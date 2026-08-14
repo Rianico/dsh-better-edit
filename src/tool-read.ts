@@ -6,33 +6,33 @@
  * @module dsh-better-edit/tool-read
  */
 
-import type { Context } from '@deepseek-ai/cordis'
-import { defineTool } from '@deepseek-ai/dsh-tools'
-import { normReq } from './edit-normalize.js'
-import { abortIf, isRec, rejectUnknownFields } from './utils.js'
-import { normFromText } from './file-reader.js'
-import { fmtReadPreview, MAX_HASH_LINES } from './read-render.js'
-import { recordServed, clearDriftReported } from './served-store.js'
-import { READ_DESCRIPTION } from './prompts.js'
-import { pathSchema } from './schema.js'
-import type { FileIO } from './fs-bridge.js'
-import { execCwd, execSessionKey } from './dsh-context.js'
+import type { Context } from "@deepseek-ai/cordis";
+import { defineTool } from "@deepseek-ai/dsh-tools";
+import { normReq } from "./edit-normalize.js";
+import { abortIf, isRec, rejectUnknownFields } from "./utils.js";
+import { normFromText } from "./file-reader.js";
+import { fmtReadPreview, MAX_HASH_LINES } from "./read-render.js";
+import { recordServed, clearDriftReported } from "./served-store.js";
+import { READ_DESCRIPTION } from "./prompts.js";
+import { pathSchema } from "./schema.js";
+import type { FileIO } from "./fs-bridge.js";
+import { execCwd, execSessionKey } from "./dsh-context.js";
 
-const ROOT_KS = new Set(['path', 'offset', 'limit'])
+const ROOT_KS = new Set(["path", "offset", "limit"]);
 
 function assertReadReq(request: unknown): asserts request is {
-	path: string
-	offset?: number
-	limit?: number
+	path: string;
+	offset?: number;
+	limit?: number;
 } {
 	if (!isRec(request)) {
-		throw new Error('[E_BAD_SHAPE] Read request must be an object.')
+		throw new Error("[E_BAD_SHAPE] Read request must be an object.");
 	}
-	rejectUnknownFields(request, ROOT_KS, 'Read request')
-	if (typeof request.path !== 'string' || request.path.length === 0) {
+	rejectUnknownFields(request, ROOT_KS, "Read request");
+	if (typeof request.path !== "string" || request.path.length === 0) {
 		throw new Error(
 			'[E_BAD_SHAPE] Read request requires a non-empty "path" string.',
-		)
+		);
 	}
 }
 
@@ -45,35 +45,35 @@ function assertReadReq(request: unknown): asserts request is {
  */
 export function buildReadTool(io: FileIO) {
 	return defineTool({
-		name: 'read',
+		name: "read",
 		description: READ_DESCRIPTION,
 		parameters: {
 			path: pathSchema,
 			offset: {
-				type: 'number',
-				description: 'Line number to start reading from (1-indexed)',
+				type: "number",
+				description: "Line number to start reading from (1-indexed)",
 			},
 			limit: {
-				type: 'number',
-				description: 'Maximum number of lines to read',
+				type: "number",
+				description: "Maximum number of lines to read",
 			},
 		},
 		output: {
-			schema: { type: 'string' },
-			render: (_args, value) => [{ type: 'text', text: value }],
+			schema: { type: "string" },
+			render: (_args, value) => [{ type: "text", text: value }],
 		},
 		async execute(args, exec) {
-			const cwd = execCwd(exec)
-			const sessionKey = execSessionKey(exec)
-			const signal = exec.signal
+			const cwd = execCwd(exec);
+			const sessionKey = execSessionKey(exec);
+			const signal = exec.signal;
 
-			const canonical = normReq(args)
-			assertReadReq(canonical)
-			const rawPath = canonical.path
+			const canonical = normReq(args);
+			assertReadReq(canonical);
+			const rawPath = canonical.path;
 
-			abortIf(signal)
-			const absolutePath = await io.resolve(rawPath, cwd, signal)
-			const rawText = await io.readText(absolutePath, signal)
+			abortIf(signal);
+			const absolutePath = await io.resolve(rawPath, cwd, signal);
+			const rawText = await io.readText(absolutePath, signal);
 			const { normalized, fileHashes, hadUtf8DecodeErrors } =
 				await normFromText({
 					absolutePath,
@@ -81,28 +81,28 @@ export function buildReadTool(io: FileIO) {
 					displayPath: rawPath,
 					signal,
 					maxLines: MAX_HASH_LINES,
-				})
+				});
 
 			const preview = await fmtReadPreview(
 				normalized,
 				{ offset: canonical.offset, limit: canonical.limit },
 				fileHashes,
 				absolutePath,
-			)
+			);
 			if (preview.served.length > 0) {
-				await recordServed(sessionKey, absolutePath, preview.served)
+				await recordServed(sessionKey, absolutePath, preview.served);
 			}
-			await clearDriftReported(sessionKey, absolutePath)
+			await clearDriftReported(sessionKey, absolutePath);
 			// Record the present observation with the fs policy gate so later
 			// built-in write/edit calls see this file as observed at the
 			// version the model just read (a no-op when no policy listens).
-			await io.emitObserved(absolutePath, exec, signal)
+			await io.emitObserved(absolutePath, exec, signal);
 
 			return hadUtf8DecodeErrors
 				? `${preview.text}\n\n[Non-UTF-8 bytes shown as U+FFFD; editing rewrites the file as UTF-8.]`
-				: preview.text
+				: preview.text;
 		},
-	})
+	});
 }
 
 /**
@@ -113,5 +113,5 @@ export function registerReadTool(
 	agentCtx: Context,
 	io: FileIO,
 ): () => void {
-	return agentCtx.tools.register(buildReadTool(io))
+	return agentCtx.tools.register(buildReadTool(io));
 }

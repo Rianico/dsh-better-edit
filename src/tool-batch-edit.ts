@@ -6,20 +6,26 @@
  * @module dsh-better-edit/tool-batch-edit
  */
 
-import type { Context } from '@deepseek-ai/cordis'
-import { defineTool } from '@deepseek-ai/dsh-tools'
-import { restoreEndings, type LineEnding } from './edit-diff.js'
-import { normFromText } from './file-reader.js'
-import { scanDrift } from './drift.js'
-import { abortIf, isRec, normalizeFilePath, rejectUnknownFields, splitLines } from './utils.js'
-import { normReq } from './edit-normalize.js'
+import type { Context } from "@deepseek-ai/cordis";
+import { defineTool } from "@deepseek-ai/dsh-tools";
+import { restoreEndings, type LineEnding } from "./edit-diff.js";
+import { normFromText } from "./file-reader.js";
+import { scanDrift } from "./drift.js";
+import {
+	abortIf,
+	isRec,
+	normalizeFilePath,
+	rejectUnknownFields,
+	splitLines,
+} from "./utils.js";
+import { normReq } from "./edit-normalize.js";
 import {
 	applyEdit,
 	lineHashes,
 	resEdit,
 	MAX_HASH_LINES,
 	type HEdit,
-} from './hashline/index.js'
+} from "./hashline/index.js";
 import {
 	AnchorMismatchError,
 	ServedRejectionError,
@@ -28,87 +34,101 @@ import {
 	recordEchoServes,
 	type ResolvedRange,
 	type ServedRow,
-} from './hashline/served.js'
-import { buildBatchResult, type BatchSection } from './edit-response.js'
-import { saveUndo } from './undo-edit.js'
-import { loadServed, recordServedTruncated } from './served-store.js'
-import { BATCH_EDIT_MAX_ITEMS, NOOP_LOOP_THRESHOLD } from './constants.js'
+} from "./hashline/served.js";
+import { buildBatchResult, type BatchSection } from "./edit-response.js";
+import { saveUndo } from "./undo-edit.js";
+import { loadServed, recordServedTruncated } from "./served-store.js";
+import { BATCH_EDIT_MAX_ITEMS, NOOP_LOOP_THRESHOLD } from "./constants.js";
 import {
 	collectRemovedHashes,
 	countLineChanges,
 	resolveMissingPath,
-} from './edit-pipeline.js'
-import { clearNoopLoop, noopPayloadKey, trackNoopPayload } from './noop-guard.js'
-import { BATCH_EDIT_DESCRIPTION } from './prompts.js'
-import { pathSchema, removeFromSchema, removeToSchema, replacementTextSchema } from './schema.js'
-import type { FileIO } from './fs-bridge.js'
-import { execCwd, execSessionKey } from './dsh-context.js'
+} from "./edit-pipeline.js";
+import {
+	clearNoopLoop,
+	noopPayloadKey,
+	trackNoopPayload,
+} from "./noop-guard.js";
+import { BATCH_EDIT_DESCRIPTION } from "./prompts.js";
+import {
+	pathSchema,
+	removeFromSchema,
+	removeToSchema,
+	replacementTextSchema,
+} from "./schema.js";
+import type { FileIO } from "./fs-bridge.js";
+import { execCwd, execSessionKey } from "./dsh-context.js";
 
 interface BatchItem {
-	path?: string
-	remove_from: string
-	remove_to: string
-	replacement_text: string
+	path?: string;
+	remove_from: string;
+	remove_to: string;
+	replacement_text: string;
 }
 
 interface BatchEditParams {
-	edits: BatchItem[]
+	edits: BatchItem[];
 }
 
 type PreparedItem = {
-	index: number
-	path: string
-	absolutePath: string
-	remove_from: string
-	remove_to: string
-	replacement_text: string
-	pathWarning?: string
-}
+	index: number;
+	path: string;
+	absolutePath: string;
+	remove_from: string;
+	remove_to: string;
+	replacement_text: string;
+	pathWarning?: string;
+};
 
-const BATCH_ITEM_KS = new Set(['path', 'remove_from', 'remove_to', 'replacement_text'])
+const BATCH_ITEM_KS = new Set([
+	"path",
+	"remove_from",
+	"remove_to",
+	"replacement_text",
+]);
 
 function assertBatchReq(request: unknown): asserts request is BatchEditParams {
 	if (!isRec(request)) {
 		throw new Error(
 			'[E_BAD_SHAPE] batch_edit request must be an object with an "edits" array.',
-		)
+		);
 	}
-	rejectUnknownFields(request, new Set(['edits']), 'batch_edit request')
+	rejectUnknownFields(request, new Set(["edits"]), "batch_edit request");
 	if (!Array.isArray(request.edits) || request.edits.length === 0) {
 		throw new Error(
 			'[E_BAD_SHAPE] batch_edit request requires a non-empty "edits" array.',
-		)
+		);
 	}
 	if (request.edits.length > BATCH_EDIT_MAX_ITEMS) {
 		throw new Error(
 			`[E_BAD_SHAPE] batch_edit accepts at most ${BATCH_EDIT_MAX_ITEMS} edits; got ${request.edits.length}. Split the batch.`,
-		)
+		);
 	}
 	request.edits.forEach((item, index) => {
 		if (!isRec(item)) {
 			throw new Error(
 				`[E_BAD_SHAPE] edits[${index}] must be an object with remove_from, remove_to, and replacement_text.`,
-			)
+			);
 		}
-		rejectUnknownFields(item, BATCH_ITEM_KS, `edits[${index}]`)
+		rejectUnknownFields(item, BATCH_ITEM_KS, `edits[${index}]`);
 		if (
-			typeof item.remove_from !== 'string' ||
-			typeof item.remove_to !== 'string' ||
-			typeof item.replacement_text !== 'string'
+			typeof item.remove_from !== "string" ||
+			typeof item.remove_to !== "string" ||
+			typeof item.replacement_text !== "string"
 		) {
 			throw new Error(
 				`[E_BAD_SHAPE] edits[${index}] requires "remove_from", "remove_to", and "replacement_text" strings.`,
-			)
+			);
 		}
 		if (
 			item.path !== undefined &&
-			(typeof item.path !== 'string' || item.path.length === 0)
+			(typeof item.path !== "string" || item.path.length === 0)
 		) {
 			throw new Error(
 				`[E_BAD_SHAPE] edits[${index}].path must be a non-empty string.`,
-			)
+			);
 		}
-	})
+	});
 }
 
 async function prepareItems(
@@ -117,33 +137,33 @@ async function prepareItems(
 	cwd: string,
 	signal: AbortSignal | undefined,
 ): Promise<PreparedItem[]> {
-	const items: PreparedItem[] = []
+	const items: PreparedItem[] = [];
 	for (let index = 0; index < params.edits.length; index++) {
-		const raw = params.edits[index]!
-		const record: Record<string, unknown> = { ...raw }
-		normalizeFilePath(record)
+		const raw = params.edits[index]!;
+		const record: Record<string, unknown> = { ...raw };
+		normalizeFilePath(record);
 
-		let path = typeof record.path === 'string' ? record.path : undefined
-		let pathWarning: string | undefined
+		let path = typeof record.path === "string" ? record.path : undefined;
+		let pathWarning: string | undefined;
 		if (!path) {
-			let resolution: { path: string; warning: string } | undefined
+			let resolution: { path: string; warning: string } | undefined;
 			try {
-				resolution = await resolveMissingPath(record)
+				resolution = await resolveMissingPath(record);
 			} catch (error) {
 				if (error instanceof Error) {
-					throw new Error(`edits[${index}]: ${error.message}`)
+					throw new Error(`edits[${index}]: ${error.message}`);
 				}
-				throw error
+				throw error;
 			}
 			if (resolution) {
-				path = resolution.path
-				pathWarning = resolution.warning
+				path = resolution.path;
+				pathWarning = resolution.warning;
 			}
 		}
 		if (!path) {
 			throw new Error(
 				`[E_BAD_SHAPE] edits[${index}] requires a non-empty "path" string, and its anchors match no known file.`,
-			)
+			);
 		}
 
 		items.push({
@@ -154,51 +174,51 @@ async function prepareItems(
 			remove_to: record.remove_to as string,
 			replacement_text: record.replacement_text as string,
 			pathWarning,
-		})
+		});
 	}
-	return items
+	return items;
 }
 
 function groupByPath(items: PreparedItem[]): Map<string, PreparedItem[]> {
-	const groups = new Map<string, PreparedItem[]>()
+	const groups = new Map<string, PreparedItem[]>();
 	for (const item of items) {
-		const list = groups.get(item.absolutePath)
-		if (list) list.push(item)
-		else groups.set(item.absolutePath, [item])
+		const list = groups.get(item.absolutePath);
+		if (list) list.push(item);
+		else groups.set(item.absolutePath, [item]);
 	}
-	return groups
+	return groups;
 }
 
 function echoRowsForItem(
 	edit: HEdit,
 	originalHashes: string[],
 ): ServedRow[] | undefined {
-	const startHash = edit.hash_bounds[0].hash
-	const endHash = edit.hash_bounds[1].hash
-	const s = originalHashes.indexOf(startHash)
-	const e = originalHashes.indexOf(endHash)
-	if (s < 0 || e < 0) return undefined
-	return buildRangeEcho(Math.min(s, e) + 1, Math.max(s, e) + 1, originalHashes)
+	const startHash = edit.hash_bounds[0].hash;
+	const endHash = edit.hash_bounds[1].hash;
+	const s = originalHashes.indexOf(startHash);
+	const e = originalHashes.indexOf(endHash);
+	if (s < 0 || e < 0) return undefined;
+	return buildRangeEcho(Math.min(s, e) + 1, Math.max(s, e) + 1, originalHashes);
 }
 
 type ProcessedFile = {
-	displayPath: string
-	absolutePath: string
-	originalNormalized: string
-	result: string
-	bom: string
-	originalEnding: LineEnding
-	hadUtf8DecodeErrors: boolean
-	warnings: string[]
-	originalHashes: string[]
-	resultHashes: string[]
-	appliedCount: number
-	noopCount: number
-	totalAddedLines: number
-	totalRemovedLines: number
-	driftNotice: string | undefined
-	range: ResolvedRange
-}
+	displayPath: string;
+	absolutePath: string;
+	originalNormalized: string;
+	result: string;
+	bom: string;
+	originalEnding: LineEnding;
+	hadUtf8DecodeErrors: boolean;
+	warnings: string[];
+	originalHashes: string[];
+	resultHashes: string[];
+	appliedCount: number;
+	noopCount: number;
+	totalAddedLines: number;
+	totalRemovedLines: number;
+	driftNotice: string | undefined;
+	range: ResolvedRange;
+};
 
 async function processFile(
 	io: FileIO,
@@ -206,10 +226,10 @@ async function processFile(
 	_cwd: string,
 	opts: { signal?: AbortSignal; sessionKey: string },
 ): Promise<ProcessedFile> {
-	const first = items[0]!
-	abortIf(opts.signal)
-	const absolutePath = first.absolutePath
-	const rawText = await io.readText(absolutePath, opts.signal)
+	const first = items[0]!;
+	abortIf(opts.signal);
+	const absolutePath = first.absolutePath;
+	const rawText = await io.readText(absolutePath, opts.signal);
 	const {
 		normalized: originalNormalized,
 		bom,
@@ -222,28 +242,28 @@ async function processFile(
 		displayPath: first.path,
 		signal: opts.signal,
 		maxLines: MAX_HASH_LINES,
-	})
+	});
 
-	const served = await loadServed(opts.sessionKey, absolutePath)
-	const warnings: string[] = []
+	const served = await loadServed(opts.sessionKey, absolutePath);
+	const warnings: string[] = [];
 
-	let currentContent = originalNormalized
-	let currentHashes = originalHashes
-	let appliedCount = 0
-	let noopCount = 0
-	let totalAddedLines = 0
-	let totalRemovedLines = 0
-	let unionStartLine = Infinity
-	let unionEndLine = -Infinity
-	let unionStartHash = ''
-	let unionEndHash = ''
+	let currentContent = originalNormalized;
+	let currentHashes = originalHashes;
+	let appliedCount = 0;
+	let noopCount = 0;
+	let totalAddedLines = 0;
+	let totalRemovedLines = 0;
+	let unionStartLine = Infinity;
+	let unionEndLine = -Infinity;
+	let unionStartHash = "";
+	let unionEndHash = "";
 	let lastApplied:
 		| { content: string; hashes: string[]; removedHashes: Set<string> }
-		| undefined
+		| undefined;
 
 	for (const item of items) {
-		abortIf(opts.signal)
-		let edit: HEdit
+		abortIf(opts.signal);
+		let edit: HEdit;
 		try {
 			edit = resEdit(
 				{
@@ -252,16 +272,16 @@ async function processFile(
 					replacement_text: item.replacement_text,
 				},
 				warnings,
-			)
+			);
 		} catch (error) {
-			const message = error instanceof Error ? error.message : String(error)
+			const message = error instanceof Error ? error.message : String(error);
 			throw new Error(
 				`[E_BATCH_ABORT] edits[${item.index}] (${item.path}) failed: ${message}\n` +
-					'The whole batch was rejected and NOTHING was written — no file changed and earlier items in the batch were NOT applied.',
-			)
+					"The whole batch was rejected and NOTHING was written — no file changed and earlier items in the batch were NOT applied.",
+			);
 		}
 
-		let anchorResult: ReturnType<typeof applyEdit>
+		let anchorResult: ReturnType<typeof applyEdit>;
 		try {
 			anchorResult = applyEdit(
 				currentContent,
@@ -270,118 +290,119 @@ async function processFile(
 				currentHashes,
 				item.path,
 				served,
-			)
+			);
 		} catch (error) {
 			if (
 				error instanceof AnchorMismatchError ||
 				error instanceof ServedRejectionError
 			) {
-				const originalLines = splitLines(originalNormalized)
+				const originalLines = splitLines(originalNormalized);
 				const echoRows =
 					error.servedRows.length > 0
 						? error.servedRows
-						: echoRowsForItem(edit, originalHashes)
+						: echoRowsForItem(edit, originalHashes);
 				if (echoRows) {
 					await recordEchoServes(
 						opts.sessionKey,
 						absolutePath,
 						echoRows,
-						'live',
-					)
+						"live",
+					);
 				}
 				const echoBlock = echoRows
 					? ` Current on-disk range for edits[${item.index}] (unchanged — nothing was written):\n${fmtServedRows(echoRows, originalLines)}`
-					: ' Call read() to get fresh anchors.'
+					: " Call read() to get fresh anchors.";
 				throw new Error(
 					`[E_BATCH_ABORT] edits[${item.index}] (${item.path}) failed: ${error.message}${echoBlock}\n` +
-						'The whole batch was rejected and NOTHING was written — no file changed and earlier items in the batch were NOT applied. Fix the failing edit (and any later edit that depends on it), then resubmit the batch.',
-				)
+						"The whole batch was rejected and NOTHING was written — no file changed and earlier items in the batch were NOT applied. Fix the failing edit (and any later edit that depends on it), then resubmit the batch.",
+				);
 			}
-			throw error
+			throw error;
 		}
 
-		const nextContent = anchorResult.content
-		const isNoop = nextContent === currentContent
-		const range = anchorResult.range
+		const nextContent = anchorResult.content;
+		const isNoop = nextContent === currentContent;
+		const range = anchorResult.range;
 		if (range.startLine < unionStartLine) {
-			unionStartLine = range.startLine
-			unionStartHash = range.startHash
+			unionStartLine = range.startLine;
+			unionStartHash = range.startHash;
 		}
 		if (range.endLine > unionEndLine) {
-			unionEndLine = range.endLine
-			unionEndHash = range.endHash
+			unionEndLine = range.endLine;
+			unionEndHash = range.endHash;
 		}
 
 		if (isNoop) {
-			noopCount += 1
+			noopCount += 1;
 			const payload = noopPayloadKey(
 				absolutePath,
 				item.remove_from,
 				item.remove_to,
 				item.replacement_text,
-			)
-			const count = trackNoopPayload(absolutePath, payload)
+			);
+			const count = trackNoopPayload(absolutePath, payload);
 			if (count >= NOOP_LOOP_THRESHOLD) {
-				const originalLines = splitLines(originalNormalized)
-				const echoRows = echoRowsForItem(edit, originalHashes)
+				const originalLines = splitLines(originalNormalized);
+				const echoRows = echoRowsForItem(edit, originalHashes);
 				if (echoRows) {
 					await recordEchoServes(
 						opts.sessionKey,
 						absolutePath,
 						echoRows,
-						'live',
-					)
+						"live",
+					);
 				}
 				throw new Error(
 					`[E_NOOP_LOOP] edits[${item.index}] (${item.path}): this exact edit (anchors ${item.remove_from} to ${item.remove_to}) has been submitted ${count} times and produced no changes each time — the range already contains the replacement text. Do not resend it; it will never change the file. The whole batch was rejected and nothing was written.` +
 						(echoRows
 							? ` Current on-disk range:\n${fmtServedRows(echoRows, originalLines)}`
-							: ''),
-				)
+							: ""),
+				);
 			}
 			if (count === 2) {
 				warnings.push(
 					`[E_NOOP_LOOP] Notice: edits[${item.index}] (${item.path}) — this exact edit has produced no changes twice in a row; the range already contains the replacement text. Resending it again will reject the batch.`,
-				)
+				);
 			}
 			warnings.push(
 				`edits[${item.index}] (${item.path}) was a noop: the range already contains the replacement text.`,
-			)
-			if (anchorResult.warnings?.length) warnings.push(...anchorResult.warnings)
-			continue
+			);
+			if (anchorResult.warnings?.length)
+				warnings.push(...anchorResult.warnings);
+			continue;
 		}
 
-		appliedCount += 1
-		const removedHashes = collectRemovedHashes(edit, currentHashes)
+		appliedCount += 1;
+		const removedHashes = collectRemovedHashes(edit, currentHashes);
 		const nextHashes = await lineHashes(
 			nextContent,
 			absolutePath,
 			{ content: currentContent, hashes: currentHashes, removedHashes },
 			undefined,
 			false,
-		)
+		);
 		const { totalAddedLines: added, totalRemovedLines: removed } =
 			countLineChanges(
 				edit,
 				originalHashes,
 				false,
 				anchorResult.autoFixes?.length ?? 0,
-			)
-		totalAddedLines += added
-		totalRemovedLines += removed
+			);
+		totalAddedLines += added;
+		totalRemovedLines += removed;
 		lastApplied = {
 			content: currentContent,
 			hashes: currentHashes,
 			removedHashes,
-		}
-		currentContent = nextContent
-		currentHashes = nextHashes
-		clearNoopLoop(absolutePath)
-		if (anchorResult.warnings?.length) warnings.push(...anchorResult.warnings)
+		};
+		currentContent = nextContent;
+		currentHashes = nextHashes;
+		clearNoopLoop(absolutePath);
+		if (anchorResult.warnings?.length) warnings.push(...anchorResult.warnings);
 	}
 
-	const result = currentContent
-	let resultHashes = currentHashes
+	const result = currentContent;
+	let resultHashes = currentHashes;
 	if (appliedCount > 0 && lastApplied) {
 		resultHashes = await lineHashes(
 			result,
@@ -393,20 +414,20 @@ async function processFile(
 			},
 			undefined,
 			true,
-		)
+		);
 	}
 
 	if (hadUtf8DecodeErrors) {
 		warnings.push(
-			'Non-UTF-8 bytes were shown as U+FFFD; this edit rewrote the file as UTF-8.',
-		)
+			"Non-UTF-8 bytes were shown as U+FFFD; this edit rewrote the file as UTF-8.",
+		);
 	}
-	if (first.pathWarning) warnings.unshift(first.pathWarning)
+	if (first.pathWarning) warnings.unshift(first.pathWarning);
 
-	let driftNotice: string | undefined
+	let driftNotice: string | undefined;
 	if (appliedCount > 0 && unionStartLine !== Infinity) {
-		const resultLines = splitLines(result)
-		const originalLines = splitLines(originalNormalized)
+		const resultLines = splitLines(result);
+		const originalLines = splitLines(originalNormalized);
 		try {
 			driftNotice = await scanDrift({
 				sessionKey: opts.sessionKey,
@@ -421,9 +442,9 @@ async function processFile(
 					delta: resultLines.length - originalLines.length,
 				},
 				path: absolutePath,
-			})
+			});
 		} catch (error) {
-			console.error('Failed to compute drift notice:', error)
+			console.error("Failed to compute drift notice:", error);
 		}
 	}
 
@@ -450,7 +471,7 @@ async function processFile(
 			endHash: unionEndHash,
 			delta: splitLines(result).length - splitLines(originalNormalized).length,
 		},
-	}
+	};
 }
 
 function toSection(file: ProcessedFile): BatchSection {
@@ -466,7 +487,7 @@ function toSection(file: ProcessedFile): BatchSection {
 		noopCount: file.noopCount,
 		totalAddedLines: file.totalAddedLines,
 		totalRemovedLines: file.totalRemovedLines,
-	}
+	};
 }
 
 /**
@@ -478,19 +499,19 @@ function toSection(file: ProcessedFile): BatchSection {
  */
 export function buildBatchEditTool(io: FileIO) {
 	return defineTool({
-		name: 'batch_edit',
+		name: "batch_edit",
 		description: BATCH_EDIT_DESCRIPTION,
 		parameters: {
 			edits: {
-				type: 'array',
+				type: "array",
 				required: true,
 				description:
 					`Ordered list of edits, each with the same shape as the edit tool: { path?, remove_from, remove_to, replacement_text }. ` +
-					'Edits to the same file are applied in order and verified against what was served before anything is written. ' +
-					'The batch is all-or-nothing: if any edit fails validation, nothing is written and the failing edit\u2019s current range is served back. ' +
-					'Use batch_edit when you have multiple edits; do not issue several edit calls in one message.',
+					"Edits to the same file are applied in order and verified against what was served before anything is written. " +
+					"The batch is all-or-nothing: if any edit fails validation, nothing is written and the failing edit\u2019s current range is served back. " +
+					"Use batch_edit when you have multiple edits; do not issue several edit calls in one message.",
 				items: {
-					type: 'object',
+					type: "object",
 					additionalProperties: false,
 					properties: {
 						path: pathSchema,
@@ -502,80 +523,84 @@ export function buildBatchEditTool(io: FileIO) {
 			},
 		},
 		output: {
-			schema: { type: 'string' },
-			render: (_args, value) => [{ type: 'text', text: value }],
+			schema: { type: "string" },
+			render: (_args, value) => [{ type: "text", text: value }],
 		},
 		async execute(args, exec) {
-			const cwd = execCwd(exec)
-			const sessionKey = execSessionKey(exec)
-			const signal = exec.signal
+			const cwd = execCwd(exec);
+			const sessionKey = execSessionKey(exec);
+			const signal = exec.signal;
 
-			const canonical = normReq(args)
+			const canonical = normReq(args);
 			if (isRec(canonical) && Array.isArray(canonical.edits)) {
 				canonical.edits = canonical.edits.map((item: unknown) => {
-					if (!isRec(item)) return item
-					const cloned = { ...item }
-					normalizeFilePath(cloned)
-					return cloned
-				})
+					if (!isRec(item)) return item;
+					const cloned = { ...item };
+					normalizeFilePath(cloned);
+					return cloned;
+				});
 			}
-			assertBatchReq(canonical)
+			assertBatchReq(canonical);
 
-			const items = await prepareItems(io, canonical, cwd, signal)
-			const groups = groupByPath(items)
+			const items = await prepareItems(io, canonical, cwd, signal);
+			const groups = groupByPath(items);
 
-			const processed: ProcessedFile[] = []
+			const processed: ProcessedFile[] = [];
 			for (const groupItems of groups.values()) {
-				abortIf(signal)
+				abortIf(signal);
 				processed.push(
 					await processFile(io, groupItems, cwd, {
 						signal,
 						sessionKey,
 					}),
-				)
+				);
 			}
 
-			const undos: Array<{ file: ProcessedFile; restore: () => Promise<void> }> =
-				[]
+			const undos: Array<{
+				file: ProcessedFile;
+				restore: () => Promise<void>;
+			}> = [];
 			for (const file of processed) {
-				if (file.appliedCount === 0) continue
+				if (file.appliedCount === 0) continue;
 				const undo = await saveUndo(file.absolutePath, {
 					content: file.originalNormalized,
 					bom: file.bom,
 					originalEnding: file.originalEnding,
 					hashes: file.originalHashes,
 					resultContent: file.result,
-				})
+				});
 				if (!undo.persisted) {
 					for (const u of undos) {
 						try {
-							await u.restore()
+							await u.restore();
 						} catch (error) {
 							console.error(
-								'Failed to restore undo entry after batch abort:',
+								"Failed to restore undo entry after batch abort:",
 								error,
-							)
+							);
 						}
 					}
 					throw new Error(
-						'[E_UNDO_UNAVAILABLE] Cannot persist undo history to the hash store; the batch was NOT applied and no file was written. Retry the batch, or use write if the store cannot be recovered.',
-					)
+						"[E_UNDO_UNAVAILABLE] Cannot persist undo history to the hash store; the batch was NOT applied and no file was written. Retry the batch, or use write if the store cannot be recovered.",
+					);
 				}
-				undos.push({ file, restore: undo.restore })
+				undos.push({ file, restore: undo.restore });
 			}
 
-			const written: Array<{ file: ProcessedFile; restore: () => Promise<void> }> =
-				[]
+			const written: Array<{
+				file: ProcessedFile;
+				restore: () => Promise<void>;
+			}> = [];
 			try {
 				for (const u of undos) {
-					abortIf(signal)
+					abortIf(signal);
 					await io.writeText(
 						u.file.absolutePath,
 						u.file.bom + restoreEndings(u.file.result, u.file.originalEnding),
 						signal,
 						exec,
-					)
-					written.push(u)
+					);
+					written.push(u);
 				}
 			} catch (error) {
 				for (const w of written) {
@@ -583,34 +608,37 @@ export function buildBatchEditTool(io: FileIO) {
 						await io.writeText(
 							w.file.absolutePath,
 							w.file.bom +
-								restoreEndings(w.file.originalNormalized, w.file.originalEnding),
+								restoreEndings(
+									w.file.originalNormalized,
+									w.file.originalEnding,
+								),
 							undefined,
 							exec,
-						)
+						);
 					} catch (restoreError) {
 						console.error(
-							'Failed to restore file after batch write failure:',
+							"Failed to restore file after batch write failure:",
 							restoreError,
-						)
+						);
 					}
 					try {
-						await w.restore()
+						await w.restore();
 					} catch (restoreError) {
 						console.error(
-							'Failed to restore undo entry after batch write failure:',
+							"Failed to restore undo entry after batch write failure:",
 							restoreError,
-						)
+						);
 					}
 				}
-				throw error
+				throw error;
 			}
 
-			const result = buildBatchResult(processed.map(toSection))
+			const result = buildBatchResult(processed.map(toSection));
 			if (result.details.servedRows && result.details.servedRows.length > 0) {
-				const byPath = result.details.servedByPath ?? []
+				const byPath = result.details.servedByPath ?? [];
 				for (const entry of byPath) {
-					if (entry.servedRows.length === 0) continue
-					const file = processed.find((f) => f.displayPath === entry.path)
+					if (entry.servedRows.length === 0) continue;
+					const file = processed.find((f) => f.displayPath === entry.path);
 					if (file) {
 						await recordServedTruncated(
 							sessionKey,
@@ -618,13 +646,13 @@ export function buildBatchEditTool(io: FileIO) {
 							entry.servedRows,
 							splitLines(file.result).length,
 							file.range.startLine - 1,
-						)
+						);
 					}
 				}
 			}
-			return result.content[0]!.text
+			return result.content[0]!.text;
 		},
-	})
+	});
 }
 
 /**
@@ -635,5 +663,5 @@ export function registerBatchEditTool(
 	agentCtx: Context,
 	io: FileIO,
 ): () => void {
-	return agentCtx.tools.register(buildBatchEditTool(io))
+	return agentCtx.tools.register(buildBatchEditTool(io));
 }
