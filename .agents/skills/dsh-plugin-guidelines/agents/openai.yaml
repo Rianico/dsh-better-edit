@@ -1,0 +1,3 @@
+interface:
+  display_name: "dsh Plugin Guidelines"
+  short_description: "Author DeepSeek Harness plugins — two planes, own layer wins, the fs event gate"
