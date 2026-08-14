@@ -1,0 +1,8 @@
+# dsh-better-edit bundle patch: mount the host-plane plugin row.
+# Installed via `dsh plugin add dsh-better-edit` (or a profile's bundle list).
+# The plugin hooks agent/session-start and shadows the built-in read/edit tools
+# (plus batch_edit / undo_last_edit) on each agent's own scope layer, so no
+# preset editing or user config is needed.
+- insert:
+    - id: dsh-better-edit
+      name: dsh-better-edit
