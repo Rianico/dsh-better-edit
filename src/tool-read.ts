@@ -93,6 +93,10 @@ export function buildReadTool(io: FileIO) {
 				await recordServed(sessionKey, absolutePath, preview.served)
 			}
 			await clearDriftReported(sessionKey, absolutePath)
+			// Record the present observation with the fs policy gate so later
+			// built-in write/edit calls see this file as observed at the
+			// version the model just read (a no-op when no policy listens).
+			await io.emitObserved(absolutePath, exec, signal)
 
 			return hadUtf8DecodeErrors
 				? `${preview.text}\n\n[Non-UTF-8 bytes shown as U+FFFD; editing rewrites the file as UTF-8.]`

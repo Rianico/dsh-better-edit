@@ -175,6 +175,7 @@ export function buildEditTool(io: FileIO) {
 					absolutePath,
 					bom + restoreEndings(result, originalEnding),
 					signal,
+					exec,
 				)
 			} catch (error) {
 				await undo.restore()

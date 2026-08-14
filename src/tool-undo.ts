@@ -116,6 +116,7 @@ export function buildUndoTool(io: FileIO) {
 				absolutePath,
 				undo.bom + restoreEndings(undo.content, undo.originalEnding),
 				signal,
+				exec,
 			)
 
 			try {

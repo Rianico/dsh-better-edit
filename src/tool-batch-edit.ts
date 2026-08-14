@@ -573,6 +573,7 @@ export function buildBatchEditTool(io: FileIO) {
 						u.file.absolutePath,
 						u.file.bom + restoreEndings(u.file.result, u.file.originalEnding),
 						signal,
+						exec,
 					)
 					written.push(u)
 				}
@@ -583,6 +584,8 @@ export function buildBatchEditTool(io: FileIO) {
 							w.file.absolutePath,
 							w.file.bom +
 								restoreEndings(w.file.originalNormalized, w.file.originalEnding),
+							undefined,
+							exec,
 						)
 					} catch (restoreError) {
 						console.error(

@@ -160,6 +160,7 @@ Corrupt stores are quarantined and rebuilt automatically.
 | `[E_INVALID_PATCH]` | Diff-preview markers pasted into `replacement_text` (autocorrected). |
 | `[E_NOOP_LOOP]` | The exact same edit keeps producing no change; resubmitting is rejected. |
 | `[E_NOT_FOUND]` | File does not exist. |
+| `[E_NOT_OBSERVED]` | The file has not been observed in this session (read-before-write policy); call `read` first. |
 | `[E_NOT_TEXT]` | Path is a directory, binary, or non-UTF-8 file; hashline edits only text. |
 | `[E_RANGE_STALE]` | A served line differs on disk since it was read; the range is echoed fresh. |
 | `[E_RANGE_UNSERVED]` | The range includes lines never served to the model. |
