@@ -2,6 +2,8 @@
 
 All notable changes to the `dsh-better-edit` plugin will be documented in this file.
 
+Entries link to the originating spec issue in [pi-hashline-edit-lsz](https://github.com/Rianico/pi-hashline-edit-lsz) where one exists.
+
 ## [0.1.8] - 2026-08-15
 
 ### Added
@@ -39,8 +41,8 @@ All notable changes to the `dsh-better-edit` plugin will be documented in this f
 
 ### Fixed
 
-- `E_RANGE_UNVERIFIED` ("served at N positions") on edits after a shrinking write: the served-state array was upserted by position but never truncated to the file's current line count, so a stale tail kept a surviving line's hash at its OLD position while the current serve held it at its new one. `recordServed`/`recordServes` now take the current line count and truncate before upserting, threaded from every whole-file serve — read, write auto-read, drift rows, and all rejection-echo sites. Regression test covers the 8-line→2-line write case.
-- The same never-truncate behavior exists in pi-hashline-edit-lsz / upstream (`upsertServed`); the fix is a candidate to upstream.
+- `E_RANGE_UNVERIFIED` ("served at N positions") on edits after a shrinking write: the served-state array was upserted by position but never truncated to the file's current line count, so a stale tail kept a surviving line's hash at its OLD position while the current serve held it at its new one. `recordServed`/`recordServes` now take the current line count and truncate before upserting, threaded from every whole-file serve — read, write auto-read, drift rows, and all rejection-echo sites. Regression test covers the 8-line→2-line write case ([Rianico/pi-hashline-edit-lsz#27](https://github.com/Rianico/pi-hashline-edit-lsz/issues/27)).
+- The fix is a candidate to upstream into pi-hashline-edit-lsz / upstream, whose `upsertServed` has the same never-truncate behavior (tracked in [Rianico/pi-hashline-edit-lsz#27](https://github.com/Rianico/pi-hashline-edit-lsz/issues/27)).
 
 ## [0.1.3] - 2026-08-15
 
@@ -65,9 +67,9 @@ All notable changes to the `dsh-better-edit` plugin will be documented in this f
 
 ### Added
 
-- Initial dsh port of pi-hashline-edit-lsz: hash-anchored `read` / `edit` / `batch_edit` / `undo_last_edit` tools for DeepSeek Harness. Every line gets a unique 3-character content hash; edits target `remove_from`/`remove_to` hashes. The hashline core is ported byte-for-byte; the tool layer is rewritten on dsh's plugin API.
+- Initial dsh port of pi-hashline-edit-lsz: hash-anchored `read` / `edit` / `batch_edit` / `undo_last_edit` tools for DeepSeek Harness. Every line gets a unique 3-character content hash; edits target `remove_from`/`remove_to` hashes. The hashline core is ported byte-for-byte; the tool layer is rewritten on dsh's plugin API ([batch_edit spec: Rianico/pi-hashline-edit-lsz#19](https://github.com/Rianico/pi-hashline-edit-lsz/issues/19)).
 - Built-in replacement via scope-layered registry shadowing: on `agent/session-start` the tools and the `tool:read`/`tool:edit` prompt sections are registered on the agent's own layer (own-layer-wins), unwinding automatically on disposal; a `tools/post-execute` listener appends the auto-read to built-in `write` results.
-- Served-state range verification with reject-and-serve: every line of the resolved range is checked against what the model was shown; stale/never-served/unverified ranges are hard-rejected with the current `HASH│content` rows echoed back (retry needs no `read`). Drift notices report served territory changed outside the edit range.
+- Served-state range verification with reject-and-serve: every line of the resolved range is checked against what the model was shown; stale/never-served/unverified ranges are hard-rejected with the current `HASH│content` rows echoed back (retry needs no `read`). Drift notices report served territory changed outside the edit range ([reject-and-serve spec: Rianico/pi-hashline-edit-lsz#13](https://github.com/Rianico/pi-hashline-edit-lsz/issues/13)).
 - Chained edits without re-reading: post-edit diff rows and rejection echoes count as serves, so follow-up edits verify cleanly.
-- Error-code contract (`[E_*]` codes, README-documented and test-enforced), `undo_last_edit` surviving restarts, and safe writes preserving permissions/line endings/BOMs/symlinks/hard links via `ctx.fs`.
+- Error-code contract (`[E_*]` codes, README-documented and test-enforced) including the noop-loop guard ([Rianico/pi-hashline-edit-lsz#18](https://github.com/Rianico/pi-hashline-edit-lsz/issues/18)); `undo_last_edit` surviving restarts; and safe writes preserving permissions, line endings, BOMs, symlinks, and hard links via `ctx.fs`.
 - Test suite ported from pi-hashline-edit-lsz (614 tests at release), driving the dsh tool builders directly over a local filesystem bridge.
