@@ -18,31 +18,39 @@ import { dirname, join } from "node:path";
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 let version;
 try {
-  version = JSON.parse(readFileSync(join(root, "package.json"), "utf8")).version;
+	version = JSON.parse(
+		readFileSync(join(root, "package.json"), "utf8"),
+	).version;
 } catch (error) {
-  console.error("[tag-current] cannot read the version from package.json:", error.message.split("\n")[0]);
-  process.exit(1);
+	console.error(
+		"[tag-current] cannot read the version from package.json:",
+		error.message.split("\n")[0],
+	);
+	process.exit(1);
 }
 
 if (process.env.npm_config_dry_run) {
-  console.log(`[tag-current] dry-run: would tag v${version} — skipping`);
-  process.exit(0);
+	console.log(`[tag-current] dry-run: would tag v${version} — skipping`);
+	process.exit(0);
 }
 
 function run(args) {
-  try {
-    return execFileSync("git", args, { cwd: root, encoding: "utf8" }).trim();
-  } catch (error) {
-    console.error(`[tag-current] git ${args.join(" ")} failed:`, error.message.split("\n")[0]);
-    process.exit(1);
-  }
+	try {
+		return execFileSync("git", args, { cwd: root, encoding: "utf8" }).trim();
+	} catch (error) {
+		console.error(
+			`[tag-current] git ${args.join(" ")} failed:`,
+			error.message.split("\n")[0],
+		);
+		process.exit(1);
+	}
 }
 
 const tag = `v${version}`;
 const existing = run(["tag", "-l", tag]);
 if (existing === tag) {
-  console.log(`[tag-current] tag ${tag} already exists — nothing to do`);
-  process.exit(0);
+	console.log(`[tag-current] tag ${tag} already exists — nothing to do`);
+	process.exit(0);
 }
 
 run(["tag", "-a", tag, "-m", `${tag} — dsh-better-edit ${version}`]);
