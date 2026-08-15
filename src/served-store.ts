@@ -68,7 +68,12 @@ export function upsertServed(
 		}
 		while (updated.length > 0 && updated[updated.length - 1] === null)
 			updated.pop();
-		store.stmts.servedUpsert(sessionKey, path, JSON.stringify(updated), Date.now());
+		store.stmts.servedUpsert(
+			sessionKey,
+			path,
+			JSON.stringify(updated),
+			Date.now(),
+		);
 	});
 }
 
@@ -108,7 +113,12 @@ export function recordServes(
 			}
 			while (updated.length > 0 && updated[updated.length - 1] === null)
 				updated.pop();
-			store.stmts.servedUpsert(sessionKey, path, JSON.stringify(updated), Date.now());
+			store.stmts.servedUpsert(
+				sessionKey,
+				path,
+				JSON.stringify(updated),
+				Date.now(),
+			);
 		});
 	} catch (error) {
 		console.error("Failed to record served rows:", error);
@@ -154,7 +164,7 @@ export function recordServesTruncated(
 				}
 				if (
 					entry.hash !== null &&
-					(typeof entry.hash !== 'string' || !HASH_RE.test(entry.hash))
+					(typeof entry.hash !== "string" || !HASH_RE.test(entry.hash))
 				) {
 					throw new TypeError(`Invalid served hash: ${String(entry.hash)}`);
 				}
@@ -171,11 +181,15 @@ export function recordServesTruncated(
 			);
 		});
 	} catch (error) {
-		console.error('Failed to record truncated served rows:', error);
+		console.error("Failed to record truncated served rows:", error);
 	}
 }
 
-export function getReported(store: HashStore, sessionKey: string, path: string): Set<string> {
+export function getReported(
+	store: HashStore,
+	sessionKey: string,
+	path: string,
+): Set<string> {
 	const row = store.stmts.servedGet(sessionKey, path);
 	if (!row) return new Set();
 	const raw = row.reported;
@@ -213,13 +227,21 @@ export function addReported(
 	});
 }
 
-export function clearReported(store: HashStore, sessionKey: string, path: string): void {
+export function clearReported(
+	store: HashStore,
+	sessionKey: string,
+	path: string,
+): void {
 	withStore(() => {
 		store.stmts.servedReportedClear(sessionKey, Date.now(), path);
 	});
 }
 
-export function deleteServed(store: HashStore, sessionKey: string, path: string): void {
+export function deleteServed(
+	store: HashStore,
+	sessionKey: string,
+	path: string,
+): void {
 	store.stmts.servedDelete(sessionKey, path);
 }
 
@@ -246,7 +268,7 @@ export async function recordServed(
 		const store = await loadHashStore();
 		recordServes(store, sessionKey, path, rows, lineCount);
 	} catch (error) {
-		console.error('Failed to record served rows:', error);
+		console.error("Failed to record served rows:", error);
 	}
 }
 
@@ -266,11 +288,14 @@ export async function recordServedTruncated(
 		const store = await loadHashStore();
 		recordServesTruncated(store, sessionKey, path, rows, lineCount, clearFrom);
 	} catch (error) {
-		console.error('Failed to record truncated served rows:', error);
+		console.error("Failed to record truncated served rows:", error);
 	}
 }
 
-export async function driftReported(sessionKey: string, path: string): Promise<Set<string>> {
+export async function driftReported(
+	sessionKey: string,
+	path: string,
+): Promise<Set<string>> {
 	try {
 		const store = await loadHashStore();
 		return getReported(store, sessionKey, path);
@@ -293,7 +318,10 @@ export async function markDriftReported(
 	}
 }
 
-export async function clearDriftReported(sessionKey: string, path: string): Promise<void> {
+export async function clearDriftReported(
+	sessionKey: string,
+	path: string,
+): Promise<void> {
 	try {
 		const store = await loadHashStore();
 		clearReported(store, sessionKey, path);
