@@ -23,6 +23,7 @@ The tutorials own the copy-paste shapes: `docs/cookbook/adding-a-tool.md` for a
 tool, `docs/cookbook/adding-a-package.md` for a bundle,
 `docs/user/develop/basic/publish.md` for installation. This skill owns what
 they don't confess.
+
 ## The two planes
 
 A plugin row runs on one of two planes, and the plane decides what it can do:
@@ -102,6 +103,7 @@ use `rootCtx.fs` (covered by your inject) and let per-call session state
 `agent.ctx.tools` / `agent.ctx.systemPrompt` DO resolve (the agent chain
 declares them) — only host services that your plugin, not the agent layer,
 declares must be read off `rootCtx`.
+
 ## The fs event gate
 
 `ctx.fs` is the only sanctioned mutation seam (sandboxed and remote backends
@@ -125,16 +127,47 @@ built-in tools exactly — resolve → waterfall → mutate → emit:
 ```ts
 const target = await ctx.fs.resolve(path, { cwd, signal })
 const intent = await ctx.waterfall('fs/write-intent', target, exec, () => undefined)
-const outcome = await ctx.fs.writeText(target, content, intent, signal)
+const outcome = await ctx.fs.writeText(target, content, intent, signal, sandboxPolicy)
 ctx.emit('fs/observed', target, { kind: 'present', version: outcome.version }, exec)
 ```
 
 A read must also emit: resolve → read → stat → `fs/observed` present at
 `info.version`. Emit failures must never fail the tool that preceded them.
 Mutation errors carry stable codes (`FS_NOT_FOUND`, `FS_PERMISSION_DENIED`,
-`FS_NOT_TEXT`, `FS_STALE_VERSION`, `FS_NOT_OBSERVED`, …) — map them onto your
-own model-facing vocabulary rather than leaking raw `FsError`s.
+`FS_NOT_TEXT`, `FS_STALE_VERSION`, `FS_NOT_OBSERVED`, `FS_SANDBOX_DENIED`, …) —
+map them onto your own model-facing vocabulary rather than leaking raw
+`FsError`s.
 
+## The sandbox policy
+
+A confined deployment (`@deepseek-ai/dsh-fs-sandbox`, reported by
+`ctx.fs.sandboxMode`) fences every mutation against a per-call policy: a
+**mode** (`read-only` / `workspace-write` / `danger-full-access`) and a
+**workspace root**. Omitting the policy is not "unconfined" — the backend
+falls back to `ctx.sandboxPolicy.resolve()` with the **deployment default
+root**, so a write inside the session workspace is denied under
+`workspace-write` even though the built-in `write` (which stamps the per-call
+policy) succeeds. A mutating tool MUST:
+
+1. **Resolve the per-call policy with the session** before mutating —
+   `sandboxPolicy.resolve({ session: exec.agent.session })` — so the session
+   cwd is the workspace root. This is what lets `workspace-write` edits land
+   inside the session workspace. (Reuse the built-in's
+   `FsSandboxController` shape — `@deepseek-ai/dsh-tool-fs` — or mirror it
+   with `@deepseek-ai/dsh-sandbox`.)
+2. **Pass the policy to the mutation** as the 5th arg of
+   `ctx.fs.writeText` / `editText`; never omit it.
+3. **Advertise the escalation fields** — `sandbox_permissions` (enum of
+   `ESCALATION_TARGETS`) + `justification` — in the tool schema when
+   `ctx.fs.sandboxMode` is defined, so a denied operation can be retried
+   once at a wider mode through `ctx.approval` (strict-wider only; `read-only`
+   is the floor, `danger-full-access` the ceiling). A tool that silently
+   drops them turns a retryable denial into a hard `E_BAD_SHAPE` rejection.
+   Honor the fields in your own arg validation (allow them through, pass them
+   to the resolver).
+4. **Map `FS_SANDBOX_DENIED`** onto the shared `[sandbox: file access denied
+   under <mode> mode]` marker plus the same-turn escalation hint, so the model
+   sees the same vocabulary bash and the built-in fs tools use.
 ## Tools
 
 Register with `ctx.tools.register(defineTool({ ... }))`, which returns the
