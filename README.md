@@ -2,33 +2,165 @@
 
 Hash-anchored `read` / `edit` / `batch_edit` / `undo_last_edit` tools for
 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (`dsh`).
-Every line of a file gets a unique 3-character hash, and you edit by hash. No
-line numbers, no fuzzy matching, no edits landing on the wrong line.
+Every line of a file gets a unique 3-character hash — a **content address** —
+and you edit by hash. No line numbers, no fuzzy matching, no edits landing on
+the wrong line.
 
-This is a dsh port of
-[pi-hashline-edit-lsz](https://github.com/Rianico/pi-hashline-edit-lsz) (itself
-a self-maintained fork of pi-hashline-edit / pi-hashline-edit-pro by RimuruW
-and Yugimob). The hashline core is ported byte-for-byte; the tool layer is
-rewritten on dsh's plugin API.
+Three things this plugin is built around:
 
-## What you get
+- **Token-saving.** An edit call carries `remove_from` / `remove_to` (two
+  3-char hashes) plus the replacement text — it never echoes the text being
+  replaced. A `str_replace` call must reproduce that text verbatim. On a
+  12-edit session over a realistic file this is **28% fewer output tokens**
+  (40% on multi-line ranges) — see the [benchmark](#benchmark--reproducible).
+- **Correctness.** Every resolved edit range is verified against the exact
+  lines the model was shown. A stale, never-served, or ambiguous range is
+  hard-rejected **before anything is written**, and the current range is
+  echoed back as fresh anchors (reject-and-serve). Wrong-line edits cannot
+  silently land.
+- **A modern edit pattern for agents.** Content-addressed anchors are
+  line-number-agnostic: edit one part of a file and the hashes of the rest
+  stay put, so chained edits need no re-reads. The model pins a line by what
+  it *is*, not by where it used to sit.
 
-- **Read with anchors.** Every line comes back as `HASH│content`. The hash is
-  the line's address.
-- **Edit by hash.** `edit` targets a range of hashes
-  (`remove_from` / `remove_to`), so edits always land on the lines you meant.
-- **Anchors that stay put.** Edit one part of a file and the hashes of the
-  rest stay the same. Read once, keep editing.
-- **Fresh anchors, automatically.** After every `write` you get the new
-  anchors (auto-read). After every `edit` you get the diff with the new
-  hashes.
-- **Undo when you need it.** The last edit on a file can be reverted, even
-  after a restart.
-- **Safe writes.** Permissions, line endings, BOMs, symlinks, and hard links
-  survive every edit (writes go through `ctx.fs`, honoring sandboxed/remote
-  backends).
+## Core concepts
+
+```mermaid
+flowchart LR
+    F["file.ts"] --> R["read"]
+    R --> A["ve7 │ function hello()<br/>szJ │   const x = 1<br/>kQm │   return x<br/>9xR │ }"]
+    A --> E["edit by hash<br/>remove_from : szJ<br/>remove_to   : kQm<br/>replacement_text : …"]
+    E --> D["diff, fresh anchors<br/>− szJ │ const x = 1<br/>+ a3m │ const x = 2<br/>  kQm │ return x"]
+```
+
+- **Every line is addressed by its content, not its position.** `read`
+  returns `HASH│content`; the hash is a stable address for that line. Change
+  the line and it gets a new hash; leave it alone and it keeps the hash even
+  as the lines around it move.
+
+```mermaid
+flowchart TB
+    B["before<br/>ve7 │ const a = 1<br/>szJ │ const b = 2<br/>kQm │ const c = 3"] --> X["insert 3 lines above const c"]
+    X --> C["after<br/>ve7 │ const a = 1<br/>szJ │ const b = 2<br/>x4n │ const d = 4<br/>r7p │ const e = 5<br/>kQm │ const c = 3"]
+    C --> N["kQm still names const c = 3<br/>line numbers would have shifted"]
+```
+
+- **Anchors survive edits.** Insert or delete lines above a target and its
+  hash is unchanged — a later `edit` by that hash still lands on it. With
+  line numbers, every edit above shifts everything below and forces a
+  re-read.
 - **Reject-and-serve.** A stale or never-served range is hard-rejected with
-  fresh `HASH│content` rows so the retry needs no `read`.
+  the current `HASH│content` rows echoed back, so the retry needs no `read`.
+
+## Why not `str_replace`?
+
+Traditional edit tools ask the model to echo the old code token-for-token
+before stating the replacement (`old_string` + `new_string`). That costs
+`O(replaced text)` tokens per edit **and** is where models fail: the original
+[harness-problem](https://stencil.so/blog/the-harness-problem) post reported
+patch-format failure rates of 46–51% for several models with replace-style
+edits, and a **61% output-token reduction** after switching to anchored
+edits. hashline sends two 3-char anchors instead:
+
+| | `str_replace` | hashline `edit` |
+| --- | --- | --- |
+| request | `{ path, old_string, new_string }` | `{ path, remove_from, remove_to, replacement_text }` |
+| replaced text | reproduced verbatim | never sent |
+| range verification | none (first match wins) | every line checked against served state |
+| stale file | old_string may still match — and hit the wrong occurrence | rejected with fresh anchors (`E_RANGE_STALE`) |
+| ambiguous text | first occurrence, silently | boundary anchors verified — call `read` for fresh anchors |
+
+## Benchmark — reproducible
+
+`benchmark/run.mjs` measures the model-side token cost of the two patterns on
+the same 103-line file with the same 12 replacements (8 single-line, 4
+multi-line of 3/6/10/15 lines), tokenized with the pinned `js-tiktoken`
+`cl100k_base`:
+
+| scenario | lines | hashline | str_replace | saved | % |
+| --- | --- | --- | --- | --- | --- |
+| single-line ×8 | 1 | 311 | 314 | 3 | 1% |
+| multi-line ×4 | 3–15 | 390 | 655 | 265 | **40%** |
+| **TOTAL ×12** | | **701** | **969** | **268** | **28%** |
+
+Read traffic is identical for both tools and cancels. These are the model's
+**output** tokens, billed at ~5-6× the input rate — at the 5× rate, hashline
+costs **~1.4× less** on effective cost. Savings scale with the replaced text:
+near parity on short single lines (the anchors' overhead roughly cancels a
+one-line `old_string`), 25–46% on multi-line ranges.
+
+Reproduce it yourself — deterministic, self-checking, no build step:
+
+```sh
+npm install        # installs js-tiktoken (pinned)
+npm run benchmark  # node benchmark/run.mjs
+```
+
+Full methodology, results, and honest limitations (what the baseline does and
+doesn't model) are in [`benchmark/README.md`](benchmark/README.md).
+
+## Usage
+
+1. Read a file:
+
+```text
+ve7│function hello() {
+szJ│  console.log("world");
+kQm│}
+```
+
+1. Edit a line by its hash:
+
+```json
+{
+  "path": "src/main.ts",
+  "remove_from": "szJ",
+  "remove_to": "szJ",
+  "replacement_text": "  console.log('hi');"
+}
+```
+
+1. Keep editing. Anchors for lines you didn't touch stay valid; the post-edit
+   diff and the auto-read after `write` hand you fresh anchors. A `read` is
+   on-demand recovery, not a per-edit ritual.
+
+### The read tool
+
+`read` returns a text file with every line prefixed by `HASH│content` (hash =
+3 chars from `A-Za-z0-9`). Parameters: `offset` (1-based start line), `limit`
+(maximum lines). Paged output ends with `[Showing lines N-M of T. Use
+offset=… to continue.]`. Lines larger than 200KB are shown as a marker with a
+`sed` inspection hint — hash anchors need full lines.
+
+### The edit tool
+
+| Field | Meaning |
+| --- | --- |
+| `path` | Path to edit (relative to the session cwd; absolute works). |
+| `remove_from` | Bare 3-char hash of the first line to remove. |
+| `remove_to` | Bare 3-char hash of the last line to remove. |
+| `replacement_text` | Replacement text; `""` deletes the range. |
+
+The tool verifies **every line** of the resolved range against what the model
+was actually shown. A line inside the range that changed on disk since it was
+served is hard-rejected with `[E_RANGE_STALE]` / `[E_RANGE_UNSERVED]` /
+`[E_RANGE_UNVERIFIED]`, and the current range is echoed back as fresh anchors
+(reject-and-serve). Anchors for lines outside the post-edit diff window are
+recovered with a `read` — that is the documented on-demand recovery.
+
+### batch_edit
+
+Several edits in one atomic call: `{ edits: [{ path?, remove_from,
+remove_to, replacement_text }, …] }`. All-or-nothing — any failing item
+rejects the whole batch with nothing written, and the failing item's current
+range is echoed as fresh serves. Up to 32 items.
+
+### undo_last_edit
+
+`{ path }` reverts the last hashline edit on the file, only while the file
+still matches the stored post-edit content. A later external write clears the
+history instead of being overwritten. Undo survives restarts (stored in the
+hash store).
 
 ## How it replaces the built-in tools
 
@@ -71,68 +203,6 @@ dsh --profile <name> --dump-config   # shows a "# == dsh-better-edit" layer
 
 - Node `^22.19.0 || >=24.0.0` (dsh's requirement; the store uses `node:sqlite`)
 - A dsh profile (`dsh plugin` initializes one on first use)
-
-## Usage
-
-1. Read a file:
-
-```text
-ve7│function hello() {
-szJ│  console.log("world");
-kQm│}
-```
-
-1. Edit a line by its hash:
-
-```json
-{
-  "path": "src/main.ts",
-  "remove_from": "szJ",
-  "remove_to": "szJ",
-  "replacement_text": "  console.log('hi');"
-}
-```
-
-1. Keep editing. Anchors for lines you didn't touch stay valid; the post-edit
-   diff and the auto-read after `write` hand you fresh anchors.
-
-### The read tool
-
-`read` returns a text file with every line prefixed by `HASH│content` (hash =
-3 chars from `A-Za-z0-9`). Parameters: `offset` (1-based start line), `limit`
-(maximum lines). Paged output ends with `[Showing lines N-M of T. Use
-offset=… to continue.]`. Lines larger than 200KB are shown as a marker with a
-`sed` inspection hint — hash anchors need full lines.
-
-### The edit tool
-
-| Field | Meaning |
-| --- | --- |
-| `path` | Path to edit (relative to the session cwd; absolute works). |
-| `remove_from` | Bare 3-char hash of the first line to remove. |
-| `remove_to` | Bare 3-char hash of the last line to remove. |
-| `replacement_text` | Replacement text; `""` deletes the range. |
-
-The tool verifies **every line** of the resolved range against what the model
-was actually shown. A line inside the range that changed on disk since it was
-served is hard-rejected with `[E_RANGE_STALE]` / `[E_RANGE_UNSERVED]` /
-`[E_RANGE_UNVERIFIED]`, and the current range is echoed back as fresh anchors
-(reject-and-serve). Anchors for lines outside the post-edit diff window are
-recovered with a `read` — that is the documented on-demand recovery.
-
-### batch_edit
-
-Several edits in one atomic call: `{ edits: [{ path?, remove_from,
-remove_to, replacement_text }, …] }`. All-or-nothing — any failing item
-rejects the whole batch with nothing written, and the failing item's current
-range is echoed as fresh serves. Up to 32 items.
-
-### undo_last_edit
-
-`{ path }` reverts the last hashline edit on the file, only while the file
-still matches the stored post-edit content. A later external write clears the
-history instead of being overwritten. Undo survives restarts (stored in the
-hash store).
 
 ## Store
 
@@ -177,6 +247,27 @@ home — treat any pre-0.1.2 undo entries as gone.
 | `[E_UNDO_UNAVAILABLE]` | Undo history could not be persisted; the edit was not applied. |
 | `[E_WOULD_EMPTY]` | An edit would empty a non-empty file; use `write` to clear it. |
 
+## Inspiration and lineage
+
+Hash-anchored editing descends from Can Bölük's
+[*The Harness Problem*](https://stencil.so/blog/the-harness-problem), which
+showed that the harness — not the model — was the bottleneck, and that
+anchored edits beat search-and-replace. This project is a dsh port of:
+
+- [**pi-hashline-edit**](https://github.com/RimuruW/pi-hashline-edit) by
+  RimuruW — the original pi-coding-agent extension that introduced
+  3-character hashes and collision resolution.
+- [**pi-hashline-edit-pro**](https://github.com/YuGiMob/pi-hashline-edit-pro)
+  by YuGiMob — the hardened fork the hashline core here is ported from.
+- [**pi-hashline-edit-lsz**](https://github.com/Rianico/pi-hashline-edit-lsz) —
+  the self-maintained fork this project tracks. The hashline core is ported
+  byte-for-byte; the tool layer is rewritten on dsh's plugin API.
+
+Related reading: [Hash anchors + Myers diff + single-token anchors
+(dirac.run)](https://dirac.run/posts/hash-anchors-myers-diff-single-token)
+(a design review of the O(S+R) → O(R) edit-call saving) and an independent
+[hashline-vs-replace benchmark](https://nwyin.com/blogs/hashline-vs-replace-edit-bench.html).
+
 ## Development
 
 ```sh
@@ -184,12 +275,13 @@ npm install
 npm run typecheck   # tsc --noEmit
 npm test            # vitest run
 npm run build       # tsc → lib/
+npm run benchmark   # reproducible token-cost benchmark (benchmark/)
 ```
 
-The test suite is ported from pi-hashline-edit-lsz (598 tests) and drives the
+The test suite is ported from pi-hashline-edit-lsz (615 tests) and drives the
 dsh tool builders directly over a local filesystem bridge.
 
 ## License
 
 MIT — see [LICENSE](LICENSE). Ported from pi-hashline-edit-lsz (MIT), which
-itself carries the upstream copyrights of RimuruW and Yugimob.
+itself carries the upstream copyrights of RimuruW and YuGiMob.
