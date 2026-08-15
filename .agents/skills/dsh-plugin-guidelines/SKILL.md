@@ -87,6 +87,21 @@ fires its own `session-start`; the child's own layer shadows whatever it
 inherited. `agent.ctx` is agent-local, auto-unwound, and rejects registration
 after disposal — do not hoist the registration to the plain context.
 
+**Declare `inject` for every service the install touches.** Cordis refuses
+property access to an undeclared service — `cannot get property "fs" without
+inject` — and the failure is silent from the model's side: the install throws
+at session-start, your tools never register, and the session quietly runs the
+built-ins. List `tools`, `systemPrompt`, and `fs` (and anything else the
+per-agent work uses) in the plugin's `inject` export.
+
+**Resolve host-plane services on the plugin's own context, not `agent.ctx`.**
+The agent's fiber chain does not carry your `inject` list, so `agent.ctx.fs`
+throws even after you declare it. Services like `fs` live on the host plane —
+use `rootCtx.fs` (covered by your inject) and let per-call session state
+(`exec.agent.session.header.cwd`) flow through the tool arguments instead.
+`agent.ctx.tools` / `agent.ctx.systemPrompt` DO resolve (the agent chain
+declares them) — only host services that your plugin, not the agent layer,
+declares must be read off `rootCtx`.
 ## The fs event gate
 
 `ctx.fs` is the only sanctioned mutation seam (sandboxed and remote backends
