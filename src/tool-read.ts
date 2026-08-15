@@ -17,6 +17,7 @@ import { READ_DESCRIPTION } from "./prompts.js";
 import { pathSchema } from "./schema.js";
 import type { FileIO } from "./fs-bridge.js";
 import { execCwd, execSessionKey } from "./dsh-context.js";
+import { withWorkspace } from "./workspace.js";
 
 const ROOT_KS = new Set(["path", "offset", "limit"]);
 
@@ -63,6 +64,7 @@ export function buildReadTool(io: FileIO) {
 			render: (_args, value) => [{ type: "text", text: value }],
 		},
 		async execute(args, exec) {
+			return withWorkspace(execCwd(exec), async () => {
 			const cwd = execCwd(exec);
 			const sessionKey = execSessionKey(exec);
 			const signal = exec.signal;
@@ -101,6 +103,7 @@ export function buildReadTool(io: FileIO) {
 			return hadUtf8DecodeErrors
 				? `${preview.text}\n\n[Non-UTF-8 bytes shown as U+FFFD; editing rewrites the file as UTF-8.]`
 				: preview.text;
+			})
 		},
 	});
 }

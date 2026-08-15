@@ -1,7 +1,9 @@
 import { existsSync } from "node:fs";
-import { readFile, rename, mkdir } from "fs/promises";
+import { readFile, rename, mkdir } from "node:fs/promises";
+import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import { hashStorePath, hashStoreDir, legacyHashStorePath } from "./paths.js";
+import { hashStorePath } from "./paths.js";
+import { workspaceCwd } from "./workspace.js";
 import { errCode, splitLines } from "./utils.js";
 import { initHasher, contentChecksum } from "./hashline/hasher.js";
 import { HASH_STORE_VERSION, HASH_STORE_BUSY_TIMEOUT, SERVED_TTL_MS } from "./constants.js";
@@ -85,8 +87,9 @@ function openDbWithBusyRetry(storePath: string): {
 	return withBusyRetry(() => openDb(storePath));
 }
 
-let cachedDb: { path: string; db: DatabaseSync; stmts: Prepared } | null = null;
-let opening: { path: string; promise: Promise<HashStore> } | null = null;
+/** One open store per store path (per workspace); parallel sessions share per-workspace dbs. */
+const stores = new Map<string, { path: string; db: DatabaseSync; stmts: Prepared }>();
+const openings = new Map<string, Promise<HashStore>>();
 let exitHandlerRegistered = false;
 function openDb(storePath: string): { db: DatabaseSync; stmts: Prepared } {
 	const db = new DatabaseSync(storePath, {
@@ -309,10 +312,10 @@ function shutdownDb(db: DatabaseSync): void {
 }
 
 async function openStore(storePath: string): Promise<HashStore> {
-	shutdownHashStore();
+	// Multi-store: never close another workspace's store when opening this one.
 
 	await initHasher();
-	await mkdir(hashStoreDir(), { recursive: true });
+	await mkdir(dirname(storePath), { recursive: true });
 
 	let existed = existsSync(storePath);
 	let opened: { db: DatabaseSync; stmts: Prepared };
@@ -334,12 +337,12 @@ async function openStore(storePath: string): Promise<HashStore> {
 	const { db, stmts } = opened;
 
 	if (!existed) {
-		await migrateLegacy(db);
+		await migrateLegacy(db, storePath);
 	}
 	withBusyRetry(() => {
 		stmts.servedPruneOlderThan(Date.now() - SERVED_TTL_MS);
 	});
-	cachedDb = { path: storePath, db, stmts };
+	stores.set(storePath, { path: storePath, db, stmts });
 
 	if (!exitHandlerRegistered) {
 		exitHandlerRegistered = true;
@@ -355,38 +358,62 @@ async function openStore(storePath: string): Promise<HashStore> {
 	return { stmts, engine: "node:sqlite" };
 }
 
-export function loadHashStore(): Promise<HashStore> {
-	const storePath = hashStorePath();
-	if (cachedDb && cachedDb.path === storePath && cachedDb.db.isOpen) {
-		return Promise.resolve({ stmts: cachedDb.stmts, engine: "node:sqlite" });
+/** Resolve the store path for this call: explicit cwd, the active workspace, or the shared-home fallback. */
+function storePathFor(cwd?: string): string {
+	return hashStorePath(cwd ?? workspaceCwd());
+}
+
+/**
+ * Load (and cache) the hash store for the given cwd — or, when omitted, the
+ * workspace active for this async execution (`withWorkspace`), falling back to
+ * the shared `$DSH_HOME` store outside a tool call.
+ * @param cwd - optional explicit workspace root; defaults to the active workspace.
+ */
+export function loadHashStore(cwd?: string): Promise<HashStore> {
+	const storePath = storePathFor(cwd);
+	const cached = stores.get(storePath);
+	if (cached && cached.db.isOpen) {
+		return Promise.resolve({ stmts: cached.stmts, engine: "node:sqlite" });
 	}
-	if (opening && opening.path === storePath) {
-		return opening.promise;
-	}
+	const existing = openings.get(storePath);
+	if (existing) return existing;
 	const promise = openStore(storePath).finally(() => {
-		if (opening?.path === storePath) opening = null;
+		openings.delete(storePath);
 	});
-	opening = { path: storePath, promise };
+	openings.set(storePath, promise);
 	return promise;
 }
 
-export function shutdownHashStore(): void {
-	if (cachedDb) {
-		shutdownDb(cachedDb.db);
-		cachedDb = null;
-	}
+/** The cached store for the active workspace (or the shared-home fallback), if open. */
+function currentStore(): { db: DatabaseSync; stmts: Prepared } | undefined {
+	return stores.get(storePathFor())?.db.isOpen ? stores.get(storePathFor()) : undefined;
 }
 
+/** Close every open store (process exit, HMR, tests). */
+export function shutdownHashStore(): void {
+	for (const [, entry] of stores) {
+		shutdownDb(entry.db);
+	}
+	stores.clear();
+	openings.clear();
+}
+
+/**
+ * Run `fn` inside one BEGIN IMMEDIATE transaction on the active workspace's
+ * store. Without an open store for this context the call runs bare (the
+ * caller has already loaded the store in every in-process path).
+ */
 export function withStore(fn: () => void): void {
-	if (cachedDb) {
+	const store = currentStore();
+	if (store) {
 		withBusyRetry(() => {
-			cachedDb!.db.exec("BEGIN IMMEDIATE");
+			store.db.exec("BEGIN IMMEDIATE");
 			try {
 				fn();
-				cachedDb!.db.exec("COMMIT");
+				store.db.exec("COMMIT");
 			} catch (e) {
 				try {
-					cachedDb!.db.exec("ROLLBACK");
+					store.db.exec("ROLLBACK");
 				} catch {}
 				throw e;
 			}
@@ -396,8 +423,9 @@ export function withStore(fn: () => void): void {
 	}
 }
 
-async function migrateLegacy(db: DatabaseSync): Promise<void> {
-	const legacyPath = legacyHashStorePath();
+
+async function migrateLegacy(db: DatabaseSync, storePath: string): Promise<void> {
+	const legacyPath = join(dirname(storePath), "hash-store.json");
 	let content: string;
 	try {
 		content = await readFile(legacyPath, "utf-8");

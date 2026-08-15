@@ -137,13 +137,20 @@ hash store).
 ## Store
 
 Hash snapshots, served-state rows, and undo history live in one SQLite store
-under the DeepSeek Harness home:
+**co-located with the workspace being edited** — one store per session cwd:
 
-- `$DSH_HOME/plugins/dsh-better-edit/hash-store.sqlite` (default
-  `~/.dsh/plugins/dsh-better-edit/hash-store.sqlite`)
+- `<workspace>/.dsh_better_edit/hash-store.sqlite`
+
+Parallel sessions in different workspaces keep separate stores (the session
+cwd is carried through each tool call), so one project's anchors and undo
+history never leak into another's. Outside a tool call (tests, previews) the
+store falls back to the shared DeepSeek Harness home
+(`$DSH_HOME/plugins/dsh-better-edit/hash-store.sqlite`).
 
 A 7-day TTL prunes served rows; missing-file snapshots are pruned at startup.
-Corrupt stores are quarantined and rebuilt automatically.
+Corrupt stores are quarantined and rebuilt automatically. Moving to the
+per-workspace layout does not migrate earlier undo history from the shared
+home — treat any pre-0.1.2 undo entries as gone.
 
 ## Error codes
 

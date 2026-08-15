@@ -40,6 +40,7 @@ import {
 } from "./schema.js";
 import type { FileIO } from "./fs-bridge.js";
 import { execCwd, execSessionKey } from "./dsh-context.js";
+import { withWorkspace } from "./workspace.js";
 
 /**
  * Register the hash-anchored `edit` tool on the calling agent's scope.
@@ -64,6 +65,7 @@ export function buildEditTool(io: FileIO) {
 			render: (_args, value) => [{ type: "text", text: value }],
 		},
 		async execute(args, exec) {
+			return withWorkspace(execCwd(exec), async () => {
 			const cwd = execCwd(exec);
 			const sessionKey = execSessionKey(exec);
 			const signal = exec.signal;
@@ -220,6 +222,7 @@ export function buildEditTool(io: FileIO) {
 				);
 			}
 			return changed.content[0]!.text;
+			})
 		},
 	});
 }

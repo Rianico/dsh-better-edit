@@ -13,6 +13,7 @@ import { fmtReadPreview, MAX_HASH_LINES } from './read-render.js'
 import { recordServed, clearDriftReported } from './served-store.js'
 import type { FileIO } from './fs-bridge.js'
 import { execCwd, execSessionKey } from './dsh-context.js'
+import { withWorkspace } from './workspace.js'
 
 const AUTO_READ_HEADING = '--- Auto-read (hashline anchors) ---'
 
@@ -39,6 +40,8 @@ export function registerWriteHook(
 			result: Readonly<ToolExecutionResult>,
 			next: () => Promise<PostToolDecision>,
 		): Promise<PostToolDecision> => {
+			return withWorkspace(execCwd(exec), async () => {
+			return withWorkspace(execCwd(exec), async () => {
 			const decision: PostToolDecision = await next()
 			if (
 				exec.name !== 'write' ||
@@ -94,6 +97,8 @@ export function registerWriteHook(
 				)
 				return decision
 			}
+			})
+			})
 		},
 	)
 }

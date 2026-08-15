@@ -58,6 +58,7 @@ import {
 } from "./schema.js";
 import type { FileIO } from "./fs-bridge.js";
 import { execCwd, execSessionKey } from "./dsh-context.js";
+import { withWorkspace } from "./workspace.js";
 
 interface BatchItem {
 	path?: string;
@@ -527,6 +528,7 @@ export function buildBatchEditTool(io: FileIO) {
 			render: (_args, value) => [{ type: "text", text: value }],
 		},
 		async execute(args, exec) {
+			return withWorkspace(execCwd(exec), async () => {
 			const cwd = execCwd(exec);
 			const sessionKey = execSessionKey(exec);
 			const signal = exec.signal;
@@ -651,6 +653,7 @@ export function buildBatchEditTool(io: FileIO) {
 				}
 			}
 			return result.content[0]!.text;
+			})
 		},
 	});
 }

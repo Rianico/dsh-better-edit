@@ -18,6 +18,7 @@ import { recordServedTruncated } from "./served-store.js";
 import { UNDO_DESCRIPTION } from "./prompts.js";
 import type { FileIO } from "./fs-bridge.js";
 import { execCwd, execSessionKey } from "./dsh-context.js";
+import { withWorkspace } from "./workspace.js";
 
 function assertUndoReq(request: unknown): asserts request is { path: string } {
 	if (!isRec(request)) {
@@ -54,6 +55,7 @@ export function buildUndoTool(io: FileIO) {
 			render: (_args, value) => [{ type: "text", text: value }],
 		},
 		async execute(args, exec) {
+			return withWorkspace(execCwd(exec), async () => {
 			const cwd = execCwd(exec);
 			const sessionKey = execSessionKey(exec);
 			const signal = exec.signal;
@@ -155,6 +157,7 @@ export function buildUndoTool(io: FileIO) {
 			return [parts.join("\n"), "", "Diff of the revert:", "", undoDiff].join(
 				"\n",
 			);
+			})
 		},
 	});
 }
