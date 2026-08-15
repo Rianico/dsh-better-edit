@@ -2,7 +2,9 @@ name: Release
 
 # Turns a pushed version tag (v0.1.x, created by `npm publish`'s postpublish
 # hook via scripts/tag-current.mjs — or pushed manually) into a GitHub
-# Release with auto-generated notes.
+# Release. The release body is the version's `## [X.Y.Z]` section from
+# CHANGELOG.md, extracted automatically; falls back to generated notes when
+# the section is missing (e.g. a publish without a changelog entry).
 on:
   push:
     tags:
@@ -19,7 +21,7 @@ jobs:
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           persist-credentials: false
-      - name: Create GitHub Release
+      - name: Create GitHub Release from CHANGELOG
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ github.ref_name }}
@@ -27,6 +29,20 @@ jobs:
         run: |
           if gh release view "$TAG" >/dev/null 2>&1; then
             echo "release $TAG already exists — skipping"
+            exit 0
+          fi
+          VERSION="${TAG#v}"
+          NOTES_FILE="$(mktemp)"
+          # print the CHANGELOG section for this version (from its `## [X.Y.Z]`
+          # header up to the next `## [` header), including ### subheadings
+          awk -v ver="## [$VERSION]" '
+            index($0, ver) == 1 { found = 1; next }
+            found && /^## \[/ { exit }
+            found { print }
+          ' CHANGELOG.md > "$NOTES_FILE"
+          if [ -s "$NOTES_FILE" ]; then
+            gh release create "$TAG" --repo "$REPO" --notes-file "$NOTES_FILE" --title "$TAG"
           else
+            echo "no CHANGELOG section for $VERSION — falling back to generated notes"
             gh release create "$TAG" --repo "$REPO" --generate-notes --title "$TAG"
           fi
