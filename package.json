@@ -1,6 +1,6 @@
 {
   "name": "dsh-better-edit",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "type": "module",
   "description": "Hash-anchored read/edit/batch_edit/undo_last_edit tools for DeepSeek Harness (dsh). Every line gets a unique 3-char hash (A-Za-z0-9) that stays stable across edits; stale or ambiguous anchors are rejected, never fuzzy-matched. Undo persists across restarts.",
   "main": "lib/index.js",

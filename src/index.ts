@@ -21,6 +21,7 @@ import { registerEditTool } from './tool-edit.js'
 import { registerBatchEditTool } from './tool-batch-edit.js'
 import { registerUndoTool } from './tool-undo.js'
 import { registerWriteHook } from './write-hook.js'
+
 import { initHasher } from './hashline/hasher.js'
 import { pruneMissingAll } from './snapshot-store.js'
 import {
@@ -34,6 +35,15 @@ import {
 /** Cordis plugin name used by loader diagnostics. */
 export const name = 'dsh-better-edit'
 
+/**
+ * Services the plugin's per-agent install touches: `tools` and `systemPrompt`
+ * for the shadow registrations, `fs` for the IO bridge. Cordis refuses
+ * property access to an undeclared service ("cannot get property X without
+ * inject"), so these MUST be listed or every agent install fails at
+ * session-start.
+ */
+export const inject = ['tools', 'systemPrompt', 'fs']
+
 /** One per-agent registration bundle, disposed with the agent. */
 interface AgentTools {
 	dispose(): void
@@ -44,7 +54,11 @@ function installAgentTools(
 	agent: Agent,
 ): () => void {
 	return agent.ctx.effect(() => {
-		const io = ctxFsIO(agent.ctx.fs as FileSystem, agent.ctx)
+		// `fs` is host-plane: use the plugin's own context (covered by
+		// inject) rather than the agent's scoped one, whose fiber chain does
+		// not declare it. Session cwd still reaches the bridge per call via
+		// exec.agent.session.header.cwd.
+		const io = ctxFsIO(rootCtx.fs as FileSystem, rootCtx)
 		const disposers: Array<() => void> = []
 		disposers.push(registerReadTool(rootCtx, agent.ctx, io))
 		disposers.push(registerEditTool(rootCtx, agent.ctx, io))
@@ -113,7 +127,6 @@ export function apply(rootCtx: Context): void {
 			)
 		}
 	})
-
 }
 
 export type { AgentTools }
