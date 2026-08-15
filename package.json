@@ -74,7 +74,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "prepublishOnly": "npm run typecheck && npm test",
-    "benchmark": "node benchmark/run.mjs"
+    "benchmark": "node benchmark/run.mjs",
+    "postpublish": "node scripts/tag-current.mjs"
   },
   "devDependencies": {
     "@deepseek-ai/cordis": "^4.0.1",
