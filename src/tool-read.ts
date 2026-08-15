@@ -92,7 +92,7 @@ export function buildReadTool(io: FileIO) {
 				absolutePath,
 			);
 			if (preview.served.length > 0) {
-				await recordServed(sessionKey, absolutePath, preview.served);
+				await recordServed(sessionKey, absolutePath, preview.served, fileHashes.length);
 			}
 			await clearDriftReported(sessionKey, absolutePath);
 			// Record the present observation with the fs policy gate so later

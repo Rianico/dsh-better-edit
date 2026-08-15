@@ -220,7 +220,7 @@ export async function execPipeline(
 			error instanceof AnchorMismatchError ||
 			error instanceof ServedRejectionError
 		) {
-			await recordEchoServes(sessionKey, absolutePath, error.servedRows, policy)
+			await recordEchoServes(sessionKey, absolutePath, error.servedRows, policy, originalHashes.length)
 		}
 		throw error
 	}

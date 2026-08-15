@@ -95,7 +95,11 @@ function assertBatchReq(request: unknown): asserts request is BatchEditParams {
 			'[E_BAD_SHAPE] batch_edit request must be an object with an "edits" array.',
 		);
 	}
-	rejectUnknownFields(request, new Set(["edits", "sandbox_permissions", "justification"]), "batch_edit request");
+	rejectUnknownFields(
+		request,
+		new Set(["edits", "sandbox_permissions", "justification"]),
+		"batch_edit request",
+	);
 	if (!Array.isArray(request.edits) || request.edits.length === 0) {
 		throw new Error(
 			'[E_BAD_SHAPE] batch_edit request requires a non-empty "edits" array.',
@@ -309,6 +313,7 @@ async function processFile(
 						absolutePath,
 						echoRows,
 						"live",
+						originalHashes.length,
 					);
 				}
 				const echoBlock = echoRows
@@ -352,6 +357,7 @@ async function processFile(
 						absolutePath,
 						echoRows,
 						"live",
+						originalHashes.length,
 					);
 				}
 				throw new Error(
@@ -530,134 +536,138 @@ export function buildBatchEditTool(io: FileIO, sandbox: FsSandboxController) {
 		},
 		async execute(args, exec) {
 			return withWorkspace(execCwd(exec), async () => {
-			const cwd = execCwd(exec);
-			const sessionKey = execSessionKey(exec);
-			const signal = exec.signal;
+				const cwd = execCwd(exec);
+				const sessionKey = execSessionKey(exec);
+				const signal = exec.signal;
 
-			const canonical = normReq(args);
-			if (isRec(canonical) && Array.isArray(canonical.edits)) {
-				canonical.edits = canonical.edits.map((item: unknown) => {
-					if (!isRec(item)) return item;
-					const cloned = { ...item };
-					normalizeFilePath(cloned);
-					return cloned;
-				});
-			}
-			assertBatchReq(canonical);
-			const sandboxPolicy = await sandbox.resolvePolicy("batch_edit", canonical as unknown as FsEscalationArgs, exec);
-
-			const items = await prepareItems(io, canonical, cwd, signal);
-			const groups = groupByPath(items);
-
-			const processed: ProcessedFile[] = [];
-			for (const groupItems of groups.values()) {
-				abortIf(signal);
-				processed.push(
-					await processFile(io, groupItems, cwd, {
-						signal,
-						sessionKey,
-					}),
+				const canonical = normReq(args);
+				if (isRec(canonical) && Array.isArray(canonical.edits)) {
+					canonical.edits = canonical.edits.map((item: unknown) => {
+						if (!isRec(item)) return item;
+						const cloned = { ...item };
+						normalizeFilePath(cloned);
+						return cloned;
+					});
+				}
+				assertBatchReq(canonical);
+				const sandboxPolicy = await sandbox.resolvePolicy(
+					"batch_edit",
+					canonical as unknown as FsEscalationArgs,
+					exec,
 				);
-			}
 
-			const undos: Array<{
-				file: ProcessedFile;
-				restore: () => Promise<void>;
-			}> = [];
-			for (const file of processed) {
-				if (file.appliedCount === 0) continue;
-				const undo = await saveUndo(file.absolutePath, {
-					content: file.originalNormalized,
-					bom: file.bom,
-					originalEnding: file.originalEnding,
-					hashes: file.originalHashes,
-					resultContent: file.result,
-				});
-				if (!undo.persisted) {
-					for (const u of undos) {
-						try {
-							await u.restore();
-						} catch (error) {
-							console.error(
-								"Failed to restore undo entry after batch abort:",
-								error,
-							);
-						}
-					}
-					throw new Error(
-						"[E_UNDO_UNAVAILABLE] Cannot persist undo history to the hash store; the batch was NOT applied and no file was written. Retry the batch, or use write if the store cannot be recovered.",
-					);
-				}
-				undos.push({ file, restore: undo.restore });
-			}
+				const items = await prepareItems(io, canonical, cwd, signal);
+				const groups = groupByPath(items);
 
-			const written: Array<{
-				file: ProcessedFile;
-				restore: () => Promise<void>;
-			}> = [];
-			try {
-				for (const u of undos) {
+				const processed: ProcessedFile[] = [];
+				for (const groupItems of groups.values()) {
 					abortIf(signal);
-					await io.writeText(
-						u.file.absolutePath,
-						u.file.bom + restoreEndings(u.file.result, u.file.originalEnding),
-						signal,
-						exec,
-						sandboxPolicy,
+					processed.push(
+						await processFile(io, groupItems, cwd, {
+							signal,
+							sessionKey,
+						}),
 					);
-					written.push(u);
 				}
-			} catch (error) {
-				for (const w of written) {
-					try {
+
+				const undos: Array<{
+					file: ProcessedFile;
+					restore: () => Promise<void>;
+				}> = [];
+				for (const file of processed) {
+					if (file.appliedCount === 0) continue;
+					const undo = await saveUndo(file.absolutePath, {
+						content: file.originalNormalized,
+						bom: file.bom,
+						originalEnding: file.originalEnding,
+						hashes: file.originalHashes,
+						resultContent: file.result,
+					});
+					if (!undo.persisted) {
+						for (const u of undos) {
+							try {
+								await u.restore();
+							} catch (error) {
+								console.error(
+									"Failed to restore undo entry after batch abort:",
+									error,
+								);
+							}
+						}
+						throw new Error(
+							"[E_UNDO_UNAVAILABLE] Cannot persist undo history to the hash store; the batch was NOT applied and no file was written. Retry the batch, or use write if the store cannot be recovered.",
+						);
+					}
+					undos.push({ file, restore: undo.restore });
+				}
+
+				const written: Array<{
+					file: ProcessedFile;
+					restore: () => Promise<void>;
+				}> = [];
+				try {
+					for (const u of undos) {
+						abortIf(signal);
 						await io.writeText(
-							w.file.absolutePath,
-							w.file.bom +
-								restoreEndings(
-									w.file.originalNormalized,
-									w.file.originalEnding,
-								),
-							undefined,
+							u.file.absolutePath,
+							u.file.bom + restoreEndings(u.file.result, u.file.originalEnding),
+							signal,
 							exec,
 							sandboxPolicy,
 						);
-					} catch (restoreError) {
-						console.error(
-							"Failed to restore file after batch write failure:",
-							restoreError,
-						);
+						written.push(u);
 					}
-					try {
-						await w.restore();
-					} catch (restoreError) {
-						console.error(
-							"Failed to restore undo entry after batch write failure:",
-							restoreError,
-						);
+				} catch (error) {
+					for (const w of written) {
+						try {
+							await io.writeText(
+								w.file.absolutePath,
+								w.file.bom +
+									restoreEndings(
+										w.file.originalNormalized,
+										w.file.originalEnding,
+									),
+								undefined,
+								exec,
+								sandboxPolicy,
+							);
+						} catch (restoreError) {
+							console.error(
+								"Failed to restore file after batch write failure:",
+								restoreError,
+							);
+						}
+						try {
+							await w.restore();
+						} catch (restoreError) {
+							console.error(
+								"Failed to restore undo entry after batch write failure:",
+								restoreError,
+							);
+						}
 					}
+					throw sandbox.mapError(error, sandboxPolicy);
 				}
-				throw sandbox.mapError(error, sandboxPolicy);
-			}
 
-			const result = buildBatchResult(processed.map(toSection));
-			if (result.details.servedRows && result.details.servedRows.length > 0) {
-				const byPath = result.details.servedByPath ?? [];
-				for (const entry of byPath) {
-					if (entry.servedRows.length === 0) continue;
-					const file = processed.find((f) => f.displayPath === entry.path);
-					if (file) {
-						await recordServedTruncated(
-							sessionKey,
-							file.absolutePath,
-							entry.servedRows,
-							splitLines(file.result).length,
-							file.range.startLine - 1,
-						);
+				const result = buildBatchResult(processed.map(toSection));
+				if (result.details.servedRows && result.details.servedRows.length > 0) {
+					const byPath = result.details.servedByPath ?? [];
+					for (const entry of byPath) {
+						if (entry.servedRows.length === 0) continue;
+						const file = processed.find((f) => f.displayPath === entry.path);
+						if (file) {
+							await recordServedTruncated(
+								sessionKey,
+								file.absolutePath,
+								entry.servedRows,
+								splitLines(file.result).length,
+								file.range.startLine - 1,
+							);
+						}
 					}
 				}
-			}
-			return result.content[0]!.text;
-			})
+				return result.content[0]!.text;
+			});
 		},
 	});
 }

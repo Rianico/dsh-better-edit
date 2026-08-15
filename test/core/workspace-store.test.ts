@@ -7,12 +7,13 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { withWorkspace, workspaceCwd } from "../../src/workspace.js";
 import { hashStorePath } from "../../src/paths.js";
 import { loadHashStore, shutdownHashStore } from "../../src/hash-store.js";
+import { recordServed, loadServed } from "../../src/served-store.js";
 import { getSnapshot } from "../../src/snapshot-store.js";
 import { lineHashes } from "../../src/hashline/index.js";
 import { initHasher } from "../../src/hashline/hasher.js";
@@ -91,3 +92,42 @@ describe("workspace isolation", () => {
 		}
 	});
 });
+
+describe('stale served tail (regression)', () => {
+	it('truncates the served array to the current line count on a whole-file serve, so a surviving hash never claims two positions', async () => {
+		await initHasher()
+		const ws = tempWorkspace('dsh-ws-tail-')
+		const path = join(ws, 'f.txt')
+		const session = 'sess-tail'
+		try {
+			// Serve an 8-line file (a full read), then a 2-line file (the
+			// write auto-read). Before the fix the second serve left the stale
+			// positions 2..7 in the array, so the surviving "c" line's hash
+			// appeared at BOTH its old position 2 and its new position 1 —
+			// and any edit targeting it failed E_RANGE_UNVERIFIED.
+			await withWorkspace(ws, async () => {
+				const big = 'a\nb\nc\nd\ne\nf\ng\nh\n'
+				writeFileSync(path, big)
+				const bigHashes = await lineHashes(big, path)
+				await recordServed(session, path, bigHashes.map((h, i) => ({ position: i, hash: h })), bigHashes.length)
+
+				const small = 'b\nc\n'
+				writeFileSync(path, small)
+				const smallHashes = await lineHashes(small, path)
+				await recordServed(session, path, smallHashes.map((h, i) => ({ position: i, hash: h })), smallHashes.length)
+
+				const served = await loadServed(session, path)
+				expect(served.length).toBe(smallHashes.length)
+				const counts = new Map<string, number>()
+				for (const h of served) {
+					if (h === null) continue
+					counts.set(h, (counts.get(h) ?? 0) + 1)
+				}
+				expect([...counts.values()].every((c) => c === 1)).toBe(true)
+			})
+		} finally {
+			shutdownHashStore()
+			rmSync(ws, { recursive: true, force: true })
+		}
+	})
+})

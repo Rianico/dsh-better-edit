@@ -77,10 +77,39 @@ export function recordServes(
 	sessionKey: string,
 	path: string,
 	rows: Array<{ position: number; hash: string | null }>,
+	lineCount?: number,
 ): void {
 	if (rows.length === 0) return;
 	try {
-		upsertServed(store, sessionKey, path, rows);
+		if (lineCount === undefined) {
+			upsertServed(store, sessionKey, path, rows);
+			return;
+		}
+		// A serve of the CURRENT file state must never leave hashes at
+		// positions beyond the file's line count: a stale tail would hold a
+		// surviving line's hash at its OLD position while the new serve holds
+		// it at its current one, and the duplicate makes every later edit on
+		// that line fail E_RANGE_UNVERIFIED ("served at N positions").
+		withStore(() => {
+			const updated = getServed(store, sessionKey, path).slice();
+			if (updated.length > lineCount) updated.length = lineCount;
+			for (const entry of rows) {
+				if (!Number.isInteger(entry.position) || entry.position < 0) {
+					throw new TypeError(`Invalid served position: ${entry.position}`);
+				}
+				if (
+					entry.hash !== null &&
+					(typeof entry.hash !== "string" || !HASH_RE.test(entry.hash))
+				) {
+					throw new TypeError(`Invalid served hash: ${String(entry.hash)}`);
+				}
+				while (updated.length <= entry.position) updated.push(null);
+				updated[entry.position] = entry.hash;
+			}
+			while (updated.length > 0 && updated[updated.length - 1] === null)
+				updated.pop();
+			store.stmts.servedUpsert(sessionKey, path, JSON.stringify(updated), Date.now());
+		});
 	} catch (error) {
 		console.error("Failed to record served rows:", error);
 	}
@@ -210,11 +239,12 @@ export async function recordServed(
 	sessionKey: string,
 	path: string,
 	rows: ServedEntry[],
+	lineCount?: number,
 ): Promise<void> {
 	if (rows.length === 0) return;
 	try {
 		const store = await loadHashStore();
-		recordServes(store, sessionKey, path, rows);
+		recordServes(store, sessionKey, path, rows, lineCount);
 	} catch (error) {
 		console.error('Failed to record served rows:', error);
 	}

@@ -78,7 +78,7 @@ export function registerWriteHook(
 					absolutePath,
 				)
 				if (preview.served.length > 0) {
-					await recordServed(sessionKey, absolutePath, preview.served)
+					await recordServed(sessionKey, absolutePath, preview.served, fileHashes.length)
 				}
 				await clearDriftReported(sessionKey, absolutePath)
 				const text = hadUtf8DecodeErrors

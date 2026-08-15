@@ -155,6 +155,7 @@ export async function scanDrift(input: {
 		input.sessionKey,
 		input.path,
 		result.rows.map((row) => ({ position: row.position, hash: row.hash })),
+		input.resultLines.length,
 	);
 	await markDriftReported(
 		input.sessionKey,

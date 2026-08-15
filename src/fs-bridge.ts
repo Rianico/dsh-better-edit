@@ -144,7 +144,13 @@ export function ctxFsIO(fs: FileSystem, ctx: Context): FileIO {
 				// confined backend checks: without it the backend falls back to
 				// the deployment default root and denies writes inside the
 				// session workspace under workspace-write.
-				const outcome = await fs.writeText(target, content, intent, signal, sandboxPolicy);
+				const outcome = await fs.writeText(
+					target,
+					content,
+					intent,
+					signal,
+					sandboxPolicy,
+				);
 				// Record the present observation (a no-op when no policy
 				// plugin listens), so later built-in tools see the new version.
 				ctx.emit(

@@ -10,33 +10,36 @@
  * @module dsh-better-edit/sandbox
  */
 
-import type { Context } from '@deepseek-ai/cordis'
-import type { ToolExecution } from '@deepseek-ai/dsh-tools'
-import { FsError } from '@deepseek-ai/dsh-fs'
-import type { SandboxExecutionPolicy, SandboxMode } from '@deepseek-ai/dsh-sandbox'
+import type { Context } from "@deepseek-ai/cordis";
+import type { ToolExecution } from "@deepseek-ai/dsh-tools";
+import { FsError } from "@deepseek-ai/dsh-fs";
+import type {
+	SandboxExecutionPolicy,
+	SandboxMode,
+} from "@deepseek-ai/dsh-sandbox";
 import {
 	ESCALATION_TARGETS,
 	approveEscalation,
 	escalationHintMarker,
 	sandboxDenialMarker,
 	validateEscalationArgs,
-} from '@deepseek-ai/dsh-sandbox'
+} from "@deepseek-ai/dsh-sandbox";
 
 /** The two escalation arguments a mutating tool may carry (advertised only under a confining backend). */
 export interface FsEscalationArgs {
-	sandbox_permissions?: string
-	justification?: string
+	sandbox_permissions?: string;
+	justification?: string;
 }
 
 /** The schema fields for the escalation arguments, spread into a tool's `parameters` when a confining backend is mounted. */
 export interface EscalationSchemaFields {
-	sandbox_permissions: { type: 'string'; enum: string[]; description: string }
-	justification: { type: 'string'; description: string }
+	sandbox_permissions: { type: "string"; enum: string[]; description: string };
+	justification: { type: "string"; description: string };
 }
 
 /** The per-session policy resolver shape from `@deepseek-ai/dsh-sandbox-policy`. */
 interface SandboxPolicyLike {
-	resolve(request?: { session?: unknown }): SandboxExecutionPolicy
+	resolve(request?: { session?: unknown }): SandboxExecutionPolicy;
 }
 
 /**
@@ -46,16 +49,21 @@ interface SandboxPolicyLike {
  */
 export class FsSandboxController {
 	/** The escalation targets this composition advertises (`[]` when no confining backend is mounted). */
-	readonly escalationModes: readonly SandboxMode[]
+	readonly escalationModes: readonly SandboxMode[];
 	/** Shared per-session policy resolver, required by a confining backend. */
-	private readonly policy: SandboxPolicyLike | undefined
+	private readonly policy: SandboxPolicyLike | undefined;
 
 	constructor(private readonly ctx: Context) {
-		const defaultMode = ctx.fs.sandboxMode
-		this.escalationModes = defaultMode === undefined ? [] : ESCALATION_TARGETS
-		this.policy = defaultMode === undefined ? undefined : ctx.get('sandboxPolicy') as SandboxPolicyLike
+		const defaultMode = ctx.fs.sandboxMode;
+		this.escalationModes = defaultMode === undefined ? [] : ESCALATION_TARGETS;
+		this.policy =
+			defaultMode === undefined
+				? undefined
+				: (ctx.get("sandboxPolicy") as SandboxPolicyLike);
 		if (defaultMode !== undefined && this.policy === undefined) {
-			throw new Error('dsh-better-edit: the mounted filesystem confines but ctx.sandboxPolicy is missing')
+			throw new Error(
+				"dsh-better-edit: the mounted filesystem confines but ctx.sandboxPolicy is missing",
+			);
 		}
 	}
 
@@ -68,17 +76,19 @@ export class FsSandboxController {
 	schemaFields(): EscalationSchemaFields {
 		return {
 			sandbox_permissions: {
-				type: 'string',
+				type: "string",
 				enum: [...this.escalationModes],
-				description: 'The wider sandbox mode this file operation needs. Only valid as a one-shot retry '
-					+ 'of an operation the sandbox just denied; requires justification and user approval.',
+				description:
+					"The wider sandbox mode this file operation needs. Only valid as a one-shot retry " +
+					"of an operation the sandbox just denied; requires justification and user approval.",
 			},
 			justification: {
-				type: 'string',
-				description: 'Required with sandbox_permissions: one sentence for the user explaining '
-					+ 'why this exact file operation needs the wider access.',
+				type: "string",
+				description:
+					"Required with sandbox_permissions: one sentence for the user explaining " +
+					"why this exact file operation needs the wider access.",
 			},
-		}
+		};
 	}
 
 	/**
@@ -93,27 +103,43 @@ export class FsSandboxController {
 	 * @returns the policy to pass to the mutation, or undefined for an
 	 *   unsandboxed backend.
 	 */
-	async resolvePolicy(toolName: string, args: FsEscalationArgs, exec: ToolExecution): Promise<SandboxExecutionPolicy | undefined> {
-		validateEscalationArgs(args.sandbox_permissions, args.justification)
-		const standingPolicy = this.policy?.resolve({ ...exec.agent ? { session: exec.agent.session } : {} })
-		if (args.sandbox_permissions === undefined || args.justification === undefined) {
-			return standingPolicy
+	async resolvePolicy(
+		toolName: string,
+		args: FsEscalationArgs,
+		exec: ToolExecution,
+	): Promise<SandboxExecutionPolicy | undefined> {
+		validateEscalationArgs(args.sandbox_permissions, args.justification);
+		const standingPolicy = this.policy?.resolve({
+			...(exec.agent ? { session: exec.agent.session } : {}),
+		});
+		if (
+			args.sandbox_permissions === undefined ||
+			args.justification === undefined
+		) {
+			return standingPolicy;
 		}
 		if (this.escalationModes.length === 0) {
-			throw new Error('sandbox_permissions is not available in this composition (no sandboxing filesystem to escalate)')
+			throw new Error(
+				"sandbox_permissions is not available in this composition (no sandboxing filesystem to escalate)",
+			);
 		}
-		const policy = standingPolicy as SandboxExecutionPolicy
+		const policy = standingPolicy as SandboxExecutionPolicy;
 		const approvedMode = await approveEscalation(
-			{ requestedMode: args.sandbox_permissions, justification: args.justification, effectiveMode: policy.mode, subject: 'operation' },
 			{
-				approver: this.ctx.get('approval'),
+				requestedMode: args.sandbox_permissions,
+				justification: args.justification,
+				effectiveMode: policy.mode,
+				subject: "operation",
+			},
+			{
+				approver: this.ctx.get("approval"),
 				agent: exec.agent,
 				callId: exec.callId,
 				toolName,
 				signal: exec.signal,
 			},
-		)
-		return { ...policy, mode: approvedMode }
+		);
+		return { ...policy, mode: approvedMode };
 	}
 
 	/**
@@ -121,9 +147,17 @@ export class FsSandboxController {
 	 * the shared `[sandbox: …]` denial marker plus the same-turn escalation
 	 * hint, keeping the structured code. Any other error passes through.
 	 */
-	mapError(error: unknown, policy: SandboxExecutionPolicy | undefined): unknown {
-		if (!(error instanceof FsError) || error.code !== 'FS_SANDBOX_DENIED') return error
-		const mode = (policy as SandboxExecutionPolicy).mode
-		return new FsError(`${sandboxDenialMarker(mode)}\n${escalationHintMarker('operation')}`, 'FS_SANDBOX_DENIED', { cause: error })
+	mapError(
+		error: unknown,
+		policy: SandboxExecutionPolicy | undefined,
+	): unknown {
+		if (!(error instanceof FsError) || error.code !== "FS_SANDBOX_DENIED")
+			return error;
+		const mode = (policy as SandboxExecutionPolicy).mode;
+		return new FsError(
+			`${sandboxDenialMarker(mode)}\n${escalationHintMarker("operation")}`,
+			"FS_SANDBOX_DENIED",
+			{ cause: error },
+		);
 	}
 }

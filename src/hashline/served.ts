@@ -187,7 +187,8 @@ export async function recordEchoServes(
 	path: string,
 	rows: ServedRow[],
 	policy: ServeRecordPolicy,
+	lineCount?: number,
 ): Promise<void> {
 	if (policy !== "live") return;
-	await recordServed(sessionKey, path, rows);
+	await recordServed(sessionKey, path, rows, lineCount);
 }
