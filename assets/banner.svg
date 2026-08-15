@@ -1,0 +1,58 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 170" width="900" height="170" role="img" aria-label="file.ts → read → hashed lines → edit by hash → diff">
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#8b949e"/>
+    </marker>
+  </defs>
+  <rect width="900" height="170" rx="18" fill="#0d1117"/>
+
+  <!-- 1 · file.ts -->
+  <rect x="24" y="60" width="110" height="52" rx="10" fill="#30363d" stroke="#484f58"/>
+  <text x="79" y="82" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="14" font-weight="700" fill="#e6edf3" text-anchor="middle">file.ts</text>
+  <text x="79" y="101" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="11" fill="#8b949e" text-anchor="middle">function hello()</text>
+
+  <!-- arrow 1 -->
+  <line x1="138" y1="86" x2="170" y2="86" stroke="#8b949e" stroke-width="2.5" marker-end="url(#arrow)"/>
+
+  <!-- 2 · read -->
+  <rect x="174" y="60" width="104" height="52" rx="10" fill="#1f6feb" stroke="#388bfd"/>
+  <text x="226" y="82" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="14" font-weight="700" fill="#ffffff" text-anchor="middle">read</text>
+  <text x="226" y="101" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="11" fill="#b6d4ff" text-anchor="middle">HASH │ line</text>
+
+  <!-- arrow 2 -->
+  <line x1="282" y1="86" x2="314" y2="86" stroke="#8b949e" stroke-width="2.5" marker-end="url(#arrow)"/>
+
+  <!-- 3 · hashed lines -->
+  <rect x="318" y="30" width="196" height="112" rx="10" fill="#101623" stroke="#238636"/>
+  <rect x="334" y="40" width="32" height="18" rx="5" fill="#238636"/>
+  <text x="350" y="53" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="11" font-weight="700" fill="#ffffff" text-anchor="middle">ve7</text>
+  <text x="374" y="53" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="11" fill="#e6edf3">function hello()</text>
+  <rect x="334" y="70" width="32" height="18" rx="5" fill="#1f6feb"/>
+  <text x="350" y="83" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="11" font-weight="700" fill="#ffffff" text-anchor="middle">szJ</text>
+  <text x="374" y="83" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="11" fill="#e6edf3">const x = 1</text>
+  <rect x="334" y="100" width="32" height="18" rx="5" fill="#bf3989"/>
+  <text x="350" y="113" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="11" font-weight="700" fill="#ffffff" text-anchor="middle">kQm</text>
+  <text x="374" y="113" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="11" fill="#e6edf3">return x</text>
+
+  <!-- arrow 3 -->
+  <line x1="518" y1="86" x2="550" y2="86" stroke="#8b949e" stroke-width="2.5" marker-end="url(#arrow)"/>
+
+  <!-- 4 · edit by hash -->
+  <rect x="554" y="30" width="160" height="112" rx="10" fill="#241b33" stroke="#a371f7"/>
+  <text x="634" y="50" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="13" font-weight="700" fill="#d2a8ff" text-anchor="middle">edit</text>
+  <text x="634" y="70" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="11" fill="#e6edf3" text-anchor="middle">remove_from : szJ</text>
+  <text x="634" y="87" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="11" fill="#e6edf3" text-anchor="middle">remove_to   : kQm</text>
+  <text x="634" y="104" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="11" fill="#e6edf3" text-anchor="middle">replacement_text : …</text>
+  <text x="634" y="126" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="10" fill="#8b949e" text-anchor="middle">no old text echoed</text>
+
+  <!-- arrow 4 -->
+  <line x1="718" y1="86" x2="750" y2="86" stroke="#8b949e" stroke-width="2.5" marker-end="url(#arrow)"/>
+
+  <!-- 5 · diff -->
+  <rect x="754" y="30" width="122" height="112" rx="10" fill="#101623" stroke="#da3633"/>
+  <text x="815" y="50" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="13" font-weight="700" fill="#ff7b72" text-anchor="middle">diff</text>
+  <text x="815" y="70" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="11" fill="#ffa198" text-anchor="middle">− szJ │ x = 1</text>
+  <text x="815" y="87" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="11" fill="#7ee787" text-anchor="middle">+ a3m │ x = 2</text>
+  <text x="815" y="104" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="11" fill="#e6edf3" text-anchor="middle">kQm │ return x</text>
+  <text x="815" y="126" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="10" fill="#8b949e" text-anchor="middle">fresh anchors</text>
+</svg>
