@@ -4,6 +4,12 @@ All notable changes to the `dsh-better-edit` plugin will be documented in this f
 
 Entries link to the originating spec issue in [pi-hashline-edit-lsz](https://github.com/Rianico/pi-hashline-edit-lsz) where one exists.
 
+## [0.1.9] - 2026-08-15
+
+### Changed
+
+- READMEs (English and 中文): added a concise "Why you need this" opening section — the transcription cost and 46–51% patch-failure rate of `str_replace`, the 31%/43% edit-token savings, verified landing, and the leaner-context benefit (the model's attention stays on the code, not on re-transcribing it) — placed before Quick Start so the demo stays immediately visible. Fixed the stale static version badge.
+
 ## [0.1.8] - 2026-08-15
 
 ### Added

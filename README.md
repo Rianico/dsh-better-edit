@@ -24,7 +24,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-0.1.6-blue.svg" alt="Version">
+  <img src="https://img.shields.io/badge/version-0.1.9-blue.svg" alt="Version">
   <img src="https://img.shields.io/badge/license-MIT-green.svg" alt="MIT License">
   <img src="https://img.shields.io/badge/DeepSeek_Harness-Plugin-blueviolet.svg" alt="DeepSeek Harness Plugin">
   <img src="https://img.shields.io/npm/v/dsh-better-edit" alt="npm version">
@@ -46,6 +46,14 @@ Most edit tools ask the model to echo the old code **token-for-token** before it
 replace-style edits. **dsh-better-edit** goes deeper. Every line of a file gets a unique 3-character
 content hash, and edits target hashes. The old text is never echoed, anchors survive edits, and every
 resolved range is verified against exactly what the model saw — wrong-line edits cannot silently land.
+
+## Why you need this
+
+`str_replace` makes the model re-type the code it's replacing — pure transcription cost (output tokens, billed ~5-6× input), and where agents fail most: 46–51% patch failures on real models, worse on bigger blocks, each failure costing a re-read and a retry.
+
+Hashline sends two hashes instead of the old text — **31% fewer edit tokens** (43% on multi-line ranges) — and verifies every range against what the model saw: an edit lands where you meant, or fails loudly with fresh anchors. Anchors are content addresses that survive edits above, so chained edits skip re-reads — and a leaner context keeps the model's attention on the code, not on re-transcribing it.
+
+Not for one-line touch-ups (near parity) or new files (`write`). It pays off in long sessions and structural edits — anywhere an edit must not land on the wrong line.
 
 ## Quick Start
 

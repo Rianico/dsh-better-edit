@@ -24,7 +24,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-0.1.7-blue.svg" alt="Version">
+  <img src="https://img.shields.io/badge/version-0.1.9-blue.svg" alt="Version">
   <img src="https://img.shields.io/badge/license-MIT-green.svg" alt="MIT License">
   <img src="https://img.shields.io/badge/DeepSeek_Harness-Plugin-blueviolet.svg" alt="DeepSeek Harness Plugin">
   <img src="https://img.shields.io/npm/v/dsh-better-edit" alt="npm version">
@@ -42,6 +42,14 @@
 > —— Can Bölük，[*The Harness Problem*](https://stencil.so/blog/the-harness-problem)
 
 大多数编辑工具要求模型在改动任何东西之前，先**逐 token** 复述旧代码——而这正是 Agent 最容易出错的地方：多个模型在 replace 式编辑下的补丁格式失败率高达 46–51%。**dsh-better-edit** 走得更远。文件的每一行都分配一个唯一的 3 字符内容哈希，编辑时按哈希定位。旧文本从不回显，锚点在编辑后依然有效，每个解析出的范围都会与模型实际看到的内容逐一核对——错行编辑不可能悄悄落盘。
+
+## 为什么需要它
+
+`str_replace` 会让模型逐字复述它要替换的代码——纯粹的转录成本（输出 token，按约 5-6 倍输入计费），也是 Agent 最容易出错的地方：真实模型补丁失败率高达 46–51%，块越大越糟，每次失败都要重新读取并重试。
+
+Hashline 用两个哈希代替旧文本——**编辑 token 减少 31%**（多行范围达 43%）——并对照模型所见内容校验每个范围：编辑要么落在你想要的行的位置，要么响亮失败并回传新锚点。锚点是内容地址，上方编辑后依然有效，连续编辑无需重读；上下文更精简，模型的注意力也保持在代码上，而不是复述上。
+
+不适用于单行小改动（接近持平）或新建文件（用 `write`）。它的价值在长会话与结构性编辑中体现——任何不允许改错行的场景。
 
 ## 快速开始
 
