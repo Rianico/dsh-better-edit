@@ -34,7 +34,7 @@ import { scanDrift } from './drift.js'
 import { abortIf, isRec, rejectUnknownFields, splitLines } from './utils.js'
 import type { EditParams } from './schema.js'
 
-const ROOT_KS = new Set(['path', 'remove_from', 'remove_to', 'replacement_text'])
+const ROOT_KS = new Set(['path', 'remove_from', 'remove_to', 'replacement_text', 'sandbox_permissions', 'justification'])
 
 export function assertReq(request: unknown): asserts request is EditParams {
 	if (!isRec(request)) {

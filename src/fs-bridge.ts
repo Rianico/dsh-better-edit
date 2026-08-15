@@ -19,6 +19,7 @@ import { readFile } from "node:fs/promises";
 import type { Context } from "@deepseek-ai/cordis";
 import type { FileSystem } from "@deepseek-ai/dsh-fs";
 import type { ToolExecution } from "@deepseek-ai/dsh-tools";
+import type { SandboxExecutionPolicy } from "@deepseek-ai/dsh-sandbox";
 import { resolveTarget, writeAtomic } from "./fs-write.js";
 import { fileSnap } from "./file-reader.js";
 import { toCwd } from "./paths.js";
@@ -31,16 +32,21 @@ export interface FileIO {
 	readText(absolutePath: string, signal?: AbortSignal): Promise<string>;
 	/**
 	 * Atomically write whole text, preserving mode when the file exists. On the
-	 * dsh backend this dispatches `fs/write-intent` (policy guard) and emits
+	 * dsh backend this dispatches `fs/write-intent` (policy guard), stamps the
+	 * sandbox policy (session workspace root + mode) onto the write, and emits
 	 * `fs/observed` with the new version on success, so later built-in tools
 	 * see a fresh observation.
 	 * @param exec - the calling execution; carries the session the policy keys by.
+	 * @param sandboxPolicy - the per-call sandbox mode + workspace root the
+	 *   confined backend checks (resolved from the session by the tool layer);
+	 *   omitted on an unsandboxed backend.
 	 */
 	writeText(
 		absolutePath: string,
 		content: string,
 		signal?: AbortSignal,
 		exec?: ToolExecution,
+		sandboxPolicy?: SandboxExecutionPolicy,
 	): Promise<void>;
 	/**
 	 * Emit `fs/observed` (present at the current version) for a successful
@@ -120,7 +126,7 @@ export function ctxFsIO(fs: FileSystem, ctx: Context): FileIO {
 				return mapFsError(error, absolutePath);
 			}
 		},
-		async writeText(absolutePath, content, signal, exec) {
+		async writeText(absolutePath, content, signal, exec, sandboxPolicy) {
 			try {
 				const target = await fs.resolve(absolutePath, {
 					...(signal !== undefined ? { signal } : {}),
@@ -134,7 +140,11 @@ export function ctxFsIO(fs: FileSystem, ctx: Context): FileIO {
 					exec,
 					() => undefined,
 				);
-				const outcome = await fs.writeText(target, content, intent, signal);
+				// The sandbox policy (session workspace root + mode) is what a
+				// confined backend checks: without it the backend falls back to
+				// the deployment default root and denies writes inside the
+				// session workspace under workspace-write.
+				const outcome = await fs.writeText(target, content, intent, signal, sandboxPolicy);
 				// Record the present observation (a no-op when no policy
 				// plugin listens), so later built-in tools see the new version.
 				ctx.emit(
@@ -144,6 +154,9 @@ export function ctxFsIO(fs: FileSystem, ctx: Context): FileIO {
 					exec,
 				);
 			} catch (error) {
+				// FS_SANDBOX_DENIED passes through raw; the tool layer maps it
+				// to the shared [sandbox: …] marker + escalation hint via its
+				// sandbox controller.
 				return mapFsError(error, absolutePath);
 			}
 		},
@@ -192,7 +205,7 @@ export function localIO(): FileIO {
 			signal?.throwIfAborted();
 			return readFile(absolutePath, "utf-8");
 		},
-		async writeText(absolutePath, content, signal) {
+		async writeText(absolutePath, content, signal, _exec, _sandboxPolicy) {
 			signal?.throwIfAborted();
 			await writeAtomic(absolutePath, content);
 		},

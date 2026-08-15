@@ -18,6 +18,7 @@ import { recordServedTruncated } from "./served-store.js";
 import { UNDO_DESCRIPTION } from "./prompts.js";
 import type { FileIO } from "./fs-bridge.js";
 import { execCwd, execSessionKey } from "./dsh-context.js";
+import { FsSandboxController, type FsEscalationArgs } from "./sandbox.js";
 import { withWorkspace } from "./workspace.js";
 
 function assertUndoReq(request: unknown): asserts request is { path: string } {
@@ -39,7 +40,7 @@ function assertUndoReq(request: unknown): asserts request is { path: string } {
  * @param io - the filesystem bridge.
  * @returns the exact disposer that unregisters the tool.
  */
-export function buildUndoTool(io: FileIO) {
+export function buildUndoTool(io: FileIO, sandbox: FsSandboxController) {
 	return defineTool({
 		name: "undo_last_edit",
 		description: UNDO_DESCRIPTION,
@@ -49,6 +50,7 @@ export function buildUndoTool(io: FileIO) {
 				required: true,
 				description: "Path to the file to undo",
 			},
+			...(sandbox.escalationModes.length > 0 ? sandbox.schemaFields() : {}),
 		},
 		output: {
 			schema: { type: "string" },
@@ -64,6 +66,7 @@ export function buildUndoTool(io: FileIO) {
 			assertUndoReq(canonical);
 			const path = canonical.path;
 			const absolutePath = await io.resolve(path, cwd, signal);
+			const sandboxPolicy = await sandbox.resolvePolicy("undo_last_edit", canonical as unknown as FsEscalationArgs, exec);
 
 			const undo = await getUndo(absolutePath);
 			if (!undo) {
@@ -111,12 +114,17 @@ export function buildUndoTool(io: FileIO) {
 			const undoDiff = undoDiffResult.diff;
 			const restoredRange = changedRange(currentNormalized, undo.content);
 
-			await io.writeText(
-				absolutePath,
-				undo.bom + restoreEndings(undo.content, undo.originalEnding),
-				signal,
-				exec,
-			);
+			try {
+				await io.writeText(
+					absolutePath,
+					undo.bom + restoreEndings(undo.content, undo.originalEnding),
+					signal,
+					exec,
+					sandboxPolicy,
+				);
+			} catch (error) {
+				throw sandbox.mapError(error, sandboxPolicy);
+			}
 
 			try {
 				await upsertSnapshotFor(
@@ -169,6 +177,7 @@ export function registerUndoTool(
 	_rootCtx: Context,
 	agentCtx: Context,
 	io: FileIO,
+	sandbox: FsSandboxController,
 ): () => void {
-	return agentCtx.tools.register(buildUndoTool(io));
+	return agentCtx.tools.register(buildUndoTool(io, sandbox));
 }

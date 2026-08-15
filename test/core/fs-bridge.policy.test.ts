@@ -88,6 +88,7 @@ describe("ctxFsIO writeText", () => {
 			"content",
 			{ kind: "replaceIfVersion", version: "v1" },
 			undefined,
+			undefined,
 		);
 	});
 
@@ -123,6 +124,7 @@ describe("ctxFsIO writeText", () => {
 		expect(fs.writeText).toHaveBeenCalledWith(
 			expect.objectContaining({ targetKey: "tk-1" }),
 			"content",
+			undefined,
 			undefined,
 			undefined,
 		);

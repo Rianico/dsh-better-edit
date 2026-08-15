@@ -19,6 +19,7 @@ import { buildEditTool } from '../../src/tool-edit.js'
 import { buildReadTool } from '../../src/tool-read.js'
 import { buildBatchEditTool } from '../../src/tool-batch-edit.js'
 import { buildUndoTool } from '../../src/tool-undo.js'
+import { FsSandboxController } from '../../src/sandbox.js'
 
 export async function getWritableTempRoot(): Promise<string> {
 	const fallback = join(process.cwd(), '.tmp')
@@ -195,19 +196,27 @@ function wrapTool(
 }
 
 /**
- * Drive the dsh tool builders end-to-end over a temp cwd, with a stable
- * session key. Mirrors the pi `setupIntegrationTest` surface so ported tests
- * run unchanged: `readTool.execute(id, params, ...)` / `editTool.execute(...)`.
+ * A sandbox controller for tests: no confining backend, so no escalation
+ * fields are advertised and `resolvePolicy` returns undefined (unconfined).
  */
+function makeTestSandbox() {
+	return new FsSandboxController({
+		fs: { sandboxMode: undefined },
+		get: () => undefined,
+	} as never)
+}
+
+/** Drive the dsh tool builders end-to-end over a temp cwd, with a stable session key. */
 export function setupIntegrationTest(cwd: string) {
 	const io: FileIO = localIO()
 	const sessionKey = 'test-session'
 	const makeExecFor = makeExec(cwd, sessionKey)
+	const sandbox = makeTestSandbox()
 	const tools = {
 		read: wrapTool(buildReadTool(io), makeExecFor),
-		edit: wrapTool(buildEditTool(io), makeExecFor),
-		batch_edit: wrapTool(buildBatchEditTool(io), makeExecFor),
-		undo_last_edit: wrapTool(buildUndoTool(io), makeExecFor),
+		edit: wrapTool(buildEditTool(io, sandbox), makeExecFor),
+		batch_edit: wrapTool(buildBatchEditTool(io, sandbox), makeExecFor),
+		undo_last_edit: wrapTool(buildUndoTool(io, sandbox), makeExecFor),
 	}
 	return {
 		io,

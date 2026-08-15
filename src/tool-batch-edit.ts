@@ -58,6 +58,7 @@ import {
 } from "./schema.js";
 import type { FileIO } from "./fs-bridge.js";
 import { execCwd, execSessionKey } from "./dsh-context.js";
+import type { FsSandboxController, FsEscalationArgs } from "./sandbox.js";
 import { withWorkspace } from "./workspace.js";
 
 interface BatchItem {
@@ -94,7 +95,7 @@ function assertBatchReq(request: unknown): asserts request is BatchEditParams {
 			'[E_BAD_SHAPE] batch_edit request must be an object with an "edits" array.',
 		);
 	}
-	rejectUnknownFields(request, new Set(["edits"]), "batch_edit request");
+	rejectUnknownFields(request, new Set(["edits", "sandbox_permissions", "justification"]), "batch_edit request");
 	if (!Array.isArray(request.edits) || request.edits.length === 0) {
 		throw new Error(
 			'[E_BAD_SHAPE] batch_edit request requires a non-empty "edits" array.',
@@ -498,7 +499,7 @@ function toSection(file: ProcessedFile): BatchSection {
  * @param io - the filesystem bridge.
  * @returns the exact disposer that unregisters the tool.
  */
-export function buildBatchEditTool(io: FileIO) {
+export function buildBatchEditTool(io: FileIO, sandbox: FsSandboxController) {
 	return defineTool({
 		name: "batch_edit",
 		description: BATCH_EDIT_DESCRIPTION,
@@ -543,6 +544,7 @@ export function buildBatchEditTool(io: FileIO) {
 				});
 			}
 			assertBatchReq(canonical);
+			const sandboxPolicy = await sandbox.resolvePolicy("batch_edit", canonical as unknown as FsEscalationArgs, exec);
 
 			const items = await prepareItems(io, canonical, cwd, signal);
 			const groups = groupByPath(items);
@@ -601,6 +603,7 @@ export function buildBatchEditTool(io: FileIO) {
 						u.file.bom + restoreEndings(u.file.result, u.file.originalEnding),
 						signal,
 						exec,
+						sandboxPolicy,
 					);
 					written.push(u);
 				}
@@ -616,6 +619,7 @@ export function buildBatchEditTool(io: FileIO) {
 								),
 							undefined,
 							exec,
+							sandboxPolicy,
 						);
 					} catch (restoreError) {
 						console.error(
@@ -632,7 +636,7 @@ export function buildBatchEditTool(io: FileIO) {
 						);
 					}
 				}
-				throw error;
+				throw sandbox.mapError(error, sandboxPolicy);
 			}
 
 			const result = buildBatchResult(processed.map(toSection));
@@ -665,6 +669,7 @@ export function registerBatchEditTool(
 	_rootCtx: Context,
 	agentCtx: Context,
 	io: FileIO,
+	sandbox: FsSandboxController,
 ): () => void {
-	return agentCtx.tools.register(buildBatchEditTool(io));
+	return agentCtx.tools.register(buildBatchEditTool(io, sandbox));
 }

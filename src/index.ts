@@ -16,6 +16,7 @@ import type { Context } from "@deepseek-ai/cordis";
 import type { Agent } from "@deepseek-ai/dsh-agent";
 import type { FileSystem } from "@deepseek-ai/dsh-fs";
 import { ctxFsIO } from "./fs-bridge.js";
+import { FsSandboxController } from "./sandbox.js";
 import { registerReadTool } from "./tool-read.js";
 import { registerEditTool } from "./tool-edit.js";
 import { registerBatchEditTool } from "./tool-batch-edit.js";
@@ -57,9 +58,10 @@ function installAgentTools(rootCtx: Context, agent: Agent): () => void {
 		const io = ctxFsIO(rootCtx.fs as FileSystem, rootCtx);
 		const disposers: Array<() => void> = [];
 		disposers.push(registerReadTool(rootCtx, agent.ctx, io));
-		disposers.push(registerEditTool(rootCtx, agent.ctx, io));
-		disposers.push(registerBatchEditTool(rootCtx, agent.ctx, io));
-		disposers.push(registerUndoTool(rootCtx, agent.ctx, io));
+		const sandbox = new FsSandboxController(rootCtx);
+		disposers.push(registerEditTool(rootCtx, agent.ctx, io, sandbox));
+		disposers.push(registerBatchEditTool(rootCtx, agent.ctx, io, sandbox));
+		disposers.push(registerUndoTool(rootCtx, agent.ctx, io, sandbox));
 		disposers.push(registerWriteHook(rootCtx, agent.ctx, io));
 
 		// Shadow the preset's built-in tool guidance with the hashline contract.

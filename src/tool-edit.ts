@@ -40,6 +40,7 @@ import {
 } from "./schema.js";
 import type { FileIO } from "./fs-bridge.js";
 import { execCwd, execSessionKey } from "./dsh-context.js";
+import type { FsSandboxController, FsEscalationArgs } from "./sandbox.js";
 import { withWorkspace } from "./workspace.js";
 
 /**
@@ -50,7 +51,7 @@ import { withWorkspace } from "./workspace.js";
  * @param io - the filesystem bridge (ctx.fs backed in deployment).
  * @returns the exact disposer that unregisters the tool.
  */
-export function buildEditTool(io: FileIO) {
+export function buildEditTool(io: FileIO, sandbox: FsSandboxController) {
 	return defineTool({
 		name: "edit",
 		description: EDIT_DESCRIPTION,
@@ -59,6 +60,7 @@ export function buildEditTool(io: FileIO) {
 			remove_from: removeFromSchema,
 			remove_to: removeToSchema,
 			replacement_text: replacementTextSchema,
+			...(sandbox.escalationModes.length > 0 ? sandbox.schemaFields() : {}),
 		},
 		output: {
 			schema: { type: "string" },
@@ -78,6 +80,7 @@ export function buildEditTool(io: FileIO) {
 				canonical.path = resolution.path;
 			}
 			assertReq(canonical);
+			const sandboxPolicy = await sandbox.resolvePolicy("edit", canonical as unknown as FsEscalationArgs, exec);
 
 			const normalizedParams = canonical;
 			const path = normalizedParams.path;
@@ -184,10 +187,11 @@ export function buildEditTool(io: FileIO) {
 					bom + restoreEndings(result, originalEnding),
 					signal,
 					exec,
+					sandboxPolicy,
 				);
 			} catch (error) {
 				await undo.restore();
-				throw error;
+				throw sandbox.mapError(error, sandboxPolicy);
 			}
 			const updatedSnapshotId = await snapshotIdFor(io, absolutePath, signal);
 
@@ -234,6 +238,7 @@ export function registerEditTool(
 	_rootCtx: Context,
 	agentCtx: Context,
 	io: FileIO,
+	sandbox: FsSandboxController,
 ): () => void {
-	return agentCtx.tools.register(buildEditTool(io));
+	return agentCtx.tools.register(buildEditTool(io, sandbox));
 }
