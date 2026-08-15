@@ -54,14 +54,14 @@ to measure.
 
 | scenario | lines | hashline | str_replace | saved | % |
 | --- | --- | --- | --- | --- | --- |
-| single-line ×8 | 1 | 311 | 314 | 3 | 1% |
-| multi-line ×4 | 3–15 | 390 | 655 | 265 | **40%** |
-| **TOTAL ×12** | | **701** | **969** | **268** | **28%** |
+| single-line ×8 | 1 | 309 | 324 | 15 | 5% |
+| multi-line ×4 | 3–15 | 393 | 691 | 298 | **43%** |
+| **TOTAL ×12** | | **702** | **1015** | **313** | **31%** |
 
 At the ~5× output-token rate, hashline costs **~1.4× less** on effective
 cost. Savings scale with the size of the replaced text: near parity for short
 single lines (the two 3-char anchors plus key-name overhead roughly cancel a
-one-line `old_string`), 25–46% for multi-line ranges.
+one-line `old_string`), 29–47% for multi-line ranges.
 
 ## What this does *not* measure
 

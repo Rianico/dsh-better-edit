@@ -383,8 +383,10 @@ function render(r) {
 	out.push(
 		`at the 5× output rate, hashline costs ${Math.round((t.sr / t.hl) * 10) / 10}× less than str_replace on effective cost.`,
 	);
+	const minMax = (es) =>
+		`${Math.min(...es.map((e) => e.pct))}–${Math.max(...es.map((e) => e.pct))}%`;
 	out.push(
-		"savings scale with the replaced text: ~0% for short single lines, 25-46% for multi-line ranges.",
+		`savings scale with the replaced text: ~${Math.round(((s.sr - s.hl) / s.sr) * 100)}% on single lines, ${minMax(multi)} on multi-line ranges.`,
 	);
 	out.push(
 		`correctness proxy: ${r.ambiguous} ambiguous str_replace match${r.ambiguous === 1 ? "" : "es"} avoided; ` +

@@ -80,7 +80,7 @@ and produces a diff with fresh anchors, so the next edit verifies cleanly with n
 
 **Token-saving.** An edit call carries `remove_from` / `remove_to` (two 3-char hashes) plus the
 replacement text — it never echoes the text being replaced. A `str_replace` call must reproduce that
-text verbatim. On a 12-edit session over a realistic file this is **28% fewer output tokens** (40%
+text verbatim. On a 12-edit session over a realistic file this is **31% fewer output tokens** (43%
 on multi-line ranges) — and these are *output* tokens, billed at ~5-6× the input rate. See the
 [benchmark](#benchmark).
 
@@ -116,8 +116,8 @@ Measured on the same 103-line file with the same 12 replacements (8 single-line,
 | Criterion | hashline | str_replace |
 | ----------- | :---: | :---: |
 | Replaced text sent over the wire | ✅ never | ❌ every edit |
-| Output tokens saved (12-edit session) | ✅ **28%** | ❌ 0% |
-| Multi-line range savings (3–15 lines) | ✅ **25–46%** | ❌ 0% |
+| Output tokens saved (12-edit session) | ✅ **31%** | ❌ 0% |
+| Multi-line range savings (3–15 lines) | ✅ **29–47%** | ❌ 0% |
 | Effective cost at 5× output pricing | ✅ **~1.4× less** | ❌ 1× |
 | Ranges verified against served state | ✅ 100% | ❌ none |
 | Deterministic, reproducible locally | ✅ `npm run benchmark` | — |
@@ -128,9 +128,9 @@ The numbers above are **deterministic and you can reproduce them locally** — `
 
 | Scenario | Lines | hashline | str_replace | Saved | % |
 | --- | :---: | :---: | :---: | :---: | :---: |
-| single-line ×8 | 1 | 311 | 314 | 3 | 1% |
-| multi-line ×4 | 3–15 | 390 | 655 | 265 | **40%** |
-| **TOTAL ×12** | | **701** | **969** | **268** | **28%** |
+| single-line ×8 | 1 | 309 | 324 | 15 | 5% |
+| multi-line ×4 | 3–15 | 393 | 691 | 298 | **43%** |
+| **TOTAL ×12** | | **702** | **1015** | **313** | **31%** |
 
 The script is deterministic by construction: a frozen corpus, a content-addressed edit script that
 self-checks (a reformatted corpus throws instead of silently changing what's measured), and a pinned
