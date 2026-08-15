@@ -1,5 +1,7 @@
 # dsh-better-edit
 
+[English](README.md) · [中文](README.zh.md)
+
 Hash-anchored `read` / `edit` / `batch_edit` / `undo_last_edit` tools for
 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (`dsh`).
 Every line of a file gets a unique 3-character hash — a **content address** —
