@@ -8,7 +8,8 @@
 import type { Context } from "@deepseek-ai/cordis";
 import { defineTool } from "@deepseek-ai/dsh-tools";
 import { toLF, stripBOM, genDiff, restoreEndings } from "./edit-diff.js";
-import { cntDiff, splitLines, isRec, normalizeFilePath } from "./utils.js";
+import { cntDiff, splitLines } from "./utils.js";
+import { assertUndoRequest } from "./contract.js";
 import { normReq } from "./edit-normalize.js";
 import { upsertSnapshotFor } from "./snapshot-store.js";
 import { contentChecksum } from "./hashline/hasher.js";
@@ -18,20 +19,8 @@ import { recordServedTruncated } from "./served-store.js";
 import { UNDO_DESCRIPTION } from "./prompts.js";
 import type { FileIO } from "./fs-bridge.js";
 import { execCwd, execSessionKey } from "./dsh-context.js";
-import { FsSandboxController, type FsEscalationArgs } from "./sandbox.js";
+import type { FsSandboxController, FsEscalationArgs } from "./sandbox.js";
 import { withWorkspace } from "./workspace.js";
-
-function assertUndoReq(request: unknown): asserts request is { path: string } {
-	if (!isRec(request)) {
-		throw new Error("[E_BAD_SHAPE] undo_last_edit request must be an object.");
-	}
-	normalizeFilePath(request);
-	if (typeof request.path !== "string" || request.path.length === 0) {
-		throw new Error(
-			'[E_BAD_SHAPE] undo_last_edit request requires a non-empty "path" string.',
-		);
-	}
-}
 
 /**
  * Register the `undo_last_edit` tool on the calling agent's scope.
@@ -63,7 +52,7 @@ export function buildUndoTool(io: FileIO, sandbox: FsSandboxController) {
 			const signal = exec.signal;
 
 			const canonical = normReq(args);
-			assertUndoReq(canonical);
+			assertUndoRequest(canonical);
 			const path = canonical.path;
 			const absolutePath = await io.resolve(path, cwd, signal);
 			const sandboxPolicy = await sandbox.resolvePolicy("undo_last_edit", canonical as unknown as FsEscalationArgs, exec);

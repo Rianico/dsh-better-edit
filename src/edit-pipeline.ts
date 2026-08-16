@@ -31,34 +31,9 @@ import {
 import { loadServed, sessionKeyFor } from './served-store.js'
 import { findSnapshotPathsByHashes } from './snapshot-store.js'
 import { scanDrift } from './drift.js'
-import { abortIf, isRec, rejectUnknownFields, splitLines } from './utils.js'
-import type { EditParams } from './schema.js'
+import { abortIf, splitLines } from './utils.js'
+import type { EditParams } from './contract.js'
 
-const ROOT_KS = new Set(['path', 'remove_from', 'remove_to', 'replacement_text', 'sandbox_permissions', 'justification'])
-
-export function assertReq(request: unknown): asserts request is EditParams {
-	if (!isRec(request)) {
-		throw new Error('[E_BAD_SHAPE] Edit request must be an object.')
-	}
-
-	rejectUnknownFields(request, ROOT_KS, 'Edit request')
-
-	if (typeof request.path !== 'string' || request.path.length === 0) {
-		throw new Error(
-			'[E_BAD_SHAPE] Edit request requires a non-empty "path" string.',
-		)
-	}
-
-	if (
-		typeof request.remove_from !== 'string' ||
-		typeof request.remove_to !== 'string' ||
-		typeof request.replacement_text !== 'string'
-	) {
-		throw new Error(
-			'[E_BAD_SHAPE] Edit request requires "remove_from", "remove_to", and "replacement_text" at the top level.',
-		)
-	}
-}
 
 export async function resolveMissingPath(
 	request: Record<string, unknown>,
