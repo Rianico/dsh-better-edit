@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { applyEdit, lineHashes, resEdit, canon, findNewEdge } from "../../src/hashline/index.js";
+import { applyEdit, lineHashes, resEdit, canon } from "../../src/hashline/index.js";
+import { findNewEdge } from "../../src/hashline/resolve.js";
 import {
   firstNonEmptyIndex,
   lastNonEmptyIndex,

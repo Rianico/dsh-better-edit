@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { lineHashes, _lineHashesPure, HASH_SPACE } from "../../src/hashline/index.js";
+import { lineHashes, lineHashesPure, HASH_SPACE } from "../../src/hashline/index.js";
 import { useTestHome } from "../support/fixtures.js";
 
 const home = useTestHome();
@@ -98,7 +98,7 @@ describe("large file stress tests — pure path (no store)", () => {
   it("handles 100,000 unique lines without timeout", () => {
     const content = Array.from({ length: 100_000 }, (_, i) => `line${i}`).join("\n");
     const start = performance.now();
-    const hashes = _lineHashesPure(content);
+    const hashes = lineHashesPure(content);
     const elapsed = performance.now() - start;
 
     expect(hashes).toHaveLength(100_000);
@@ -110,7 +110,7 @@ describe("large file stress tests — pure path (no store)", () => {
   it("handles 20,000 identical closing braces", () => {
     const content = Array.from({ length: 20_000 }, () => "}").join("\n");
     const start = performance.now();
-    const hashes = _lineHashesPure(content);
+    const hashes = lineHashesPure(content);
     const elapsed = performance.now() - start;
 
     expect(hashes).toHaveLength(20_000);
@@ -130,14 +130,14 @@ describe("hash collision stress tests", () => {
 
   it("assigns unique hashes to 10,000 identical lines (pure)", () => {
     const content = Array.from({ length: 10_000 }, () => "same").join("\n");
-    const hashes = _lineHashesPure(content);
+    const hashes = lineHashesPure(content);
     const unique = new Set(hashes);
     expect(unique.size).toBe(10_000);
   }, 60_000);
 
   it("correctly maps hashes for 10,000 identical lines with selective removal", async () => {
     const oldContent = Array.from({ length: 10_000 }, () => "same").join("\n");
-    const oldHashes = _lineHashesPure(oldContent);
+    const oldHashes = lineHashesPure(oldContent);
 
     const newContent = Array.from({ length: 5_000 }, () => "same").join("\n");
     const removedHashes = new Set(
@@ -172,7 +172,7 @@ describe("hash collision stress tests", () => {
   it("near-capacity collision: 200,000 identical lines (pure)", () => {
     const content = Array.from({ length: 200_000 }, () => "x").join("\n");
     const start = performance.now();
-    const hashes = _lineHashesPure(content);
+    const hashes = lineHashesPure(content);
     const elapsed = performance.now() - start;
 
     expect(hashes).toHaveLength(200_000);
@@ -184,14 +184,14 @@ describe("hash collision stress tests", () => {
   it("throws a clear error when hash space is exhausted", () => {
     const line = "x";
     const content = Array.from({ length: HASH_SPACE + 1 }, () => line).join("\n");
-    expect(() => _lineHashesPure(content)).toThrow("E_FILE_TOO_LARGE");
+    expect(() => lineHashesPure(content)).toThrow("E_FILE_TOO_LARGE");
   }, 300_000);
 });
 
 describe("mapStableHashes — large file stress", () => {
   it("handles 10,000 identical lines with interleaved insert/delete/modify", async () => {
     const oldContent = Array.from({ length: 10_000 }, () => "same").join("\n");
-    const oldHashes = _lineHashesPure(oldContent);
+    const oldHashes = lineHashesPure(oldContent);
 
     const newLines: string[] = [];
     for (let i = 0; i < 10_000; i++) {
@@ -219,7 +219,7 @@ describe("mapStableHashes — large file stress", () => {
 
   it("handles 5,000 identical lines with removedHashes covering half the space", async () => {
     const oldContent = Array.from({ length: 5_000 }, () => "dup").join("\n");
-    const oldHashes = _lineHashesPure(oldContent);
+    const oldHashes = lineHashesPure(oldContent);
 
     const removedHashes = new Set(oldHashes.filter((_, i) => i < 2_500));
     const newContent = Array.from({ length: 3_000 }, () => "dup").join("\n");
@@ -240,7 +240,7 @@ describe("mapStableHashes — large file stress", () => {
 
   it("does not degrade when every candidate is removed (regression)", async () => {
     const oldContent = Array.from({ length: 100_000 }, () => "dup").join("\n");
-    const oldHashes = _lineHashesPure(oldContent);
+    const oldHashes = lineHashesPure(oldContent);
     const removedHashes = new Set(oldHashes);
     const newContent = Array.from({ length: 100_000 }, () => "dup").join("\n");
     const start = performance.now();

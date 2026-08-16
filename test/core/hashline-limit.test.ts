@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  _lineHashesPure,
+  lineHashesPure,
   lineHashes,
   HASH_SPACE,
   MAX_HASH_LINES,
@@ -24,7 +24,7 @@ describe("hashline limits", () => {
       { length: MAX_HASH_LINES },
       (_, i) => `line ${i}`,
     ).join("\n");
-    const hashes = _lineHashesPure(content);
+    const hashes = lineHashesPure(content);
     expect(hashes).toHaveLength(MAX_HASH_LINES);
     expect(new Set(hashes).size).toBe(MAX_HASH_LINES);
   }, 300_000);
@@ -33,7 +33,7 @@ describe("hashline limits", () => {
     const content = Array.from({ length: MAX_HASH_LINES + 1 }, () => "x").join(
       "\n",
     );
-    expect(() => _lineHashesPure(content)).toThrow("E_FILE_TOO_LARGE");
+    expect(() => lineHashesPure(content)).toThrow("E_FILE_TOO_LARGE");
   }, 300_000);
 
   it("preserves unique hashes at the boundary through the store path", async () => {

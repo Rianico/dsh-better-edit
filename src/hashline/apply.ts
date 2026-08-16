@@ -1,5 +1,5 @@
 import { abortIf, splitLines } from "../utils.js";
-import { _lineHashesPure, HASH_SEP } from "./hash.js";
+import { lineHashesPure, HASH_SEP } from "./pure.js";
 import {
 	AnchorMismatchError,
 	verifyServedRange,
@@ -164,7 +164,7 @@ export function applyEdit(
 	abortIf(signal);
 
 	const lineIndex = buildIdx(content);
-	const fileHashes = precomputedHashes ?? _lineHashesPure(content);
+	const fileHashes = precomputedHashes ?? lineHashesPure(content);
 	const warnings: string[] = [];
 
 	const rangeFixed = swapReversedRanges(edit, fileHashes, warnings);

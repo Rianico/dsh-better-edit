@@ -1,5 +1,5 @@
 import * as Diff from "diff";
-import { _lineHashesPure, ANCHOR_LEN, HASH_SEP } from "./hashline/index.js";
+import { lineHashesPure, ANCHOR_LEN, HASH_SEP } from "./hashline/index.js";
 import type { ServedRow } from "./hashline/served.js";
 
 export type LineEnding = "\r\n" | "\n" | "\r";
@@ -56,7 +56,7 @@ export function genDiff(
 	firstChangedLine: number | undefined;
 	servedRows: ServedRow[];
 } {
-	const effectiveNewHashes = newContentHashes ?? _lineHashesPure(newContent);
+	const effectiveNewHashes = newContentHashes ?? lineHashesPure(newContent);
 
 	const parts = Diff.diffLines(oldContent, newContent);
 	const output: string[] = [];

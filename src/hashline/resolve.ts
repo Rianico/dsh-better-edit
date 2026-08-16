@@ -11,7 +11,7 @@ import {
 	HL_PREFIX_PLUS_RE,
 	HL_PREFIX_MINUS_RE,
 	canon,
-} from "./hash.js";
+} from "./pure.js";
 import { parseHashRef, parseText, type Anchor } from "./parse.js";
 import type { ServedRow } from "./served.js";
 import { NEW_CONTENT_NOT_STRING_MSG } from "../constants.js";
@@ -85,16 +85,6 @@ function assertAligned(
 			`${ctx}: fileHashes.length (${fileHashes.length}) must match fileLines.length (${fileLines.length}).`,
 		);
 	}
-}
-
-export function fmtMismatch(
-	mismatches: HMismatch[],
-	fileLines: string[],
-	fileHashes: string[],
-	filePath?: string,
-): string {
-	return fmtMismatchWithServes(mismatches, fileLines, fileHashes, filePath)
-		.message;
 }
 
 export function fmtMismatchWithServes(
