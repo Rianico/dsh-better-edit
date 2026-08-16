@@ -11,8 +11,8 @@ import { defineTool } from "@deepseek-ai/dsh-tools";
 import { restoreEndings } from "./edit-diff.js";
 import { normReq } from "./edit-normalize.js";
 import { abortIf, isRec, splitLines } from "./utils.js";
+import { assertEditRequest } from "./contract.js";
 import {
-	assertReq,
 	execPipeline,
 	resolveMissingPath,
 	snapshotIdFor,
@@ -79,7 +79,7 @@ export function buildEditTool(io: FileIO, sandbox: FsSandboxController) {
 				if (resolution && isRec(canonical)) {
 					canonical.path = resolution.path;
 				}
-				assertReq(canonical);
+				assertEditRequest(canonical);
 				const sandboxPolicy = await sandbox.resolvePolicy(
 					"edit",
 					canonical as unknown as FsEscalationArgs,

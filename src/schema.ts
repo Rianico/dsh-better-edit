@@ -3,7 +3,7 @@
  * the dsh schema DSL (not TypeBox). `path` is deliberately NOT `required` at
  * the schema level: the tools accept the built-in `file_path` spelling too
  * (the implicit parameter root stays open), and enforce path presence in
- * `assertReq` after `normalizeFilePath` aliasing.
+ * `assertEditRequest` after `normalizeFilePath` aliasing.
  * @module dsh-better-edit/schema
  */
 
@@ -31,20 +31,8 @@ export const pathSchema = {
 		'Path to edit. Required — always provide it explicitly; it is only auto-resolved from the anchors as a fallback when omitted by mistake.',
 } as const
 
-export interface EditParams {
-	path: string
-	remove_from: string
-	remove_to: string
-	replacement_text: string
-}
-
-export interface BatchItemParams {
-	path?: string
-	remove_from: string
-	remove_to: string
-	replacement_text: string
-}
-
-export interface BatchEditParams {
-	edits: BatchItemParams[]
-}
+export type {
+	EditParams,
+	BatchItemParams,
+	BatchEditParams,
+} from "./contract.js";

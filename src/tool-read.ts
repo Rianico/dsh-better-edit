@@ -9,7 +9,8 @@
 import type { Context } from "@deepseek-ai/cordis";
 import { defineTool } from "@deepseek-ai/dsh-tools";
 import { normReq } from "./edit-normalize.js";
-import { abortIf, isRec, rejectUnknownFields } from "./utils.js";
+import { abortIf } from "./utils.js";
+import { assertReadRequest } from "./contract.js";
 import { normFromText } from "./file-reader.js";
 import { fmtReadPreview, MAX_HASH_LINES } from "./read-render.js";
 import { recordServed, clearDriftReported } from "./served-store.js";
@@ -18,24 +19,6 @@ import { pathSchema } from "./schema.js";
 import type { FileIO } from "./fs-bridge.js";
 import { execCwd, execSessionKey } from "./dsh-context.js";
 import { withWorkspace } from "./workspace.js";
-
-const ROOT_KS = new Set(["path", "offset", "limit"]);
-
-function assertReadReq(request: unknown): asserts request is {
-	path: string;
-	offset?: number;
-	limit?: number;
-} {
-	if (!isRec(request)) {
-		throw new Error("[E_BAD_SHAPE] Read request must be an object.");
-	}
-	rejectUnknownFields(request, ROOT_KS, "Read request");
-	if (typeof request.path !== "string" || request.path.length === 0) {
-		throw new Error(
-			'[E_BAD_SHAPE] Read request requires a non-empty "path" string.',
-		);
-	}
-}
 
 /**
  * Register the hash-anchored `read` tool on the calling agent's scope.
@@ -70,7 +53,7 @@ export function buildReadTool(io: FileIO) {
 			const signal = exec.signal;
 
 			const canonical = normReq(args);
-			assertReadReq(canonical);
+			assertReadRequest(canonical);
 			const rawPath = canonical.path;
 
 			abortIf(signal);

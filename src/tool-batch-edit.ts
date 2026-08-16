@@ -15,9 +15,13 @@ import {
 	abortIf,
 	isRec,
 	normalizeFilePath,
-	rejectUnknownFields,
 	splitLines,
 } from "./utils.js";
+import {
+	assertBatchEditRequest,
+	type BatchEditParams,
+	type BatchItemParams,
+} from "./contract.js";
 import { normReq } from "./edit-normalize.js";
 import {
 	applyEdit,
@@ -38,7 +42,7 @@ import {
 import { buildBatchResult, type BatchSection } from "./edit-response.js";
 import { saveUndo } from "./undo-edit.js";
 import { loadServed, recordServedTruncated } from "./served-store.js";
-import { BATCH_EDIT_MAX_ITEMS, NOOP_LOOP_THRESHOLD } from "./constants.js";
+import { NOOP_LOOP_THRESHOLD } from "./constants.js";
 import {
 	collectRemovedHashes,
 	countLineChanges,
@@ -61,16 +65,6 @@ import { execCwd, execSessionKey } from "./dsh-context.js";
 import type { FsSandboxController, FsEscalationArgs } from "./sandbox.js";
 import { withWorkspace } from "./workspace.js";
 
-interface BatchItem {
-	path?: string;
-	remove_from: string;
-	remove_to: string;
-	replacement_text: string;
-}
-
-interface BatchEditParams {
-	edits: BatchItem[];
-}
 
 type PreparedItem = {
 	index: number;
@@ -82,60 +76,6 @@ type PreparedItem = {
 	pathWarning?: string;
 };
 
-const BATCH_ITEM_KS = new Set([
-	"path",
-	"remove_from",
-	"remove_to",
-	"replacement_text",
-]);
-
-function assertBatchReq(request: unknown): asserts request is BatchEditParams {
-	if (!isRec(request)) {
-		throw new Error(
-			'[E_BAD_SHAPE] batch_edit request must be an object with an "edits" array.',
-		);
-	}
-	rejectUnknownFields(
-		request,
-		new Set(["edits", "sandbox_permissions", "justification"]),
-		"batch_edit request",
-	);
-	if (!Array.isArray(request.edits) || request.edits.length === 0) {
-		throw new Error(
-			'[E_BAD_SHAPE] batch_edit request requires a non-empty "edits" array.',
-		);
-	}
-	if (request.edits.length > BATCH_EDIT_MAX_ITEMS) {
-		throw new Error(
-			`[E_BAD_SHAPE] batch_edit accepts at most ${BATCH_EDIT_MAX_ITEMS} edits; got ${request.edits.length}. Split the batch.`,
-		);
-	}
-	request.edits.forEach((item, index) => {
-		if (!isRec(item)) {
-			throw new Error(
-				`[E_BAD_SHAPE] edits[${index}] must be an object with remove_from, remove_to, and replacement_text.`,
-			);
-		}
-		rejectUnknownFields(item, BATCH_ITEM_KS, `edits[${index}]`);
-		if (
-			typeof item.remove_from !== "string" ||
-			typeof item.remove_to !== "string" ||
-			typeof item.replacement_text !== "string"
-		) {
-			throw new Error(
-				`[E_BAD_SHAPE] edits[${index}] requires "remove_from", "remove_to", and "replacement_text" strings.`,
-			);
-		}
-		if (
-			item.path !== undefined &&
-			(typeof item.path !== "string" || item.path.length === 0)
-		) {
-			throw new Error(
-				`[E_BAD_SHAPE] edits[${index}].path must be a non-empty string.`,
-			);
-		}
-	});
-}
 
 async function prepareItems(
 	io: FileIO,
@@ -549,7 +489,7 @@ export function buildBatchEditTool(io: FileIO, sandbox: FsSandboxController) {
 						return cloned;
 					});
 				}
-				assertBatchReq(canonical);
+				assertBatchEditRequest(canonical);
 				const sandboxPolicy = await sandbox.resolvePolicy(
 					"batch_edit",
 					canonical as unknown as FsEscalationArgs,
