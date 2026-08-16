@@ -18,7 +18,6 @@
   <a href="#快速开始">快速开始</a> •
   <a href="#为什么用-hashline">为什么用 Hashline</a> •
   <a href="#基准测试">基准测试</a> •
-  <a href="#安装">安装</a> •
   <a href="#工具">工具</a> •
   <a href="#致谢">致谢</a>
 </p>
@@ -52,6 +51,25 @@ Hashline 用两个哈希代替旧文本——**编辑 token 减少 31%**（多�
 不适用于单行小改动（接近持平）或新建文件（用 `write`）。它的价值在长会话与结构性编辑中体现——任何不允许改错行的场景。
 
 ## 快速开始
+
+### 安装
+
+```sh
+dsh plugin --profile <name> add dsh-better-edit   # 从 npm
+dsh plugin --profile <name> add /path/to/dsh-better-edit   # 从本地源码
+```
+
+该 profile 的下一个会话将带着 hashline 工具运行。验证该层是否生效：
+
+```sh
+dsh --profile <name> --dump-config   # 会显示 "# == dsh-better-edit" 层
+```
+
+| 要求 | |
+| --- | --- |
+| Node | `^22.19.0 \|\| >=24.0.0`（dsh 的要求；存储使用 `node:sqlite`） |
+| Profile | 一个 dsh profile（首次使用 `dsh plugin` 时初始化） |
+| 后端 | 支持沙箱/远程文件系统（写入经 `ctx.fs`） |
 
 `read` 返回的每一行都带有哈希前缀——哈希*就是*这一行的地址：
 
@@ -128,25 +146,6 @@ kQm│}
 脚本天然确定：固定语料、内容寻址且自带自检的编辑脚本（语料被重排会直接抛错，而不是悄悄改变测量对象）、固定版本的 tokenizer。因为一切都是固定的，`npm run benchmark` 对每个人都是同一个结果。
 
 > **范围与诚实。** 基准测试衡量的是**请求负载 token**——每次编辑调用时模型发出的内容——读文件流量完全相同故已排除（可抵消），替换文本也完全一致。它**没有**建模转录失败与重试，而真实差距恰恰主要在那边：最初的 [harness-problem](https://stencil.so/blog/the-harness-problem) 文章报告改用锚定编辑后**输出 token 减少 61%**，补丁失败率从 46–51% 降至接近零。完整的方法论与局限见 [`benchmark/README.md`](benchmark/README.md)。
-
-## 安装
-
-```sh
-dsh plugin --profile <name> add dsh-better-edit   # 从 npm
-dsh plugin --profile <name> add /path/to/dsh-better-edit   # 从本地源码
-```
-
-该 profile 的下一个会话将带着 hashline 工具运行。验证该层是否生效：
-
-```sh
-dsh --profile <name> --dump-config   # 会显示 "# == dsh-better-edit" 层
-```
-
-| 要求 | |
-| --- | --- |
-| Node | `^22.19.0 \|\| >=24.0.0`（dsh 的要求；存储使用 `node:sqlite`） |
-| Profile | 一个 dsh profile（首次使用 `dsh plugin` 时初始化） |
-| 后端 | 支持沙箱/远程文件系统（写入经 `ctx.fs`） |
 
 ## 工具
 

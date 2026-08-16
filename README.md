@@ -18,7 +18,6 @@
   <a href="#quick-start">Quick Start</a> •
   <a href="#why-hashline">Why Hashline</a> •
   <a href="#benchmark">Benchmark</a> •
-  <a href="#installation">Installation</a> •
   <a href="#tools">Tools</a> •
   <a href="#acknowledgments">Acknowledgments</a>
 </p>
@@ -56,6 +55,25 @@ Hashline sends two hashes instead of the old text — **31% fewer edit tokens** 
 Not for one-line touch-ups (near parity) or new files (`write`). It pays off in long sessions and structural edits — anywhere an edit must not land on the wrong line.
 
 ## Quick Start
+
+### Install
+
+```sh
+dsh plugin --profile <name> add dsh-better-edit   # from npm
+dsh plugin --profile <name> add /path/to/dsh-better-edit   # from a local checkout
+```
+
+The profile's next session runs with the hashline tools installed. To verify the layer is active:
+
+```sh
+dsh --profile <name> --dump-config   # shows a "# == dsh-better-edit" layer
+```
+
+| Requirement | |
+| --- | --- |
+| Node | `^22.19.0 \|\| >=24.0.0` (dsh's requirement; the store uses `node:sqlite`) |
+| Profile | a dsh profile (`dsh plugin` initializes one on first use) |
+| Backends | sandboxed / remote filesystems supported (writes go through `ctx.fs`) |
 
 `read` returns every line prefixed by its hash — the hash *is* the line's address:
 
@@ -151,25 +169,6 @@ tokenizer. Because everything is fixed, `npm run benchmark` gives everyone the s
 > a **61% output-token reduction** and patch-failure drops from 46–51% to near zero after switching
 > to anchored edits. Full methodology and limitations in
 > [`benchmark/README.md`](benchmark/README.md).
-
-## Installation
-
-```sh
-dsh plugin --profile <name> add dsh-better-edit   # from npm
-dsh plugin --profile <name> add /path/to/dsh-better-edit   # from a local checkout
-```
-
-The profile's next session runs with the hashline tools installed. To verify the layer is active:
-
-```sh
-dsh --profile <name> --dump-config   # shows a "# == dsh-better-edit" layer
-```
-
-| Requirement | |
-| --- | --- |
-| Node | `^22.19.0 \|\| >=24.0.0` (dsh's requirement; the store uses `node:sqlite`) |
-| Profile | a dsh profile (`dsh plugin` initializes one on first use) |
-| Backends | sandboxed / remote filesystems supported (writes go through `ctx.fs`) |
 
 ## Tools
 
