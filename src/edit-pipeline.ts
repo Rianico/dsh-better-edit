@@ -1,9 +1,12 @@
 /**
- * The single-edit pipeline shared by `edit`, `batch_edit`, and previews:
- * resolve → normalize → hash → verify anchors against served state → apply →
- * re-hash with stable anchors → drift notice. All IO goes through the
- * {@link FileIO} bridge so the same pipeline runs on `ctx.fs` and on the host
- * filesystem.
+ * The single-edit pipeline shared by `edit`, previews, and (through the
+ * engine) `batch_edit`: resolve → normalize → hash → verify anchors against
+ * served state → apply → re-hash with stable anchors → drift notice. The
+ * apply/reject/re-hash computation lives in the edit engine
+ * ({@link edit-engine}); this module keeps the single-edit orchestration
+ * shape, preview-mode options, and the pipeline result type. All IO goes
+ * through the {@link FileIO} bridge so the same pipeline runs on `ctx.fs` and
+ * on the host filesystem.
  * @module dsh-better-edit/edit-pipeline
  */
 
@@ -13,12 +16,8 @@ import { normFromText, fileSnap } from './file-reader.js'
 import type { LineEnding } from './edit-diff.js'
 import { toCwd } from './paths.js'
 import {
-	applyEdit,
-	lineHashes,
 	resEdit,
-	parseHashRef,
 	MAX_HASH_LINES,
-	type HEdit,
 	type NEdit,
 } from './hashline/index.js'
 import type { ResolvedRange } from './hashline/served.js'
@@ -29,46 +28,10 @@ import {
 	type ServeRecordPolicy,
 } from './hashline/served.js'
 import { loadServed, sessionKeyFor } from './served-store.js'
-import { findSnapshotPathsByHashes } from './snapshot-store.js'
 import { scanDrift } from './drift.js'
 import { abortIf, splitLines } from './utils.js'
 import type { EditParams } from './contract.js'
-
-
-export async function resolveMissingPath(
-	request: Record<string, unknown>,
-): Promise<{ path: string; warning: string } | undefined> {
-	if (typeof request.path === 'string') return undefined
-	const from = request.remove_from
-	const to = request.remove_to
-	if (typeof from !== 'string' || typeof to !== 'string') return undefined
-	const hashes: string[] = []
-	for (const ref of [from, to]) {
-		try {
-			hashes.push(parseHashRef(ref).hash)
-		} catch {
-			return undefined
-		}
-	}
-	let matches: string[]
-	try {
-		matches = await findSnapshotPathsByHashes(hashes)
-	} catch {
-		return undefined
-	}
-	if (matches.length === 1) {
-		return {
-			path: matches[0]!,
-			warning: `[E_BAD_SHAPE] Autocorrected: missing "path" resolved to ${matches[0]} — the only file whose stored hashes contain both anchors.`,
-		}
-	}
-	if (matches.length > 1) {
-		throw new Error(
-			`[E_BAD_SHAPE] Edit request requires a non-empty "path" string; the anchors match multiple known files: ${matches.join(', ')}. Include the intended path.`,
-		)
-	}
-	return undefined
-}
+import { applyOne } from './edit-engine.js'
 
 export interface PipelineResult {
 	path: string
@@ -97,44 +60,6 @@ export interface ExecPipelineOptions {
 	sessionKey?: string
 }
 
-export function collectRemovedHashes(
-	edit: HEdit,
-	originalHashes: string[],
-): Set<string> {
-	const removedHashes = new Set<string>()
-	const startHash = edit.hash_bounds[0].hash
-	const endHash = edit.hash_bounds[1].hash
-	const startLine = originalHashes.indexOf(startHash)
-	const endLine = originalHashes.indexOf(endHash)
-	if (startLine >= 0 && endLine >= 0) {
-		const firstLine = Math.min(startLine, endLine)
-		const lastLine = Math.max(startLine, endLine)
-		for (let i = firstLine; i <= lastLine; i++) {
-			removedHashes.add(originalHashes[i]!)
-		}
-	}
-	return removedHashes
-}
-
-export function countLineChanges(
-	edit: HEdit,
-	originalHashes: string[],
-	isNoop: boolean,
-	removedAutoFixes: number,
-): { totalAddedLines: number; totalRemovedLines: number } {
-	if (isNoop) return { totalAddedLines: 0, totalRemovedLines: 0 }
-	let totalRemovedLines = 0
-	const startLine = originalHashes.indexOf(edit.hash_bounds[0].hash)
-	const endLine = originalHashes.indexOf(edit.hash_bounds[1].hash)
-	if (startLine >= 0 && endLine >= 0) {
-		totalRemovedLines = Math.abs(endLine - startLine) + 1
-	}
-	return {
-		totalAddedLines: Math.max(0, edit.content_lines.length - removedAutoFixes),
-		totalRemovedLines,
-	}
-}
-
 export async function execPipeline(
 	io: FileIO,
 	params: EditParams,
@@ -144,6 +69,8 @@ export async function execPipeline(
 	const path = params.path
 
 	const editWarnings: string[] = []
+	// Resolve the edit up front (before IO) so malformed anchors fail before
+	// any filesystem work, exactly as the tool always did.
 	const edit = resEdit(
 		{
 			remove_from: params.remove_from,
@@ -180,52 +107,41 @@ export async function execPipeline(
 	const policy: ServeRecordPolicy =
 		options?.noPersist === true ? 'preview' : 'live'
 
-	let anchorResult: ReturnType<typeof applyEdit>
-	try {
-		anchorResult = applyEdit(
-			originalNormalized,
-			edit,
-			signal,
-			originalHashes,
-			path,
+	const applied = await applyOne(
+		{
+			content: originalNormalized,
+			hashes: originalHashes,
 			served,
-		)
-	} catch (error) {
-		if (
-			error instanceof AnchorMismatchError ||
-			error instanceof ServedRejectionError
-		) {
-			await recordEchoServes(sessionKey, absolutePath, error.servedRows, policy, originalHashes.length)
-		}
-		throw error
-	}
-	const result = anchorResult.content
-	const isNoop = result === originalNormalized
-
-	const noPersist = options?.noPersist
-	const removedHashes = isNoop
-		? undefined
-		: collectRemovedHashes(edit, originalHashes)
-	const resultHashes = isNoop
-		? originalHashes
-		: await lineHashes(
-				result,
-				absolutePath,
-				{
-					content: originalNormalized,
-					hashes: originalHashes,
-					removedHashes,
-				},
-				hashStore,
-				noPersist !== true,
-			)
-	const warnings = [...editWarnings, ...(anchorResult.warnings ?? [])]
-	const { totalAddedLines, totalRemovedLines } = countLineChanges(
-		edit,
-		originalHashes,
-		isNoop,
-		anchorResult.autoFixes?.length ?? 0,
+			removeFrom: params.remove_from,
+			removeTo: params.remove_to,
+			replacementText: params.replacement_text,
+			absolutePath,
+			displayPath: path,
+			signal,
+			warnings: editWarnings,
+			store: hashStore,
+			persist: options?.noPersist !== true,
+			edit,
+		},
+		async (error) => {
+			if (
+				error instanceof AnchorMismatchError ||
+				error instanceof ServedRejectionError
+			) {
+				await recordEchoServes(
+					sessionKey,
+					absolutePath,
+					error.servedRows,
+					policy,
+					originalHashes.length,
+				)
+			}
+			throw error
+		},
 	)
+	const result = applied.result
+	const isNoop = applied.noop
+	const warnings = [...editWarnings, ...(applied.anchorWarnings ?? [])]
 
 	let driftNotice: string | undefined
 	if (options?.noPersist !== true) {
@@ -233,9 +149,9 @@ export async function execPipeline(
 			driftNotice = await scanDrift({
 				sessionKey,
 				served,
-				resultHashes,
+				resultHashes: applied.hashes,
 				resultLines: splitLines(result),
-				range: anchorResult.range,
+				range: applied.range,
 				path: absolutePath,
 			})
 		} catch (error) {
@@ -252,15 +168,15 @@ export async function execPipeline(
 		originalEnding,
 		hadUtf8DecodeErrors,
 		warnings,
-		noopEdit: anchorResult.noopEdit,
-		firstChangedLine: anchorResult.firstChangedLine,
-		lastChangedLine: anchorResult.lastChangedLine,
-		resultHashes,
+		noopEdit: applied.noopEdit,
+		firstChangedLine: applied.firstChangedLine,
+		lastChangedLine: applied.lastChangedLine,
 		originalHashes,
-		totalAddedLines,
-		totalRemovedLines,
+		resultHashes: applied.hashes,
+		totalAddedLines: applied.totalAddedLines,
+		totalRemovedLines: applied.totalRemovedLines,
 		driftNotice,
-		range: anchorResult.range,
+		range: applied.range,
 	}
 }
 

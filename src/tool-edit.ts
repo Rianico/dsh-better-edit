@@ -8,21 +8,18 @@
 
 import type { Context } from "@deepseek-ai/cordis";
 import { defineTool } from "@deepseek-ai/dsh-tools";
-import { restoreEndings } from "./edit-diff.js";
 import { normReq } from "./edit-normalize.js";
 import { abortIf, isRec, splitLines } from "./utils.js";
 import { assertEditRequest } from "./contract.js";
 import {
-	execPipeline,
+	enforceNoopLoop,
+	persistUndoAndWrite,
 	resolveMissingPath,
+} from "./edit-engine.js";
+import {
+	execPipeline,
 	snapshotIdFor,
 } from "./edit-pipeline.js";
-import {
-	buildRangeEcho,
-	fmtServedRows,
-	recordEchoServes,
-} from "./hashline/served.js";
-import { saveUndo } from "./undo-edit.js";
 import {
 	clearNoopLoop,
 	noopPayloadKey,
@@ -30,7 +27,6 @@ import {
 } from "./noop-guard.js";
 import { buildNoop, buildChanged, type RMeta } from "./edit-response.js";
 import { recordServedTruncated } from "./served-store.js";
-import { NOOP_LOOP_THRESHOLD } from "./constants.js";
 import { EDIT_DESCRIPTION } from "./prompts.js";
 import {
 	pathSchema,
@@ -126,28 +122,19 @@ export function buildEditTool(io: FileIO, sandbox: FsSandboxController) {
 						canonical.replacement_text,
 					);
 					const count = trackNoopPayload(absolutePath, payload);
-
-					if (count >= NOOP_LOOP_THRESHOLD) {
-						const echoRows = buildRangeEcho(
-							range.startLine,
-							range.endLine,
-							originalHashes,
-						);
-						const echo = fmtServedRows(
-							echoRows,
-							splitLines(originalNormalized),
-						);
-						await recordEchoServes(sessionKey, absolutePath, echoRows, "live", originalHashes.length);
-						throw new Error(
-							`[E_NOOP_LOOP] This exact edit (anchors ${canonical.remove_from} to ${canonical.remove_to} in ${path}) has been submitted ${count} times and produced no changes each time — the range already contains the replacement text. Do not resend this edit; it will never change the file. Current range:\n${echo}`,
-						);
-					}
-
-					if (count === 2) {
-						warnings.push(
-							`[E_NOOP_LOOP] Notice: this exact edit (anchors ${canonical.remove_from} to ${canonical.remove_to} in ${path}) has produced no changes twice in a row. The range already contains the replacement text; resending it again will be rejected.`,
-						);
-					}
+					const notice = await enforceNoopLoop({
+						absolutePath,
+						removeFrom: canonical.remove_from,
+						removeTo: canonical.remove_to,
+						replacementText: canonical.replacement_text,
+						displayPath: path,
+						count,
+						sessionKey,
+						originalHashes,
+						originalNormalized,
+						range,
+					});
+					if (notice) warnings.push(notice);
 
 					const noopSnapshotId = await snapshotIdFor(io, absolutePath, signal);
 					const noopResult = buildNoop({
@@ -175,31 +162,27 @@ export function buildEditTool(io: FileIO, sandbox: FsSandboxController) {
 				}
 
 				abortIf(signal);
-				const undo = await saveUndo(absolutePath, {
-					content: originalNormalized,
-					bom,
-					originalEnding,
-					hashes: originalHashes,
-					resultContent: result,
+				await persistUndoAndWrite({
+					io,
+					files: [
+						{
+							absolutePath,
+							displayPath: path,
+							originalNormalized,
+							bom,
+							originalEnding,
+							originalHashes,
+							result,
+						},
+					],
+					exec,
+					sandbox,
+					sandboxPolicy,
+					signal,
+					undoUnavailableMessage: (displayPath) =>
+						`[E_UNDO_UNAVAILABLE] Cannot persist undo history to the hash store; the edit was NOT applied and ${displayPath} is unchanged. Retry the edit, or use write if the store cannot be recovered.`,
+					restoreUnwrittenUndos: true,
 				});
-				if (!undo.persisted) {
-					throw new Error(
-						`[E_UNDO_UNAVAILABLE] Cannot persist undo history to the hash store; the edit was NOT applied and ${path} is unchanged. Retry the edit, or use write if the store cannot be recovered.`,
-					);
-				}
-				try {
-					abortIf(signal);
-					await io.writeText(
-						absolutePath,
-						bom + restoreEndings(result, originalEnding),
-						signal,
-						exec,
-						sandboxPolicy,
-					);
-				} catch (error) {
-					await undo.restore();
-					throw sandbox.mapError(error, sandboxPolicy);
-				}
 				const updatedSnapshotId = await snapshotIdFor(io, absolutePath, signal);
 
 				const editMeta: RMeta = {
