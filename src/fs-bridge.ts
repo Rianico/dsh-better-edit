@@ -20,9 +20,9 @@ import type { Context } from "@deepseek-ai/cordis";
 import type { FileSystem } from "@deepseek-ai/dsh-fs";
 import type { ToolExecution } from "@deepseek-ai/dsh-tools";
 import type { SandboxExecutionPolicy } from "@deepseek-ai/dsh-sandbox";
-import { resolveTarget, writeAtomic } from "./fs-write.js";
+import { writeAtomic } from "./fs-write.js";
 import { fileSnap } from "./file-reader.js";
-import { toCwd } from "./paths.js";
+import { resolveTarget, toCwd } from "./paths.js";
 
 /** Text-IO operations the hashline tools need, keyed by canonical absolute path. */
 export interface FileIO {

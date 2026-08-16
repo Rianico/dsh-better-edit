@@ -9,11 +9,8 @@
 import type { Context } from "@deepseek-ai/cordis";
 import { defineTool } from "@deepseek-ai/dsh-tools";
 import { normReq } from "./edit-normalize.js";
-import { abortIf } from "./utils.js";
 import { assertReadRequest } from "./contract.js";
-import { normFromText } from "./file-reader.js";
-import { fmtReadPreview, MAX_HASH_LINES } from "./read-render.js";
-import { recordServed, clearDriftReported } from "./served-store.js";
+import { readAndServe } from "./read-and-serve.js";
 import { READ_DESCRIPTION } from "./prompts.js";
 import { pathSchema } from "./schema.js";
 import type { FileIO } from "./fs-bridge.js";
@@ -56,36 +53,23 @@ export function buildReadTool(io: FileIO) {
 			assertReadRequest(canonical);
 			const rawPath = canonical.path;
 
-			abortIf(signal);
-			const absolutePath = await io.resolve(rawPath, cwd, signal);
-			const rawText = await io.readText(absolutePath, signal);
-			const { normalized, fileHashes, hadUtf8DecodeErrors } =
-				await normFromText({
-					absolutePath,
-					rawText,
-					displayPath: rawPath,
+			const { text, absolutePath } = await readAndServe(
+				io,
+				rawPath,
+				cwd,
+				{
+					sessionKey,
 					signal,
-					maxLines: MAX_HASH_LINES,
-				});
-
-			const preview = await fmtReadPreview(
-				normalized,
-				{ offset: canonical.offset, limit: canonical.limit },
-				fileHashes,
-				absolutePath,
+					offset: canonical.offset,
+					limit: canonical.limit,
+				},
 			);
-			if (preview.served.length > 0) {
-				await recordServed(sessionKey, absolutePath, preview.served, fileHashes.length);
-			}
-			await clearDriftReported(sessionKey, absolutePath);
 			// Record the present observation with the fs policy gate so later
 			// built-in write/edit calls see this file as observed at the
 			// version the model just read (a no-op when no policy listens).
 			await io.emitObserved(absolutePath, exec, signal);
 
-			return hadUtf8DecodeErrors
-				? `${preview.text}\n\n[Non-UTF-8 bytes shown as U+FFFD; editing rewrites the file as UTF-8.]`
-				: preview.text;
+			return text;
 			})
 		},
 	});

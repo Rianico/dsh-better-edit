@@ -8,9 +8,7 @@
 
 import type { Context } from '@deepseek-ai/cordis'
 import type { PostToolDecision, ToolExecution, ToolExecutionResult } from '@deepseek-ai/dsh-tools'
-import { normFromText } from './file-reader.js'
-import { fmtReadPreview, MAX_HASH_LINES } from './read-render.js'
-import { recordServed, clearDriftReported } from './served-store.js'
+import { readAndServe } from './read-and-serve.js'
 import type { FileIO } from './fs-bridge.js'
 import { execCwd, execSessionKey } from './dsh-context.js'
 import { withWorkspace } from './workspace.js'
@@ -41,7 +39,6 @@ export function registerWriteHook(
 			next: () => Promise<PostToolDecision>,
 		): Promise<PostToolDecision> => {
 			return withWorkspace(execCwd(exec), async () => {
-			return withWorkspace(execCwd(exec), async () => {
 			const decision: PostToolDecision = await next()
 			if (
 				exec.name !== 'write' ||
@@ -61,29 +58,7 @@ export function registerWriteHook(
 				const cwd = execCwd(exec)
 				const sessionKey = execSessionKey(exec)
 				const signal = exec.signal
-				const absolutePath = await io.resolve(rawPath, cwd, signal)
-				const rawText = await io.readText(absolutePath, signal)
-				const { normalized, fileHashes, hadUtf8DecodeErrors } =
-					await normFromText({
-						absolutePath,
-						rawText,
-						displayPath: rawPath,
-						signal,
-						maxLines: MAX_HASH_LINES,
-					})
-				const preview = await fmtReadPreview(
-					normalized,
-					{},
-					fileHashes,
-					absolutePath,
-				)
-				if (preview.served.length > 0) {
-					await recordServed(sessionKey, absolutePath, preview.served, fileHashes.length)
-				}
-				await clearDriftReported(sessionKey, absolutePath)
-				const text = hadUtf8DecodeErrors
-					? `${preview.text}\n\n[Non-UTF-8 bytes shown as U+FFFD; editing rewrites the file as UTF-8.]`
-					: preview.text
+				const { text } = await readAndServe(io, rawPath, cwd, { sessionKey, signal })
 				return {
 					kind: 'accept' as const,
 					content: [
@@ -97,7 +72,6 @@ export function registerWriteHook(
 				)
 				return decision
 			}
-			})
 			})
 		},
 	)

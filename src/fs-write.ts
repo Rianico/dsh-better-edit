@@ -1,75 +1,17 @@
 import { randomUUID } from "node:crypto";
 import {
-	lstat,
 	mkdir,
 	open,
 	readdir,
-	readlink,
 	rename,
 	rm,
 	stat,
 	writeFile,
 } from "fs/promises";
-import { dirname, join, parse, resolve, sep } from "node:path";
+import { dirname, join } from "node:path";
 import { errCode } from "./utils.js";
+import { resolveTarget } from "./paths.js";
 
-export async function resolveTarget(path: string): Promise<string> {
-  const absolutePath = resolve(path);
-  const { root } = parse(absolutePath);
-  const parts = absolutePath
-    .slice(root.length)
-    .split(sep)
-    .filter((part) => part.length > 0);
-  const visitedSymlinks = new Set<string>();
-
-  async function resParts(
-    currentPath: string,
-    remainingParts: string[],
-  ): Promise<string> {
-    if (remainingParts.length === 0) {
-      return currentPath;
-    }
-
-    const [nextPart, ...tail] = remainingParts;
-    const candidatePath = join(currentPath, nextPart);
-
-    try {
-      const candidateStats = await lstat(candidatePath);
-      if (!candidateStats.isSymbolicLink()) {
-        return resParts(candidatePath, tail);
-      }
-
-      if (visitedSymlinks.has(candidatePath)) {
-        const error = new Error(
-          `Too many symbolic links while resolving ${path}`,
-        ) as NodeJS.ErrnoException;
-        error.code = "ELOOP";
-        throw error;
-      }
-      visitedSymlinks.add(candidatePath);
-
-      const linkTargetPath = resolve(
-        dirname(candidatePath),
-        await readlink(candidatePath),
-      );
-      const targetParts = linkTargetPath
-        .slice(parse(linkTargetPath).root.length)
-        .split(sep)
-        .filter((part) => part.length > 0);
-      return resParts(parse(linkTargetPath).root, [
-        ...targetParts,
-        ...tail,
-      ]);
-    } catch (error: unknown) {
-      if (errCode(error) === "ENOENT") {
-        return join(candidatePath, ...tail);
-      }
-      throw error;
-    }
-  }
-
-  return resParts(root, parts);
-}
 
 const TEMP_PREFIX = ".tmp-";
 const TEMP_UUID_RE = /^\.tmp-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
