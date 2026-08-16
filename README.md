@@ -6,7 +6,7 @@
 
 <p align="center">
   <strong>Hash-anchored edit tools for DeepSeek Harness.<br>
-  Edit by content address — not line numbers. Fewer tokens. Zero misapplied edits.</strong>
+  Edit by content address — not by line numbers, not by string replacement. Fewer tokens. More attention for real work. Zero misapplied edits.</strong>
 </p>
 
 <p align="center">

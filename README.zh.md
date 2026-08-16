@@ -6,7 +6,7 @@
 
 <p align="center">
   <strong>面向 DeepSeek Harness 的哈希锚定编辑工具。<br>
-  按内容地址编辑——而不是行号。更省 token。绝不会改错行。</strong>
+  按内容地址编辑——不靠行号，也不靠字符串替换。更省 token。更多注意力留给真正的工作。绝不会改错行。</strong>
 </p>
 
 <p align="center">
