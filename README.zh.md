@@ -234,6 +234,15 @@ npm run build       # tsc → lib/
 npm run benchmark   # 可复现的 token 成本基准测试（benchmark/）
 ```
 
+### 发布流程（先打 tag）
+
+```sh
+npm run release -- 0.2.0                 # 升版本 + 迁移 CHANGELOG + 提交 + 打 tag + 推送 → 生成 GitHub release
+npm publish --registry https://registry.npmjs.org   # 版本未打 tag 前会被阻止
+```
+
+`npm run release` 会更新 `package.json`/lockfile、把 CHANGELOG 的 `[Unreleased]` 段落迁移到版本号下、提交、打 `vX.Y.Z` tag 并推送——tag 推送会基于 changelog 自动创建 GitHub release。`npm publish` 在该 tag 存在之前会拒绝运行（prepublishOnly 门禁），因此每个 npm 版本都一定已经打好 tag 并发布过 release。
+
 测试套件移植自 pi-hashline-edit-lsz，通过本地文件系统桥接直接驱动 dsh 工具构建器。
 
 ## 路线图

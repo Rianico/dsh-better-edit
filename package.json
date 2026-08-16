@@ -74,9 +74,10 @@
     "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.test.json",
     "test": "vitest run",
     "test:watch": "vitest",
-    "prepublishOnly": "npm run typecheck && npm test",
+    "prepublishOnly": "npm run typecheck && npm test && node scripts/assert-tagged.mjs",
     "benchmark": "node benchmark/run.mjs",
-    "postpublish": "node scripts/tag-current.mjs"
+    "postpublish": "node scripts/tag-current.mjs",
+    "release": "node scripts/release.mjs"
   },
   "devDependencies": {
     "@deepseek-ai/cordis": "^4.0.1",

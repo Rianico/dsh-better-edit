@@ -4,6 +4,10 @@ All notable changes to the `dsh-better-edit` plugin will be documented in this f
 
 Entries link to the originating spec issue in [pi-hashline-edit-lsz](https://github.com/Rianico/pi-hashline-edit-lsz) where one exists.
 
+## [Unreleased]
+
+Development entries accumulate here; `npm run release -- X.Y.Z` moves them to a version section, tags, and creates the GitHub release.
+
 ## [0.1.9] - 2026-08-15
 
 ### Changed

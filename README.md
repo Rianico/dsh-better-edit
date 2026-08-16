@@ -268,6 +268,18 @@ npm run build       # tsc → lib/
 npm run benchmark   # reproducible token-cost benchmark (benchmark/)
 ```
 
+### Releasing (tag-first)
+
+```sh
+npm run release -- 0.2.0                 # bump + CHANGELOG move + commit + tag + push → GitHub release
+npm publish --registry https://registry.npmjs.org   # blocked until the version is tagged
+```
+
+`npm run release` bumps `package.json`/lockfile, moves the CHANGELOG `[Unreleased]` section to the
+version, commits, tags `vX.Y.Z`, and pushes — the tag push creates the GitHub release from the
+changelog. `npm publish` refuses to run until that tag exists (prepublishOnly gate), so every npm
+version is always already tagged and released.
+
 The test suite is ported from pi-hashline-edit-lsz and drives the dsh tool builders directly over a
 local filesystem bridge.
 
