@@ -7,7 +7,7 @@ import {
 } from "../../src/hashline/served.js";
 import { finalizeToolResult } from "../../src/edit-response.js";
 import { applyEdit, _lineHashesPure, type HEdit } from "../../src/hashline/index.js";
-import { loadServed } from "../../src/served-state.js";
+import { loadServed } from "../../src/served-store.js";
 import { shutdownHashStore } from "../../src/hash-store.js";
 import { initHasher } from "../../src/hashline/hasher.js";
 import { getWritableTempRoot } from "../support/fixtures.js";
