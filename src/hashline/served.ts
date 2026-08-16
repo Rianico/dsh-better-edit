@@ -1,5 +1,5 @@
 import { HASH_SEP } from "./hash.js";
-import { recordServed, servedPositionsOf } from "../served-state.js";
+import { recordServed, servedPositionsOf } from "../served-store.js";
 import { SERVED_ECHO_CAP } from "../constants.js";
 
 export type ServedCode =

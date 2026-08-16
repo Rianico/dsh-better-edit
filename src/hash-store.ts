@@ -496,16 +496,6 @@ export {
 	isValidSnapshot,
 } from "./snapshot-store.js";
 export type { LegacySnapshot } from "./snapshot-store.js";
-export {
-	getServed,
-	upsertServed,
-	recordServes,
-	getReported,
-	addReported,
-	clearReported,
-	deleteServed,
-	wipeServed,
-} from "./served-store.js";
 export type { ServedEntry } from "./served-store.js";
 export {
 	upsertUndo,

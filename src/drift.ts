@@ -10,7 +10,7 @@ import {
 	markDriftReported,
 	recordServed,
 	servedPositionsOf,
-} from "./served-state.js";
+} from "./served-store.js";
 
 export const DRIFT_NOTICE_HEADING = "Drift notice:";
 
