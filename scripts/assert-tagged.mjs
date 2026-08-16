@@ -17,28 +17,39 @@ const root = dirname(dirname(fileURLToPath(import.meta.url)));
 
 let version;
 try {
-  version = JSON.parse(readFileSync(join(root, "package.json"), "utf8")).version;
+	version = JSON.parse(
+		readFileSync(join(root, "package.json"), "utf8"),
+	).version;
 } catch (error) {
-  console.error("[assert-tagged] cannot read the version from package.json:", error.message.split("\n")[0]);
-  process.exit(1);
+	console.error(
+		"[assert-tagged] cannot read the version from package.json:",
+		error.message.split("\n")[0],
+	);
+	process.exit(1);
 }
 
 const tag = `v${version}`;
 let local;
 try {
-  local = execFileSync("git", ["tag", "-l", tag], { cwd: root, encoding: "utf8" }).trim();
+	local = execFileSync("git", ["tag", "-l", tag], {
+		cwd: root,
+		encoding: "utf8",
+	}).trim();
 } catch (error) {
-  console.error("[assert-tagged] git tag lookup failed:", error.message.split("\n")[0]);
-  process.exit(1);
+	console.error(
+		"[assert-tagged] git tag lookup failed:",
+		error.message.split("\n")[0],
+	);
+	process.exit(1);
 }
 
 if (local !== tag) {
-  console.error(
-    `[assert-tagged] ${tag} is not tagged — publish blocked.\n` +
-      `Release first: npm run release -- ${version}   (bumps, moves the CHANGELOG, commits, tags, pushes, creates the GitHub release)\n` +
-      `then run npm publish again.`,
-  );
-  process.exit(1);
+	console.error(
+		`[assert-tagged] ${tag} is not tagged — publish blocked.\n` +
+			`Release first: npm run release -- ${version}   (bumps, moves the CHANGELOG, commits, tags, pushes, creates the GitHub release)\n` +
+			`then run npm publish again.`,
+	);
+	process.exit(1);
 }
 
 console.log(`[assert-tagged] ${tag} tagged — publish allowed ✓`);

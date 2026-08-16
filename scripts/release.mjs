@@ -29,26 +29,35 @@ const dryRun = args.includes("--dry-run");
 const requested = args.find((a) => !a.startsWith("--"));
 
 function run(args, opts = {}) {
-  if (dryRun) {
-    console.log(`[dry-run] git ${args.join(" ")}`);
-    return "";
-  }
-  try {
-    return execFileSync("git", args, { cwd: root, encoding: "utf8", ...opts }).trim();
-  } catch (error) {
-    console.error(`git ${args.join(" ")} failed:`, error.message.split("\n")[0]);
-    process.exit(1);
-  }
+	if (dryRun) {
+		console.log(`[dry-run] git ${args.join(" ")}`);
+		return "";
+	}
+	try {
+		return execFileSync("git", args, {
+			cwd: root,
+			encoding: "utf8",
+			...opts,
+		}).trim();
+	} catch (error) {
+		console.error(
+			`git ${args.join(" ")} failed:`,
+			error.message.split("\n")[0],
+		);
+		process.exit(1);
+	}
 }
 
 function fail(message) {
-  console.error(`[release] ${message}`);
-  process.exit(1);
+	console.error(`[release] ${message}`);
+	process.exit(1);
 }
 
 // --- 1. validate -----------------------------------------------------------
 if (!/^\d+\.\d+\.\d+$/.test(requested ?? "")) {
-  fail('usage: npm run release -- <X.Y.Z> [--dry-run]   (e.g. npm run release -- 0.2.0)');
+	fail(
+		"usage: npm run release -- <X.Y.Z> [--dry-run]   (e.g. npm run release -- 0.2.0)",
+	);
 }
 let pkg;
 try {
@@ -59,21 +68,21 @@ try {
 const current = pkg.version;
 const next = requested;
 const cmp = (a, b) => {
-  const [am, an, ap] = a.split(".").map(Number);
-  const [bm, bn, bp] = b.split(".").map(Number);
-  return am - bm || an - bn || ap - bp;
+	const [am, an, ap] = a.split(".").map(Number);
+	const [bm, bn, bp] = b.split(".").map(Number);
+	return am - bm || an - bn || ap - bp;
 };
 if (cmp(next, current) <= 0) {
-  fail(`version ${next} is not newer than the current ${current}`);
+	fail(`version ${next} is not newer than the current ${current}`);
 }
 
 const dirty = run(["status", "--porcelain"]);
 if (dirty) {
-  fail(`working tree is not clean — commit or stash first:\n${dirty}`);
+	fail(`working tree is not clean — commit or stash first:\n${dirty}`);
 }
 const existingTag = run(["tag", "-l", `v${next}`]);
 if (existingTag === `v${next}`) {
-  fail(`tag v${next} already exists`);
+	fail(`tag v${next} already exists`);
 }
 
 // --- 2. bump version -------------------------------------------------------
@@ -85,8 +94,14 @@ try {
 	fail(`cannot read package-lock.json: ${error.message.split("\n")[0]}`);
 }
 if (!dryRun) {
-  writeFileSync(join(root, "package.json"), `${JSON.stringify({ ...pkg, version: next }, null, 2)}\n`);
-  writeFileSync(lockPath, `${JSON.stringify({ ...lock, version: next }, null, 2)}\n`);
+	writeFileSync(
+		join(root, "package.json"),
+		`${JSON.stringify({ ...pkg, version: next }, null, 2)}\n`,
+	);
+	writeFileSync(
+		lockPath,
+		`${JSON.stringify({ ...lock, version: next }, null, 2)}\n`,
+	);
 }
 console.log(`version ${current} → ${next}`);
 
@@ -110,6 +125,9 @@ run(["push", "origin", `v${next}`]);
 
 // --- 6. next step ----------------------------------------------------------
 console.log("");
-console.log(`released v${next}: commit pushed, GitHub release created from the changelog.`);
-console.log(`next: npm publish --registry https://registry.npmjs.org   (requires browser OTP; blocked until the tag exists)`);
-
+console.log(
+	`released v${next}: commit pushed, GitHub release created from the changelog.`,
+);
+console.log(
+	`next: npm publish --registry https://registry.npmjs.org   (requires browser OTP; blocked until the tag exists)`,
+);
