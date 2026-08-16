@@ -39,7 +39,7 @@ import {
 	type ServedRow,
 } from "./hashline/served.js";
 import { loadServed } from "./served-store.js";
-import { findSnapshotPathsByHashes } from "./snapshot-store.js";
+import { findSnapshotPathsByHashes } from "./hash-store.js";
 import { saveUndo } from "./undo-edit.js";
 import {
 	clearNoopLoop,

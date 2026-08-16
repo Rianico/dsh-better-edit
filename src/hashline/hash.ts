@@ -1,10 +1,5 @@
 import { splitLines } from "../utils.js";
-import {
-	loadHashStore,
-	type HashStore,
-	getSnapshot,
-	upsertSnapshot,
-} from "../hash-store.js";
+import { loadHashStore, type HashStore } from "../hash-store.js";
 import { contentChecksum, initHasher } from "./hasher.js";
 import { lineHashesPure, mapStableHashes } from "./pure.js";
 
@@ -38,7 +33,7 @@ export async function lineHashes(
     );
     if (persist !== false) {
       try {
-        upsertSnapshot(hashStore, path, contentChecksum(content), splitLines(content).length, newHashes);
+        hashStore.upsertSnapshot(path, contentChecksum(content), splitLines(content).length, newHashes);
       } catch (error) {
         console.error("Failed to persist hash snapshot:", error);
       }
@@ -48,7 +43,7 @@ export async function lineHashes(
 
   let cached: string[] | undefined;
   try {
-    cached = getSnapshot(hashStore, path, content, persist !== false);
+    cached = hashStore.getSnapshot(path, content, persist !== false);
   } catch (error) {
     console.error("Failed to read hash store snapshot:", error);
   }
@@ -59,7 +54,7 @@ export async function lineHashes(
   const newHashes = lineHashesPure(content);
   if (persist !== false) {
     try {
-      upsertSnapshot(hashStore, path, contentChecksum(content), splitLines(content).length, newHashes);
+      hashStore.upsertSnapshot(path, contentChecksum(content), splitLines(content).length, newHashes);
     } catch (error) {
       console.error("Failed to persist hash snapshot:", error);
     }

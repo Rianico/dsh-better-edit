@@ -2,7 +2,6 @@ import { describe, expect, it, vi } from "vitest";
 import { DatabaseSync } from "node:sqlite";
 import { saveUndo, getUndo, clearUndo } from "../../src/undo-edit.js";
 import { loadHashStore, shutdownHashStore } from "../../src/hash-store.js";
-import { upsertUndo, getUndoEntry, deleteUndo } from "../../src/undo-store.js";
 import * as hashStoreModule from "../../src/hash-store.js";
 import { hashStorePath } from "../../src/paths.js";
 import { useTestHome } from "../support/fixtures.js";
@@ -153,14 +152,14 @@ describe("undo-store", () => {
 describe("undo-store — raw entries", () => {
 	it("round-trips an undo entry", async () => {
 		const store = await loadHashStore();
-		upsertUndo(store, "/a.ts", {
+		store.upsertUndo("/a.ts", {
 			content: "old",
 			bom: "\uFEFF",
 			ending: "\r\n",
 			hashes: ["abc", "def"],
 			resultContent: "new",
 		});
-		const entry = getUndoEntry(store, "/a.ts");
+		const entry = store.getUndo("/a.ts");
 		expect(entry).toEqual({
 			content: "old",
 			bom: "\uFEFF",
@@ -172,26 +171,26 @@ describe("undo-store — raw entries", () => {
 
 	it("returns undefined for a path with no undo entry", async () => {
 		const store = await loadHashStore();
-		expect(getUndoEntry(store, "/missing.ts")).toBeUndefined();
+		expect(store.getUndo("/missing.ts")).toBeUndefined();
 	});
 
 	it("overwrites the previous entry for the same path", async () => {
 		const store = await loadHashStore();
-		upsertUndo(store, "/a.ts", {
+		store.upsertUndo("/a.ts", {
 			content: "first",
 			bom: "",
 			ending: "\n",
 			hashes: ["aB3"],
 			resultContent: "first!",
 		});
-		upsertUndo(store, "/a.ts", {
+		store.upsertUndo("/a.ts", {
 			content: "second",
 			bom: "",
 			ending: "\r",
 			hashes: ["bC4"],
 			resultContent: "second!",
 		});
-		const entry = getUndoEntry(store, "/a.ts");
+		const entry = store.getUndo("/a.ts");
 		expect(entry!.content).toBe("second");
 		expect(entry!.ending).toBe("\r");
 		expect(entry!.hashes).toEqual(["bC4"]);
@@ -199,20 +198,20 @@ describe("undo-store — raw entries", () => {
 
 	it("deletes an undo entry", async () => {
 		const store = await loadHashStore();
-		upsertUndo(store, "/a.ts", {
+		store.upsertUndo("/a.ts", {
 			content: "old",
 			bom: "",
 			ending: "\n",
 			hashes: ["xY7"],
 			resultContent: "new",
 		});
-		deleteUndo(store, "/a.ts");
-		expect(getUndoEntry(store, "/a.ts")).toBeUndefined();
+		store.deleteUndo("/a.ts");
+		expect(store.getUndo("/a.ts")).toBeUndefined();
 	});
 
 	it("treats a row with unparseable hashes as a miss", async () => {
 		const store = await loadHashStore();
-		upsertUndo(store, "/a.ts", {
+		store.upsertUndo("/a.ts", {
 			content: "old",
 			bom: "",
 			ending: "\n",
@@ -225,7 +224,7 @@ describe("undo-store — raw entries", () => {
 			"/a.ts",
 		);
 		db.close();
-		expect(getUndoEntry(store, "/a.ts")).toBeUndefined();
+		expect(store.getUndo("/a.ts")).toBeUndefined();
 		const check = new DatabaseSync(hashStorePath(), {
 			defensive: false,
 		} as any);
@@ -238,7 +237,7 @@ describe("undo-store — raw entries", () => {
 
 	it("treats a row with malformed hash strings as a miss", async () => {
 		const store = await loadHashStore();
-		upsertUndo(store, "/a.ts", {
+		store.upsertUndo("/a.ts", {
 			content: "old",
 			bom: "",
 			ending: "\n",
@@ -251,7 +250,7 @@ describe("undo-store — raw entries", () => {
 			"/a.ts",
 		);
 		db.close();
-		expect(getUndoEntry(store, "/a.ts")).toBeUndefined();
+		expect(store.getUndo("/a.ts")).toBeUndefined();
 		const check = new DatabaseSync(hashStorePath(), {
 			defensive: false,
 		} as any);

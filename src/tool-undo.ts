@@ -11,7 +11,7 @@ import { toLF, stripBOM, genDiff, restoreEndings } from "./edit-diff.js";
 import { cntDiff, splitLines } from "./utils.js";
 import { assertUndoRequest } from "./contract.js";
 import { normReq } from "./edit-normalize.js";
-import { upsertSnapshotFor } from "./snapshot-store.js";
+import { upsertSnapshotFor } from "./hash-store.js";
 import { contentChecksum } from "./hashline/hasher.js";
 import { lineHashes, changedRange } from "./hashline/index.js";
 import { getUndo, clearUndo } from "./undo-edit.js";

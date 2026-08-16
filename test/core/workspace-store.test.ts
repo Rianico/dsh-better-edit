@@ -14,7 +14,6 @@ import { withWorkspace, workspaceCwd } from "../../src/workspace.js";
 import { hashStorePath } from "../../src/paths.js";
 import { loadHashStore, shutdownHashStore } from "../../src/hash-store.js";
 import { recordServed, loadServed } from "../../src/served-store.js";
-import { getSnapshot } from "../../src/snapshot-store.js";
 import { lineHashes } from "../../src/hashline/index.js";
 import { initHasher } from "../../src/hashline/hasher.js";
 
@@ -74,7 +73,7 @@ describe("workspace isolation", () => {
 			await withWorkspace(b, async () => {
 				const store = await loadHashStore();
 				expect(
-					getSnapshot(store, join(a, "f.txt"), content, false),
+					store.getSnapshot(join(a, "f.txt"), content, false),
 				).toBeUndefined();
 			});
 
@@ -82,7 +81,7 @@ describe("workspace isolation", () => {
 			await withWorkspace(a, async () => {
 				const store = await loadHashStore();
 				expect(
-					getSnapshot(store, join(a, "f.txt"), content, false),
+					store.getSnapshot(join(a, "f.txt"), content, false),
 				).toBeDefined();
 			});
 		} finally {

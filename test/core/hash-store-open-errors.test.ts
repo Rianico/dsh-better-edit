@@ -123,25 +123,25 @@ describe("hash store open error handling", () => {
   });
 
   it("retries a transient busy error on statement execution", async () => {
-    const { loadHashStore, shutdownHashStore, upsertSnapshot } = await import("../../src/hash-store");
+    const { loadHashStore, shutdownHashStore } = await import("../../src/hash-store");
     shutdownHashStore();
     const store = await loadHashStore();
     state.busyOnce = busyError("database is locked");
     expect(() => {
-      upsertSnapshot(store, "/p.ts", "checksum", 1, ["AAA"]);
+      store.upsertSnapshot("/p.ts", "checksum", 1, ["AAA"]);
     }).not.toThrow();
     expect(state.runCalls).toBeGreaterThan(1);
   });
 
   it("propagates a persistent busy error after exhausting retries", async () => {
-    const { loadHashStore, shutdownHashStore, upsertSnapshot } = await import("../../src/hash-store");
+    const { loadHashStore, shutdownHashStore } = await import("../../src/hash-store");
     shutdownHashStore();
     const store = await loadHashStore();
     state.busyOnce = busyError("database is locked");
     state.persistentBusy = true;
     const callsBefore = state.runCalls;
     expect(() => {
-      upsertSnapshot(store, "/p.ts", "checksum", 1, ["AAA"]);
+      store.upsertSnapshot("/p.ts", "checksum", 1, ["AAA"]);
     }).toThrow(/locked/);
     expect(state.runCalls - callsBefore).toBe(4);
   });

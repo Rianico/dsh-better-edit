@@ -9,8 +9,25 @@
  */
 
 import type { LineEnding } from './edit-diff.js'
-import { readUndo, writeUndo, removeUndo, type UndoRecord } from './undo-store.js'
+import { loadHashStore, type UndoRecord } from './hash-store.js'
 
+/** Load the last undo row for a path from the active store, if any. */
+async function readUndo(path: string): Promise<UndoRecord | undefined> {
+	const store = await loadHashStore()
+	return store.getUndo(path)
+}
+
+/** Persist the undo row for a path to the active store. */
+async function writeUndo(path: string, entry: UndoRecord): Promise<void> {
+	const store = await loadHashStore()
+	store.upsertUndo(path, entry)
+}
+
+/** Drop the undo row for a path from the active store. */
+async function removeUndo(path: string): Promise<void> {
+	const store = await loadHashStore()
+	store.deleteUndo(path)
+}
 export interface UndoEntry {
 	content: string
 	bom: string

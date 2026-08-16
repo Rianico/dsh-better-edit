@@ -15,12 +15,6 @@ import {
 	wipeServedState,
 	servedPositionsOf,
 } from "../../src/served-store.js";
-import {
-	pruneMissing,
-	upsertSnapshot,
-	getSnapshot,
-} from "../../src/snapshot-store.js";
-import { upsertUndo, getUndoEntry } from "../../src/undo-store.js";
 import { HASH_STORE_VERSION, SERVED_TTL_MS } from "../../src/constants.js";
 import { initHasher, contentChecksum } from "../../src/hashline/hasher.js";
 import { getWritableTempRoot } from "../support/fixtures.js";
@@ -244,8 +238,8 @@ describe("served state — session wipe keeps snapshots and undo", () => {
 			const store = await loadHashStore();
 			await recordServed("sessionA", "/a.ts", [{ position: 0, hash: "abc" }]);
 			await recordServed("sessionA", "/b.ts", [{ position: 1, hash: "def" }]);
-			upsertSnapshot(store, "/a.ts", contentChecksum("a\n"), 1, ["abc"]);
-			upsertUndo(store, "/u.ts", {
+			store.upsertSnapshot("/a.ts", contentChecksum("a\n"), 1, ["abc"]);
+			store.upsertUndo("/u.ts", {
 				content: "old",
 				bom: "",
 				ending: "\n",
@@ -257,8 +251,8 @@ describe("served state — session wipe keeps snapshots and undo", () => {
 
 			expect(await loadServed("sessionA", "/a.ts")).toEqual([]);
 			expect(await loadServed("sessionA", "/b.ts")).toEqual([]);
-			expect(getSnapshot(store, "/a.ts", "a\n")).toEqual(["abc"]);
-			expect(getUndoEntry(store, "/u.ts")).toBeDefined();
+			expect(store.getSnapshot("/a.ts", "a\n")).toEqual(["abc"]);
+			expect(store.getUndo("/u.ts")).toBeDefined();
 		});
 	});
 });
@@ -340,8 +334,8 @@ describe("served state — schema versioning", () => {
 		await withTempHome(async (home) => {
 			const store = await loadHashStore();
 			await recordServed("sessionA", "/p.ts", [{ position: 0, hash: "XYZ" }]);
-			upsertSnapshot(store, "/p.ts", contentChecksum("x\n"), 1, ["XYZ"]);
-			upsertUndo(store, "/u.ts", {
+			store.upsertSnapshot("/p.ts", contentChecksum("x\n"), 1, ["XYZ"]);
+			store.upsertUndo("/u.ts", {
 				content: "old",
 				bom: "",
 				ending: "\n",
@@ -357,8 +351,8 @@ describe("served state — schema versioning", () => {
 			db.close();
 
 			expect(await loadServed("sessionA", "/p.ts")).toEqual([]);
-			expect(getSnapshot(await loadHashStore(), "/p.ts", "x\n")).toBeUndefined();
-			expect(getUndoEntry(await loadHashStore(), "/u.ts")).toBeUndefined();
+			expect((await loadHashStore()).getSnapshot("/p.ts", "x\n")).toBeUndefined();
+			expect((await loadHashStore()).getUndo("/u.ts")).toBeUndefined();
 
 			const check = new DatabaseSync(sqlitePath(home), {
 				defensive: false,
@@ -394,7 +388,7 @@ describe("served state — pruneMissing", () => {
 		await withTempHome(async () => {
 			const store = await loadHashStore();
 			await recordServed("sessionA", "/gone.ts", [{ position: 0, hash: "ZZZ" }]);
-			await pruneMissing(store);
+			await store.pruneMissing();
 			expect(await loadServed("sessionA", "/gone.ts")).toEqual([]);
 		});
 	});
@@ -405,7 +399,7 @@ describe("served state — pruneMissing", () => {
 			await writeFile(existing, "keep\n", "utf-8");
 			const store = await loadHashStore();
 			await recordServed("sessionA", existing, [{ position: 0, hash: "KEP" }]);
-			await pruneMissing(store);
+			await store.pruneMissing();
 			expect(await loadServed("sessionA", existing)).toEqual(["KEP"]);
 		});
 	});
@@ -414,7 +408,7 @@ describe("served state — pruneMissing", () => {
 		await withTempHome(async () => {
 			const store = await loadHashStore();
 			await recordServed("sessionA", "/orphan.ts", [{ position: 0, hash: "ORG" }]);
-			await pruneMissing(store);
+			await store.pruneMissing();
 			expect(await loadServed("sessionA", "/orphan.ts")).toEqual([]);
 		});
 	});
@@ -426,30 +420,30 @@ describe("served state — pruneMissing", () => {
 			const store = await loadHashStore();
 			await recordServed("sessionA", existing, [{ position: 0, hash: "KEP" }]);
 			await recordServed("sessionA", "/gone.ts", [{ position: 0, hash: "GON" }]);
-			upsertSnapshot(store, existing, contentChecksum("keep\n"), 1, ["KEP"]);
-			upsertSnapshot(store, "/gone.ts", contentChecksum("gone\n"), 1, ["GON"]);
-			upsertUndo(store, existing, {
+			store.upsertSnapshot(existing, contentChecksum("keep\n"), 1, ["KEP"]);
+			store.upsertSnapshot("/gone.ts", contentChecksum("gone\n"), 1, ["GON"]);
+			store.upsertUndo(existing, {
 				content: "old",
 				bom: "",
 				ending: "\n",
 				hashes: ["KEP"],
 				resultContent: "new",
 			});
-			upsertUndo(store, "/gone.ts", {
+			store.upsertUndo("/gone.ts", {
 				content: "old",
 				bom: "",
 				ending: "\n",
 				hashes: ["GON"],
 				resultContent: "new",
 			});
-			await pruneMissing(store);
+			await store.pruneMissing();
 
 			expect(await loadServed("sessionA", existing)).toEqual(["KEP"]);
 			expect(await loadServed("sessionA", "/gone.ts")).toEqual([]);
-			expect(getSnapshot(store, existing, "keep\n")).toEqual(["KEP"]);
-			expect(getSnapshot(store, "/gone.ts", "gone\n")).toBeUndefined();
-			expect(getUndoEntry(store, existing)).toBeDefined();
-			expect(getUndoEntry(store, "/gone.ts")).toBeUndefined();
+			expect(store.getSnapshot(existing, "keep\n")).toEqual(["KEP"]);
+			expect(store.getSnapshot("/gone.ts", "gone\n")).toBeUndefined();
+			expect(store.getUndo(existing)).toBeDefined();
+			expect(store.getUndo("/gone.ts")).toBeUndefined();
 		});
 	});
 });
@@ -515,7 +509,7 @@ describe("served state — reported drift set", () => {
 		await withTempHome(async () => {
 			const store = await loadHashStore();
 			await markDriftReported("sessionA", "/gone.ts", ["abc"]);
-			await pruneMissing(store);
+			await store.pruneMissing();
 			expect(await driftReported("sessionA", "/gone.ts")).toEqual(new Set());
 		});
 	});

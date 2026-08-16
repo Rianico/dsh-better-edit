@@ -1,12 +1,12 @@
 /**
  * Served state — what the model has been shown, per session and path.
  *
- * This is the ONE module that owns the served-state concept: persistence
- * (over the hash store), the served-row merge invariant, the reported-drift
- * set, and the position-reconstruction math used by drift notices. The
- * reject-and-serve errors and range verification live with the hashline
- * module (`hashline/served.ts`); drift computation lives in `drift.ts`. Both
- * import from here.
+ * This is the ONE module that owns the served-state concept: the served-row
+ * merge invariant, the reported-drift set, and the position-reconstruction
+ * math used by drift notices. Persistence goes through the hash store's
+ * served domain API (`hash-store.ts`); the reject-and-serve errors and range
+ * verification live with the hashline module (`hashline/served.ts`); drift
+ * computation lives in `drift.ts`. Both import from here.
  *
  * The API is async-only: every operation loads the per-workspace hash store
  * and resolves it through the active workspace context. There is deliberately
@@ -17,7 +17,7 @@
 
 import { randomUUID } from "node:crypto";
 import { HASH_RE } from "./hashline/alphabet.js";
-import { loadHashStore, withStore, type HashStore } from "./hash-store.js";
+import { loadHashStore, withStore } from "./hash-store.js";
 
 export type ServedEntry = { position: number; hash: string | null };
 
@@ -32,67 +32,6 @@ export function sessionKeyFor(sessionId?: string): string {
 	if (sessionId && sessionId.length > 0) return sessionId;
 	fallbackSessionKey ??= randomUUID();
 	return fallbackSessionKey;
-}
-
-function isValidServedList(value: unknown): value is (string | null)[] {
-	if (!Array.isArray(value)) return false;
-	for (const entry of value) {
-		if (entry === null) continue;
-		if (typeof entry !== "string" || !HASH_RE.test(entry)) return false;
-	}
-	return true;
-}
-
-/** Read the stored served array for one session+path, healing corrupt rows. */
-function readServed(
-	store: HashStore,
-	sessionKey: string,
-	path: string,
-): (string | null)[] {
-	const row = store.stmts.servedGet(sessionKey, path);
-	if (!row) return [];
-	try {
-		const parsed = JSON.parse(row.hashes as string);
-		if (isValidServedList(parsed)) return parsed;
-		store.stmts.servedDelete(sessionKey, path);
-		return [];
-	} catch {
-		store.stmts.servedDelete(sessionKey, path);
-		return [];
-	}
-}
-
-/** Persist a served array for one session+path. */
-function writeServed(
-	store: HashStore,
-	sessionKey: string,
-	path: string,
-	list: (string | null)[],
-): void {
-	store.stmts.servedUpsert(sessionKey, path, JSON.stringify(list), Date.now());
-}
-
-/** Read the reported-drift hash set for one session+path (healing bad rows). */
-function readReported(
-	store: HashStore,
-	sessionKey: string,
-	path: string,
-): Set<string> {
-	const row = store.stmts.servedGet(sessionKey, path);
-	if (!row) return new Set();
-	const raw = row.reported;
-	if (typeof raw !== "string" || raw.length === 0) return new Set();
-	try {
-		const parsed = JSON.parse(raw) as unknown;
-		if (!Array.isArray(parsed)) return new Set();
-		return new Set(
-			parsed.filter(
-				(h): h is string => typeof h === "string" && HASH_RE.test(h),
-			),
-		);
-	} catch {
-		return new Set();
-	}
 }
 
 /**
@@ -155,7 +94,7 @@ export async function loadServed(
 	path: string,
 ): Promise<(string | null)[]> {
 	const store = await loadHashStore();
-	return readServed(store, sessionKey, path);
+	return store.getServed(sessionKey, path);
 }
 
 /**
@@ -175,13 +114,13 @@ export async function recordServed(
 	try {
 		const store = await loadHashStore();
 		withStore(() => {
-			const current = readServed(store, sessionKey, path);
+			const current = store.getServed(sessionKey, path);
 			const updated = _mergeServedRows(
 				current,
 				rows,
 				lineCount === undefined ? undefined : { truncateTo: lineCount },
 			);
-			writeServed(store, sessionKey, path, updated);
+			store.upsertServed(sessionKey, path, JSON.stringify(updated));
 		});
 	} catch (error) {
 		console.error("Failed to record served rows:", error);
@@ -205,12 +144,12 @@ export async function recordServedTruncated(
 	try {
 		const store = await loadHashStore();
 		withStore(() => {
-			const current = readServed(store, sessionKey, path);
+			const current = store.getServed(sessionKey, path);
 			const updated = _mergeServedRows(current, rows, {
 				truncateTo: lineCount,
 				clearFrom,
 			});
-			writeServed(store, sessionKey, path, updated);
+			store.upsertServed(sessionKey, path, JSON.stringify(updated));
 		});
 	} catch (error) {
 		console.error("Failed to record truncated served rows:", error);
@@ -224,7 +163,7 @@ export async function driftReported(
 ): Promise<Set<string>> {
 	try {
 		const store = await loadHashStore();
-		return readReported(store, sessionKey, path);
+		return store.getServedReported(sessionKey, path);
 	} catch (error) {
 		console.error("Failed to load reported drift set:", error);
 		return new Set();
@@ -242,13 +181,12 @@ export async function markDriftReported(
 		if (valid.length === 0) return;
 		const store = await loadHashStore();
 		withStore(() => {
-			const current = readReported(store, sessionKey, path);
+			const current = store.getServedReported(sessionKey, path);
 			for (const hash of valid) current.add(hash);
-			store.stmts.servedReportedUpsert(
+			store.upsertServedReported(
 				sessionKey,
 				path,
 				JSON.stringify([...current]),
-				Date.now(),
 			);
 		});
 	} catch (error) {
@@ -264,7 +202,7 @@ export async function clearDriftReported(
 	try {
 		const store = await loadHashStore();
 		withStore(() => {
-			store.stmts.servedReportedClear(sessionKey, Date.now(), path);
+			store.clearServedReported(sessionKey, path);
 		});
 	} catch (error) {
 		console.error("Failed to clear reported drift set:", error);
@@ -275,7 +213,7 @@ export async function clearDriftReported(
 export async function wipeServedState(sessionKey: string): Promise<void> {
 	try {
 		const store = await loadHashStore();
-		store.stmts.servedWipe(sessionKey);
+		store.wipeServed(sessionKey);
 	} catch (error) {
 		console.error("Failed to wipe served state:", error);
 	}

@@ -1,13 +1,73 @@
+/**
+ * The hash store — ONE deep persistence module for the hashline domain.
+ *
+ * Owns the sqlite db, the schema and migrations, corruption quarantine,
+ * busy-retry, WAL, the legacy-JSON migration, AND the three narrow row APIs
+ * the rest of the plugin needs: hash snapshots, undo entries, and served
+ * rows. The prepared statements are a private implementation detail — callers
+ * use domain methods, never SQL.
+ *
+ * Corrupt-row handling (parse the JSON column → validate against the hash
+ * alphabet → delete the corrupt row) lives here, once, for every row family.
+ * Cross-table cleanup (pruneMissing) lives here too — a sibling module never
+ * reaches into another family's rows.
+ * @module dsh-better-edit/hash-store
+ */
+
 import { existsSync } from "node:fs";
-import { readFile, rename, mkdir } from "node:fs/promises";
+import { readFile, rename, mkdir, stat } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { hashStorePath } from "./paths.js";
 import { workspaceCwd } from "./workspace.js";
 import { errCode, splitLines } from "./utils.js";
 import { initHasher, contentChecksum } from "./hashline/hasher.js";
+import { HASH_RE } from "./hashline/alphabet.js";
 import { HASH_STORE_VERSION, HASH_STORE_BUSY_TIMEOUT, SERVED_TTL_MS } from "./constants.js";
-import { isValidSnapshot } from "./snapshot-store.js";
+
+// ---- validators (owned here; the store's corruption handling uses them) ----
+
+/** The legacy JSON snapshot shape (pre-sqlite stores). */
+export interface LegacySnapshot {
+	content: string;
+	hashes: string[];
+}
+
+export function isValidHashList(value: unknown): value is string[] {
+	if (!Array.isArray(value)) return false;
+	for (const hash of value) {
+		if (typeof hash !== "string" || !HASH_RE.test(hash)) return false;
+	}
+	return true;
+}
+
+export function isValidSnapshot(value: unknown): value is LegacySnapshot {
+	if (typeof value !== "object" || value === null) return false;
+	const v = value as Record<string, unknown>;
+	if (typeof v.content !== "string") return false;
+	return isValidHashList(v.hashes);
+}
+
+/** A served-row array: per-position hash, or null for never-served slots. */
+export function isValidServedList(value: unknown): value is (string | null)[] {
+	if (!Array.isArray(value)) return false;
+	for (const entry of value) {
+		if (entry === null) continue;
+		if (typeof entry !== "string" || !HASH_RE.test(entry)) return false;
+	}
+	return true;
+}
+
+/** The undo row contract shared by undo-edit and the store. */
+export interface UndoRecord {
+	content: string;
+	bom: string;
+	ending: string;
+	hashes: string[];
+	resultContent: string;
+}
+
+// ---- the domain interface --------------------------------------------------
 
 type SqlParams = (string | number)[];
 
@@ -30,10 +90,61 @@ interface Prepared {
 	servedPruneOlderThan: (...params: SqlParams) => void;
 }
 
+/**
+ * The domain face of the hash store. Each row family gets a narrow API;
+ * corruption healing (parse → validate → delete) happens inside the getters.
+ */
 export interface HashStore {
-	readonly stmts: Prepared;
 	readonly engine: "node:sqlite";
+
+	// ---- hash snapshots (stable anchors keyed by path+checksum+line count) ----
+	/** The stored hashes for a path+content, or undefined on a miss; a corrupt row is deleted (when deleteCorrupt) and treated as a miss. */
+	getSnapshot(
+		path: string,
+		content: string,
+		deleteCorrupt?: boolean,
+	): string[] | undefined;
+	upsertSnapshot(
+		path: string,
+		checksum: string,
+		lineCount: number,
+		hashes: string[],
+	): void;
+	/** Every path referenced by any row family (snapshots ∪ undo ∪ served). */
+	allKnownPaths(): { path: string }[];
+	/** Every snapshot's path and raw hashes JSON (for path-by-hash scans). */
+	allSnapshotHashes(): { path: string; hashes: string }[];
+	deleteSnapshot(path: string): void;
+	/** Paths whose stored snapshot hashes contain every given anchor. */
+	findSnapshotPaths(hashes: string[]): string[];
+
+	// ---- undo entries (one per path) ----------------------------------------
+	/** The undo row for a path, healing a corrupt row (parse → validate → delete). */
+	getUndo(path: string): UndoRecord | undefined;
+	upsertUndo(path: string, entry: UndoRecord): void;
+	deleteUndo(path: string): void;
+
+	// ---- served rows (what the model has seen, per session+path) ------------
+	/** The served hashes array for a session+path, healing a corrupt row; [] when nothing was served. */
+	getServed(sessionKey: string, path: string): (string | null)[];
+	/** The reported-drift hash set for a session+path (lenient parse, never deletes). */
+	getServedReported(sessionKey: string, path: string): Set<string>;
+	/** Persist the hashes JSON column for a session+path. */
+	upsertServed(sessionKey: string, path: string, hashesJson: string): void;
+	/** Persist the reported-drift JSON column for a session+path (inserting a fresh empty hashes row). */
+	upsertServedReported(sessionKey: string, path: string, reportedJson: string): void;
+	clearServedReported(sessionKey: string, path: string): void;
+	deleteServed(sessionKey: string, path: string): void;
+	deleteServedByPath(path: string): void;
+	wipeServed(sessionKey: string): void;
+	pruneServedOlderThan(ts: number): void;
+
+	// ---- maintenance ---------------------------------------------------------
+	/** Delete every row family's entries for paths that no longer exist on disk. */
+	pruneMissing(): Promise<void>;
 }
+
+// ---- db plumbing (private) --------------------------------------------------
 
 export function isCorruptionError(error: unknown): boolean {
 	if (error && typeof error === "object") {
@@ -88,9 +199,13 @@ function openDbWithBusyRetry(storePath: string): {
 }
 
 /** One open store per store path (per workspace); parallel sessions share per-workspace dbs. */
-const stores = new Map<string, { path: string; db: DatabaseSync; stmts: Prepared }>();
+const stores = new Map<
+	string,
+	{ path: string; db: DatabaseSync; stmts: Prepared; store: HashStore }
+>();
 const openings = new Map<string, Promise<HashStore>>();
 let exitHandlerRegistered = false;
+
 function openDb(storePath: string): { db: DatabaseSync; stmts: Prepared } {
 	const db = new DatabaseSync(storePath, {
 		timeout: HASH_STORE_BUSY_TIMEOUT,
@@ -100,7 +215,9 @@ function openDb(storePath: string): { db: DatabaseSync; stmts: Prepared } {
 	} catch (error) {
 		try {
 			db.close();
-		} catch {}
+		} catch {
+			// best-effort close when the store build fails
+		}
 		throw error;
 	}
 }
@@ -279,6 +396,162 @@ function buildStore(db: DatabaseSync): { db: DatabaseSync; stmts: Prepared } {
 	return { db, stmts };
 }
 
+/** Wire the domain methods over the prepared statements. */
+function makeDomainStore(stmts: Prepared): HashStore {
+	return {
+		engine: "node:sqlite",
+
+		getSnapshot(path, content, deleteCorrupt = true) {
+			const checksum = contentChecksum(content);
+			const lineCount = splitLines(content).length;
+			const row = stmts.get(path, checksum, lineCount);
+			if (!row) return undefined;
+			try {
+				const parsed = JSON.parse(row.hashes as string);
+				if (isValidHashList(parsed)) return parsed;
+				if (deleteCorrupt) stmts.deleteOne(path);
+				return undefined;
+			} catch {
+				if (deleteCorrupt) stmts.deleteOne(path);
+				return undefined;
+			}
+		},
+		upsertSnapshot(path, checksum, lineCount, hashes) {
+			stmts.upsert(
+				path,
+				checksum,
+				lineCount,
+				JSON.stringify(hashes),
+				Date.now(),
+			);
+		},
+		allKnownPaths() {
+			return stmts.allPaths() as { path: string }[];
+		},
+		allSnapshotHashes() {
+			return stmts.allHashes() as { path: string; hashes: string }[];
+		},
+		deleteSnapshot(path) {
+			stmts.deleteOne(path);
+		},
+		findSnapshotPaths(hashes) {
+			const rows = stmts.allHashes() as { path: string; hashes: string }[];
+			const matches: string[] = [];
+			for (const row of rows) {
+				try {
+					const parsed = JSON.parse(row.hashes) as unknown;
+					if (!isValidHashList(parsed)) continue;
+					if (hashes.every((h) => parsed.includes(h))) matches.push(row.path);
+				} catch {
+					// unparseable row → skip it
+				}
+			}
+			return matches;
+		},
+
+		getUndo(path) {
+			const row = stmts.undoGet(path);
+			if (!row) return undefined;
+			try {
+				const parsed = JSON.parse(row.hashes as string);
+				if (!isValidHashList(parsed)) {
+					stmts.undoDelete(path);
+					return undefined;
+				}
+				return {
+					content: row.content as string,
+					bom: row.bom as string,
+					ending: row.ending as string,
+					hashes: parsed as string[],
+					resultContent: row.result_content as string,
+				};
+			} catch {
+				stmts.undoDelete(path);
+				return undefined;
+			}
+		},
+		upsertUndo(path, entry) {
+			stmts.undoUpsert(
+				path,
+				entry.content,
+				entry.bom,
+				entry.ending,
+				JSON.stringify(entry.hashes),
+				entry.resultContent,
+				Date.now(),
+			);
+		},
+		deleteUndo(path) {
+			stmts.undoDelete(path);
+		},
+
+		getServed(sessionKey, path) {
+			const row = stmts.servedGet(sessionKey, path);
+			if (!row) return [];
+			try {
+				const parsed = JSON.parse(row.hashes as string);
+				if (isValidServedList(parsed)) return parsed;
+				stmts.servedDelete(sessionKey, path);
+				return [];
+			} catch {
+				stmts.servedDelete(sessionKey, path);
+				return [];
+			}
+		},
+		getServedReported(sessionKey, path) {
+			const row = stmts.servedGet(sessionKey, path);
+			if (!row) return new Set();
+			const raw = row.reported;
+			if (typeof raw !== "string" || raw.length === 0) return new Set();
+			try {
+				const parsed = JSON.parse(raw) as unknown;
+				if (!Array.isArray(parsed)) return new Set();
+				return new Set(
+					parsed.filter(
+						(h): h is string => typeof h === "string" && HASH_RE.test(h),
+					),
+				);
+			} catch {
+				return new Set();
+			}
+		},
+		upsertServed(sessionKey, path, hashesJson) {
+			stmts.servedUpsert(sessionKey, path, hashesJson, Date.now());
+		},
+		upsertServedReported(sessionKey, path, reportedJson) {
+			stmts.servedReportedUpsert(sessionKey, path, reportedJson, Date.now());
+		},
+		clearServedReported(sessionKey, path) {
+			stmts.servedReportedClear(sessionKey, Date.now(), path);
+		},
+		deleteServed(sessionKey, path) {
+			stmts.servedDelete(sessionKey, path);
+		},
+		deleteServedByPath(path) {
+			stmts.servedDeletePath(path);
+		},
+		wipeServed(sessionKey) {
+			stmts.servedWipe(sessionKey);
+		},
+		pruneServedOlderThan(ts) {
+			stmts.servedPruneOlderThan(ts);
+		},
+
+		async pruneMissing() {
+			const rows = stmts.allPaths() as { path: string }[];
+			const missing = await statMissing(rows);
+			if (missing.length === 0) return;
+			withStore(() => {
+				for (const path of missing) {
+					stmts.deleteOne(path);
+					stmts.undoDelete(path);
+					stmts.servedDeletePath(path);
+				}
+			});
+		},
+	};
+}
+
 function isHealthy(db: DatabaseSync): boolean {
 	try {
 		const row = db.prepare("PRAGMA quick_check").get() as
@@ -307,8 +580,33 @@ async function quarantineStore(storePath: string): Promise<void> {
 function shutdownDb(db: DatabaseSync): void {
 	try {
 		db.exec("PRAGMA wal_checkpoint(TRUNCATE)");
-	} catch {}
+	} catch {
+		// best-effort checkpoint before close
+	}
 	db.close();
+}
+
+const STAT_BATCH = 64;
+
+async function statMissing(rows: { path: string }[]): Promise<string[]> {
+	const missing: string[] = [];
+	for (let i = 0; i < rows.length; i += STAT_BATCH) {
+		const batch = rows.slice(i, i + STAT_BATCH);
+		const results = await Promise.all(
+			batch.map(async (row) => {
+				try {
+					await stat(row.path);
+					return undefined;
+				} catch {
+					return row.path;
+				}
+			}),
+		);
+		for (const path of results) {
+			if (path !== undefined) missing.push(path);
+		}
+	}
+	return missing;
 }
 
 async function openStore(storePath: string): Promise<HashStore> {
@@ -342,7 +640,8 @@ async function openStore(storePath: string): Promise<HashStore> {
 	withBusyRetry(() => {
 		stmts.servedPruneOlderThan(Date.now() - SERVED_TTL_MS);
 	});
-	stores.set(storePath, { path: storePath, db, stmts });
+	const store = makeDomainStore(stmts);
+	stores.set(storePath, { path: storePath, db, stmts, store });
 
 	if (!exitHandlerRegistered) {
 		exitHandlerRegistered = true;
@@ -355,7 +654,7 @@ async function openStore(storePath: string): Promise<HashStore> {
 		}
 	}
 
-	return { stmts, engine: "node:sqlite" };
+	return store;
 }
 
 /** Resolve the store path for this call: explicit cwd, the active workspace, or the shared-home fallback. */
@@ -373,7 +672,7 @@ export function loadHashStore(cwd?: string): Promise<HashStore> {
 	const storePath = storePathFor(cwd);
 	const cached = stores.get(storePath);
 	if (cached && cached.db.isOpen) {
-		return Promise.resolve({ stmts: cached.stmts, engine: "node:sqlite" });
+		return Promise.resolve(cached.store);
 	}
 	const existing = openings.get(storePath);
 	if (existing) return existing;
@@ -384,9 +683,12 @@ export function loadHashStore(cwd?: string): Promise<HashStore> {
 	return promise;
 }
 
-/** The cached store for the active workspace (or the shared-home fallback), if open. */
-function currentStore(): { db: DatabaseSync; stmts: Prepared } | undefined {
-	return stores.get(storePathFor())?.db.isOpen ? stores.get(storePathFor()) : undefined;
+/** The cached store entry for the active workspace (or the shared-home fallback), if open. */
+function currentStore():
+	| { db: DatabaseSync; stmts: Prepared; store: HashStore }
+	| undefined {
+	const entry = stores.get(storePathFor());
+	return entry?.db.isOpen ? entry : undefined;
 }
 
 /** Close every open store (process exit, HMR, tests). */
@@ -414,7 +716,9 @@ export function withStore(fn: () => void): void {
 			} catch (e) {
 				try {
 					store.db.exec("ROLLBACK");
-				} catch {}
+			} catch {
+				// best-effort rollback; the original error propagates
+			}
 				throw e;
 			}
 		});
@@ -422,7 +726,6 @@ export function withStore(fn: () => void): void {
 		fn();
 	}
 }
-
 
 async function migrateLegacy(db: DatabaseSync, storePath: string): Promise<void> {
 	const legacyPath = join(dirname(storePath), "hash-store.json");
@@ -487,19 +790,24 @@ async function migrateLegacy(db: DatabaseSync, storePath: string): Promise<void>
 	}
 }
 
-export {
-	getSnapshot,
-	upsertSnapshot,
-	findSnapshotPaths,
-	pruneMissing,
-	isValidHashList,
-	isValidSnapshot,
-} from "./snapshot-store.js";
-export type { LegacySnapshot } from "./snapshot-store.js";
-export type { ServedEntry } from "./served-store.js";
-export {
-	upsertUndo,
-	getUndoEntry,
-	deleteUndo,
-} from "./undo-store.js";
-export type { UndoRecord } from "./undo-store.js";
+// ---- async convenience helpers (load the active store, then delegate) ------
+
+/** Find files whose stored snapshot hashes contain every given anchor. */
+export async function findSnapshotPathsByHashes(
+	hashes: string[],
+): Promise<string[]> {
+	const store = await loadHashStore();
+	return store.findSnapshotPaths(hashes);
+}
+
+/** Persist a hash snapshot for one path (async over the active store). */
+export async function upsertSnapshotFor(
+	path: string,
+	checksum: string,
+	lineCount: number,
+	hashes: string[],
+): Promise<void> {
+	const store = await loadHashStore();
+	store.upsertSnapshot(path, checksum, lineCount, hashes);
+}
+

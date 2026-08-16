@@ -8,12 +8,6 @@ import {
 	shutdownHashStore,
 	type HashStore,
 } from "../../src/hash-store.js";
-import {
-	getSnapshot,
-	upsertSnapshot,
-	pruneMissing,
-} from "../../src/snapshot-store.js";
-import { upsertUndo, getUndoEntry } from "../../src/undo-store.js";
 import { initHasher, contentChecksum } from "../../src/hashline/hasher.js";
 import { splitLines } from "../../src/utils.js";
 import { getWritableTempRoot } from "../support/fixtures.js";
@@ -54,8 +48,7 @@ async function put(
 	content: string,
 	hashes: string[],
 ): Promise<void> {
-	upsertSnapshot(
-		store,
+	store.upsertSnapshot(
 		path,
 		contentChecksum(content),
 		splitLines(content).length,
@@ -71,7 +64,7 @@ describe("snapshot-store — snapshot get / upsert / delete", () => {
 			const hashes = ["aB3", "xY7"];
 			await put(store, "/path/to/file.ts", content, hashes);
 
-			expect(getSnapshot(store, "/path/to/file.ts", content)).toEqual(hashes);
+			expect(store.getSnapshot("/path/to/file.ts", content)).toEqual(hashes);
 		});
 	});
 
@@ -80,8 +73,8 @@ describe("snapshot-store — snapshot get / upsert / delete", () => {
 			const store = await loadHashStore();
 			await put(store, "/p.ts", "aaa\nbbb\n", ["aB3", "xY7"]);
 
-			expect(getSnapshot(store, "/p.ts", "aaa\nbbb\n")).toEqual(["aB3", "xY7"]);
-			expect(getSnapshot(store, "/p.ts", "aaa\nBBB\n")).toBeUndefined();
+			expect(store.getSnapshot("/p.ts", "aaa\nbbb\n")).toEqual(["aB3", "xY7"]);
+			expect(store.getSnapshot("/p.ts", "aaa\nBBB\n")).toBeUndefined();
 		});
 	});
 
@@ -91,8 +84,8 @@ describe("snapshot-store — snapshot get / upsert / delete", () => {
 			await put(store, "/p.ts", "old\n", ["OPQ"]);
 			await put(store, "/p.ts", "new\n", ["NOP"]);
 
-			expect(getSnapshot(store, "/p.ts", "old\n")).toBeUndefined();
-			expect(getSnapshot(store, "/p.ts", "new\n")).toEqual(["NOP"]);
+			expect(store.getSnapshot("/p.ts", "old\n")).toBeUndefined();
+			expect(store.getSnapshot("/p.ts", "new\n")).toEqual(["NOP"]);
 		});
 	});
 
@@ -106,8 +99,8 @@ describe("snapshot-store — snapshot get / upsert / delete", () => {
 			await put(store, "/big.ts", aContent, aHashes);
 			await put(store, "/small.ts", "x\n", ["XYZ"]);
 
-			expect(getSnapshot(store, "/big.ts", aContent)).toEqual(aHashes);
-			expect(getSnapshot(store, "/small.ts", "x\n")).toEqual(["XYZ"]);
+			expect(store.getSnapshot("/big.ts", aContent)).toEqual(aHashes);
+			expect(store.getSnapshot("/small.ts", "x\n")).toEqual(["XYZ"]);
 		});
 	});
 });
@@ -133,9 +126,9 @@ describe("snapshot-store — corrupt row handling", () => {
 			await corruptHashes(home, "/p.ts", "not json");
 			shutdownHashStore();
 			const reloaded = await loadHashStore();
-			expect(getSnapshot(reloaded, "/p.ts", "x\n")).toBeUndefined();
-			upsertSnapshot(reloaded, "/p.ts", contentChecksum("x\n"), 1, ["BBB"]);
-			expect(getSnapshot(reloaded, "/p.ts", "x\n")).toEqual(["BBB"]);
+			expect(reloaded.getSnapshot("/p.ts", "x\n")).toBeUndefined();
+			reloaded.upsertSnapshot("/p.ts", contentChecksum("x\n"), 1, ["BBB"]);
+			expect(reloaded.getSnapshot("/p.ts", "x\n")).toEqual(["BBB"]);
 		});
 	});
 
@@ -146,7 +139,7 @@ describe("snapshot-store — corrupt row handling", () => {
 			await corruptHashes(home, "/p.ts", "[1,2]");
 			shutdownHashStore();
 			const reloaded = await loadHashStore();
-			expect(getSnapshot(reloaded, "/p.ts", "x\n")).toBeUndefined();
+			expect(reloaded.getSnapshot("/p.ts", "x\n")).toBeUndefined();
 		});
 	});
 
@@ -157,7 +150,7 @@ describe("snapshot-store — corrupt row handling", () => {
 			await corruptHashes(home, "/p.ts", '["ZZ", "ZZZZ", "a!b"]');
 			shutdownHashStore();
 			const reloaded = await loadHashStore();
-			expect(getSnapshot(reloaded, "/p.ts", "x\n")).toBeUndefined();
+			expect(reloaded.getSnapshot("/p.ts", "x\n")).toBeUndefined();
 			const db = new DatabaseSync(sqlitePath(home), {
 				defensive: false,
 			} as any);
@@ -175,23 +168,23 @@ describe("snapshot-store — pruneMissing", () => {
 		await withTempHome(async () => {
 			const store = await loadHashStore();
 			await put(store, "/gone.ts", "old\n", ["ZZZ"]);
-			await pruneMissing(store);
-			expect(getSnapshot(store, "/gone.ts", "old\n")).toBeUndefined();
+			await store.pruneMissing();
+			expect(store.getSnapshot("/gone.ts", "old\n")).toBeUndefined();
 		});
 	});
 
 	it("removes undo entries for files that no longer exist", async () => {
 		await withTempHome(async () => {
 			const store = await loadHashStore();
-			upsertUndo(store, "/gone.ts", {
+			store.upsertUndo("/gone.ts", {
 				content: "old",
 				bom: "",
 				ending: "\n",
 				hashes: ["ZZZ"],
 				resultContent: "new",
 			});
-			await pruneMissing(store);
-			expect(getUndoEntry(store, "/gone.ts")).toBeUndefined();
+			await store.pruneMissing();
+			expect(store.getUndo("/gone.ts")).toBeUndefined();
 		});
 	});
 
@@ -201,15 +194,15 @@ describe("snapshot-store — pruneMissing", () => {
 			await writeFile(existing, "keep\n", "utf-8");
 
 			const store = await loadHashStore();
-			upsertUndo(store, existing, {
+			store.upsertUndo(existing, {
 				content: "old",
 				bom: "",
 				ending: "\n",
 				hashes: ["KEP"],
 				resultContent: "new",
 			});
-			await pruneMissing(store);
-			expect(getUndoEntry(store, existing)).toBeDefined();
+			await store.pruneMissing();
+			expect(store.getUndo(existing)).toBeDefined();
 		});
 	});
 
@@ -221,10 +214,10 @@ describe("snapshot-store — pruneMissing", () => {
 			const store = await loadHashStore();
 			await put(store, existing, "keep\n", ["KEP"]);
 			await put(store, "/gone.ts", "gone\n", ["GON"]);
-			await pruneMissing(store);
+			await store.pruneMissing();
 
-			expect(getSnapshot(store, existing, "keep\n")).toEqual(["KEP"]);
-			expect(getSnapshot(store, "/gone.ts", "gone\n")).toBeUndefined();
+			expect(store.getSnapshot(existing, "keep\n")).toEqual(["KEP"]);
+			expect(store.getSnapshot("/gone.ts", "gone\n")).toBeUndefined();
 		});
 	});
 
@@ -239,11 +232,11 @@ describe("snapshot-store — pruneMissing", () => {
 			await put(store, keep, "keep\n", ["KEP"]);
 			await put(store, "/gone.ts", "gone\n", ["GON"]);
 			await put(store, grown, "grow\n", ["GRW"]);
-			await pruneMissing(store);
+			await store.pruneMissing();
 
-			expect(getSnapshot(store, keep, "keep\n")).toEqual(["KEP"]);
-			expect(getSnapshot(store, grown, "grow\n")).toEqual(["GRW"]);
-			expect(getSnapshot(store, "/gone.ts", "gone\n")).toBeUndefined();
+			expect(store.getSnapshot(keep, "keep\n")).toEqual(["KEP"]);
+			expect(store.getSnapshot(grown, "grow\n")).toEqual(["GRW"]);
+			expect(store.getSnapshot("/gone.ts", "gone\n")).toBeUndefined();
 		});
 	});
 
@@ -263,12 +256,12 @@ describe("snapshot-store — pruneMissing", () => {
 					`G${String(i).padStart(2, "0")}`,
 				]);
 			}
-			await pruneMissing(store);
+			await store.pruneMissing();
 			for (const entry of existing) {
-				expect(getSnapshot(store, entry.path, "keep\n")).toEqual([entry.hash]);
+				expect(store.getSnapshot(entry.path, "keep\n")).toEqual([entry.hash]);
 			}
 			for (let i = 0; i < 70; i++) {
-				expect(getSnapshot(store, `/gone-${i}.ts`, "gone\n")).toBeUndefined();
+				expect(store.getSnapshot(`/gone-${i}.ts`, "gone\n")).toBeUndefined();
 			}
 		});
 	});
