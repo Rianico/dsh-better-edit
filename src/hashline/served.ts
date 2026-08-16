@@ -1,4 +1,4 @@
-import { HASH_SEP } from "./hash.js";
+import { HASH_SEP } from "./pure.js";
 import { recordServed, servedPositionsOf } from "../served-state.js";
 import { SERVED_ECHO_CAP } from "../constants.js";
 

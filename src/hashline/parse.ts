@@ -1,7 +1,7 @@
 import {
-	ANCHOR_LEN,
+ANCHOR_LEN,
 	ALPH_RE,
-} from "./hash.js";
+} from "./pure.js";
 import { NEW_CONTENT_NOT_STRING_MSG } from "../constants.js";
 
 export type Anchor = { hash: string };

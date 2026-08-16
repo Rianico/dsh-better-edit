@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
 	applyEdit,
 	lineHashes,
+	lineHashesPure,
 	parseText,
 } from "../../src/hashline/index.js";
 import { splitLines } from "../../src/utils.js";
@@ -149,5 +150,22 @@ describe("perfect hashing", () => {
 			const hashes = await lineHashes(file, home.testPath);
 			expect(hashes).toHaveLength(splitLines(file).length);
 		}
+	});
+});
+
+describe("pure hasher", () => {
+	it("lineHashesPure agrees with the pathless wrapper and needs no store", async () => {
+		const content = "alpha\nbeta\ngamma";
+		const pure = lineHashesPure(content);
+		// The wrapper without a path never touches the hash store — it is
+		// exactly the pure path.
+		const wrapper = await lineHashes(content);
+		expect(pure).toEqual(wrapper);
+		expect(new Set(pure).size).toBe(pure.length);
+	});
+
+	it("lineHashesPure is deterministic", () => {
+		const content = "a\nb\nc\nd\ne\n";
+		expect(lineHashesPure(content)).toEqual(lineHashesPure(content));
 	});
 });

@@ -6,7 +6,7 @@ import {
 	ServedRejectionError,
 } from "../../src/hashline/served.js";
 import { finalizeToolResult } from "../../src/edit-response.js";
-import { applyEdit, _lineHashesPure, type HEdit } from "../../src/hashline/index.js";
+import { applyEdit, lineHashesPure, type HEdit } from "../../src/hashline/index.js";
 import { loadServed } from "../../src/served-state.js";
 import { shutdownHashStore } from "../../src/hash-store.js";
 import { initHasher } from "../../src/hashline/hasher.js";
@@ -45,7 +45,7 @@ describe("recordEchoServes — serve-record policy", () => {
 describe("applyEdit — stale range beats would-empty", () => {
 	it("rejects E_RANGE_STALE before E_WOULD_EMPTY when both apply", () => {
 		const content = "aaa\nbbb\nccc";
-		const hashes = _lineHashesPure(content);
+		const hashes = lineHashesPure(content);
 		const served = [hashes[0]!, "S1", hashes[2]!];
 		let error: unknown;
 		try {
@@ -94,7 +94,7 @@ describe("finalizeToolResult", () => {
 describe("applyEdit — resolved range geometry", () => {
 	it("returns startLine, endLine, boundary hashes, and delta as one value", () => {
 		const content = "aaa\nbbb\nccc";
-		const hashes = _lineHashesPure(content);
+		const hashes = lineHashesPure(content);
 		const edit: HEdit = {
 			hash_bounds: [{ hash: hashes[1]! }, { hash: hashes[1]! }],
 			content_lines: ["BBB", "B2"],
@@ -111,7 +111,7 @@ describe("applyEdit — resolved range geometry", () => {
 
 	it("reports zero delta for a noop and negative delta for a deletion", () => {
 		const content = "aaa\nbbb\nccc";
-		const hashes = _lineHashesPure(content);
+		const hashes = lineHashesPure(content);
 		const noop = applyEdit(content, {
 			hash_bounds: [{ hash: hashes[1]! }, { hash: hashes[1]! }],
 			content_lines: ["bbb"],

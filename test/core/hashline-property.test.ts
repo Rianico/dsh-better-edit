@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  _lineHashesPure,
+  lineHashesPure,
   applyEdit,
   lineHashes,
   resEdit,
@@ -260,7 +260,7 @@ describe("property: pure hashing uniqueness", () => {
         { length: randInt(rnd, 0, 200) },
         () => randLine(rnd),
       ).join("\n");
-      const hashes = _lineHashesPure(content);
+      const hashes = lineHashesPure(content);
       expect(hashes).toHaveLength(splitLines(content).length);
       expect(new Set(hashes).size).toBe(hashes.length);
     }

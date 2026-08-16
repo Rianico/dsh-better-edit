@@ -1,6 +1,6 @@
 import { beforeAll, describe, expect, it } from "vitest";
 import { detectEnding, toLF, restoreEndings, stripBOM, genDiff } from "../../src/edit-diff.js";
-import { _lineHashesPure, initHasher } from "../../src/hashline/index.js";
+import { lineHashesPure, initHasher } from "../../src/hashline/index.js";
 
 beforeAll(async () => {
   await initHasher();
@@ -137,7 +137,7 @@ describe("genDiff", () => {
   it("keeps hashes aligned when a literal __ELLIPSIS__ line sits in diff context", () => {
     const oldContent = "a\n__ELLIPSIS__\nc\nd\n";
     const newContent = "a\n__ELLIPSIS__\nc\nD\n";
-    const hashes = _lineHashesPure(newContent);
+    const hashes = lineHashesPure(newContent);
     const { diff } = genDiff(oldContent, newContent, 2, hashes);
     const cLine = diff.split("\n").find((line) => line.endsWith("│c"))!;
     expect(cLine.startsWith(` ${hashes[2]}`)).toBe(true);

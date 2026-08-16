@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   HASH_PROBE_STRIDE,
   HASH_SPACE,
-  _lineHashesPure,
+  lineHashesPure,
   lineHashes,
 } from "../../src/hashline/index.js";
 import { useTestHome } from "../support/fixtures.js";
@@ -40,7 +40,7 @@ describe("hash probe stride", () => {
 
   it("spreads blank lines so consecutive hashes share no characters", () => {
     const content = Array.from({ length: 20 }, () => "").join("\n");
-    const hashes = _lineHashesPure(content);
+    const hashes = lineHashesPure(content);
     for (let i = 1; i < hashes.length; i++) {
       expect(allCharsDiffer(hashes[i - 1]!, hashes[i]!)).toBe(true);
     }
@@ -48,7 +48,7 @@ describe("hash probe stride", () => {
 
   it("spreads repeated closing braces the same way", () => {
     const content = Array.from({ length: 20 }, () => "}").join("\n");
-    const hashes = _lineHashesPure(content);
+    const hashes = lineHashesPure(content);
     for (let i = 1; i < hashes.length; i++) {
       expect(allCharsDiffer(hashes[i - 1]!, hashes[i]!)).toBe(true);
     }
