@@ -125,24 +125,22 @@ pins a line by what it *is*, not by where it used to sit.
 
 ### How It Compares
 
-| | hashline `edit` | `str_replace` | line-number edit | @oh-my-pi/hashline patch |
-| --- | :---: | :---: | :---: | :---: |
-| Replaced text echoed in the call | ✅ no — 2 hashes | ❌ verbatim | ✅ no | ✅ no — `+` rows only |
-| Lines addressed by | content hash | text match | number | number + file-content tag |
-| Verified against what the model saw | ✅ every line | ❌ first match wins | ~ | ~ file version only |
-| Stale file detected | ✅ rejects, fresh anchors | ❌ may match wrong spot | ~ | ✅ tag mismatch → refuse or 3-way merge |
-| Anchors survive edits above | ✅ content-addressed | ✅ content-based | ❌ re-read needed | ❌ renumber + new tag |
-| Chained edits without re-reads | ✅ diff serves fresh anchors | ~ | ❌ | ~ via edit-response numbers |
-| Unambiguous when text repeats | ✅ boundary anchors verified | ❌ first occurrence | ~ | ~ position, unverified per line |
-| Wrong-line edit can land silently | ❌ impossible | ✅ | ✅ | ~ possible (tag checks version, not lines) |
-| Block ops / registers / `MV` / `REM` | ❌ | ❌ | ❌ | ✅ |
-| One document per change | ❌ per-edit call | ❌ per-edit call | ❌ per-edit call | ✅ multi-hunk patch |
-| Runtime | ✅ Node (dsh) | — | — | ⚠️ Bun only |
-| Undo | ✅ persisted | ❌ | ❌ | ❌ not in scope |
+| | hashline `edit` | `str_replace` (Claude Code / Codex) | @oh-my-pi/hashline patch |
+| --- | :---: | :---: | :---: |
+| Replaced text echoed in the call | ✅ no — 2 hashes | ❌ verbatim | ✅ no — `+` rows only |
+| Lines addressed by | content hash | text match | number + file-content tag |
+| Verified against what the model saw | ✅ every line | ❌ first match wins | ~ file version only |
+| Stale file detected | ✅ rejects, fresh anchors | ❌ may match wrong spot | ✅ tag mismatch → refuse or 3-way merge |
+| Anchors survive edits above | ✅ content-addressed | ✅ content-based | ❌ renumber + new tag |
+| Chained edits without re-reads | ✅ diff serves fresh anchors | ~ | ~ via edit-response numbers |
+| Unambiguous when text repeats | ✅ boundary anchors verified | ❌ first occurrence | ~ position, unverified per line |
+| Wrong-line edit can land silently | ❌ impossible | ✅ | ~ possible (tag checks version, not lines) |
+| Block ops / registers / `MV` / `REM` | ❌ | ❌ | ✅ |
+| One document per change | ❌ per-edit call | ❌ per-edit call | ✅ multi-hunk patch |
+| Runtime | ✅ Node (dsh) | — | ⚠️ Bun only |
+| Undo | ✅ persisted | ❌ | ❌ not in scope |
 
-> `~` = occasionally / inconsistently. Line-number edit tools accept a line range and apply it to
-> whatever is at that offset when the call executes — cheap, but stale the moment anything above
-> moves. `@oh-my-pi/hashline` is a compact line-anchored patch language
+> `~` = occasionally / inconsistently. `@oh-my-pi/hashline` is a compact line-anchored patch language
 > ([npm](https://www.npmjs.com/package/@oh-my-pi/hashline), [repo](https://github.com/can1357/oh-my-pi/tree/main/packages/hashline)):
 > `[path#tag]` headers bind each hunk to a full-file content hash, `PUT N.=M:` addresses lines by
 > number, and every edit renumbers — take the next numbers and tag from the edit response or a fresh `read`.
