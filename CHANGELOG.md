@@ -6,6 +6,12 @@ Entries link to the originating spec issue in [pi-hashline-edit-lsz](https://git
 
 ## [Unreleased]
 
+### Changed
+
+- Benchmark extended to a third arm, `@oh-my-pi/hashline`: same corpus, same 12 replacements, two modes (per-edit `seq` with renumbered lines + one-document `batch` fixed to original line numbers). Payloads are built from the package's published grammar and validated before counting (the package is Bun-only, so it cannot run under the Node benchmark). Honest result, reported as such: hashline saves 31% vs `str_replace` on the session (43% on multi-line ranges) and remains the plugin's claim; the compact patch language saves 42% per edit / 53% batched — and this README says so. `npm run benchmark` stays byte-deterministic (verified over repeated runs).
+- READMEs (English and 中文) refined along ponytail-style lines: "How It Compares" gains an `@oh-my-pi/hashline` column plus a same-lineage/different-jobs comparison; the Benchmark section documents all three arms, adds an honest "regenerate, don't trust" reproducibility note, and widens the scope-and-honesty block with what the payload numbers do *not* capture (renumber/tag-chase cost, block ops, Bun-vs-Node, tool-pair vs patcher library).
+- `package.json` keywords now include `oh-my-pi` alongside `hashline`.
+
 ## [0.2.0] - 2026-08-16
 
 ### Changed

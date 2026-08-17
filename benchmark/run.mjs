@@ -2,10 +2,10 @@
 /**
  * dsh-better-edit — reproducible token-cost benchmark
  * ---------------------------------------------------
- * Compares the model-side request tokens of two edit tool patterns applied to
+ * Compares the model-side request tokens of three edit patterns applied to
  * the SAME file with the SAME replacement text:
  *
- *   1. hashline    — hash-anchored edit (this plugin):
+ *   1. hashline    — hash-anchored edit tool (this plugin):
  *                    { path, remove_from, remove_to, replacement_text }
  *                    the tool call carries only 2×3-char anchors + the
  *                    replacement; the replaced text is never echoed.
@@ -15,10 +15,26 @@
  *                    { path, old_string, new_string }
  *                    the tool call must echo the replaced text VERBATIM.
  *
+ *   3. oh-my-pi    — @oh-my-pi/hashline's line-anchored patch language:
+ *                    [PATH#TAG] + PUT N.=M: + +TEXT body rows. It never
+ *                    echoes old text either, but addresses lines by NUMBER
+ *                    bound to a full-file content-hash tag (4 hex chars)
+ *                    served by read, and every edit renumbers. Measured in
+ *                    both of the format's modes:
+ *                      seq   — one [PATH#TAG] section per edit (tool-loop
+ *                              style; line numbers renumbered after each edit)
+ *                      batch — one patch document, all 12 hunks fixed to the
+ *                              ORIGINAL line numbers, header counted once
+ *
  * Everything is deterministic: a fixed corpus, a fixed 12-edit script, and a
  * fixed tokenizer (js-tiktoken cl100k_base when installed — it is a
  * devDependency — else the standard chars/4 heuristic, which is conservative:
- * it UNDER-counts code tokens, so it flatters str_replace, never hashline).
+ * it UNDER-counts code tokens, so it flatters the replacement-style arms,
+ * never hashline). The oh-my-pi payloads are built from the package's
+ * published grammar (src/prompt.md) and validated against it before counting.
+ * The package itself is Bun-only (engines.bun >=1.3.14, ships raw .ts source),
+ * so it cannot run under this Node benchmark — and only its model-side
+ * emission text is being measured here anyway.
  *
  * Edits are content-addressed: each edit pins the unique line that contains a
  * `match` substring plus a `span` line count. The script self-checks that the
@@ -97,7 +113,7 @@ function rehash(lines) {
 	const out = new Array(lines.length);
 	for (let i = 0; i < lines.length; i++) {
 		const prev = previousHashes.get(lines[i]);
-		out[i] = prev !== undefined ? prev : hashLine(lines[i]);
+		out[i] = prev === undefined ? hashLine(lines[i]) : prev;
 	}
 	return out;
 }
@@ -253,6 +269,16 @@ function run() {
 	const lines = CORPUS.split("\n");
 	let hashes = rehash(lines);
 	const PATH = "src/shopping-cart.ts";
+	const originalLines = CORPUS.split("\n");
+
+	// Original 1-based line numbers per edit, resolved once against the
+	// pristine corpus. The oh-my-pi batch mode fixes every hunk to the
+	// ORIGINAL file ("numbers are original, never shifted by hunks"), so its
+	// ranges are computed here rather than from the evolving file.
+	const origRanges = EDITS.map((e, i) => {
+		const { start, end } = findRange(originalLines, e, i);
+		return { start, end };
+	});
 
 	const edits = [];
 	let ambiguous = 0;
@@ -278,6 +304,12 @@ function run() {
 		});
 
 		const hlTok = tokens(hlReq);
+
+		// oh-my-pi/hashline — one section per edit, CURRENT line numbers
+		// (every edit renumbers; the tag changes with the file content).
+		const omSeqText = `[${PATH}#${OHMY_TAG}]\n${ohmyHunk(start, end, e.replacement)}`;
+		validateOhMyPatch(omSeqText);
+		const omTok = tokens(omSeqText);
 		const srTok = tokens(strReq);
 
 		// correctness proxy: how many times does old_string occur in the file?
@@ -289,7 +321,7 @@ function run() {
 			note: e.note,
 			hl: hlTok,
 			sr: srTok,
-			saved: srTok - hlTok,
+			omSeq: omTok,
 			pct: Math.round(((srTok - hlTok) / srTok) * 100),
 			rangeLines: e.span,
 			ambiguity: amb,
@@ -302,14 +334,29 @@ function run() {
 		hashes = rehash(lines);
 	}
 
+	// oh-my-pi/hashline — one batch document: all hunks sorted ascending by
+	// ORIGINAL line number, the [PATH#TAG] header counted once. This is the
+	// format's favourable case (its natural single-document mode).
+	const batchHunks = origRanges
+		.map((r, i) => ({
+			start: r.start,
+			hunk: ohmyHunk(r.start, r.end, EDITS[i].replacement),
+		}))
+		.sort((a, b) => a.start - b.start);
+	const omBatchText = `[${PATH}#${OHMY_TAG}]\n${batchHunks.map((h) => h.hunk).join("\n")}\n`;
+	validateOhMyPatch(omBatchText);
+
 	return {
 		edits,
 		ambiguous,
-		lineCount: CORPUS.split("\n").length,
+		lineCount: CORPUS.replace(/\n$/, "").split("\n").length,
 		totals: {
 			hl: edits.reduce((s, e) => s + e.hl, 0),
 			sr: edits.reduce((s, e) => s + e.sr, 0),
+			omSeq: edits.reduce((s, e) => s + e.omSeq, 0),
+			omBatch: tokens(omBatchText),
 		},
+		omBatchHunks: batchHunks.length,
 	};
 }
 
@@ -325,23 +372,77 @@ function countOccurrences(text, needle) {
 }
 
 // ---------------------------------------------------------------------------
+// 5b. @oh-my-pi/hashline payload construction + grammar validation.
+//     The package is Bun-only (engines.bun >=1.3.14, ships raw .ts source),
+//     so the model-side emission text is built here from the published
+//     grammar (src/prompt.md) and validated against it before counting.
+// ---------------------------------------------------------------------------
+const OHMY_TAG = "a1b2"; // 4-hex content-hash tag served by read; any 4-hex
+// value tokenizes identically, so a fixed placeholder is used.
+
+// One hunk:  PUT N.=M:  then +TEXT body rows. Never -old rows — the range
+// deletes, the body is final content. Numbers are 1-based and inclusive.
+function ohmyHunk(start, end, replacement) {
+	const rows = replacement.map((l) => "+" + l).join("\n");
+	return `PUT ${start + 1}.=${end + 1}:\n${rows}`;
+}
+
+// Validate a generated patch against the published grammar; throws on any
+// deviation so the benchmark cannot silently count an un-parseable payload.
+function validateOhMyPatch(text) {
+	const lines = text.split("\n");
+	if (!/^\[.+#[0-9a-fA-F]{4}\]$/.test(lines[0])) {
+		throw new Error(`oh-my-pi header malformed: ${JSON.stringify(lines[0])}`);
+	}
+	let i = 1;
+	let hunks = 0;
+	while (i < lines.length) {
+		const header = lines[i++];
+		const m = /^PUT (\d+)\.=(\d+):$/.exec(header);
+		if (!m) {
+			throw new Error(`oh-my-pi hunk header malformed: ${JSON.stringify(header)}`);
+		}
+		if (Number(m[1]) > Number(m[2])) {
+			throw new Error(`oh-my-pi hunk range inverted: ${header}`);
+		}
+		hunks++;
+		while (i < lines.length && !/^PUT \d+\.=\d+:$/.test(lines[i])) {
+			const row = lines[i];
+			// a single trailing empty line terminates the document
+			if (row === "" && i === lines.length - 1) {
+				i++;
+				break;
+			}
+			if (!/^\+/.test(row)) {
+				throw new Error(`oh-my-pi body row malformed: ${JSON.stringify(row)}`);
+			}
+			i++;
+		}
+	}
+	if (hunks === 0) throw new Error("oh-my-pi patch has no hunks");
+}
+
+// ---------------------------------------------------------------------------
 // 6. Render the report.
 // ---------------------------------------------------------------------------
 function render(r) {
 	const single = r.edits.filter((e) => e.rangeLines === 1);
 	const multi = r.edits.filter((e) => e.rangeLines > 1);
 	const sum = (es) =>
-		es.reduce((s, e) => ({ hl: s.hl + e.hl, sr: s.sr + e.sr }), {
-			hl: 0,
-			sr: 0,
-		});
-	const fmtPct = (hl, sr) =>
-		sr === 0 ? "n/a" : `${Math.round(((sr - hl) / sr) * 100)}%`;
-	const sep =
-		"------------------|-------|----------|-------------|-------|-----";
+		es.reduce(
+			(s, e) => ({ hl: s.hl + e.hl, sr: s.sr + e.sr, omSeq: s.omSeq + e.omSeq }),
+			{ hl: 0, sr: 0, omSeq: 0 },
+		);
+	const pct = (a, b) =>
+		b === 0 ? "n/a" : `${Math.round(((b - a) / b) * 100)}%`;
+	const widths = [20, 5, 8, 11, 8, 10];
+	const sep = widths.map((n) => "-".repeat(n)).join("|");
+	const cell = (v, w) => String(v).padStart(w);
 
 	const out = [];
-	out.push("dsh-better-edit — token-cost benchmark (hashline vs str_replace)");
+	out.push(
+		"dsh-better-edit — token-cost benchmark (hashline vs str_replace vs @oh-my-pi/hashline)",
+	);
 	out.push(`corpus   : ${corpusPath}`);
 	out.push(`size     : ${r.lineCount} lines`);
 	out.push(
@@ -350,12 +451,12 @@ function render(r) {
 	out.push(`tokenizer: ${TOKENIZER_NAME}`);
 	out.push("");
 	out.push(
-		"scenario            | lines | hashline | str_replace | saved |  %  |",
+		`${"scenario".padEnd(20)} | ${cell("lines", 5)} | ${cell("hashline", 8)} | ${cell("str_replace", 11)} | ${cell("ohmy seq", 8)} | ${cell("ohmy batch", 10)} |`,
 	);
 	out.push(sep);
 	for (const e of r.edits) {
 		out.push(
-			`${e.note.padEnd(20)} | ${String(e.rangeLines).padStart(5)} | ${String(e.hl).padStart(8)} | ${String(e.sr).padStart(11)} | ${String(e.saved).padStart(5)} | ${e.pct.toString().padStart(3)}% |` +
+			`${e.note.padEnd(20)} | ${cell(e.rangeLines, 5)} | ${cell(e.hl, 8)} | ${cell(e.sr, 11)} | ${cell(e.omSeq, 8)} | ${cell("-", 10)} |` +
 				(e.ambiguity > 0 ? `  ambiguous match ×${e.ambiguity}` : ""),
 		);
 	}
@@ -364,24 +465,27 @@ function render(r) {
 	const t = r.totals;
 	out.push(sep);
 	out.push(
-		`${`single-line ×${single.length}`.padEnd(20)} | ${String("-").padStart(5)} | ${String(s.hl).padStart(8)} | ${String(s.sr).padStart(11)} | ${String(s.sr - s.hl).padStart(5)} | ${fmtPct(s.hl, s.sr).padStart(3)} |`,
+		`${`single-line ×${single.length}`.padEnd(20)} | ${cell("-", 5)} | ${cell(s.hl, 8)} | ${cell(s.sr, 11)} | ${cell(s.omSeq, 8)} | ${cell("-", 10)} |`,
 	);
 	out.push(
-		`${`multi-line ×${multi.length}`.padEnd(20)} | ${String("-").padStart(5)} | ${String(m.hl).padStart(8)} | ${String(m.sr).padStart(11)} | ${String(m.sr - m.hl).padStart(5)} | ${fmtPct(m.hl, m.sr).padStart(3)} |`,
+		`${`multi-line ×${multi.length}`.padEnd(20)} | ${cell("-", 5)} | ${cell(m.hl, 8)} | ${cell(m.sr, 11)} | ${cell(m.omSeq, 8)} | ${cell("-", 10)} |`,
 	);
 	out.push(
-		`${`TOTAL ×${r.edits.length}`.padEnd(20)} | ${String("-").padStart(5)} | ${String(t.hl).padStart(8)} | ${String(t.sr).padStart(11)} | ${String(t.sr - t.hl).padStart(5)} | ${fmtPct(t.hl, t.sr).padStart(3)} |`,
+		`${`TOTAL ×${r.edits.length}`.padEnd(20)} | ${cell("-", 5)} | ${cell(t.hl, 8)} | ${cell(t.sr, 11)} | ${cell(t.omSeq, 8)} | ${cell(t.omBatch, 10)} |`,
 	);
 	out.push("");
-	const saved = t.sr - t.hl;
+	const vs = (x) => `${t.sr - x} (${pct(x, t.sr)})`;
 	out.push(
-		"read traffic is identical for both tools and is excluded (it cancels).",
+		`vs str_replace: hashline saves ${vs(t.hl)}, oh-my-pi seq saves ${vs(t.omSeq)}, oh-my-pi batch saves ${vs(t.omBatch)}.`,
+	);
+	out.push(
+		"read traffic is identical for the tool arms and is excluded (it cancels).",
 	);
 	out.push(
 		"these are the model's OUTPUT tokens (the edit call it emits), billed at ~5-6× input.",
 	);
 	out.push(
-		`at the 5× output rate, hashline costs ${Math.round((t.sr / t.hl) * 10) / 10}× less than str_replace on effective cost.`,
+		`at the 5× output rate, effective cost vs str_replace: hashline ${(t.sr / t.hl).toFixed(1)}×, oh-my-pi seq ${(t.sr / t.omSeq).toFixed(1)}×, oh-my-pi batch ${(t.sr / t.omBatch).toFixed(1)}×.`,
 	);
 	const minMax = (es) =>
 		`${Math.min(...es.map((e) => e.pct))}–${Math.max(...es.map((e) => e.pct))}%`;
@@ -391,6 +495,9 @@ function render(r) {
 	out.push(
 		`correctness proxy: ${r.ambiguous} ambiguous str_replace match${r.ambiguous === 1 ? "" : "es"} avoided; ` +
 			"hashline verified 100% (every resolved range is checked against served state).",
+	);
+	out.push(
+		`oh-my-pi payloads validated against the published grammar (${r.omBatchHunks} hunks in the batch arm).`,
 	);
 	return out.join("\n");
 }

@@ -110,6 +110,11 @@ text verbatim. On a 12-edit session over a realistic file this is **31% fewer ou
 on multi-line ranges) — and these are *output* tokens, billed at ~5-6× the input rate. See the
 [benchmark](#benchmark).
 
+**But this was never about “fewest tokens.”** Savings scale with the replaced text — near parity on
+one-line touch-ups — and a compact patch language like [@oh-my-pi/hashline](#how-it-compares) can
+emit a lighter payload still (42–53% on the same session). The point is the *right* kind of edit
+call: no re-typing old code, and nothing for the model to track except two stable content addresses.
+
 **Correctness.** Every resolved edit range is verified against the exact lines the model was shown.
 A stale, never-served, or ambiguous range is hard-rejected **before anything is written**, and the
 current range is echoed back as fresh anchors (reject-and-serve) — the retry needs no `read`.
@@ -120,55 +125,87 @@ pins a line by what it *is*, not by where it used to sit.
 
 ### How It Compares
 
-| | hashline `edit` | `str_replace` | line-number edit |
-| --- | :---: | :---: | :---: |
-| Replaced text echoed in the call | ✅ no — 2 hashes | ❌ verbatim | ✅ no |
-| Verification against what the model saw | ✅ every line | ❌ first match wins | ~ |
-| Stale file detected | ✅ rejects, fresh anchors | ❌ may match wrong spot | ~ |
-| Anchors survive edits above | ✅ content-addressed | ✅ content-based | ❌ re-read needed |
-| Chained edits without re-reads | ✅ diff serves fresh anchors | ~ | ❌ |
-| Unambiguous when text repeats | ✅ boundary anchors verified | ❌ first occurrence | ~ |
-| Wrong-line edit can land silently | ❌ impossible | ✅ | ✅ |
+| | hashline `edit` | `str_replace` | line-number edit | @oh-my-pi/hashline patch |
+| --- | :---: | :---: | :---: | :---: |
+| Replaced text echoed in the call | ✅ no — 2 hashes | ❌ verbatim | ✅ no | ✅ no — `+` rows only |
+| Lines addressed by | content hash | text match | number | number + file-content tag |
+| Verified against what the model saw | ✅ every line | ❌ first match wins | ~ | ~ file version only |
+| Stale file detected | ✅ rejects, fresh anchors | ❌ may match wrong spot | ~ | ✅ tag mismatch → refuse or 3-way merge |
+| Anchors survive edits above | ✅ content-addressed | ✅ content-based | ❌ re-read needed | ❌ renumber + new tag |
+| Chained edits without re-reads | ✅ diff serves fresh anchors | ~ | ❌ | ~ via edit-response numbers |
+| Unambiguous when text repeats | ✅ boundary anchors verified | ❌ first occurrence | ~ | ~ position, unverified per line |
+| Wrong-line edit can land silently | ❌ impossible | ✅ | ✅ | ~ possible (tag checks version, not lines) |
+| Block ops / registers / `MV` / `REM` | ❌ | ❌ | ❌ | ✅ |
+| One document per change | ❌ per-edit call | ❌ per-edit call | ❌ per-edit call | ✅ multi-hunk patch |
+| Runtime | ✅ Node (dsh) | — | — | ⚠️ Bun only |
+| Undo | ✅ persisted | ❌ | ❌ | ❌ not in scope |
 
 > `~` = occasionally / inconsistently. Line-number edit tools accept a line range and apply it to
 > whatever is at that offset when the call executes — cheap, but stale the moment anything above
-> moves.
+> moves. `@oh-my-pi/hashline` is a compact line-anchored patch language
+> ([npm](https://www.npmjs.com/package/@oh-my-pi/hashline), [repo](https://github.com/can1357/oh-my-pi/tree/main/packages/hashline)):
+> `[path#tag]` headers bind each hunk to a full-file content hash, `PUT N.=M:` addresses lines by
+> number, and every edit renumbers — take the next numbers and tag from the edit response or a fresh `read`.
+
+**Different jobs, same lineage.** Both descend from the
+[harness-problem](https://stencil.so/blog/the-harness-problem) insight that the model should never
+re-type old code. `@oh-my-pi/hashline` is a **patch-language library** — payload-light (42% saved
+per edit, 53% in a single batch document, see [benchmark](#benchmark)), with syntactic block ops
+(`PUT N*:`), registers, `REM`/`MV`, multi-hunk documents, a pluggable filesystem for any backend,
+and session-aware 3-way-merge recovery on stale tags. This plugin is a **dsh tool pair**: `read`
+hands the model 3-char content hashes, `edit` takes two of them, and every resolved line is verified
+against the served state — no line numbers to renumber, no tag to re-fetch, a wrong anchor can never
+land on the wrong line, and `undo_last_edit` survives restarts. Its trade-offs: a JSON envelope per
+edit costs a little payload, there are no block ops, and it lives inside dsh (Node) rather than as a
+standalone patcher (Bun). Pick hashline-the-library for a cross-backend patch format; pick
+hashline-the-tool for verified, content-addressed edits in your agent.
 
 ## Benchmark
 
 Measured on the same 103-line file with the same 12 replacements (8 single-line, 4 multi-line of
-3/6/10/15 lines), tokenized with the pinned `js-tiktoken` `cl100k_base`:
+3/6/10/15 lines), tokenized with the pinned `js-tiktoken` `cl100k_base`. Three arms emit the same
+replacements: this plugin's `edit` (two 3-char anchors), a `str_replace` tool (old text echoed
+verbatim), and [`@oh-my-pi/hashline`](https://www.npmjs.com/package/@oh-my-pi/hashline) in both of
+its modes — one `[path#tag]` section per edit (`seq`) and one multi-hunk batch document (`batch`):
 
-| Criterion | hashline | str_replace |
-| ----------- | :---: | :---: |
-| Replaced text sent over the wire | ✅ never | ❌ every edit |
-| Output tokens saved (12-edit session) | ✅ **31%** | ❌ 0% |
-| Multi-line range savings (3–15 lines) | ✅ **29–47%** | ❌ 0% |
-| Effective cost at 5× output pricing | ✅ **~1.4× less** | ❌ 1× |
-| Ranges verified against served state | ✅ 100% | ❌ none |
-| Deterministic, reproducible locally | ✅ `npm run benchmark` | — |
+| Criterion | hashline | str_replace | oh-my-pi seq / batch |
+| ----------- | :---: | :---: | :---: |
+| Replaced text sent over the wire | ✅ never | ❌ every edit | ✅ never |
+| Output tokens saved (12-edit session) | ✅ **31%** | ❌ 0% | ✅ **42% / 53%** |
+| Multi-line range savings (3–15 lines) | ✅ **29–47%** | ❌ 0% | ✅ **40–53%** |
+| Effective cost at 5× output pricing | ✅ **~1.4× less** | ❌ 1× | ✅ **~1.7× / ~2.1× less** |
+| Ranges verified against served state | ✅ 100% | ❌ none | ~ file version only |
+| Line numbers the model must track | ✅ none — content anchors | ✅ none — text match | ❌ renumber every edit |
+| Deterministic, reproducible locally | ✅ `npm run benchmark` | — | — |
 
 ### Reproducible
 
 The numbers above are **deterministic and you can reproduce them locally** — `npm run benchmark`:
 
-| Scenario | Lines | hashline | str_replace | Saved | % |
+| Scenario | Lines | hashline | str_replace | oh-my-pi seq | oh-my-pi batch |
 | --- | :---: | :---: | :---: | :---: | :---: |
-| single-line ×8 | 1 | 309 | 324 | 15 | 5% |
-| multi-line ×4 | 3–15 | 393 | 691 | 298 | **43%** |
-| **TOTAL ×12** | | **702** | **1015** | **313** | **31%** |
+| single-line ×8 | 1 | 309 | 324 | 241 | — |
+| multi-line ×4 | 3–15 | 393 | 691 | 349 | — |
+| **TOTAL ×12** | | **702** | **1015** | **590** | **480** |
+
+Saved vs `str_replace`: hashline **313 (31%)** · oh-my-pi per-edit **425 (42%)** · oh-my-pi batch **535 (53%)**.
 
 The script is deterministic by construction: a frozen corpus, a content-addressed edit script that
-self-checks (a reformatted corpus throws instead of silently changing what's measured), and a pinned
-tokenizer. Because everything is fixed, `npm run benchmark` gives everyone the same result.
+self-checks (a reformatted corpus throws instead of silently changing what's measured), a pinned
+tokenizer, and oh-my-pi payloads validated against the package's published grammar before counting.
+Because everything is fixed, `npm run benchmark` gives everyone the same result — the numbers in
+this README are a snapshot of that run; regenerate, don't trust.
 
 > **Scope & honesty.** The benchmark measures **request-payload tokens** — what the model emits per
 > edit call — with identical read traffic excluded (it cancels) and identical replacement text.
 > It does **not** model transcription failure and retries, which is where the real-world gap is
 > largest: the original [harness-problem](https://stencil.so/blog/the-harness-problem) post reported
 > a **61% output-token reduction** and patch-failure drops from 46–51% to near zero after switching
-> to anchored edits. Full methodology and limitations in
-> [`benchmark/README.md`](benchmark/README.md).
+> to anchored edits. It also does **not** model what a line-numbered format costs the model *between*
+> calls — renumbering and re-fetching the file tag after every edit — nor block-op power, nor the
+> Bun-vs-Node runtime difference, nor the fact that `@oh-my-pi/hashline` is a standalone patcher
+> while this plugin is a dsh tool pair with `read`/`edit`/`undo`. Full methodology, the per-edit
+> table, and the complete limitation list in [`benchmark/README.md`](benchmark/README.md).
 
 ## Tools
 
@@ -249,7 +286,7 @@ dsh-better-edit/
 │   ├── write-hook.ts    # auto-read appended to write results
 │   ├── served-store.ts  # per-workspace SQLite store (node:sqlite)
 │   └── workspace.ts     # session-cwd AsyncLocalStorage carrier
-├── benchmark/           # reproducible hashline-vs-str_replace token benchmark
+├── benchmark/           # reproducible hashline-vs-str_replace-vs-oh-my-pi token benchmark
 │   └── corpus/          # frozen 103-line fixture
 ├── test/                # 615 tests (ported + regression)
 ├── assets/              # logo + banner
