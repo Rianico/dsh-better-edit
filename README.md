@@ -158,6 +158,29 @@ edit costs a little payload, there are no block ops, and it lives inside dsh (No
 standalone patcher (Bun). Pick hashline-the-library for a cross-backend patch format; pick
 hashline-the-tool for verified, content-addressed edits in your agent.
 
+### Correctness in edge cases
+
+The token benchmark measures the payload the model emits — it assumes the model gets every
+address right, for free. Correctness is where the two hashline implementations actually diverge.
+These are the real failure modes from the harness-problem literature (wrong-line edits, drift,
+repeated text), and what each tool does when they hit:
+
+| Edge case | hashline `edit` (this plugin) | @oh-my-pi/hashline patch |
+| --- | --- | --- |
+| Wrong address (off-by-one anchor / line number) | **Impossible** — anchors resolve to specific lines; every resolved line is verified against served state, rejected **before** anything is written | **Possible** — a wrong line number against a current tag applies **silently** at the wrong place; the tag proves the file version, never the lines |
+| File changed on disk after the model's view | Hard reject + fresh anchors echoed (reject-and-serve); retry needs no `read` | Tag mismatch → refuse **or best-effort 3-way merge** onto unknown current content |
+| An edit above shifts the file | Nothing shifts — anchors are content addresses; the diff serves fresh anchors | **Every edit renumbers** — “RE-GROUND AFTER EVERY EDIT” is the format's own #1 rule; the model carries the bookkeeping |
+| Repeated / identical text | Per-line hashes are unique (collision-resolved); ambiguity → `[E_AMBIGUOUS_ANCHOR]` | Position-based, so repeats don't confuse it — but the position itself is unverified |
+| Lines never shown to the model | `[E_RANGE_UNSERVED]` — hard reject with fresh anchors | Undisplayed hunks rejected — same reliance on the model knowing what it saw |
+| Mid-expression / wrong block node | Irrelevant — any verified line range is valid | Grammar rules + `PUT N*:` node choice; mispointing (anchoring `def` orphans its decorator) silently lands wrong; no syntax check |
+| Multi-edit batch fails mid-way | `batch_edit` — atomic, all-or-nothing; the failing item is echoed as fresh serves | Multi-section patches preflighted up front — also atomic |
+
+> The 42–53% oh-my-pi payload saving is a lighter wire format; the table above is what that
+> format asks the model to hold in its head instead — renumbering, tag-chasing, node choice —
+> the exact component that fails most (46–51% patch-failure rates on replace-style edits). This
+> plugin's 31% is the price of a contract where a wrong edit cannot land, and any rejection
+> needs no re-read.
+
 ## Benchmark
 
 Measured on the same 103-line file with the same 12 replacements (8 single-line, 4 multi-line of
@@ -203,7 +226,7 @@ this README are a snapshot of that run; regenerate, don't trust.
 > calls — renumbering and re-fetching the file tag after every edit — nor block-op power, nor the
 > Bun-vs-Node runtime difference, nor the fact that `@oh-my-pi/hashline` is a standalone patcher
 > while this plugin is a dsh tool pair with `read`/`edit`/`undo`. Full methodology, the per-edit
-> table, and the complete limitation list in [`benchmark/README.md`](benchmark/README.md).
+> table, and the complete limitation list in [`benchmark/README.md`](benchmark/README.md). The correctness gap behind those numbers is spelled out above in [Correctness in edge cases](#correctness-in-edge-cases).
 
 ## Tools
 
