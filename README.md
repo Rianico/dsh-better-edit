@@ -347,6 +347,7 @@ served-tail truncation fix, reproducible benchmark, EN + 中文 READMEs, publish
 
 <details><summary>Next</summary>
 
+- **Close or justify the gap vs @oh-my-pi/hashline** (reference: [`../oh-my-pi.md`](../oh-my-pi.md)). The sibling patch language is payload-lighter — 42%/53% vs our 31% vs `str_replace` on the benchmark, because a bare patch document skips the JSON envelope we pay per call — and offers four abilities we do not support: syntactic block ops (`PUT N*:`), registers + `REM`/`MV`, one multi-hunk document per change, and a pluggable filesystem. The counterweight is correctness: its line numbers are unverified (a wrong number on a current tag lands silently), every edit renumbers, stale tags trigger best-effort 3-way merge instead of verification, and the grammar raises the model skill floor. Decide each ability reject-or-adopt on its own merits — the payload gap alone is not a reason to switch formats.
 - Verify 0.1.6 live in a dsh session after the served-tail fix.
 - Upstream the served-tail truncation fix to pi-hashline-edit-lsz / upstream (their `upsertServed`
   never truncates either).
