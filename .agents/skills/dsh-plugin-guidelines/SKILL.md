@@ -243,6 +243,36 @@ calls.
 - Verify a layer without booting: `dsh --profile <name> --dump-config` shows
   each bundle's contribution under `# == <bundle>`.
 
+### Local install & verification (a real deployment, not just dump-config)
+
+To run an unpublished build in a live deployment — e.g. a PR branch — install a
+packed snapshot into a profile, then boot:
+
+1. Build and pack: `npm run build` (transpile `src` → `lib/`, which is
+gitignored) then `npm pack --pack-destination /tmp` →
+`<pkg>-<version>.tgz`. The tgz is what `files` ships, so this mirrors the
+published package exactly.
+2. Install into a profile: `dsh plugin --profile <name> add /path/<pkg>.tgz`
+(the same pnpm forwarder as any install). This rewrites the profile's
+`package.json` dependency to `file:/path/<pkg>.tgz` and reconciles the
+bundle list; `dsh plugin --profile <name> add <pkg>@<range>` reverts it.
+3. **`--dump-config` does NOT boot agents.** It shows the host-plane rows
+only — it will not run `apply()` side effects, register prompt sections, or
+materialize files. Confirming the row is loaded is necessary but not
+sufficient for verifying behaviour that happens at `agent/session-start` or
+boot.
+4. Boot the app and observe the real effects: template files the plugin
+materializes into `$DSH_HOME/plugins/<pkg>/` on `apply()`, then per-
+preset/per-agent registrations the first session triggers. A plugin whose
+state is keyed by preset or workspace is often fastest to verify by
+materializing its sample files once, overriding one, and starting a new
+session.
+
+Install a local build into a THROWAWAY profile (e.g. `dsh plugin --profile
+scratch-<topic> add …`) first when the change is experimental — it keeps the
+real profiles untouched and exercises the exact pack→add→boot path; delete the
+profile dir to clean up.
+
 ## Session-scoped state
 
 The store for per-session state belongs under the dsh home
