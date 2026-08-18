@@ -12,11 +12,11 @@ import {
 	resolveSection,
 } from "../src/guidance.js";
 import {
-	BATCH_EDIT_GUIDELINES,
+	BATCH_EDIT_GUIDANCE,
 	EDIT_DESCRIPTION,
-	EDIT_GUIDELINES,
-	READ_GUIDELINES,
-	UNDO_GUIDELINES,
+	EDIT_GUIDANCE,
+	READ_GUIDANCE,
+	UNDO_GUIDANCE,
 } from "../src/prompts.js";
 
 async function withHome(run: (home: string) => Promise<void>): Promise<void> {
@@ -67,16 +67,16 @@ describe("guidance sections", () => {
 
 	it("default render matches today's inline section text", () => {
 		expect(renderSectionDefault("tool:read")).toBe(
-			[READ_HEADER, "", bullets(READ_GUIDELINES)].join("\n"),
+			[READ_HEADER, "", bullets(READ_GUIDANCE)].join("\n"),
 		);
 		expect(renderSectionDefault("tool:edit")).toBe(
-			[EDIT_DESCRIPTION, "", bullets(EDIT_GUIDELINES)].join("\n"),
+			[EDIT_DESCRIPTION, "", bullets(EDIT_GUIDANCE)].join("\n"),
 		);
 		expect(renderSectionDefault("tool:batch_edit")).toBe(
-			bullets(BATCH_EDIT_GUIDELINES),
+			bullets(BATCH_EDIT_GUIDANCE),
 		);
 		expect(renderSectionDefault("tool:undo_last_edit")).toBe(
-			bullets(UNDO_GUIDELINES),
+			bullets(UNDO_GUIDANCE),
 		);
 	});
 });

@@ -15,17 +15,13 @@ export const EDIT_DESCRIPTION =
 export const EDIT_SNIPPET =
 	'Edit lines in a text file via bare 3-char HASH anchors from read — hash only, never line content; anchor exactly the lines that change; one edit per tool call'
 
-export const EDIT_GUIDELINES = [
-	'`edit`: remove_from and remove_to take ONLY the bare 3-char hash — read row `ve7│function hello() {` means `"remove_from": "ve7"`. Never paste the line content, a code line, a paragraph, or the whole `HASH│content` row into these fields.',
-	'`edit`: remove_from and remove_to mark the exact lines that are REMOVED, and replacement_text is their complete replacement applied in order; nothing outside the range changes. Every line inside the range that is not reproduced byte-exact in replacement_text is deleted from the file.',
-	'`edit`: keep the range as tight as the change — anchor only the first and last line that actually change, never a whole function, class, or import block when only part of it changes.',
-	'`edit`: to edit a single line, set both remove_from and remove_to to the same hash: remove_from: "<HASH>", remove_to: "<HASH>".',
-	'`edit`: when copying a line from read output, remove its HASH│ prefix and keep the leading whitespace exactly as shown.',
-	'`edit`: every `\\n` in replacement_text separates lines, so a trailing `\\n` adds a final empty line. Mirror the removed lines exactly: a range that ends on a blank line must end replacement_text with `\\n` (e.g. `"code\\n"`), and a replacement whose last line is not blank must not end with `\\n`. To add a blank line after a line, end replacement_text with an explicit empty line after it (e.g. `"X\\n"` adds a blank after X). A replacement that is only blank lines is written as one `\\n` per blank line.',
-	'`edit`: when the tool shows the post-edit diff, its rows are the fresh anchors for the new file — `+HASH│` and ` HASH│` rows carry current hashes and unchanged lines keep their previous hashes, so you can anchor follow-up edits on the diff.',
-	'`edit`: the tool verifies every line of your range against what it served you. If the file changed since it was served, or a line was never served, the edit is hard-rejected — `[E_RANGE_STALE]` or `[E_RANGE_UNSERVED]` names the first offending line and echoes the current range as fresh `HASH│content` rows. Copy remove_from/remove_to from those echoed rows and retry — the rows count as serves.',
-	'`edit`: only rows the tool delivered count as serves — read output, post-edit diffs, and rejection echoes. Content you saw through bash or another channel is not served state; a range over it is rejected as never-served or unverifiable, and there is no way to waive that check.',
-	'`edit`: do not issue multiple edit calls on the same file in one message. Use `batch_edit` for multiple edits — it validates every edit before writing anything, applies the whole batch all-or-nothing, and returns one combined diff per file.',
+export const EDIT_GUIDANCE = [
+	'`edit`: remove_from and remove_to take the bare 3-char hash only — copy it from the leftmost column of a read row (row `ve7│function hello() {` means `"remove_from": "ve7"`). Never pass line content, a code line, a paragraph, or a whole `HASH│content` row.',
+	'`edit`: the range marks the exact lines REMOVED; replacement_text is their complete replacement, applied in order. Nothing outside the range changes; every line inside it that replacement_text does not reproduce byte-exact is deleted. Anchor only the first and last line that change — never a whole function, class, or import block when part of it changes. A single line takes the same hash in both fields.',
+	'`edit`: mirror whitespace exactly. Keep the leading whitespace of every copied line; every `\\n` in replacement_text is a line break, so a range ending on a blank line must end replacement_text with `\\n` and a non-blank last line must not. A blank line is written as `\\n`; an explicit trailing empty line adds one.',
+	'`edit`: the post-edit diff rows carry the fresh anchors — `+HASH│` and ` HASH│` rows have current hashes and unchanged lines keep theirs, so follow-up edits anchor on the diff without re-reading.',
+	'`edit`: every line of the range is verified against what the tool served. A stale or never-served line rejects the edit hard — `[E_RANGE_STALE]` or `[E_RANGE_UNSERVED]` names the first offending line and echoes the current range as fresh `HASH│content` rows; copy the anchors from those rows and retry, since the rows count as serves. Only tool-delivered rows count as serves — content seen through bash or another channel is never served, and nothing waives that check.',
+	'`edit`: for multiple edits to one file in a single message, use batch_edit — it validates every edit before writing, applies the batch all-or-nothing, and returns one combined diff per file.',
 ]
 
 export const READ_DESCRIPTION =
@@ -36,9 +32,9 @@ export const READ_DESCRIPTION =
 export const READ_SNIPPET =
 	'Read a file; each line returned as HASH│content'
 
-export const READ_GUIDELINES = [
-	'`read`: call only when you need information the tool never served you — a page you never saw, content past the post-edit diff. `edit` verifies every line of your range against what the tool served; a rejection echoes the current range as fresh `HASH│content` rows to retry on.',
-	'`read`: the post-edit diff rows from edit/undo and the drift-notice rows also carry fresh anchors for the lines they show.',
+export const READ_GUIDANCE = [
+	'`read`: call it only for content the tools never served — a page you never saw, or lines past the post-edit diff.',
+	'`read`: post-edit diff rows from edit/undo and drift-notice rows carry fresh anchors for the lines they show.',
 ]
 
 export const BATCH_EDIT_DESCRIPTION =
@@ -51,12 +47,11 @@ export const BATCH_EDIT_DESCRIPTION =
 	'HASH│content rows so you can retry without a read. Use batch_edit whenever you have multiple ' +
 	'edits; do not issue several edit calls in one message.'
 
-export const BATCH_EDIT_GUIDELINES = [
-	'batch_edit: each item takes the same fields as edit — { path?, remove_from, remove_to, replacement_text }. remove_from and remove_to take ONLY the bare 3-char hash from read/diff output; never the line content.',
-	'batch_edit: items are applied in order. Edits to the same file must not overlap — an item whose range was changed by an earlier item in the batch is rejected.',
-	'batch_edit: the whole batch is all-or-nothing. If any item fails validation, nothing is written anywhere; the failing item\u2019s current range is echoed as fresh HASH│content rows that count as serves.',
-	'batch_edit: every item is verified against what the tool served you — stale anchors, changed interiors, or never-served lines reject the batch.',
-	'batch_edit: a noop item (the range already contains the replacement text) is reported without failing the batch; an all-noop batch reports no changes.',
+export const BATCH_EDIT_GUIDANCE = [
+	'batch_edit: each item takes edit\u2019s fields — { path?, remove_from, remove_to, replacement_text } — with bare 3-char hash anchors from read/diff output, never line content.',
+	'batch_edit: items apply in order. Same-file ranges must not overlap — an item whose range an earlier item changed is rejected.',
+	'batch_edit: the batch is all-or-nothing. Any failing item — stale or ambiguous anchor, changed range interior, never-served line — writes nothing anywhere, and its current range is echoed as fresh `HASH│content` rows that count as serves.',
+	'batch_edit: a noop item (the range already contains the replacement) is reported without failing the batch; an all-noop batch reports no changes.',
 	'batch_edit: the result is one combined diff per file with fresh anchors — anchor follow-up edits on those rows without re-reading.',
 ]
 
@@ -64,7 +59,7 @@ export const UNDO_DESCRIPTION =
 	'Undo the last edit on a file, reverting it to its previous state. Use when an edit produced ' +
 	'incorrect results (e.g., wrong content, duplicated lines, broken syntax).'
 
-export const UNDO_GUIDELINES = [
-	'`undo_last_edit`: reverts only the most recent edit on the file — any write to the file clears the undo history, so call it immediately after a bad edit. An edit is bad when its post-edit diff shows `-HASH│` rows for lines you meant to keep (a closing brace, import, or declaration).',
-	'`undo_last_edit`: when the tool shows the post-edit diff, its `+HASH│` and ` HASH│` rows are the fresh anchors for the restored file, so follow-up edits can anchor on the diff.',
+export const UNDO_GUIDANCE = [
+	'`undo_last_edit`: reverts only the most recent edit on the file — any write clears the undo history, so call it immediately after a bad edit. An edit is bad when its post-edit diff shows `-HASH│` rows for lines you meant to keep (a closing brace, import, or declaration).',
+	'`undo_last_edit`: the restored diff\u2019s `+HASH│` and ` HASH│` rows are the fresh anchors for follow-up edits.',
 ]
