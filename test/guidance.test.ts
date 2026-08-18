@@ -15,7 +15,6 @@ import {
 } from "../src/guidance.js";
 import {
 	BATCH_EDIT_GUIDANCE,
-	EDIT_DESCRIPTION,
 	EDIT_GUIDANCE,
 	READ_GUIDANCE,
 	UNDO_GUIDANCE,
@@ -43,8 +42,6 @@ async function writeSection(
 	await writeFile(join(dir, file), content, "utf-8");
 }
 
-const READ_HEADER =
-	"Use the read tool — not shell commands like cat — to inspect text files.";
 const bullets = (lines: readonly string[]) =>
 	lines.map((line) => `- ${line}`).join("\n");
 
@@ -63,22 +60,22 @@ describe("guidance sections", () => {
 			"undo_last_edit.md",
 		]);
 		expect(GUIDANCE_SECTIONS.map((s) => s.defaultOrder)).toEqual([
-			100, 102, 103, 104,
+			130, 131, 132, 133,
 		]);
 	});
 
 	it("default render matches today's inline section text", () => {
 		expect(renderSectionDefault("tool:read")).toBe(
-			[READ_HEADER, "", bullets(READ_GUIDANCE)].join("\n"),
+			[READ_GUIDANCE.intro, "", bullets(READ_GUIDANCE.lines)].join("\n"),
 		);
 		expect(renderSectionDefault("tool:edit")).toBe(
-			[EDIT_DESCRIPTION, "", bullets(EDIT_GUIDANCE)].join("\n"),
+			[EDIT_GUIDANCE.intro, "", bullets(EDIT_GUIDANCE.lines)].join("\n"),
 		);
 		expect(renderSectionDefault("tool:batch_edit")).toBe(
-			bullets(BATCH_EDIT_GUIDANCE),
+			[BATCH_EDIT_GUIDANCE.intro, "", bullets(BATCH_EDIT_GUIDANCE.lines)].join("\n"),
 		);
 		expect(renderSectionDefault("tool:undo_last_edit")).toBe(
-			bullets(UNDO_GUIDANCE),
+			[UNDO_GUIDANCE.intro, "", bullets(UNDO_GUIDANCE.lines)].join("\n"),
 		);
 	});
 });
@@ -94,6 +91,13 @@ describe("parseSectionFile", () => {
 		expect(parseSectionFile("---\norder: 150\n---\nbody line")).toEqual({
 			order: 150,
 			text: "body line",
+		});
+	});
+
+	it("strips leading blank lines after the closing fence", () => {
+		expect(parseSectionFile("---\norder: 150\n---\n\nbody")).toEqual({
+			order: 150,
+			text: "body",
 		});
 	});
 
@@ -142,7 +146,7 @@ describe("resolveSection", () => {
 				homeDir: home,
 			});
 			expect(resolved).toEqual({
-				order: 102,
+				order: 131,
 				text: renderSectionDefault("tool:edit"),
 			});
 		});
@@ -155,7 +159,7 @@ describe("resolveSection", () => {
 				presetId: "code",
 				homeDir: home,
 			});
-			expect(resolved).toEqual({ order: 102, text: "global edit text" });
+			expect(resolved).toEqual({ order: 131, text: "global edit text" });
 		});
 	});
 
@@ -167,7 +171,7 @@ describe("resolveSection", () => {
 				presetId: "code",
 				homeDir: home,
 			});
-			expect(resolved).toEqual({ order: 102, text: "preset edit text" });
+			expect(resolved).toEqual({ order: 131, text: "preset edit text" });
 		});
 	});
 
@@ -190,7 +194,7 @@ describe("resolveSection", () => {
 				presetId: undefined,
 				homeDir: home,
 			});
-			expect(resolved).toEqual({ order: 102, text: "global edit text" });
+			expect(resolved).toEqual({ order: 131, text: "global edit text" });
 		});
 	});
 
@@ -201,7 +205,7 @@ describe("resolveSection", () => {
 				homeDir: home,
 			});
 			expect(resolved).toEqual({
-				order: 100,
+				order: 130,
 				text: renderSectionDefault("tool:read"),
 			});
 		});
@@ -226,7 +230,7 @@ describe("composeSections", () => {
 				"tool:batch_edit",
 				"tool:undo_last_edit",
 			]);
-			expect(sections.map((s) => s.order)).toEqual([100, 102, 103, 104]);
+			expect(sections.map((s) => s.order)).toEqual([130, 131, 132, 133]);
 			expect(sections.map((s) => s.text)).toEqual(
 				GUIDANCE_SECTIONS.map((s) => s.renderDefault()),
 			);
@@ -245,7 +249,7 @@ describe("composeSections", () => {
 			// Unoverridden sections keep their compiled defaults.
 			expect(sections.find((s) => s.name === "tool:read")).toEqual({
 				name: "tool:read",
-				order: 100,
+				order: 130,
 				text: renderSectionDefault("tool:read"),
 			});
 		});
@@ -254,7 +258,7 @@ describe("composeSections", () => {
 
 
 describe("ensureDefaultGuidance", () => {
-	it("creates the four section files byte-identical to the compiled defaults plus a README", async () => {
+	it("creates the four section files as order front-matter + compiled default, plus a README", async () => {
 		await withHome(async (home) => {
 			await ensureDefaultGuidance(home);
 			const templateDir = join(home, DEFAULT_GUIDANCE_DIR);
@@ -263,7 +267,7 @@ describe("ensureDefaultGuidance", () => {
 					join(templateDir, section.file),
 					"utf-8",
 				);
-				expect(content).toBe(section.renderDefault());
+				expect(content).toBe(`---\norder: ${section.defaultOrder}\n---\n\n${section.renderDefault()}`);
 			}
 			const readme = await readFile(join(templateDir, "README.md"), "utf-8");
 			expect(readme).toBe(DEFAULT_GUIDANCE_README);
@@ -300,7 +304,7 @@ describe("ensureDefaultGuidance", () => {
 				if (section.file === "edit.md") continue;
 				expect(
 					await readFile(join(templateDir, section.file), "utf-8"),
-				).toBe(section.renderDefault());
+				).toBe(`---\norder: ${section.defaultOrder}\n---\n\n${section.renderDefault()}`);
 			}
 			expect(await readFile(join(templateDir, "README.md"), "utf-8")).toBe(
 				DEFAULT_GUIDANCE_README,
@@ -323,7 +327,7 @@ describe("ensureDefaultGuidance", () => {
 			});
 			const read = await resolveSection("tool:read", { homeDir: home });
 			expect(read).toEqual({
-				order: 100,
+				order: 130,
 				text: renderSectionDefault("tool:read"),
 			});
 		});

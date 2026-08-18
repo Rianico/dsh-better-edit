@@ -26,10 +26,10 @@ import { join } from "node:path";
 
 import {
 	BATCH_EDIT_GUIDANCE,
-	EDIT_DESCRIPTION,
 	EDIT_GUIDANCE,
 	READ_GUIDANCE,
 	UNDO_GUIDANCE,
+	type ToolGuidance,
 } from "./prompts.js";
 import { errCode } from "./utils.js";
 
@@ -37,12 +37,13 @@ import { errCode } from "./utils.js";
 export const DEFAULT_GUIDANCE_DIR = "_default";
 
 /**
- * The `tool:read` section header. Mirrors the string `src/index.ts` renders
- * inline today (it is not `READ_DESCRIPTION`, which only feeds the tool
- * schema); the installer ticket removes the inline copy.
+ * Render one tool's guidance as its intro line, a blank line, then bullets.
+ * Uniform across the four sections: no tool-schema description is duplicated
+ * (that already reaches the model through the tool catalog).
  */
-const READ_SECTION_HEADER =
-	"Use the read tool — not shell commands like cat — to inspect text files.";
+function guidanceText(g: ToolGuidance): string {
+	return [g.intro, "", bulletLines(g.lines)].join("\n");
+}
 
 function bulletLines(lines: readonly string[]): string {
 	return lines.map((line) => `- ${line}`).join("\n");
@@ -65,28 +66,26 @@ export const GUIDANCE_SECTIONS: readonly GuidanceSection[] = [
 	{
 		name: "tool:read",
 		file: "read.md",
-		defaultOrder: 100,
-		renderDefault: () =>
-			[READ_SECTION_HEADER, "", bulletLines(READ_GUIDANCE)].join("\n"),
+		defaultOrder: 130,
+		renderDefault: () => guidanceText(READ_GUIDANCE),
 	},
 	{
 		name: "tool:edit",
 		file: "edit.md",
-		defaultOrder: 102,
-		renderDefault: () =>
-			[EDIT_DESCRIPTION, "", bulletLines(EDIT_GUIDANCE)].join("\n"),
+		defaultOrder: 131,
+		renderDefault: () => guidanceText(EDIT_GUIDANCE),
 	},
 	{
 		name: "tool:batch_edit",
 		file: "batch_edit.md",
-		defaultOrder: 103,
-		renderDefault: () => bulletLines(BATCH_EDIT_GUIDANCE),
+		defaultOrder: 132,
+		renderDefault: () => guidanceText(BATCH_EDIT_GUIDANCE),
 	},
 	{
 		name: "tool:undo_last_edit",
 		file: "undo_last_edit.md",
-		defaultOrder: 104,
-		renderDefault: () => bulletLines(UNDO_GUIDANCE),
+		defaultOrder: 133,
+		renderDefault: () => guidanceText(UNDO_GUIDANCE),
 	},
 ];
 
@@ -135,7 +134,14 @@ export function parseSectionFile(content: string): ParsedSection {
 		if (!match) return { text: content };
 		order = Number.parseInt(match[1] as string, 10);
 	}
-	return { order, text: lines.slice(close + 1).join("\n") };
+	// Front-matter body: strip leading blank lines after the closing fence so
+	// `---\n…\n---\n\nbody` and `---\n…\n---\nbody` parse identically (the
+	// materialized _default/ files carry a blank line after the fence).
+	const body = lines.slice(close + 1);
+	let bodyStart = 0;
+	while (bodyStart < body.length && body[bodyStart]!.trim() === "")
+		bodyStart++;
+	return { order, text: body.slice(bodyStart).join("\n") };
 }
 
 /** Options for resolving one section's guidance. */
@@ -272,7 +278,10 @@ export async function ensureDefaultGuidance(homeDir: string): Promise<void> {
 	await mkdir(templateDir, { recursive: true });
 	const existing = new Set(await readdir(templateDir));
 	const targets: Array<[string, string]> = GUIDANCE_SECTIONS.map(
-		(section) => [section.file, section.renderDefault()],
+		(section) => [
+			section.file,
+			`---\norder: ${section.defaultOrder}\n---\n\n${section.renderDefault()}`,
+		],
 	);
 	targets.push(["README.md", DEFAULT_GUIDANCE_README]);
 	await Promise.all(

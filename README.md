@@ -289,10 +289,10 @@ $DSH_HOME/plugins/dsh-better-edit/<preset>/<section>.md
 
 | File | Section | Default order |
 | --- | --- | --- |
-| `read.md` | `tool:read` | 100 |
-| `edit.md` | `tool:edit` | 102 |
-| `batch_edit.md` | `tool:batch_edit` | 103 |
-| `undo_last_edit.md` | `tool:undo_last_edit` | 104 |
+| `read.md` | `tool:read` | 130 |
+| `edit.md` | `tool:edit` | 131 |
+| `batch_edit.md` | `tool:batch_edit` | 132 |
+| `undo_last_edit.md` | `tool:undo_last_edit` | 133 |
 
 On first boot the plugin materializes `_default/` — the compiled guidance as editable files plus a
 README — so a preset's guidance starts from a copy, not a blank page:

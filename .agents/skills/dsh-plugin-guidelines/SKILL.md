@@ -80,7 +80,9 @@ never confess:
   nondeterministic across loads. Distinct names at one order do NOT throw
   (duplicate names do, per above); only non-finite orders throw too. A tie with
   a built-in is the "breaks system prompt consistency" report: the same prompt
-  assembles in different order on machines with different load orders.
+  assembles in different order on machines with different load orders. `dsh-better-edit`
+  ships its own tool-guidance defaults at 130–133 for exactly this reason — above the
+  built-in band, so a same-order tie with a built-in cannot occur out of the box.
 
 Consequence of own layer wins: a preset row can neither reorder nor override a
 plugin's agent-layer sections — its same-named sections are shadowed, its
