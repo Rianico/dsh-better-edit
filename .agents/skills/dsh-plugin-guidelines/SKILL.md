@@ -270,6 +270,24 @@ state is keyed by preset or workspace is often fastest to verify by
 materializing its sample files once, overriding one, and starting a new
 session.
 
+> **Gotcha — a same-version `file:` tgz silently serves STALE content.** pnpm's
+> content store is keyed by package@version, so `dsh plugin --profile <name> add
+> <same-version.tgz>` (and plain `pnpm add`) reports "added 0" and re-links the
+> OLD build when only the tarball's bytes changed — the `.tgz` in `package.json`
+> is unchanged, so pnpm never re-reads it. Symptom: you booted the "new" build
+> but behaviour/files are exactly as before. Force the refresh in the profile
+> with `rm -rf node_modules/<pkg> && pnpm install --force` (this re-extracts
+> from the changed tarball), or bump the version — a distinct version defeats
+> the store dedup by construction. This is why iterating on a PR build should
+> bump the version (e.g. `0.2.0-rc.0` → `0.2.0-rc.1`) or clear the entry each
+> round rather than re-`add` a rebuilt same-version snapshot.
+
+The plugin's `_default/` guidance templates (and other files it materializes on
+`apply()`) land in the plugin's SHARED home under `$DSH_HOME/plugins/<pkg>/`,
+shared across every profile — `ensureDefaultGuidance` never rewrites existing
+files, so a stale `_default/` from an earlier profile boot survives a fresh
+install until you delete it explicitly.
+
 Install a local build into a THROWAWAY profile (e.g. `dsh plugin --profile
 scratch-<topic> add …`) first when the change is experimental — it keeps the
 real profiles untouched and exercises the exact pack→add→boot path; delete the
