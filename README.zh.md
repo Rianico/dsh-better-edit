@@ -230,10 +230,10 @@ $DSH_HOME/plugins/dsh-better-edit/<preset>/<section>.md
 
 | 文件 | 提示词片段 | 默认 order |
 | --- | --- | --- |
-| `read.md` | `tool:read` | 100 |
-| `edit.md` | `tool:edit` | 102 |
-| `batch_edit.md` | `tool:batch_edit` | 103 |
-| `undo_last_edit.md` | `tool:undo_last_edit` | 104 |
+| `read.md` | `tool:read` | 130 |
+| `edit.md` | `tool:edit` | 131 |
+| `batch_edit.md` | `tool:batch_edit` | 132 |
+| `undo_last_edit.md` | `tool:undo_last_edit` | 133 |
 
 首次启动时插件会物化出 `_default/`——把编译内置的指引写成可编辑的文件，外加一份 README——这样 preset
 的指引从拷贝开始，而不是从空白开始：
