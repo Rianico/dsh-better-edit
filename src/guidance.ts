@@ -7,7 +7,7 @@
  * and `order` with a plain markdown file keyed by agent preset: the override
  * files live in the plugin's shared home (`$DSH_HOME/plugins/dsh-better-edit`,
  * never the workspace store) and are resolved per section as
- * `<preset>/<section>.md` → `_default/<section>.md` → compiled default.
+ * `<preset>/<section>.md` → compiled default.
  *
  * An override file is pure prose unless it opens with a valid YAML front-matter
  * fence carrying only an `order` key (`---` / `order: N` / `---`); anything
@@ -33,8 +33,13 @@ import {
 } from "./prompts.js";
 import { errCode } from "./utils.js";
 
-/** The fallback/template directory name inside the plugin home. */
-export const DEFAULT_GUIDANCE_DIR = "_default";
+/** The presets shipped by the harness, each seeded with editable guidance. */
+export const DEFAULT_PRESETS: readonly string[] = [
+	"standard",
+	"code",
+	"minimal",
+	"cordis",
+];
 
 /**
  * Render one tool's guidance as its intro line, a blank line, then bullets.
@@ -136,7 +141,7 @@ export function parseSectionFile(content: string): ParsedSection {
 	}
 	// Front-matter body: strip leading blank lines after the closing fence so
 	// `---\n…\n---\n\nbody` and `---\n…\n---\nbody` parse identically (the
-	// materialized _default/ files carry a blank line after the fence).
+	// materialized preset files carry a blank line after the fence).
 	const body = lines.slice(close + 1);
 	let bodyStart = 0;
 	while (bodyStart < body.length && body[bodyStart]!.trim() === "")
@@ -160,7 +165,6 @@ function overrideCandidates(
 	if (options.presetId !== undefined) {
 		candidates.push(join(options.homeDir, options.presetId, file));
 	}
-	candidates.push(join(options.homeDir, DEFAULT_GUIDANCE_DIR, file));
 	return candidates;
 }
 
@@ -202,7 +206,7 @@ export interface SectionOverride {
 
 /**
  * Resolve all four sections for a preset. `presetId === undefined` skips the
- * `<preset>/` layer (still consulting `_default/`, the live global fallback).
+ * `<preset>/` layer and resolves straight to the compiled defaults.
  */
 export async function composeSections(
 	presetId: string | undefined,
@@ -220,36 +224,31 @@ export async function composeSections(
 }
 
 /**
- * The `_default/` template README: the copy-to-override convention users see
- * when they open the template directory.
+ * The root README: the per-preset customization convention users see in the
+ * plugin home.
  */
-export const DEFAULT_GUIDANCE_README = `# Default tool guidance
+export const GUIDANCE_HOME_README = `# dsh-better-edit guidance
 
-This directory holds the built-in guidance for the hashline tools (\`read\`,
-\`edit\`, \`batch_edit\`, \`undo_last_edit\`). It is recreated from the compiled
-defaults when missing, and existing files are never overwritten.
+Each agent preset has its own guidance directory here: \`<preset>/<section>.md\`.
+On first boot the plugin seeds the shipped presets (\`standard\`, \`code\`,
+\`minimal\`, \`cordis\`) with the compiled defaults; existing files are never
+overwritten, so your edits survive.
 
-Each file overrides the guidance for one tool section:
+Each file is one tool section:
 
-- \`read.md\` -> the \`tool:read\` section
-- \`edit.md\` -> the \`tool:edit\` section
-- \`batch_edit.md\` -> the \`tool:batch_edit\` section
-- \`undo_last_edit.md\` -> the \`tool:undo_last_edit\` section
+- \`read.md\` -> \`tool:read\`
+- \`edit.md\` -> \`tool:edit\`
+- \`batch_edit.md\` -> \`tool:batch_edit\`
+- \`undo_last_edit.md\` -> \`tool:undo_last_edit\`
 
-## Override per preset
+## Customize
 
-Copy this directory to the name of an agent preset to customize that preset's
-guidance. The plugin reads \`<home>/<preset>/<section>.md\` first, then falls
-back to this directory, then to the compiled defaults:
+Edit the \`<section>.md\` file for the preset and section you want to change —
+the file body IS the text the model reads for that section. Files are read once
+per agent at session-start, so edits apply to new sessions.
 
-    cp -r _default my-preset
-
-A preset directory may contain only the sections you want to override.
-
-## Section order
-
-A file may open with a YAML front-matter fence carrying an \`order\` number; the
-section is then placed at that position in the assembled system prompt:
+An optional YAML front-matter fence places the section at a custom position in
+the assembled system prompt:
 
     ---
     order: 150
@@ -260,41 +259,54 @@ section is then placed at that position in the assembled system prompt:
 A file without front-matter keeps the default order. A malformed fence (a
 missing closing \`---\`, a non-integer \`order\`, an unknown key) makes the whole
 file plain prose.
+
+## Fallback
+
+A preset with no directory here, or a missing section file, falls back to the
+compiled defaults in the plugin bundle. To customize a preset that has no
+seeded directory, copy a seeded one to its name.
 `;
 
 /**
- * Materialize the `_default/` template directory in the plugin home.
+ * Materialize per-preset guidance directories in the plugin home.
  *
- * Creates `_default/{read,edit,batch_edit,undo_last_edit}.md` rendered from
- * the compiled defaults (byte-identical to the resolver's fallback) plus a
- * `README.md` documenting the convention. Idempotent: existing files are never
- * rewritten (a user-edited template survives repeated calls) and a missing
- * directory is created on demand. Each file is written exclusively, so two
- * concurrent first runs race safely — whichever lands first wins, the other
- * observes EEXIST and leaves the file alone.
+ * For each of \`DEFAULT_PRESETS\` creates \`<preset>/{read,edit,batch_edit,
+ * undo_last_edit}.md\` rendered from the compiled defaults (with order
+ * front-matter), plus a root \`README.md\` documenting the convention.
+ * Idempotent: existing files are never rewritten (a user-edited file survives
+ * repeated calls) and missing directories are created on demand. Each file is
+ * written exclusively, so two concurrent first runs race safely.
  */
-export async function ensureDefaultGuidance(homeDir: string): Promise<void> {
-	const templateDir = join(homeDir, DEFAULT_GUIDANCE_DIR);
-	await mkdir(templateDir, { recursive: true });
-	const existing = new Set(await readdir(templateDir));
-	const targets: Array<[string, string]> = GUIDANCE_SECTIONS.map(
-		(section) => [
-			section.file,
-			`---\norder: ${section.defaultOrder}\n---\n\n${section.renderDefault()}`,
-		],
-	);
-	targets.push(["README.md", DEFAULT_GUIDANCE_README]);
+export async function ensurePresetGuidance(homeDir: string): Promise<void> {
+	await mkdir(homeDir, { recursive: true });
 	await Promise.all(
-		targets.map(async ([file, content]) => {
-			if (existing.has(file)) return;
-			await writeFile(join(templateDir, file), content, {
-				encoding: "utf-8",
-				flag: "wx",
-			}).catch((error: unknown) => {
-				// A concurrent writer landed first; never clobber it.
-				if (errCode(error) === "EEXIST") return;
-				throw error;
-			});
+		DEFAULT_PRESETS.map(async (preset) => {
+			const dir = join(homeDir, preset);
+			await mkdir(dir, { recursive: true });
+			const existing = new Set(await readdir(dir));
+			await Promise.all(
+				GUIDANCE_SECTIONS.map(async (section) => {
+					if (existing.has(section.file)) return;
+					const content = `---\norder: ${section.defaultOrder}\n---\n\n${section.renderDefault()}`;
+					await writeFile(join(dir, section.file), content, {
+						encoding: "utf-8",
+						flag: "wx",
+					}).catch((error: unknown) => {
+						// A concurrent writer landed first; never clobber it.
+						if (errCode(error) === "EEXIST") return;
+						throw error;
+					});
+				}),
+			);
 		}),
 	);
+	if (!(await readdir(homeDir)).includes("README.md")) {
+		await writeFile(join(homeDir, "README.md"), GUIDANCE_HOME_README, {
+			encoding: "utf-8",
+			flag: "wx",
+		}).catch((error: unknown) => {
+			if (errCode(error) === "EEXIST") return;
+			throw error;
+		});
+	}
 }

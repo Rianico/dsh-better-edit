@@ -4,11 +4,11 @@ import { join } from "node:path";
 
 import { getWritableTempRoot } from "./support/fixtures.js";
 import {
-	DEFAULT_GUIDANCE_DIR,
-	DEFAULT_GUIDANCE_README,
+	DEFAULT_PRESETS,
+	GUIDANCE_HOME_README,
 	GUIDANCE_SECTIONS,
 	composeSections,
-	ensureDefaultGuidance,
+	ensurePresetGuidance,
 	parseSectionFile,
 	renderSectionDefault,
 	resolveSection,
@@ -152,21 +152,9 @@ describe("resolveSection", () => {
 		});
 	});
 
-	it("uses the _default file when the preset file is absent", async () => {
-		await withHome(async (home) => {
-			await writeSection(home, DEFAULT_GUIDANCE_DIR, "edit.md", "global edit text");
-			const resolved = await resolveSection("tool:edit", {
-				presetId: "code",
-				homeDir: home,
-			});
-			expect(resolved).toEqual({ order: 131, text: "global edit text" });
-		});
-	});
-
-	it("prefers the preset file over the _default file", async () => {
+	it("reads the preset file when one exists", async () => {
 		await withHome(async (home) => {
 			await writeSection(home, "code", "edit.md", "preset edit text");
-			await writeSection(home, DEFAULT_GUIDANCE_DIR, "edit.md", "global edit text");
 			const resolved = await resolveSection("tool:edit", {
 				presetId: "code",
 				homeDir: home,
@@ -186,15 +174,30 @@ describe("resolveSection", () => {
 		});
 	});
 
-	it("skips the preset layer when presetId is undefined but still reads _default", async () => {
+	it("ignores preset files when presetId is undefined", async () => {
 		await withHome(async (home) => {
 			await writeSection(home, "code", "edit.md", "preset edit text");
-			await writeSection(home, DEFAULT_GUIDANCE_DIR, "edit.md", "global edit text");
 			const resolved = await resolveSection("tool:edit", {
 				presetId: undefined,
 				homeDir: home,
 			});
-			expect(resolved).toEqual({ order: 131, text: "global edit text" });
+			expect(resolved).toEqual({
+				order: 131,
+				text: renderSectionDefault("tool:edit"),
+			});
+		});
+	});
+
+	it("falls back to compiled defaults when the preset has no directory", async () => {
+		await withHome(async (home) => {
+			const resolved = await resolveSection("tool:edit", {
+				presetId: "ghost",
+				homeDir: home,
+			});
+			expect(resolved).toEqual({
+				order: 131,
+				text: renderSectionDefault("tool:edit"),
+			});
 		});
 	});
 
@@ -257,75 +260,77 @@ describe("composeSections", () => {
 });
 
 
-describe("ensureDefaultGuidance", () => {
-	it("creates the four section files as order front-matter + compiled default, plus a README", async () => {
+describe("ensurePresetGuidance", () => {
+	it("seeds each shipped preset with the four section files plus a root README", async () => {
 		await withHome(async (home) => {
-			await ensureDefaultGuidance(home);
-			const templateDir = join(home, DEFAULT_GUIDANCE_DIR);
-			for (const section of GUIDANCE_SECTIONS) {
-				const content = await readFile(
-					join(templateDir, section.file),
-					"utf-8",
-				);
-				expect(content).toBe(`---\norder: ${section.defaultOrder}\n---\n\n${section.renderDefault()}`);
+			await ensurePresetGuidance(home);
+			for (const preset of DEFAULT_PRESETS) {
+				for (const section of GUIDANCE_SECTIONS) {
+					const content = await readFile(
+						join(home, preset, section.file),
+						"utf-8",
+					);
+					expect(content).toBe(`---\norder: ${section.defaultOrder}\n---\n\n${section.renderDefault()}`);
+				}
 			}
-			const readme = await readFile(join(templateDir, "README.md"), "utf-8");
-			expect(readme).toBe(DEFAULT_GUIDANCE_README);
-			expect(readme).toContain("cp -r _default");
+			const readme = await readFile(join(home, "README.md"), "utf-8");
+			expect(readme).toBe(GUIDANCE_HOME_README);
 			expect(readme).toContain("order");
 		});
 	});
 
-	it("never rewrites existing files — a user-edited template survives repeated calls", async () => {
+	it("never rewrites existing files - a user-edited preset file survives repeated calls", async () => {
 		await withHome(async (home) => {
-			await ensureDefaultGuidance(home);
-			const editFile = join(home, DEFAULT_GUIDANCE_DIR, "edit.md");
+			await ensurePresetGuidance(home);
+			const editFile = join(home, "code", "edit.md");
 			const custom = "---\norder: 150\n---\nMy custom edit guidance, kept verbatim.";
 			await writeFile(editFile, custom, "utf-8");
-			await ensureDefaultGuidance(home);
+			await ensurePresetGuidance(home);
 			expect(await readFile(editFile, "utf-8")).toBe(custom);
 		});
 	});
 
 	it("fills in only the files that are missing", async () => {
 		await withHome(async (home) => {
-			const templateDir = join(home, DEFAULT_GUIDANCE_DIR);
-			await mkdir(templateDir, { recursive: true });
-			await writeFile(
-				join(templateDir, "edit.md"),
-				"custom edit guidance",
-				"utf-8",
-			);
-			await ensureDefaultGuidance(home);
-			expect(await readFile(join(templateDir, "edit.md"), "utf-8")).toBe(
+			await mkdir(join(home, "code"), { recursive: true });
+			await writeFile(join(home, "code", "edit.md"), "custom edit guidance", "utf-8");
+			await ensurePresetGuidance(home);
+			expect(await readFile(join(home, "code", "edit.md"), "utf-8")).toBe(
 				"custom edit guidance",
 			);
 			for (const section of GUIDANCE_SECTIONS) {
 				if (section.file === "edit.md") continue;
 				expect(
-					await readFile(join(templateDir, section.file), "utf-8"),
+					await readFile(join(home, "code", section.file), "utf-8"),
 				).toBe(`---\norder: ${section.defaultOrder}\n---\n\n${section.renderDefault()}`);
 			}
-			expect(await readFile(join(templateDir, "README.md"), "utf-8")).toBe(
-				DEFAULT_GUIDANCE_README,
+			expect(await readFile(join(home, "README.md"), "utf-8")).toBe(
+				GUIDANCE_HOME_README,
 			);
 		});
 	});
 
-	it("the materialized _default layer is honoured by the resolver as the global fallback", async () => {
+	it("a seeded preset dir is honoured as that preset's editable default", async () => {
 		await withHome(async (home) => {
-			await ensureDefaultGuidance(home);
+			await ensurePresetGuidance(home);
 			await writeFile(
-				join(home, DEFAULT_GUIDANCE_DIR, "edit.md"),
-				"---\norder: 151\n---\ncustom global edit guidance",
+				join(home, "code", "edit.md"),
+				"---\norder: 151\n---\ncustom code edit guidance",
 				"utf-8",
 			);
-			const resolved = await resolveSection("tool:edit", { homeDir: home });
+			const resolved = await resolveSection("tool:edit", {
+				presetId: "code",
+				homeDir: home,
+			});
 			expect(resolved).toEqual({
 				order: 151,
-				text: "custom global edit guidance",
+				text: "custom code edit guidance",
 			});
-			const read = await resolveSection("tool:read", { homeDir: home });
+			// An unedited seeded section still equals the compiled default.
+			const read = await resolveSection("tool:read", {
+				presetId: "code",
+				homeDir: home,
+			});
 			expect(read).toEqual({
 				order: 130,
 				text: renderSectionDefault("tool:read"),
@@ -333,4 +338,3 @@ describe("ensureDefaultGuidance", () => {
 		});
 	});
 });
-

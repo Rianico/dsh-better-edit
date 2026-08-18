@@ -294,16 +294,13 @@ $DSH_HOME/plugins/dsh-better-edit/<preset>/<section>.md
 | `batch_edit.md` | `tool:batch_edit` | 132 |
 | `undo_last_edit.md` | `tool:undo_last_edit` | 133 |
 
-On first boot the plugin materializes `_default/` — the compiled guidance as editable files plus a
-README — so a preset's guidance starts from a copy, not a blank page:
-
-```
-cp -r _default my-preset        # run inside $DSH_HOME/plugins/dsh-better-edit/
-```
-
-`_default/` doubles as the live global fallback: any preset without its own file inherits it, and
-editing it customizes every preset at once. A preset directory may hold only the sections you want
-to override — the rest fall through to the defaults.
+On first boot the plugin seeds the four shipped presets — `standard/`, `code/`,
+`minimal/`, `cordis/` — each with the compiled guidance as editable files (plus
+`order` front-matter), so every preset's guidance starts editable rather than
+blank. A `README.md` at the plugin-home root documents the scheme. Files are
+seeded once and never rewritten, so your edits survive. A preset directory may
+hold only the sections you want to override — the rest fall through to the
+compiled defaults.
 
 A file is pure prose unless it opens with an `order` front-matter fence, which moves the section in
 the assembled system prompt:
@@ -316,10 +313,13 @@ order: 150
 <section text>
 ```
 
-Per section, resolution walks `<preset>/<section>.md` → `_default/<section>.md` → compiled default.
-Files are read once per agent at session-start, so edits apply to new sessions — never mid-session.
-A deployment without the `agentPresets` service (no preset roster) keeps the compiled defaults and
-never touches these files; presets are never required.
+Per section, resolution reads `<preset>/<section>.md`, else the compiled
+default. Files are read once per agent at session-start, so edits apply to new
+sessions — never mid-session. A preset with no seeded directory (e.g. a
+user-authored one) falls back to the compiled defaults unless you copy a seeded
+dir to its name. A deployment without the `agentPresets` service (no preset
+roster) keeps the compiled defaults and never touches these files; presets are
+never required.
 
 ## Store
 

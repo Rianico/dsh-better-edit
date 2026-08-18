@@ -282,11 +282,11 @@ session.
 > bump the version (e.g. `0.2.0-rc.0` → `0.2.0-rc.1`) or clear the entry each
 > round rather than re-`add` a rebuilt same-version snapshot.
 
-The plugin's `_default/` guidance templates (and other files it materializes on
+The plugin's per-preset guidance dirs (and other files it materializes on
 `apply()`) land in the plugin's SHARED home under `$DSH_HOME/plugins/<pkg>/`,
-shared across every profile — `ensureDefaultGuidance` never rewrites existing
-files, so a stale `_default/` from an earlier profile boot survives a fresh
-install until you delete it explicitly.
+shared across every profile — the seeding function never rewrites existing
+files, so stale seeded files from an earlier profile boot survive a fresh
+install until you delete them explicitly.
 
 Install a local build into a THROWAWAY profile (e.g. `dsh plugin --profile
 scratch-<topic> add …`) first when the change is experimental — it keeps the

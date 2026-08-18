@@ -8,10 +8,10 @@ Entries link to the originating spec issue in [pi-hashline-edit-lsz](https://git
 
 ### Added
 
-- Configurable per-preset tool guidance (issues #7, #8; tickets #9–#13): the four `tool:*` prompt sections resolve from plain-markdown override files keyed by agent preset — `$DSH_HOME/plugins/dsh-better-edit/<preset>/<section>.md` — with an optional `order` front-matter. A `_default/` template is materialized from the compiled defaults on first boot: copy source and live global fallback in one. Per section the chain is `<preset>/` → `_default/` → compiled default; files are read once per agent at session-start, so edits apply to new sessions. Deployments without the `agentPresets` service keep the compiled defaults untouched.
+- Configurable per-preset tool guidance (issues #7, #8; tickets #9–#13): the four `tool:*` prompt sections resolve from plain-markdown override files keyed by agent preset — `$DSH_HOME/plugins/dsh-better-edit/<preset>/<section>.md` — with an optional `order` front-matter. On first boot the plugin seeds each shipped preset (`standard`, `code`, `minimal`, `cordis`) with its guidance as editable files plus a root README documenting the scheme. Per section the chain is `<preset>/<section>.md` → compiled default; files are read once per agent at session-start, so edits apply to new sessions. Deployments without the `agentPresets` service keep the compiled defaults untouched.
 Default orders sit at 130–133, above the built-in tool-guidance band (100–116 in the shipped
 dsh), so a same-order section merge with unrelated tool guidance cannot occur out of the box; the
-materialized `_default/` files expose that `order` as editable front-matter.
+the seeded preset files expose that `order` as editable front-matter.
 - Default guidance text simplified per the writing-for-agents principles; the `*_GUIDELINES` constants unified on `*_GUIDANCE`.
 
 ### Changed
