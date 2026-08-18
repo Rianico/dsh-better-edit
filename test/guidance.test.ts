@@ -6,6 +6,7 @@ import { getWritableTempRoot } from "./support/fixtures.js";
 import {
 	DEFAULT_PRESETS,
 	GUIDANCE_HOME_README,
+	GUIDANCE_HOME_README_ZH,
 	GUIDANCE_SECTIONS,
 	composeSections,
 	ensurePresetGuidance,
@@ -276,6 +277,9 @@ describe("ensurePresetGuidance", () => {
 			const readme = await readFile(join(home, "README.md"), "utf-8");
 			expect(readme).toBe(GUIDANCE_HOME_README);
 			expect(readme).toContain("order");
+			const readmeZh = await readFile(join(home, "README.zh.md"), "utf-8");
+			expect(readmeZh).toBe(GUIDANCE_HOME_README_ZH);
+			expect(readmeZh).toContain("order");
 		});
 	});
 
@@ -306,6 +310,7 @@ describe("ensurePresetGuidance", () => {
 			}
 			expect(await readFile(join(home, "README.md"), "utf-8")).toBe(
 				GUIDANCE_HOME_README,
+	GUIDANCE_HOME_README_ZH,
 			);
 		});
 	});
