@@ -26,10 +26,10 @@ import { registerWriteHook } from "./write-hook.js";
 import { initHasher } from "./hashline/hasher.js";
 import {
 	EDIT_DESCRIPTION,
-	EDIT_GUIDELINES,
-	READ_GUIDELINES,
-	BATCH_EDIT_GUIDELINES,
-	UNDO_GUIDELINES,
+	EDIT_GUIDANCE,
+	READ_GUIDANCE,
+	BATCH_EDIT_GUIDANCE,
+	UNDO_GUIDANCE,
 } from "./prompts.js";
 
 /** Cordis plugin name used by loader diagnostics. */
@@ -73,7 +73,7 @@ function installAgentTools(rootCtx: Context, agent: Agent): () => void {
 				text: [
 					EDIT_DESCRIPTION,
 					"",
-					EDIT_GUIDELINES.map((line) => `- ${line}`).join("\n"),
+					EDIT_GUIDANCE.map((line) => `- ${line}`).join("\n"),
 				].join("\n"),
 			}),
 		);
@@ -84,7 +84,7 @@ function installAgentTools(rootCtx: Context, agent: Agent): () => void {
 				text: [
 					"Use the read tool — not shell commands like cat — to inspect text files.",
 					"",
-					READ_GUIDELINES.map((line) => `- ${line}`).join("\n"),
+					READ_GUIDANCE.map((line) => `- ${line}`).join("\n"),
 				].join("\n"),
 			}),
 		);
@@ -92,14 +92,14 @@ function installAgentTools(rootCtx: Context, agent: Agent): () => void {
 			agent.ctx.systemPrompt.section({
 				name: "tool:batch_edit",
 				order: 103,
-				text: BATCH_EDIT_GUIDELINES.map((line) => `- ${line}`).join("\n"),
+				text: BATCH_EDIT_GUIDANCE.map((line) => `- ${line}`).join("\n"),
 			}),
 		);
 		disposers.push(
 			agent.ctx.systemPrompt.section({
 				name: "tool:undo_last_edit",
 				order: 104,
-				text: UNDO_GUIDELINES.map((line) => `- ${line}`).join("\n"),
+				text: UNDO_GUIDANCE.map((line) => `- ${line}`).join("\n"),
 			}),
 		);
 

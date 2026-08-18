@@ -25,11 +25,11 @@ import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import {
-	BATCH_EDIT_GUIDELINES,
+	BATCH_EDIT_GUIDANCE,
 	EDIT_DESCRIPTION,
-	EDIT_GUIDELINES,
-	READ_GUIDELINES,
-	UNDO_GUIDELINES,
+	EDIT_GUIDANCE,
+	READ_GUIDANCE,
+	UNDO_GUIDANCE,
 } from "./prompts.js";
 import { errCode } from "./utils.js";
 
@@ -67,26 +67,26 @@ export const GUIDANCE_SECTIONS: readonly GuidanceSection[] = [
 		file: "read.md",
 		defaultOrder: 100,
 		renderDefault: () =>
-			[READ_SECTION_HEADER, "", bulletLines(READ_GUIDELINES)].join("\n"),
+			[READ_SECTION_HEADER, "", bulletLines(READ_GUIDANCE)].join("\n"),
 	},
 	{
 		name: "tool:edit",
 		file: "edit.md",
 		defaultOrder: 102,
 		renderDefault: () =>
-			[EDIT_DESCRIPTION, "", bulletLines(EDIT_GUIDELINES)].join("\n"),
+			[EDIT_DESCRIPTION, "", bulletLines(EDIT_GUIDANCE)].join("\n"),
 	},
 	{
 		name: "tool:batch_edit",
 		file: "batch_edit.md",
 		defaultOrder: 103,
-		renderDefault: () => bulletLines(BATCH_EDIT_GUIDELINES),
+		renderDefault: () => bulletLines(BATCH_EDIT_GUIDANCE),
 	},
 	{
 		name: "tool:undo_last_edit",
 		file: "undo_last_edit.md",
 		defaultOrder: 104,
-		renderDefault: () => bulletLines(UNDO_GUIDELINES),
+		renderDefault: () => bulletLines(UNDO_GUIDANCE),
 	},
 ];
 
