@@ -275,6 +275,52 @@ registration cannot replace them. This plugin:
 3. Leaves the built-in `write` in place, but a scoped `tools/post-execute` listener appends the
    hashline auto-read to write results.
 
+## Configuring Guidance per Preset
+
+The `tool:read` / `tool:edit` / `tool:batch_edit` / `tool:undo_last_edit` guidance sections are
+plain-markdown files, overridable per agent preset. Override files live in the plugin's shared
+home — never the workspace store:
+
+```
+$DSH_HOME/plugins/dsh-better-edit/<preset>/<section>.md
+```
+
+(default home `~/.dsh`, so `~/.dsh/plugins/dsh-better-edit/`). The section table:
+
+| File | Section | Default order |
+| --- | --- | --- |
+| `read.md` | `tool:read` | 100 |
+| `edit.md` | `tool:edit` | 102 |
+| `batch_edit.md` | `tool:batch_edit` | 103 |
+| `undo_last_edit.md` | `tool:undo_last_edit` | 104 |
+
+On first boot the plugin materializes `_default/` — the compiled guidance as editable files plus a
+README — so a preset's guidance starts from a copy, not a blank page:
+
+```
+cp -r _default my-preset        # run inside $DSH_HOME/plugins/dsh-better-edit/
+```
+
+`_default/` doubles as the live global fallback: any preset without its own file inherits it, and
+editing it customizes every preset at once. A preset directory may hold only the sections you want
+to override — the rest fall through to the defaults.
+
+A file is pure prose unless it opens with an `order` front-matter fence, which moves the section in
+the assembled system prompt:
+
+```md
+---
+order: 150
+---
+
+<section text>
+```
+
+Per section, resolution walks `<preset>/<section>.md` → `_default/<section>.md` → compiled default.
+Files are read once per agent at session-start, so edits apply to new sessions — never mid-session.
+A deployment without the `agentPresets` service (no preset roster) keeps the compiled defaults and
+never touches these files; presets are never required.
+
 ## Store
 
 Hash snapshots, served-state rows, and undo history live in one SQLite store **co-located with the
