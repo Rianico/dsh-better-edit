@@ -17,7 +17,7 @@ docs promise compatibility-breaking changes. Every rule cites the mechanism
 it derives from — the registry's scope layering, the `fs/*` event gate, the
 bundle patch semantics. When a rule stops matching your installed dsh, the
 mechanism is where it broke: read the package that owns it (`dsh-tools`,
-`dsh-fs`, `dsh-agent-presets`) rather than the rule.
+`dsh-fs`, `dsh-agent-presets`, `dsh-system-prompt`) rather than the rule.
 
 The tutorials own the copy-paste shapes: `docs/cookbook/adding-a-tool.md` for a
 tool, `docs/cookbook/adding-a-package.md` for a bundle,
@@ -61,6 +61,32 @@ sees into a sibling.
   with a duplicate name in the same layer throws, and a same-name section on a
   nearer scope replaces the farther one (this is how a preset shadows the
   deployment persona).
+
+## Prompt section order
+
+Assembly merges every layer's sections, then concatenates them in ascending
+`order` — one number, nothing else. The `order` gotchas the tutorials' examples
+never confess:
+
+- **The bands are convention, not enforcement.** `-100` harness identity, `0`
+  persona, `100–199` tool guidance. A section at any order sorts exactly where
+  the number sits; nothing validates the band. Plugin tool guidance in the
+  100–199 band interleaves with the built-ins, whose occupancy is current for
+  rc.6: 100 read, 103 glob, 105 bash/pwsh, 106 jobs, 110 web_search, 114 goal,
+  115 cordis/workflow, 116 ralph — pick gap numbers or a clean upper band, and
+  verify the occupancy against the installed `dsh-tool-*` packages before
+  choosing.
+- **Equal `order` values tie-break by registration order** — a load artifact,
+  nondeterministic across loads. Distinct names at one order do NOT throw
+  (duplicate names do, per above); only non-finite orders throw too. A tie with
+  a built-in is the "breaks system prompt consistency" report: the same prompt
+  assembles in different order on machines with different load orders.
+
+Consequence of own layer wins: a preset row can neither reorder nor override a
+plugin's agent-layer sections — its same-named sections are shadowed, its
+different-named ones only tie. A plugin that needs configurable text or order
+must read its own row `config` (it reaches `apply(ctx, config)`) or its own
+files; it cannot be patched from outside.
 
 ### Shadowing a built-in (the pattern)
 
