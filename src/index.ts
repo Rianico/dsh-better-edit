@@ -9,6 +9,10 @@
  * automatically when the agent is disposed. The built-in `write` stays in
  * place; a scoped `tools/post-execute` listener appends the fresh hashline
  * preview to write results.
+ *
+ * The four `tool:*` guidance sections resolve per agent preset from override
+ * files in the shared home (see `src/guidance.ts`); deployments without the
+ * `agentPresets` service keep the compiled defaults unchanged.
  * @module dsh-better-edit
  */
 
@@ -25,12 +29,11 @@ import { registerWriteHook } from "./write-hook.js";
 
 import { initHasher } from "./hashline/hasher.js";
 import {
-	EDIT_DESCRIPTION,
-	EDIT_GUIDANCE,
-	READ_GUIDANCE,
-	BATCH_EDIT_GUIDANCE,
-	UNDO_GUIDANCE,
-} from "./prompts.js";
+	composeSections,
+	GUIDANCE_SECTIONS,
+	type SectionOverride,
+} from "./guidance.js";
+import { configDir } from "./paths.js";
 
 /** Cordis plugin name used by loader diagnostics. */
 export const name = "dsh-better-edit";
@@ -49,8 +52,52 @@ interface AgentTools {
 	dispose(): void;
 }
 
-function installAgentTools(rootCtx: Context, agent: Agent): () => void {
-	return agent.ctx.effect(() => {
+/**
+ * Minimal shape of the optional `agentPresets` service (dsh-agent-presets).
+ * Read via `ctx.get` — never injected — so a deployment composed without the
+ * service keeps the compiled defaults and never touches the filesystem here.
+ */
+interface AgentPresetsService {
+	composedPreset(agentCtx: Context): string | undefined;
+}
+
+/** The four sections as compiled, byte-identical to the pre-guidance install. */
+function compiledDefaultSections(): SectionOverride[] {
+	return GUIDANCE_SECTIONS.map((section) => ({
+		name: section.name,
+		order: section.defaultOrder,
+		text: section.renderDefault(),
+	}));
+}
+
+/**
+ * Resolve the four guidance sections for one agent. Without the `agentPresets`
+ * service the fast path returns the compiled defaults untouched. With it, the
+ * agent's preset id drives `composeSections` against the shared home; any
+ * resolution failure degrades to compiled defaults so a bad override file can
+ * never fail the install.
+ */
+async function resolveAgentSections(
+	rootCtx: Context,
+	agent: Agent,
+): Promise<SectionOverride[]> {
+	const agentPresets = rootCtx.get(
+		"agentPresets",
+	) as AgentPresetsService | undefined;
+	if (!agentPresets) return compiledDefaultSections();
+	try {
+		const presetId = agentPresets.composedPreset(agent.ctx);
+		return await composeSections(presetId, configDir());
+	} catch (error) {
+		rootCtx.logger.warn(
+			`dsh-better-edit: guidance resolution failed for agent ${agent.id}, using compiled defaults: ${error instanceof Error ? error.message : String(error)}`,
+		);
+		return compiledDefaultSections();
+	}
+}
+
+function installAgentTools(rootCtx: Context, agent: Agent): void {
+	agent.ctx.effect(async () => {
 		// `fs` is host-plane: use the plugin's own context (covered by
 		// inject) rather than the agent's scoped one, whose fiber chain does
 		// not declare it. Session cwd still reaches the bridge per call via
@@ -64,44 +111,13 @@ function installAgentTools(rootCtx: Context, agent: Agent): () => void {
 		disposers.push(registerUndoTool(rootCtx, agent.ctx, io, sandbox));
 		disposers.push(registerWriteHook(rootCtx, agent.ctx, io));
 
-		// Shadow the preset's built-in tool guidance with the hashline contract.
-		// Same section names on the agent's own layer win over the preset's.
-		disposers.push(
-			agent.ctx.systemPrompt.section({
-				name: "tool:edit",
-				order: 102,
-				text: [
-					EDIT_DESCRIPTION,
-					"",
-					EDIT_GUIDANCE.map((line) => `- ${line}`).join("\n"),
-				].join("\n"),
-			}),
-		);
-		disposers.push(
-			agent.ctx.systemPrompt.section({
-				name: "tool:read",
-				order: 100,
-				text: [
-					"Use the read tool — not shell commands like cat — to inspect text files.",
-					"",
-					READ_GUIDANCE.map((line) => `- ${line}`).join("\n"),
-				].join("\n"),
-			}),
-		);
-		disposers.push(
-			agent.ctx.systemPrompt.section({
-				name: "tool:batch_edit",
-				order: 103,
-				text: BATCH_EDIT_GUIDANCE.map((line) => `- ${line}`).join("\n"),
-			}),
-		);
-		disposers.push(
-			agent.ctx.systemPrompt.section({
-				name: "tool:undo_last_edit",
-				order: 104,
-				text: UNDO_GUIDANCE.map((line) => `- ${line}`).join("\n"),
-			}),
-		);
+		// Shadow the preset's built-in tool guidance with the hashline
+		// contract. Same section names on the agent's own layer win over the
+		// preset's; text and order come from the per-preset resolution.
+		const sections = await resolveAgentSections(rootCtx, agent);
+		for (const section of sections) {
+			disposers.push(agent.ctx.systemPrompt.section(section));
+		}
 
 		return () => {
 			for (const dispose of disposers) dispose();
