@@ -217,6 +217,49 @@ dsh 的工具注册表按作用域解析：agent 看到的是 `agent → preset 
 2. 在 `agent/session-start` 时，将 hashline 工具**以及** `tool:read` / `tool:edit` 提示词片段注册到 agent 自身的作用域层——从而为该 agent 遮蔽 preset 的内置工具，并在 agent 销毁时自动解除。
 3. 保留内置的 `write`，但通过一个作用域内的 `tools/post-execute` 监听器把 hashline 自动读取附加到 write 结果之后。
 
+## 按 preset 配置指引
+
+`tool:read` / `tool:edit` / `tool:batch_edit` / `tool:undo_last_edit` 四个提示词片段的指引是
+纯 Markdown 文件，可以按 agent preset 覆盖。覆盖文件位于插件的共享主目录——绝不放在工作区存储中：
+
+```
+$DSH_HOME/plugins/dsh-better-edit/<preset>/<section>.md
+```
+
+（默认主目录为 `~/.dsh`，即 `~/.dsh/plugins/dsh-better-edit/`）。片段对照表：
+
+| 文件 | 提示词片段 | 默认 order |
+| --- | --- | --- |
+| `read.md` | `tool:read` | 100 |
+| `edit.md` | `tool:edit` | 102 |
+| `batch_edit.md` | `tool:batch_edit` | 103 |
+| `undo_last_edit.md` | `tool:undo_last_edit` | 104 |
+
+首次启动时插件会物化出 `_default/`——把编译内置的指引写成可编辑的文件，外加一份 README——这样 preset
+的指引从拷贝开始，而不是从空白开始：
+
+```
+cp -r _default my-preset        # 在 $DSH_HOME/plugins/dsh-better-edit/ 下执行
+```
+
+`_default/` 同时也是活跃的全局回退层：任何没有自己文件的 preset 都会继承它，编辑它即可一次性定制所有
+preset。preset 目录里可以只放你想覆盖的片段文件，其余自动回退到默认值。
+
+文件默认为纯文本；除非以 `order` front-matter 栅栏开头，它会改变该片段在组装后的系统提示中的位置：
+
+```md
+---
+order: 150
+---
+
+<片段文本>
+```
+
+每个片段的解析顺序为 `<preset>/<section>.md` → `_default/<section>.md` → 编译内置默认值。文件只在
+agent 的 session-start 时读取一次，因此修改只影响新会话——绝不影响进行中的会话。没有
+`agentPresets` 服务（即没有 preset 名册）的部署继续使用编译内置默认值，完全不会触碰这些文件；
+preset 从来不是必需的。
+
 ## 存储
 
 哈希快照、已提供状态行与撤销历史存放在一个 SQLite 库中，**与被编辑的工作区放在一起**——每个会话 cwd 一个库：
