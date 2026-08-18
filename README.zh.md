@@ -235,15 +235,10 @@ $DSH_HOME/plugins/dsh-better-edit/<preset>/<section>.md
 | `batch_edit.md` | `tool:batch_edit` | 132 |
 | `undo_last_edit.md` | `tool:undo_last_edit` | 133 |
 
-首次启动时插件会物化出 `_default/`——把编译内置的指引写成可编辑的文件，外加一份 README——这样 preset
-的指引从拷贝开始，而不是从空白开始：
-
-```
-cp -r _default my-preset        # 在 $DSH_HOME/plugins/dsh-better-edit/ 下执行
-```
-
-`_default/` 同时也是活跃的全局回退层：任何没有自己文件的 preset 都会继承它，编辑它即可一次性定制所有
-preset。preset 目录里可以只放你想覆盖的片段文件，其余自动回退到默认值。
+首次启动时插件会为四个随附 preset——`standard/`、`code/`、`minimal/`、`cordis/`——各自写入编译内置的
+可编辑指引文件（含 `order` front-matter），让每个 preset 的指引一开始就可编辑，而不是空白。插件主目录
+根的 `README.md` 说明整套机制。文件只在首次写入时生成、之后绝不被覆盖，因此你的修改会保留。preset 目录
+里可以只放你想覆盖的片段文件，其余自动回退到编译内置默认值。
 
 文件默认为纯文本；除非以 `order` front-matter 栅栏开头，它会改变该片段在组装后的系统提示中的位置：
 
@@ -255,9 +250,10 @@ order: 150
 <片段文本>
 ```
 
-每个片段的解析顺序为 `<preset>/<section>.md` → `_default/<section>.md` → 编译内置默认值。文件只在
-agent 的 session-start 时读取一次，因此修改只影响新会话——绝不影响进行中的会话。没有
-`agentPresets` 服务（即没有 preset 名册）的部署继续使用编译内置默认值，完全不会触碰这些文件；
+每个片段的解析顺序为：读取 `<preset>/<section>.md`，否则回退到编译内置默认值。文件只在 agent 的
+session-start 时读取一次，因此修改只影响新会话——绝不影响进行中的会话。没有种子目录的 preset（例如
+用户自建的）会回退到编译内置默认值，除非你把某个种子目录复制成它的名字。没有 `agentPresets` 服务
+（即没有 preset 名册）的部署继续使用编译内置默认值，完全不会触碰这些文件；
 preset 从来不是必需的。
 
 ## 存储

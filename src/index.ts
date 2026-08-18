@@ -30,7 +30,7 @@ import { registerWriteHook } from "./write-hook.js";
 import { initHasher } from "./hashline/hasher.js";
 import {
 	composeSections,
-	ensureDefaultGuidance,
+	ensurePresetGuidance,
 	GUIDANCE_SECTIONS,
 	type SectionOverride,
 } from "./guidance.js";
@@ -137,12 +137,12 @@ export function apply(rootCtx: Context): void {
 		);
 	});
 
-	// Materialize the `_default/` guidance template once, so users have a
-	// copy source for per-preset overrides (idempotent: never rewrites an
-	// existing directory). A failure must never fail the boot.
-	ensureDefaultGuidance(configDir()).catch((error) => {
+	// Seed each shipped preset's guidance directory once, so users have
+	// editable per-preset overrides (idempotent: never rewrites existing
+	// files). A failure must never fail the boot.
+	ensurePresetGuidance(configDir()).catch((error) => {
 		rootCtx.logger.warn(
-			`dsh-better-edit: default guidance materialization failed: ${error instanceof Error ? error.message : String(error)}`,
+			`dsh-better-edit: guidance materialization failed: ${error instanceof Error ? error.message : String(error)}`,
 		);
 	});
 
