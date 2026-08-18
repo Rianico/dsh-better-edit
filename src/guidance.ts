@@ -21,7 +21,7 @@
  * @module dsh-better-edit/guidance
  */
 
-import { readFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import {
@@ -209,6 +209,83 @@ export async function composeSections(
 				homeDir,
 			});
 			return { name: section.name, order, text };
+		}),
+	);
+}
+
+/**
+ * The `_default/` template README: the copy-to-override convention users see
+ * when they open the template directory.
+ */
+export const DEFAULT_GUIDANCE_README = `# Default tool guidance
+
+This directory holds the built-in guidance for the hashline tools (\`read\`,
+\`edit\`, \`batch_edit\`, \`undo_last_edit\`). It is recreated from the compiled
+defaults when missing, and existing files are never overwritten.
+
+Each file overrides the guidance for one tool section:
+
+- \`read.md\` -> the \`tool:read\` section
+- \`edit.md\` -> the \`tool:edit\` section
+- \`batch_edit.md\` -> the \`tool:batch_edit\` section
+- \`undo_last_edit.md\` -> the \`tool:undo_last_edit\` section
+
+## Override per preset
+
+Copy this directory to the name of an agent preset to customize that preset's
+guidance. The plugin reads \`<home>/<preset>/<section>.md\` first, then falls
+back to this directory, then to the compiled defaults:
+
+    cp -r _default my-preset
+
+A preset directory may contain only the sections you want to override.
+
+## Section order
+
+A file may open with a YAML front-matter fence carrying an \`order\` number; the
+section is then placed at that position in the assembled system prompt:
+
+    ---
+    order: 150
+    ---
+
+    <section text>
+
+A file without front-matter keeps the default order. A malformed fence (a
+missing closing \`---\`, a non-integer \`order\`, an unknown key) makes the whole
+file plain prose.
+`;
+
+/**
+ * Materialize the `_default/` template directory in the plugin home.
+ *
+ * Creates `_default/{read,edit,batch_edit,undo_last_edit}.md` rendered from
+ * the compiled defaults (byte-identical to the resolver's fallback) plus a
+ * `README.md` documenting the convention. Idempotent: existing files are never
+ * rewritten (a user-edited template survives repeated calls) and a missing
+ * directory is created on demand. Each file is written exclusively, so two
+ * concurrent first runs race safely — whichever lands first wins, the other
+ * observes EEXIST and leaves the file alone.
+ */
+export async function ensureDefaultGuidance(homeDir: string): Promise<void> {
+	const templateDir = join(homeDir, DEFAULT_GUIDANCE_DIR);
+	await mkdir(templateDir, { recursive: true });
+	const existing = new Set(await readdir(templateDir));
+	const targets: Array<[string, string]> = GUIDANCE_SECTIONS.map(
+		(section) => [section.file, section.renderDefault()],
+	);
+	targets.push(["README.md", DEFAULT_GUIDANCE_README]);
+	await Promise.all(
+		targets.map(async ([file, content]) => {
+			if (existing.has(file)) return;
+			await writeFile(join(templateDir, file), content, {
+				encoding: "utf-8",
+				flag: "wx",
+			}).catch((error: unknown) => {
+				// A concurrent writer landed first; never clobber it.
+				if (errCode(error) === "EEXIST") return;
+				throw error;
+			});
 		}),
 	);
 }

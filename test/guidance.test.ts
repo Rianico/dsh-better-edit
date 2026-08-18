@@ -1,12 +1,14 @@
 import { describe, expect, it } from "vitest";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { getWritableTempRoot } from "./support/fixtures.js";
 import {
 	DEFAULT_GUIDANCE_DIR,
+	DEFAULT_GUIDANCE_README,
 	GUIDANCE_SECTIONS,
 	composeSections,
+	ensureDefaultGuidance,
 	parseSectionFile,
 	renderSectionDefault,
 	resolveSection,
@@ -249,3 +251,82 @@ describe("composeSections", () => {
 		});
 	});
 });
+
+
+describe("ensureDefaultGuidance", () => {
+	it("creates the four section files byte-identical to the compiled defaults plus a README", async () => {
+		await withHome(async (home) => {
+			await ensureDefaultGuidance(home);
+			const templateDir = join(home, DEFAULT_GUIDANCE_DIR);
+			for (const section of GUIDANCE_SECTIONS) {
+				const content = await readFile(
+					join(templateDir, section.file),
+					"utf-8",
+				);
+				expect(content).toBe(section.renderDefault());
+			}
+			const readme = await readFile(join(templateDir, "README.md"), "utf-8");
+			expect(readme).toBe(DEFAULT_GUIDANCE_README);
+			expect(readme).toContain("cp -r _default");
+			expect(readme).toContain("order");
+		});
+	});
+
+	it("never rewrites existing files — a user-edited template survives repeated calls", async () => {
+		await withHome(async (home) => {
+			await ensureDefaultGuidance(home);
+			const editFile = join(home, DEFAULT_GUIDANCE_DIR, "edit.md");
+			const custom = "---\norder: 150\n---\nMy custom edit guidance, kept verbatim.";
+			await writeFile(editFile, custom, "utf-8");
+			await ensureDefaultGuidance(home);
+			expect(await readFile(editFile, "utf-8")).toBe(custom);
+		});
+	});
+
+	it("fills in only the files that are missing", async () => {
+		await withHome(async (home) => {
+			const templateDir = join(home, DEFAULT_GUIDANCE_DIR);
+			await mkdir(templateDir, { recursive: true });
+			await writeFile(
+				join(templateDir, "edit.md"),
+				"custom edit guidance",
+				"utf-8",
+			);
+			await ensureDefaultGuidance(home);
+			expect(await readFile(join(templateDir, "edit.md"), "utf-8")).toBe(
+				"custom edit guidance",
+			);
+			for (const section of GUIDANCE_SECTIONS) {
+				if (section.file === "edit.md") continue;
+				expect(
+					await readFile(join(templateDir, section.file), "utf-8"),
+				).toBe(section.renderDefault());
+			}
+			expect(await readFile(join(templateDir, "README.md"), "utf-8")).toBe(
+				DEFAULT_GUIDANCE_README,
+			);
+		});
+	});
+
+	it("the materialized _default layer is honoured by the resolver as the global fallback", async () => {
+		await withHome(async (home) => {
+			await ensureDefaultGuidance(home);
+			await writeFile(
+				join(home, DEFAULT_GUIDANCE_DIR, "edit.md"),
+				"---\norder: 151\n---\ncustom global edit guidance",
+				"utf-8",
+			);
+			const resolved = await resolveSection("tool:edit", { homeDir: home });
+			expect(resolved).toEqual({
+				order: 151,
+				text: "custom global edit guidance",
+			});
+			const read = await resolveSection("tool:read", { homeDir: home });
+			expect(read).toEqual({
+				order: 100,
+				text: renderSectionDefault("tool:read"),
+			});
+		});
+	});
+});
+
