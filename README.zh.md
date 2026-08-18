@@ -98,6 +98,45 @@ kQm│}
   kQm │ }
 ```
 
+## 按 preset 配置指引
+
+`tool:read` / `tool:edit` / `tool:batch_edit` / `tool:undo_last_edit` 四个提示词片段的指引是
+纯 Markdown 文件，可以按 agent preset 覆盖。覆盖文件位于插件的共享主目录——绝不放在工作区存储中：
+
+```
+$DSH_HOME/plugins/dsh-better-edit/<preset>/<section>.md
+```
+
+（默认主目录为 `~/.dsh`，即 `~/.dsh/plugins/dsh-better-edit/`）。片段对照表：
+
+| 文件 | 提示词片段 | 默认 order |
+| --- | --- | --- |
+| `read.md` | `tool:read` | 130 |
+| `edit.md` | `tool:edit` | 131 |
+| `batch_edit.md` | `tool:batch_edit` | 132 |
+| `undo_last_edit.md` | `tool:undo_last_edit` | 133 |
+
+首次启动时插件会为四个随附 preset——`standard/`、`code/`、`minimal/`、`cordis/`——各自写入编译内置的
+可编辑指引文件（含 `order` front-matter），让每个 preset 的指引一开始就可编辑，而不是空白。插件主目录
+根的 `README.md` 说明整套机制。文件只在首次写入时生成、之后绝不被覆盖，因此你的修改会保留。preset 目录
+里可以只放你想覆盖的片段文件，其余自动回退到编译内置默认值。
+
+文件默认为纯文本；除非以 `order` front-matter 栅栏开头，它会改变该片段在组装后的系统提示中的位置：
+
+```md
+---
+order: 150
+---
+
+<片段文本>
+```
+
+每个片段的解析顺序为：读取 `<preset>/<section>.md`，否则回退到编译内置默认值。文件只在 agent 的
+session-start 时读取一次，因此修改只影响新会话——绝不影响进行中的会话。没有种子目录的 preset（例如
+用户自建的）会回退到编译内置默认值，除非你把某个种子目录复制成它的名字。没有 `agentPresets` 服务
+（即没有 preset 名册）的部署继续使用编译内置默认值，完全不会触碰这些文件；
+preset 从来不是必需的。
+
 ## 为什么用 Hashline
 
 **省 token。** 一次编辑调用只携带 `remove_from` / `remove_to`（两个 3 字符哈希）加替换文本——从不回显被替换的文本。`str_replace` 调用则必须逐字复现被替换的文本。在一个真实文件上的 12 次编辑会话中，这可以**减少 31% 的输出 token**（多行范围达 43%）——而且这些是*输出* token，按输入的约 5-6 倍计费。见[基准测试](#基准测试)。
@@ -216,45 +255,6 @@ dsh 的工具注册表按作用域解析：agent 看到的是 `agent → preset 
 1. 通过其 `cordis.patch.yml` bundle 补丁作为宿主层 Cordis 插件挂载。
 2. 在 `agent/session-start` 时，将 hashline 工具**以及** `tool:read` / `tool:edit` 提示词片段注册到 agent 自身的作用域层——从而为该 agent 遮蔽 preset 的内置工具，并在 agent 销毁时自动解除。
 3. 保留内置的 `write`，但通过一个作用域内的 `tools/post-execute` 监听器把 hashline 自动读取附加到 write 结果之后。
-
-## 按 preset 配置指引
-
-`tool:read` / `tool:edit` / `tool:batch_edit` / `tool:undo_last_edit` 四个提示词片段的指引是
-纯 Markdown 文件，可以按 agent preset 覆盖。覆盖文件位于插件的共享主目录——绝不放在工作区存储中：
-
-```
-$DSH_HOME/plugins/dsh-better-edit/<preset>/<section>.md
-```
-
-（默认主目录为 `~/.dsh`，即 `~/.dsh/plugins/dsh-better-edit/`）。片段对照表：
-
-| 文件 | 提示词片段 | 默认 order |
-| --- | --- | --- |
-| `read.md` | `tool:read` | 130 |
-| `edit.md` | `tool:edit` | 131 |
-| `batch_edit.md` | `tool:batch_edit` | 132 |
-| `undo_last_edit.md` | `tool:undo_last_edit` | 133 |
-
-首次启动时插件会为四个随附 preset——`standard/`、`code/`、`minimal/`、`cordis/`——各自写入编译内置的
-可编辑指引文件（含 `order` front-matter），让每个 preset 的指引一开始就可编辑，而不是空白。插件主目录
-根的 `README.md` 说明整套机制。文件只在首次写入时生成、之后绝不被覆盖，因此你的修改会保留。preset 目录
-里可以只放你想覆盖的片段文件，其余自动回退到编译内置默认值。
-
-文件默认为纯文本；除非以 `order` front-matter 栅栏开头，它会改变该片段在组装后的系统提示中的位置：
-
-```md
----
-order: 150
----
-
-<片段文本>
-```
-
-每个片段的解析顺序为：读取 `<preset>/<section>.md`，否则回退到编译内置默认值。文件只在 agent 的
-session-start 时读取一次，因此修改只影响新会话——绝不影响进行中的会话。没有种子目录的 preset（例如
-用户自建的）会回退到编译内置默认值，除非你把某个种子目录复制成它的名字。没有 `agentPresets` 服务
-（即没有 preset 名册）的部署继续使用编译内置默认值，完全不会触碰这些文件；
-preset 从来不是必需的。
 
 ## 存储
 
