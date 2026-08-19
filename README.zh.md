@@ -55,8 +55,9 @@ Hashline 用两个哈希代替旧文本——**编辑 token 减少 31%**（多�
 ### 安装
 
 ```sh
-dsh plugin --profile <name> add dsh-better-edit   # 从 npm
-dsh plugin --profile <name> add /path/to/dsh-better-edit   # 从本地源码
+npx @deepseek-ai/dsh plugin --profile web add github:Rianico/dsh-better-edit   # 从 github
+npx @deepseek-ai/dsh plugin --profile web add dsh-better-edit   # 从 npm
+npx @deepseek-ai/dsh plugin --profile web add /path/to/dsh-better-edit   # 从本地源码
 ```
 
 该 profile 的下一个会话将带着 hashline 工具运行。验证该层是否生效：

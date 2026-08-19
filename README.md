@@ -59,8 +59,9 @@ Not for one-line touch-ups (near parity) or new files (`write`). It pays off in 
 ### Install
 
 ```sh
-dsh plugin --profile <name> add dsh-better-edit   # from npm
-dsh plugin --profile <name> add /path/to/dsh-better-edit   # from a local checkout
+npx @deepseek-ai/dsh plugin --profile web add github:Rianico/dsh-better-edit   # from github
+npx @deepseek-ai/dsh plugin --profile web add dsh-better-edit   # from npm
+npx @deepseek-ai/dsh plugin --profile web add /path/to/dsh-better-edit   # from a local checkout
 ```
 
 The profile's next session runs with the hashline tools installed. To verify the layer is active:
