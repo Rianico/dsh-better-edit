@@ -5,8 +5,8 @@
 <h1 align="center">dsh-better-edit</h1>
 
 <p align="center">
-  <strong>Hash-anchored edit tools for DeepSeek Harness.<br>
-  Edit by content address — not by line numbers, not by string replacement. Fewer tokens. More attention for real work. Zero misapplied edits.</strong>
+  <strong>A better edit tool for DeepSeek Harness<br>
+  Powered by hash‑anchored positioning — not by line numbers, not by string replacement, fewer tokens, more context space for real work.</strong>
 </p>
 
 <p align="center">

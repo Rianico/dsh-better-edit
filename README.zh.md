@@ -5,8 +5,8 @@
 <h1 align="center">dsh-better-edit</h1>
 
 <p align="center">
-  <strong>面向 DeepSeek Harness 的哈希锚定编辑工具。<br>
-  按内容地址编辑——不靠行号，也不靠字符串替换。更省 token。更多注意力留给真正的工作。绝不会改错行。</strong>
+  <strong>一个专为 DeepSeek Harness 而生的更好的编辑工具。<br>
+  底层基于 hash-anchored 定位——不依赖行号，也不靠字符串替换，更少的词源消耗，留出更多的上下文空间给真正的工作。</strong>
 </p>
 
 <p align="center">
