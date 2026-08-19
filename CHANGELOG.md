@@ -6,6 +6,10 @@ Entries link to the originating spec issue in [pi-hashline-edit-lsz](https://git
 
 ## [Unreleased]
 
+### Added
+
+- Guidance reset & restore defaults (issue #17): emptying or deleting an override file — or deleting its whole `<preset>/` directory — restores that section's compiled default guidance and order: the default renders at session-start and the file re-seeds at next boot (shipped presets; a deleted custom-preset override stays absent). A whitespace-only file with no front-matter fence means "I want the default"; any well-formed fence (even keyless, even an empty body) is a deliberate-intent signal and is never reset. Malformed fences now fast-fail instead of degrading to prose: a missing closing `---`, a non-integer `order`, or an unknown key rejects the file — the compiled default renders, a warning names the file and the reason, and the file is left untouched on disk for repair.
+
 ## [0.2.1] - 2026-08-18
 
 ### Added
