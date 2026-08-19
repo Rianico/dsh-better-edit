@@ -126,7 +126,8 @@ On first boot the plugin seeds the four shipped presets — `standard/`, `code/`
 `minimal/`, `cordis/` — each with the compiled guidance as editable files (plus
 `order` front-matter), so every preset's guidance starts editable rather than
 blank. A `README.md` at the plugin-home root documents the scheme. Files are
-seeded once and never rewritten, so your edits survive. A preset directory may
+seeded once and never rewritten, so your edits survive — a reset is the one
+exception (see *Reset / restore defaults* below). A preset directory may
 hold only the sections you want to override — the rest fall through to the
 compiled defaults.
 
@@ -148,6 +149,20 @@ user-authored one) falls back to the compiled defaults unless you copy a seeded
 dir to its name. A deployment without the `agentPresets` service (no preset
 roster) keeps the compiled defaults and never touches these files; presets are
 never required.
+
+### Reset / restore defaults
+
+Emptying or deleting an override file restores that section's compiled default
+guidance and order: the default renders at session-start, and the file re-seeds
+at next boot.
+
+- **Reset = delete the file, or empty it AND remove the front-matter fence.** A whitespace-only file with no fence means "I want the default" — the compiled default renders, and the file re-seeds at next boot for any preset dir, shipped or custom.
+- **Blank on purpose = keep a valid fence.** Any well-formed `---` fence — even a keyless `---\n---\n`, even an empty body — is a deliberate-intent signal: the file is explicit content and is never reset or re-seeded.
+- **Broken fence = fast fail.** A `---` fence that does not parse (missing closing `---`, non-integer `order`, unknown key) is rejected: the malformed text is never injected into the context, the compiled default renders, a warning names the file and the reason, and the file is left untouched on disk for repair.
+- **Shipped vs custom.** Shipped preset files (`standard`, `code`, `minimal`, `cordis`) re-seed at boot; a deleted custom-preset override stays absent — absence is no override. Deleting a whole `<preset>/` directory re-seeds all four section files at boot (shipped presets).
+- **Reset restores the current bundle defaults** — a plugin upgrade yields new defaults.
+
+Re-seeding happens at boot, never mid-session.
 
 ## Why Hashline
 
