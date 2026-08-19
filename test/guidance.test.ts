@@ -504,6 +504,8 @@ describe("ensurePresetGuidance", () => {
 			}
 			expect(await readFile(join(home, "README.md"), "utf-8")).toBe(
 				GUIDANCE_HOME_README,
+			);
+			expect(await readFile(join(home, "README.zh.md"), "utf-8")).toBe(
 				GUIDANCE_HOME_README_ZH,
 			);
 		});
