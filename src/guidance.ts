@@ -9,11 +9,13 @@
  * never the workspace store) and are resolved per section as
  * `<preset>/<section>.md` → compiled default.
  *
- * An override file is pure prose unless it opens with a valid YAML front-matter
- * fence carrying only an `order` key (`---` / `order: N` / `---`); anything
- * else — a missing closing fence, a non-integer `order`, an unknown key —
- * degrades the WHOLE file to prose so the mistake stays visible in the
- * rendered section.
+ * fence carrying only an `order` key (`---` / `order: N` / `---`). Any
+ * well-formed fence — even keyless, even an empty body — is deliberate content
+ * and wins. A leading `---` that does not parse (a missing closing fence, a
+ * non-integer `order`, an unknown key) is a MALFORMED override and must never
+ * reach the model: resolution falls back to the compiled default and reports
+ * the file and parse reason. An absent or blank override (whitespace-only body,
+ * no fence) means "use the default" and is re-seeded at boot.
  *
  * Resolution is pure: no cordis services, no harness wiring. The installer
  * ticket reads the resolved sections once per agent at session-start;
@@ -109,8 +111,12 @@ export function renderSectionDefault(name: string): string {
 export interface ParsedSection {
 	/** Front-matter `order`, when present and valid. */
 	order?: number;
-	/** The section text: the file body, or the whole file when front-matter is absent or malformed. */
+	/** The section text: the file body, or the whole file when no fence is present. */
 	text: string;
+	/** True when a leading `---` fence is present but does not parse (fast fail). */
+	malformed?: boolean;
+	/** Human-readable parse reason, present only when `malformed` is true. */
+	reason?: string;
 }
 
 function stripCR(line: string): string {
@@ -119,24 +125,42 @@ function stripCR(line: string): string {
 
 /**
  * Parse an override file. Only a leading `---` fence whose lines are empty or
- * `order: <integer>` is accepted; every other shape (no fence, no closing
- * fence, unknown key, non-integer value) yields the whole file as prose.
+ * `order: <integer>` is accepted. A leading `---` that does not parse (no
+ * closing fence, unknown key, non-integer value) is a malformed override;
+ * anything else is pure prose (the whole file as text).
  */
 export function parseSectionFile(content: string): ParsedSection {
 	const lines = content.split("\n");
-	if (lines.length < 3 || stripCR(lines[0]) !== "---") {
+	if (stripCR(lines[0]) !== "---") {
 		return { text: content };
 	}
 	const close = lines.findIndex(
 		(line, index) => index > 0 && stripCR(line) === "---",
 	);
-	if (close < 0) return { text: content };
+	if (close < 0) {
+		return { text: content, malformed: true, reason: "missing closing fence" };
+	}
 	let order: number | undefined;
 	for (let index = 1; index < close; index++) {
 		const line = stripCR(lines[index]);
 		if (line.trim() === "") continue;
+		const key = line.split(":")[0].trim();
 		const match = /^order:\s*(-?\d+)\s*$/.exec(line);
-		if (!match) return { text: content };
+		if (!match) {
+			if (key === "order") {
+				const value = line.slice(line.indexOf(":") + 1).trim();
+				return {
+					text: content,
+					malformed: true,
+					reason: `non-integer order '${value}'`,
+				};
+			}
+			return {
+				text: content,
+				malformed: true,
+				reason: `unknown key '${key}'`,
+			};
+		}
 		order = Number.parseInt(match[1] as string, 10);
 	}
 	// Front-matter body: strip leading blank lines after the closing fence so
@@ -144,9 +168,34 @@ export function parseSectionFile(content: string): ParsedSection {
 	// materialized preset files carry a blank line after the fence).
 	const body = lines.slice(close + 1);
 	let bodyStart = 0;
-	while (bodyStart < body.length && body[bodyStart]!.trim() === "")
-		bodyStart++;
+	while (bodyStart < body.length && body[bodyStart]!.trim() === "") bodyStart++;
 	return { order, text: body.slice(bodyStart).join("\n") };
+}
+
+/**
+ * True when an override file is blank: whitespace-only body and NO front-matter
+ * fence (the "I want the default" case). The single source of truth for whether
+ * a boot-time materialization pass should re-seed a file. False for prose with
+ * content, for any valid fence (including a keyless/empty one — a deliberate
+ * blank), and for malformed files.
+ */
+export function isBlankOverride(content: string): boolean {
+	const parsed = parseSectionFile(content);
+	return (
+		!parsed.malformed &&
+		parsed.order === undefined &&
+		parsed.text.trim() === "" &&
+		!startsWithFenceLine(content)
+	);
+}
+
+/** True when an override file opens with a leading `---` fence that is malformed. */
+export function isMalformedOverride(content: string): boolean {
+	return parseSectionFile(content).malformed === true;
+}
+
+function startsWithFenceLine(content: string): boolean {
+	return stripCR(content.split("\n")[0]) === "---";
 }
 
 /** Options for resolving one section's guidance. */
@@ -172,12 +221,15 @@ function overrideCandidates(
 export interface GuidanceResolution {
 	order: number;
 	text: string;
+	/** Set when the override file was malformed and the compiled default was used. */
+	malformed?: { file: string; reason: string };
 }
 
 /**
  * Resolve one section's guidance: the first override file that exists wins,
- * falling back to the compiled default. A missing file (ENOENT) advances the
- * chain; any other read error propagates.
+ * falling back to the compiled default. A missing or blank file (ENOENT, or
+ * whitespace-only with no fence) advances the chain; a malformed file resolves
+ * to the compiled default and reports itself; any other read error propagates.
  */
 export async function resolveSection(
 	name: string,
@@ -192,6 +244,21 @@ export async function resolveSection(
 		});
 		if (content === undefined) continue;
 		const parsed = parseSectionFile(content);
+		if (parsed.malformed) {
+			// A broken override must never reach the model. Resolve to the
+			// compiled default and report the file + parse reason to the caller.
+			return {
+				order: section.defaultOrder,
+				text: section.renderDefault(),
+				malformed: {
+					file: candidate,
+					reason: parsed.reason ?? "malformed override",
+				},
+			};
+		}
+		// Blank (no fence, whitespace-only) means "use the default": advance the
+		// fallback chain rather than render an empty section.
+		if (isBlankOverride(content)) continue;
 		return { order: parsed.order ?? section.defaultOrder, text: parsed.text };
 	}
 	return { order: section.defaultOrder, text: section.renderDefault() };
@@ -202,6 +269,8 @@ export interface SectionOverride {
 	name: string;
 	order: number;
 	text: string;
+	/** Set when the override file was malformed and the compiled default was used. */
+	malformed?: { file: string; reason: string };
 }
 
 /**
@@ -214,11 +283,16 @@ export async function composeSections(
 ): Promise<SectionOverride[]> {
 	return Promise.all(
 		GUIDANCE_SECTIONS.map(async (section) => {
-			const { order, text } = await resolveSection(section.name, {
+			const resolved = await resolveSection(section.name, {
 				presetId,
 				homeDir,
 			});
-			return { name: section.name, order, text };
+			return {
+				name: section.name,
+				order: resolved.order,
+				text: resolved.text,
+				malformed: resolved.malformed,
+			};
 		}),
 	);
 }
@@ -308,9 +382,13 @@ export const GUIDANCE_HOME_README_ZH = `# dsh-better-edit 指引
  * For each of \`DEFAULT_PRESETS\` creates \`<preset>/{read,edit,batch_edit,
  * undo_last_edit}.md\` rendered from the compiled defaults (with order
  * front-matter), plus a root \`README.md\` documenting the convention.
- * Idempotent: existing files are never rewritten (a user-edited file survives
- * repeated calls) and missing directories are created on demand. Each file is
- * written exclusively, so two concurrent first runs race safely.
+ * Idempotent: a user-edited file survives repeated calls. A blank override file
+ * (whitespace-only body, no fence) is re-seeded with the current compiled
+ * default; malformed, non-blank, and deliberate-blank (valid-fence) files are
+ * never touched. Custom preset directories present on disk are scanned the same
+ * way but never fabricated. Missing directories are created on demand (shipped
+ * presets only), and shipped files are written exclusively so two concurrent
+ * first runs race safely.
  */
 export async function ensurePresetGuidance(homeDir: string): Promise<void> {
 	await mkdir(homeDir, { recursive: true });
@@ -321,9 +399,12 @@ export async function ensurePresetGuidance(homeDir: string): Promise<void> {
 			const existing = new Set(await readdir(dir));
 			await Promise.all(
 				GUIDANCE_SECTIONS.map(async (section) => {
-					if (existing.has(section.file)) return;
-					const content = `---\norder: ${section.defaultOrder}\n---\n\n${section.renderDefault()}`;
-					await writeFile(join(dir, section.file), content, {
+					const path = join(dir, section.file);
+					if (existing.has(section.file)) {
+						await healBlankOverride(path, section);
+						return;
+					}
+					await writeFile(path, seededContent(section), {
 						encoding: "utf-8",
 						flag: "wx",
 					}).catch((error: unknown) => {
@@ -334,6 +415,26 @@ export async function ensurePresetGuidance(homeDir: string): Promise<void> {
 				}),
 			);
 		}),
+	);
+	// Custom presets present on disk: heal existing blank section files only.
+	// Absence is respected — a custom preset's files are never fabricated, and
+	// malformed / non-blank / deliberate-blank files are left untouched.
+	const entries = await readdir(homeDir, { withFileTypes: true });
+	await Promise.all(
+		entries
+			.filter(
+				(entry) => entry.isDirectory() && !DEFAULT_PRESETS.includes(entry.name),
+			)
+			.map(async (entry) => {
+				const dir = join(homeDir, entry.name);
+				const existing = new Set(await readdir(dir));
+				await Promise.all(
+					GUIDANCE_SECTIONS.map(async (section) => {
+						if (!existing.has(section.file)) return;
+						await healBlankOverride(join(dir, section.file), section);
+					}),
+				);
+			}),
 	);
 	const homeFiles = new Set(await readdir(homeDir));
 	const readmes: Array<[string, string]> = [
@@ -352,4 +453,33 @@ export async function ensurePresetGuidance(homeDir: string): Promise<void> {
 			});
 		}),
 	);
+}
+
+/** The content a seeded override file carries, rendered from the current defaults. */
+function seededContent(section: GuidanceSection): string {
+	return `---\norder: ${section.defaultOrder}\n---\n\n${section.renderDefault()}`;
+}
+
+/**
+ * Heal an existing empty override file: a blank file means "use the default",
+ * so it is rewritten with the current seeded default. Malformed, non-blank, and
+ * deliberate-blank (valid-fence) files are left untouched — overwriting a
+ * malformed file would destroy the user's salvageable body. Plain overwrite:
+ * the file already exists. Errors propagate to the boot caller, which never
+ * fails init.
+ */
+async function healBlankOverride(
+	path: string,
+	section: GuidanceSection,
+): Promise<void> {
+	let content: string | undefined;
+	try {
+		content = await readFile(path, "utf-8");
+	} catch (error: unknown) {
+		// Vanished between readdir and read; nothing to heal.
+		if (errCode(error) === "ENOENT") return;
+		throw error;
+	}
+	if (!isBlankOverride(content)) return;
+	await writeFile(path, seededContent(section), { encoding: "utf-8" });
 }
