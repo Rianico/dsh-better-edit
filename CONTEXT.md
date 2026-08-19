@@ -12,8 +12,16 @@ _Avoid_: prompt, prompt entry
 The editable prose of a prompt section — the usage instructions the model reads. Overridable per preset; the compiled defaults live in `src/prompts.ts`.
 _Avoid_: prompt, instructions ("instructions" is `dsh-agent-instructions`' term for AGENTS.md content), guidelines (the legacy `*_GUIDELINES` constant names in `src/prompts.ts` — unify on "guidance")
 
+**Override file**:
+A `<preset>/<section>.md` plain-markdown file in the plugin's shared home that overrides one prompt section's guidance and (optionally) its `order` via front-matter. The unit users edit and reset — distinct from the preset, which is a roster composition.
+_Avoid_: preset ("the preset file" is the composition row, not this override file), custom prompt
+
 **Order**:
 The numeric ordering of a prompt section within the assembled system prompt. Overridable alongside guidance.
 
 **Preset**:
 A per-session agent composition from the dsh roster (`agent.cordis.yml` plus metadata, system- or user-authored). The unit guidance overrides are keyed by; the plugin reads the agent's preset id at `agent/session-start` via `agentPresets.composedPreset`.
+
+**Reset**:
+Restoring the compiled default guidance and order for an override file. Triggered by emptying or deleting an override file, or deleting its whole `<preset>/` directory: the plugin renders the compiled default at session-start and re-seeds the file at next boot. An emptied override file is treated as absent.
+_Avoid_: restore, regenerate, "recover the default prompt"
