@@ -82,13 +82,23 @@ async function resolveAgentSections(
 	rootCtx: Context,
 	agent: Agent,
 ): Promise<SectionOverride[]> {
-	const agentPresets = rootCtx.get(
-		"agentPresets",
-	) as AgentPresetsService | undefined;
+	const agentPresets = rootCtx.get("agentPresets") as
+		| AgentPresetsService
+		| undefined;
 	if (!agentPresets) return compiledDefaultSections();
 	try {
 		const presetId = agentPresets.composedPreset(agent.ctx);
-		return await composeSections(presetId, configDir());
+		const sections = await composeSections(presetId, configDir());
+		// Warn once per agent install (this runs once per agent, under the
+		// WeakSet guard) about any malformed override we had to ignore.
+		for (const section of sections) {
+			if (section.malformed) {
+				rootCtx.logger.warn(
+					`dsh-better-edit: ignoring malformed guidance override ${section.malformed.file}: ${section.malformed.reason}; using compiled default`,
+				);
+			}
+		}
+		return sections;
 	} catch (error) {
 		rootCtx.logger.warn(
 			`dsh-better-edit: guidance resolution failed for agent ${agent.id}, using compiled defaults: ${error instanceof Error ? error.message : String(error)}`,
