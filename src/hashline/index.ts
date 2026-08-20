@@ -1,3 +1,8 @@
+/**
+ * Hashline barrel — thin re-export via deep seams.
+ * Deep seams: hash-assign (allocation), anchor-pipeline (ordering), hash (persistence).
+ * @module dsh-better-edit/hashline
+ */
 export {
  ANCHOR_LEN,
  HASH_SEP,
@@ -15,9 +20,10 @@ export {
  lineHashesPure,
  mapStableHashes,
  initHasher,
- lineHashes,
  contentChecksum,
 } from "./hash-assign.js";
+
+export { lineHashes } from "./hash.js";
 
 export { parseHashRef, parseText } from "./parse.js";
 export type { Anchor } from "./parse.js";

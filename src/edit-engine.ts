@@ -26,7 +26,8 @@ import {
 	type HEdit,
 	type NEdit,
 } from "./hashline/anchor-pipeline.js";
-import { lineHashes, MAX_HASH_LINES } from "./hashline/hash-assign.js";
+import { lineHashes } from "./hashline/hash.js";
+import { MAX_HASH_LINES } from "./hashline/hash-assign.js";
 import {
 	AnchorMismatchError,
 	ServedRejectionError,
