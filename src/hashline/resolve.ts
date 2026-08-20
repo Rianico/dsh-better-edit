@@ -233,6 +233,7 @@ function warnUnicodeEsc(edit: HEdit, warnings: string[]): void {
 	}
 }
 
+/** @internal — private to anchor-pipeline seam; do not import directly, use anchor-pipeline.ts */
 export function stripBarePrefixes(
 	edit: HEdit,
 	fileHashes: string[],
@@ -265,6 +266,7 @@ export function stripBarePrefixes(
 	return { ...edit, content_lines: contentLines };
 }
 
+/** @internal — private to anchor-pipeline seam */
 export function stripDiffPrefixes(edit: HEdit, warnings: string[]): HEdit {
 	const stripped: number[] = [];
 	const contentLines = edit.content_lines.map((line, lineIndex) => {
@@ -290,6 +292,7 @@ export function stripDiffPrefixes(edit: HEdit, warnings: string[]): HEdit {
 	return { ...edit, content_lines: contentLines };
 }
 
+/** @internal — private to anchor-pipeline seam */
 export function swapReversedRanges(
 	edit: HEdit,
 	fileHashes: string[],
@@ -433,6 +436,7 @@ function canonCounts(lines: string[]): Map<string, number> {
 	return counts;
 }
 
+/** @internal — private to anchor-pipeline seam */
 export function findNewEdge(
 	contentLines: string[],
 	rangeLines: string[],
@@ -455,6 +459,7 @@ export function findNewEdge(
 	return undefined;
 }
 
+/** @internal — private to anchor-pipeline seam: detection + boundaryDups belongs to AnchorPipeline ordering */
 export function valEdit(
 	edit: HEdit,
 	fileLines: string[],

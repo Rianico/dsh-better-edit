@@ -1,15 +1,15 @@
 /**
- * The shared read-and-serve operation: resolve → read → normalize → render
- * the hashline preview → record the served rows → clear the drift marks →
- * append the UTF-8 rewrite note. Used by the `read` tool and by the write
- * auto-read hook, so the model is always shown fresh anchors the same way no
- * matter which tool produced the read.
+ * The shared read-and-serve operation — now a thin wrapper over FileView.
+ *
+ * FileView owns normalize → hash → render → truncate → served selection.
+ * This module only adds the persistence seam: recordServed + clearDriftReported
+ * + UTF-8 rewrite note. Used by the `read` tool and by the write auto-read
+ * hook, so the model is always shown fresh anchors the same way.
  * @module dsh-better-edit/read-and-serve
  */
 
 import { abortIf } from "./utils.js";
-import { normFromText } from "./file-reader.js";
-import { fmtReadPreview, MAX_HASH_LINES } from "./read-render.js";
+import { readView } from "./file-view.js";
 import { recordServed, clearDriftReported } from "./served-store.js";
 import type { FileIO } from "./fs-bridge.js";
 import type { ServedRow } from "./hashline/served.js";
@@ -54,35 +54,27 @@ export async function readAndServe(
 ): Promise<ReadAndServeResult> {
 	const { sessionKey, signal } = options;
 	abortIf(signal);
-	const absolutePath = await io.resolve(rawPath, cwd, signal);
-	const rawText = await io.readText(absolutePath, signal);
-	const { normalized, fileHashes, hadUtf8DecodeErrors } =
-		await normFromText({
-			absolutePath,
-			rawText,
-			displayPath: rawPath,
-			signal,
-			maxLines: MAX_HASH_LINES,
-		});
-
-	const preview = await fmtReadPreview(
-		normalized,
-		{ offset: options.offset, limit: options.limit },
-		fileHashes,
-		absolutePath,
-	);
-	if (preview.served.length > 0) {
+	const view = await readView(io, rawPath, cwd, {
+		offset: options.offset,
+		limit: options.limit,
+		signal,
+	});
+	if (view.served.length > 0) {
 		await recordServed(
 			sessionKey,
-			absolutePath,
-			preview.served,
-			fileHashes.length,
+			view.absolutePath,
+			view.served,
+			view.hashes.length,
 		);
 	}
-	await clearDriftReported(sessionKey, absolutePath);
-
-	const text = hadUtf8DecodeErrors
-		? `${preview.text}\n\n${UTF8_REWRITE_NOTE}`
-		: preview.text;
-	return { text, served: preview.served, hadUtf8DecodeErrors, absolutePath };
+	await clearDriftReported(sessionKey, view.absolutePath);
+	const text = view.hadUtf8DecodeErrors
+		? `${view.text}\n\n${UTF8_REWRITE_NOTE}`
+		: view.text;
+	return {
+		text,
+		served: view.served,
+		hadUtf8DecodeErrors: view.hadUtf8DecodeErrors,
+		absolutePath: view.absolutePath,
+	};
 }
