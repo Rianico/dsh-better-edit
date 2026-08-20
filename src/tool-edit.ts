@@ -13,11 +13,11 @@ import { abortIf, isRec, splitLines } from "./utils.js";
 
 import {
 	enforceNoopLoop,
-	persistUndoAndWrite,
+	commit,
 	resolveMissingPath,
 } from "./mutation.js";
 import {
-	execPipeline,
+	applySingle,
 	snapshotIdFor,
 } from "./mutation.js";
 import {
@@ -80,7 +80,7 @@ export function buildEditTool(io: FileIO, sandbox: FsSandboxController) {
 				const path = normalizedParams.path;
 				abortIf(signal);
 
-				const pipeline = await execPipeline(io, normalizedParams, cwd, {
+				const pipeline = await applySingle(io, normalizedParams, cwd, {
 					signal,
 					sessionKey,
 				});
@@ -156,7 +156,7 @@ export function buildEditTool(io: FileIO, sandbox: FsSandboxController) {
 				}
 
 				abortIf(signal);
-				await persistUndoAndWrite({
+				await commit({
 					io,
 					files: [
 						{
