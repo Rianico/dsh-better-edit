@@ -10,6 +10,7 @@ import {
 	type HashStore,
 } from "../../src/hash-store.js";
 import { HASH_STORE_VERSION } from "../../src/constants.js";
+import { CANON_VERSION } from "../../src/hashline/hash-assign.js";
 import { initHasher, contentChecksum } from "../../src/hashline/hasher.js";
 import { splitLines } from "../../src/utils.js";
 import { getWritableTempRoot } from "../support/fixtures.js";
@@ -93,7 +94,7 @@ describe("hash-store — loadHashStore", () => {
 });
 
 describe("hash-store — migration from legacy hash-store.json", () => {
-	it("imports valid legacy snapshots and renames the file to .bak", async () => {
+	it("imports valid legacy snapshot rows and renames the file to .bak (rows are old-canon, so they rebuild on next read)", async () => {
 		await withTempHome(async (home) => {
 			await writeLegacyStore(home, {
 				"/valid.ts": { content: "ok\n", hashes: ["ABC"] },
@@ -102,17 +103,14 @@ describe("hash-store — migration from legacy hash-store.json", () => {
 
 			const store = await loadHashStore();
 
-			expect(store.getSnapshot("/valid.ts", "ok\n")).toEqual(["ABC"]);
-			expect(store.getSnapshot("/also.ts", "good\nmore\n")).toEqual([
-				"XYZ",
-				"QWE",
-			]);
+			expect(store.getSnapshot("/valid.ts", "ok\n")).toBeUndefined();
+			expect(store.getSnapshot("/also.ts", "good\nmore\n")).toBeUndefined();
 			expect(existsSync(legacyPath(home))).toBe(false);
 			expect(existsSync(`${legacyPath(home)}.bak`)).toBe(true);
 		});
 	});
 
-	it("drops structurally invalid legacy entries, keeps valid ones", async () => {
+	it("drops structurally invalid legacy entries, imports valid rows (old-canon, rebuilt on next read)", async () => {
 		await withTempHome(async (home) => {
 			await writeLegacyStore(home, {
 				"/valid.ts": { content: "ok\n", hashes: ["ABC"] },
@@ -125,12 +123,16 @@ describe("hash-store — migration from legacy hash-store.json", () => {
 
 			const store = await loadHashStore();
 
-			expect(store.getSnapshot("/valid.ts", "ok\n")).toEqual(["ABC"]);
-			expect(store.getSnapshot("/also-valid.ts", "good\n")).toEqual(["XYZ"]);
+			expect(store.getSnapshot("/valid.ts", "ok\n")).toBeUndefined();
+			expect(store.getSnapshot("/also-valid.ts", "good\n")).toBeUndefined();
 			expect(store.getSnapshot("/missing-hashes.ts", "x\n")).toBeUndefined();
 			expect(store.getSnapshot("/null-content.ts", "")).toBeUndefined();
 			expect(store.getSnapshot("/hashes-not-array.ts", "y\n")).toBeUndefined();
 			expect(store.getSnapshot("/hash-not-string.ts", "z\n")).toBeUndefined();
+			const paths = store.allKnownPaths().map((r) => r.path);
+			expect(paths).toEqual(
+				expect.arrayContaining(["/valid.ts", "/also-valid.ts"]),
+			);
 		});
 	});
 
@@ -144,7 +146,7 @@ describe("hash-store — migration from legacy hash-store.json", () => {
 			const store = await loadHashStore();
 
 			expect(store.getSnapshot("/dup.ts", "a\nb\n")).toBeUndefined();
-			expect(store.getSnapshot("/valid.ts", "ok\n")).toEqual(["ABC"]);
+			expect(store.getSnapshot("/valid.ts", "ok\n")).toBeUndefined();
 		});
 	});
 
@@ -158,7 +160,7 @@ describe("hash-store — migration from legacy hash-store.json", () => {
 			const store = await loadHashStore();
 
 			expect(store.getSnapshot("/bad.ts", "x\n")).toBeUndefined();
-			expect(store.getSnapshot("/valid.ts", "ok\n")).toEqual(["ABC"]);
+			expect(store.getSnapshot("/valid.ts", "ok\n")).toBeUndefined();
 		});
 	});
 
@@ -186,7 +188,7 @@ describe("hash-store — migration from legacy hash-store.json", () => {
 				"/one.ts": { content: "1\n", hashes: ["AAA"] },
 			});
 			const first = await loadHashStore();
-			expect(first.getSnapshot("/one.ts", "1\n")).toEqual(["AAA"]);
+			expect(first.getSnapshot("/one.ts", "1\n")).toBeUndefined();
 			expect(existsSync(`${legacyPath(home)}.bak`)).toBe(true);
 
 			await writeFile(
@@ -200,7 +202,7 @@ describe("hash-store — migration from legacy hash-store.json", () => {
 
 			const second = await loadHashStore();
 			expect(second.getSnapshot("/two.ts", "2\n")).toBeUndefined();
-			expect(second.getSnapshot("/one.ts", "1\n")).toEqual(["AAA"]);
+			expect(second.getSnapshot("/one.ts", "1\n")).toBeUndefined();
 		});
 	});
 });
@@ -220,7 +222,7 @@ describe("hash-store — concurrency (issue #10)", () => {
 			second.exec("BEGIN IMMEDIATE");
 			ins.run(
 				"/b.ts",
-				contentChecksum("beta\n"),
+				`${CANON_VERSION}:${contentChecksum("beta\n")}`,
 				splitLines("beta\n").length,
 				JSON.stringify(["BBC"]),
 				Date.now(),
