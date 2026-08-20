@@ -707,7 +707,42 @@ export function verifyServedRange(args: {
 
 	const startPositions = servedPositionsOf(served, startHash);
 	const endPositions = servedPositionsOf(served, endHash);
-	if (startPositions.length !== 1 || endPositions.length !== 1) {
+	const currentLen = endLine - startLine + 1;
+	let from: number | undefined;
+	let to: number | undefined;
+	if (startPositions.length === 1 && endPositions.length === 1) {
+		from = Math.min(startPositions[0]!, endPositions[0]!);
+		to = Math.max(startPositions[0]!, endPositions[0]!);
+	} else {
+		const candidates: Array<{ from: number; to: number }> = [];
+		for (const s of startPositions) {
+			for (const e of endPositions) {
+				const candFrom = Math.min(s, e);
+				const candTo = Math.max(s, e);
+				if (candTo - candFrom + 1 !== currentLen) continue;
+				let ok = true;
+				for (let k = 0; k < currentLen; k++) {
+					if (served[candFrom + k] !== fileHashes[startLine - 1 + k]) {
+						ok = false;
+						break;
+					}
+				}
+				if (ok) candidates.push({ from: candFrom, to: candTo });
+			}
+		}
+		if (candidates.length === 1) {
+			from = candidates[0]!.from;
+			to = candidates[0]!.to;
+		} else if (candidates.length > 1) {
+			candidates.sort(
+				(a, b) =>
+					Math.abs(a.from - (startLine - 1)) - Math.abs(b.from - (startLine - 1)),
+			);
+			from = candidates[0]!.from;
+			to = candidates[0]!.to;
+		}
+	}
+	if (from === undefined || to === undefined) {
 		const problems: string[] = [];
 		if (startPositions.length === 0) {
 			problems.push(`remove_from "${startHash}" has no served position`);
@@ -727,13 +762,13 @@ export function verifyServedRange(args: {
 			code: "E_RANGE_UNVERIFIED",
 			message:
 				`[E_RANGE_UNVERIFIED] Cannot verify the range against served state${where}: ${problems.join("; ")}. ` +
-				`The tool only verifies what it delivered to the model's context; a boundary anchor that cannot be verified is never guessed at. Current range:\n${echo}\n${retryHint()}`,
+				`No served span matched the current range (${currentLen} lines). ` +
+				`A full read will re-sync the served mirror — the echoed range below is current content, ` +
+				`but retrying without re-reading cannot clear a stale duplicate outside the echoed window.\n` +
+				`Current range:\n${echo}`,
 			servedRows: echoRows,
 		});
 	}
-
-	const from = Math.min(startPositions[0]!, endPositions[0]!);
-	const to = Math.max(startPositions[0]!, endPositions[0]!);
 
 	for (let i = from; i <= to; i++) {
 		if (served[i] === null) {
@@ -747,7 +782,6 @@ export function verifyServedRange(args: {
 	}
 
 	const servedLen = to - from + 1;
-	const currentLen = endLine - startLine + 1;
 	if (servedLen !== currentLen) {
 		throw new ServedRejectionError({
 			code: "E_RANGE_STALE",
