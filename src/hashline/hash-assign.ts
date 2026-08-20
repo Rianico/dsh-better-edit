@@ -78,8 +78,21 @@ function hashAt(idx: number): string {
 export const HL_PREFIX_PLUS_RE = new RegExp(`^\\+${HASH_CLASS}│`);
 export const HL_PREFIX_MINUS_RE = new RegExp(`^-(?:${HASH_CLASS}│| {${ANCHOR_LEN}}│)`);
 export const HL_BARE_PREFIX_RE = new RegExp(`^\\s*(${HASH_CLASS})│`);
+
+export const CANON_VERSION = 2;
+
+const CANON_RE = /[ \t\r\n]+/g;
+
 export function canon(line: string): string {
-  return line.replace(/\r/g, "").trimEnd();
+  return line.replace(CANON_RE, "");
+}
+
+function getCanon(cache: Map<string, string>, line: string): string {
+  let v = cache.get(line);
+  if (v !== undefined) return v;
+  v = canon(line);
+  cache.set(line, v);
+  return v;
 }
 const BITSET_WORDS = Math.ceil(HASH_SPACE / 32);
 function getBit(bits: Uint32Array, idx: number): boolean {
@@ -114,8 +127,9 @@ export function lineHashesPure(content: string): string[] {
   const hashes = new Array<string>(lines.length);
   const used = new Uint32Array(BITSET_WORDS);
   const hint = { value: 0 };
+  const canonCache = new Map<string, string>();
   for (let i = 0; i < lines.length; i++) {
-    const c = canon(lines[i]!);
+    const c = getCanon(canonCache, lines[i]!);
     const baseIdx = (xxh32(c) >>> 14) % HASH_SPACE;
     hashes[i] = assignHash(used, baseIdx, hint);
   }
@@ -151,6 +165,7 @@ export function mapStableHashes(oldContent: string, oldHashes: string[], newCont
   const newHashes = new Array<string>(newLines.length);
   const used = new Uint32Array(BITSET_WORDS);
   const hint = { value: 0 };
+  const canonCache = new Map<string, string>();
   const removed = removedHashes ?? new Set<string>();
   const oldHashIndex = new Map<string, number>();
   for (let i = 0; i < oldHashes.length; i++) {
@@ -182,7 +197,7 @@ export function mapStableHashes(oldContent: string, oldHashes: string[], newCont
   }
   const newByContent = new Map<string, number[]>();
   for (let i = 0; i < newLines.length; i++) {
-    const key = canon(newLines[i]!);
+    const key = getCanon(canonCache, newLines[i]!);
     const list = newByContent.get(key);
     if (list) list.push(i);
     else newByContent.set(key, [i]);
@@ -195,7 +210,7 @@ export function mapStableHashes(oldContent: string, oldHashes: string[], newCont
     }
   };
   for (const entry of survivors) {
-    const candidates = newByContent.get(canon(oldLines[entry.index]!));
+    const candidates = newByContent.get(getCanon(canonCache, oldLines[entry.index]!));
     if (!candidates || candidates.length === 0) continue;
     const target = entry.index > spanEnd ? entry.index + shiftAfterSpan : entry.index;
     const pos = nearestNew(candidates, target);
@@ -206,7 +221,7 @@ export function mapStableHashes(oldContent: string, oldHashes: string[], newCont
   }
   const removedByContent = new Map<string, { hashes: string[]; pos: number }>();
   for (const entry of removedEntries) {
-    const key = canon(oldLines[entry.index]!);
+    const key = getCanon(canonCache, oldLines[entry.index]!);
     let queue = removedByContent.get(key);
     if (!queue) {
       queue = { hashes: [], pos: 0 };
@@ -216,14 +231,14 @@ export function mapStableHashes(oldContent: string, oldHashes: string[], newCont
   }
   for (let i = 0; i < newLines.length; i++) {
     if (newHashes[i]) continue;
-    const queue = removedByContent.get(canon(newLines[i]!));
+    const queue = removedByContent.get(getCanon(canonCache, newLines[i]!));
     if (!queue || queue.pos >= queue.hashes.length) continue;
     newHashes[i] = queue.hashes[queue.pos]!;
     queue.pos += 1;
   }
   for (let i = 0; i < newLines.length; i++) {
     if (newHashes[i]) continue;
-    const c = canon(newLines[i]!);
+    const c = getCanon(canonCache, newLines[i]!);
     const baseIdx = (xxh32(c) >>> 14) % HASH_SPACE;
     newHashes[i] = assignHash(used, baseIdx, hint);
   }
