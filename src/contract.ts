@@ -202,23 +202,23 @@ export function assertUndoRequest(
 export const replacementTextSchema = {
 	type: 'string',
 	description:
-		'Replacement text as a single string with \\n line separators; every \\n separates lines, so a trailing \\n adds a final empty line. Mirror the removed lines exactly, blank lines included. A replacement that is only blank lines is written as one \\n per blank line. Use "" to delete the range.',
+		'Complete replacement for the range; use "" to delete',
 } as const
 
 export const removeFromSchema = {
 	type: 'string',
 	description:
-		'Bare 3-char HASH only (e.g. "aB3") — copy just the hash from the leftmost column of a read row like `aB3│content`; never the line content. Marks the FIRST line to remove (inclusive)',
+		'First line to remove (inclusive)',
 } as const
 
 export const removeToSchema = {
 	type: 'string',
 	description:
-		'Bare 3-char HASH only (e.g. "aB3") — copy just the hash from the leftmost column of a read row like `aB3│content`; never the line content. Marks the LAST line to remove (inclusive)',
+		'Last line to remove (inclusive)',
 } as const
 
 export const pathSchema = {
 	type: 'string',
 	description:
-		'Path to edit. Required — always provide it explicitly; it is only auto-resolved from the anchors as a fallback when omitted by mistake.',
+		'Required; auto-resolved from anchors only as fallback',
 } as const

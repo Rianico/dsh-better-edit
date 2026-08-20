@@ -16,9 +16,9 @@ describe("edit input validation", () => {
 		const toolEdit: HTEdit = { remove_from: hashes[0]!, remove_to: hashes[0]!, replacement_text: `${hashes[0]!}│FOO` };
     const result = applyEdit(file, resEdit(toolEdit));
 		expect(result.content).toBe("FOO\nbar");
-		expect(result.warnings?.[0]).toMatch(/Autocorrected: stripped "HASH│" prefix/);
+		expect(result.warnings?.[0]).toMatch(/stripped "HASH│" prefix/);
 		expect(result.warnings?.[0]).toMatch(/replacement_text line 1/);
-		expect(result.warnings?.[0]).toMatch(/1 of 1 stripped hash\(es\) match current file lines/);
+		expect(result.warnings?.[0]).toMatch(/1\/1 matched/);
 	});
 
 	it("rejects array replacement_text before patch-prefix validation", () => {
@@ -69,7 +69,7 @@ describe("partial hash prefixes copied into content (issue #24)", () => {
       remove_to: anchor, replacement_text: `${betaHash}│### heading\nreal content` },
     hashes);
     expect(result.content).toBe("### heading\nreal content\nbeta\ngamma\ndelta");
-    expect(result.warnings?.[0]).toMatch(/1 of 1 stripped hash\(es\) match current file lines/);
+    expect(result.warnings?.[0]).toMatch(/1\/1 matched/);
     expect(result.warnings?.[0]).not.toMatch(/literal content/);
 	});
 
@@ -82,7 +82,7 @@ describe("partial hash prefixes copied into content (issue #24)", () => {
       remove_to: anchor, replacement_text: `${gammaHash}│text` },
     hashes);
     expect(result.content).toBe("text\nbeta\ngamma\ndelta");
-    expect(result.warnings?.[0]).toMatch(/1 of 1 stripped hash\(es\) match current file lines/);
+    expect(result.warnings?.[0]).toMatch(/1\/1 matched/);
 	});
 
 	it("strips bare prefixes even when the hash is not in the file hash set", async () => {
@@ -93,8 +93,8 @@ describe("partial hash prefixes copied into content (issue #24)", () => {
       remove_to: anchor, replacement_text: "ZZZ│one\nZZP│two" },
     hashes);
     expect(result.content).toBe("one\ntwo\nbeta\ngamma\ndelta");
-    expect(result.warnings?.[0]).toMatch(/none of the stripped hashes match current file lines/);
-    expect(result.warnings?.[0]).toMatch(/literal content/);
+    expect(result.warnings?.[0]).toMatch(/0 matched/);
+    expect(result.warnings?.[0]).toMatch(/literal 'HASH│' content/);
 	});
 
 	it("reports the replacement_text line for each stripped line", async () => {
@@ -168,7 +168,7 @@ describe("diff preview rows copied into content", () => {
       remove_to: anchor, replacement_text: `+${hashes[1]!}│### heading\nreal content` },
     hashes);
 		expect(result.content).toBe("### heading\nreal content\nbeta\ngamma\ndelta");
-		expect(result.warnings?.[0]).toMatch(/Autocorrected: stripped diff-preview marker/);
+		expect(result.warnings?.[0]).toMatch(/stripped diff-preview marker/);
 		expect(result.warnings?.[0]).toMatch(/replacement_text line 1/);
 	});
 

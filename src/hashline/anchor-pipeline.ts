@@ -166,7 +166,7 @@ function fmtMismatchWithServes(
 	const refList = notFound.map((m) => `"${m.ref.hash}"`).join(", ");
 	if (notFound.length > 0) {
 		out.push(
-			`[E_STALE_ANCHOR] ${notFound.length} stale anchor${notFound.length > 1 ? "s" : ""}${filePath ? ` in ${filePath}` : ""}: ${refList}. The file content has changed since those anchors were read. Call read() to get fresh anchors, then copy the 3-char HASH of the start and end of the range you are editing into remove_from and remove_to of your next edit call.`,
+			`[E_STALE_ANCHOR] ${notFound.length} stale anchor${notFound.length > 1 ? "s" : ""}${filePath ? ` in ${filePath}` : ""}: ${refList}. Re-read for fresh anchors.`,
 		);
 		for (const m of notFound) {
 			const ctx = m.context;
@@ -189,7 +189,7 @@ function fmtMismatchWithServes(
 	if (ambiguous.length > 0) {
 		if (out.length > 0) out.push("");
 		out.push(
-			`[E_AMBIGUOUS_ANCHOR] ${ambiguous.length} ambiguous anchor${ambiguous.length > 1 ? "s" : ""}${filePath ? ` in ${filePath}` : ""}. Call read() to get fresh anchors, then copy the 3-char HASH of the start and end of the range you are editing into remove_from and remove_to of your next edit call.`,
+			`[E_AMBIGUOUS_ANCHOR] ${ambiguous.length} ambiguous anchor${ambiguous.length > 1 ? "s" : ""}${filePath ? ` in ${filePath}` : ""}. Re-read for fresh anchors.`,
 		);
 		for (const m of ambiguous) {
 			const sample = (m.candidates ?? []).slice(0, 5);
@@ -263,11 +263,11 @@ export function resEdit(edit: HTEdit, warnings?: string[]): HEdit {
 		if (match) {
 			let message: string;
 			if (match[1] === "+") {
-				message = `[E_BAD_REF] Autocorrected: stripped diff-preview marker copied from the diff preview in remove_from/remove_to entry "${trimmed}".`;
+				message = `[E_BAD_REF] stripped diff-preview marker from remove_from/remove_to "${trimmed}".`;
 			} else if (match[1] === "-") {
-				message = `[E_BAD_REF] Autocorrected: stripped leading "-" marker in remove_from/remove_to entry "${trimmed}".`;
+				message = `[E_BAD_REF] stripped leading "-" marker from remove_from/remove_to "${trimmed}".`;
 			} else {
-				message = `[E_BAD_REF] Autocorrected: stripped "HASH│" prefix copied from read output in remove_from/remove_to entry "${trimmed}".`;
+				message = `[E_BAD_REF] stripped "HASH│" prefix from remove_from/remove_to "${trimmed}".`;
 			}
 			warnings?.push(message);
 			return match[2]!;
@@ -307,16 +307,9 @@ function stripBarePrefixes(
 		.map((s) => `replacement_text line ${s.lineIndex + 1}`)
 		.join(", ");
 	const matchedCount = stripped.filter((s) => s.matched).length;
-	const evidence =
-		matchedCount === 0
-			? "none of the stripped hashes match current file lines"
-			: `${matchedCount} of ${stripped.length} stripped hash(es) match current file lines`;
-	const guidance =
-		matchedCount === 0
-			? " Verify that these lines were pasted from read output; literal content starting with 'HASH│' would be altered by this strip."
-			: "";
+	const evidence = matchedCount === 0 ? "0 matched — verify literal 'HASH│' content" : `${matchedCount}/${stripped.length} matched`;
 	warnings.push(
-		`[E_BARE_HASH_PREFIX] Autocorrected: stripped "HASH│" prefix copied from read output in ${locations} (${evidence}).${guidance}`,
+		`[E_BARE_HASH_PREFIX] stripped "HASH│" prefix from ${locations} (${evidence}).`,
 	);
 	return { ...edit, content_lines: contentLines };
 }
@@ -342,7 +335,7 @@ function stripDiffPrefixes(edit: HEdit, warnings: string[]): HEdit {
 		.map((i) => `replacement_text line ${i + 1}`)
 		.join(", ");
 	warnings.push(
-		`[E_INVALID_PATCH] Autocorrected: stripped diff-preview marker copied from the diff preview in ${locations}.`,
+		`[E_INVALID_PATCH] stripped diff-preview marker from ${locations}.`,
 	);
 	return { ...edit, content_lines: contentLines };
 }
@@ -368,7 +361,7 @@ function swapReversedRanges(
 		return edit;
 	}
 	warnings.push(
-		`[E_BAD_OP] Autocorrected: remove_from and remove_to were reversed (remove_from ${startRef.hash} is after remove_to ${endRef.hash}); swapped the pair.`,
+		`[E_BAD_OP] reversed remove_from/remove_to (${startRef.hash} after ${endRef.hash}); swapped.`,
 	);
 	return { ...edit, hash_bounds: [endRef, startRef] as [Anchor, Anchor] };
 }
@@ -669,11 +662,11 @@ export function fmtServedRows(rows: ServedRow[], fileLines: string[]): string {
 }
 
 function retryHint(): string {
-	return "Retry the edit with remove_from/remove_to copied from these fresh rows (no read needed).";
+	return "Retry with these anchors (no read needed).";
 }
 
 function paginationHint(nextOffset: number, more: number): string {
-	return `[... ${more} more lines — use read with offset=${nextOffset} to see the rest]`;
+	return `[... ${more} more — read offset=${nextOffset}]`;
 }
 
 export function verifyServedRange(args: {
@@ -726,8 +719,8 @@ export function verifyServedRange(args: {
 		throw new ServedRejectionError({
 			code: "E_RANGE_UNVERIFIED",
 			message:
-				`[E_RANGE_UNVERIFIED] Cannot verify the range against served state${where}: ${problems.join("; ")}. ` +
-				`The tool only verifies what it delivered to the model's context; a boundary anchor that cannot be verified is never guessed at. Current range:\n${echo}\n${retryHint()}`,
+				`[E_RANGE_UNVERIFIED] cannot verify range against served state${where}: ${problems.join("; ")}. ` +
+				`Current range:\n${echo}\n${retryHint()}`,
 			servedRows: echoRows,
 		});
 	}
@@ -739,7 +732,7 @@ export function verifyServedRange(args: {
 		if (served[i] === null) {
 			throw new ServedRejectionError({
 				code: "E_RANGE_UNSERVED",
-				message: `[E_RANGE_UNSERVED] Line ${i + 1}${where} was never served to the model — the range includes lines the model has not seen. Current range:\n${echo}\n${retryHint()}`,
+				message: `[E_RANGE_UNSERVED] line ${i + 1}${where} was never served.\nCurrent range:\n${echo}\n${retryHint()}`,
 				firstOffendingLine: i + 1,
 				servedRows: echoRows,
 			});
@@ -751,7 +744,7 @@ export function verifyServedRange(args: {
 	if (servedLen !== currentLen) {
 		throw new ServedRejectionError({
 			code: "E_RANGE_STALE",
-			message: `[E_RANGE_STALE] The served span (${servedLen} lines) no longer matches the current range (${currentLen} lines)${where}. Current range:\n${echo}\n${retryHint()}`,
+			message: `[E_RANGE_STALE] served span (${servedLen} lines) no longer matches current range (${currentLen} lines)${where}.\nCurrent range:\n${echo}\n${retryHint()}`,
 			firstOffendingLine: startLine,
 			servedRows: echoRows,
 		});
@@ -761,7 +754,7 @@ export function verifyServedRange(args: {
 			const offendingLine = startLine + k;
 			throw new ServedRejectionError({
 				code: "E_RANGE_STALE",
-				message: `[E_RANGE_STALE] Line ${offendingLine}${where} differs from what you were served — the file changed on disk since it was read. Current range:\n${echo}\n${retryHint()}`,
+				message: `[E_RANGE_STALE] line ${offendingLine}${where} differs from what was served.\nCurrent range:\n${echo}\n${retryHint()}`,
 				firstOffendingLine: offendingLine,
 				servedRows: echoRows,
 			});

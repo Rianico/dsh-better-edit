@@ -95,7 +95,7 @@ describe("resEdit", () => {
 		expect(warnings).toHaveLength(2);
 		expect(warnings[0]).toMatch(/^\[E_BAD_REF\]/);
 		expect(warnings[0]).toContain('stripped "HASH│" prefix');
-		expect(warnings[0]).toContain("remove_from/remove_to entry");
+		expect(warnings[0]).toContain("from remove_from/remove_to");
 	});
 
 	it("strips diff-preview rows pasted into remove_from/remove_to with a warning", () => {
@@ -106,7 +106,7 @@ describe("resEdit", () => {
 		expect(resolved.hash_bounds[1].hash).toBe("MQX");
 		expect(warnings).toHaveLength(2);
 		expect(warnings[0]).toContain("diff-preview marker");
-		expect(warnings[0]).toContain("copied from the diff preview");
+		expect(warnings[0]).toContain("stripped diff-preview marker");
 		expect(warnings[1]).toContain('leading "-" marker');
 	});
 

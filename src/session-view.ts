@@ -215,8 +215,7 @@ export function currentPositionOfDrifted(served: (string | null)[], currentPosit
   return servedIndex + delta;
 }
 
-// --- drift (owned here) ---
-export const DRIFT_NOTICE_HEADING = "Drift notice:";
+export const DRIFT_NOTICE_HEADING = "drift:";
 
 export interface DriftRow extends ServedRow {
   content: string;
@@ -281,7 +280,7 @@ export function computeDrift(input: ComputeDriftInput): DriftNoticeResult | unde
   const countLabel = `${total} line(s)`;
   if (!anyNotReported) {
     return {
-      text: `${DRIFT_NOTICE_HEADING} ${countLabel} outside the edited range drifted and were already reported — call read to refresh.`,
+      text: `${DRIFT_NOTICE_HEADING} ${countLabel} changed outside the range (already reported) — re-read to refresh.`,
       rows: [],
       total,
       allAlreadyReported: true,
@@ -304,9 +303,9 @@ export function computeDrift(input: ComputeDriftInput): DriftNoticeResult | unde
     drifted: driftedSet.has(position),
   }));
   const rowsText = fmtServedRows(rows, resultLines);
-  const moreText = unshown > 0 ? `\n[... ${unshown} more line(s) — call read to see them]` : "";
+  const moreText = unshown > 0 ? `\n[... ${unshown} more — re-read to see]` : "";
   return {
-    text: `${DRIFT_NOTICE_HEADING} ${countLabel} outside the edited range drifted. Current content around the drift:\n${rowsText}${moreText}`,
+    text: `${DRIFT_NOTICE_HEADING} ${countLabel} changed outside the range:\n${rowsText}${moreText}`,
     rows,
     total,
     allAlreadyReported: false,
