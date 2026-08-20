@@ -360,11 +360,11 @@ export async function enforceNoopLoop(
 				originalHashes.length,
 			);
 			throw new Error(
-				`[E_NOOP_LOOP] This exact edit (anchors ${removeFrom} to ${removeTo} in ${displayPath}) has been submitted ${count} times and produced no changes each time — the range already contains the replacement text. Do not resend this edit; it will never change the file. Current range:\n${echo}`,
+				`[E_NOOP_LOOP] identical edit (${removeFrom} → ${removeTo} in ${displayPath}) submitted ${count}×, no changes each time. Range already contains this text; resend will reject. Current range:\n${echo}`,
 			);
 		}
 		if (count === 2) {
-			return `[E_NOOP_LOOP] Notice: this exact edit (anchors ${removeFrom} to ${removeTo} in ${displayPath}) has produced no changes twice in a row. The range already contains the replacement text; resending it again will be rejected.`;
+			return `[E_NOOP_LOOP] Notice: identical edit (${removeFrom} → ${removeTo} in ${displayPath}) no-op'd twice; range already has this text. Resend will reject.`;
 		}
 		return undefined;
 	}
@@ -382,14 +382,14 @@ export async function enforceNoopLoop(
 			);
 		}
 		throw new Error(
-			`[E_NOOP_LOOP] edits[${index}] (${displayPath}): this exact edit (anchors ${removeFrom} to ${removeTo}) has been submitted ${count} times and produced no changes each time — the range already contains the replacement text. Do not resend it; it will never change the file. The whole batch was rejected and nothing was written.` +
+			`[E_NOOP_LOOP] edits[${index}] (${displayPath}): identical edit (${removeFrom} → ${removeTo}) submitted ${count}×, no changes each time. Range already has this text; resend will reject the batch.` +
 				(echoRows
 					? ` Current on-disk range:\n${fmtServedRows(echoRows, originalLines)}`
 					: ""),
 		);
 	}
 	if (count === 2) {
-		return `[E_NOOP_LOOP] Notice: edits[${index}] (${displayPath}) — this exact edit has produced no changes twice in a row; the range already contains the replacement text. Resending it again will reject the batch.`;
+		return `[E_NOOP_LOOP] Notice: edits[${index}] (${displayPath}) — identical edit no-op'd twice; range already has this text. Resend will reject the batch.`;
 	}
 	return undefined;
 }

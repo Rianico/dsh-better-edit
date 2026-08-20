@@ -79,6 +79,9 @@ export type ServedEntry = { position: number; hash: string | null };
 /**
  * Merge served rows into a copy of the stored array. This single helper owns
  * the served-merge invariant shared by recordServed and recordServedTruncated.
+ * Eagerly heals orphaned serves: if the same hash is written at a new position
+ * the old position is nulled (O(n) scan, no extra I/O). This prevents a
+ * partial re-serve from leaving a stale duplicate behind (ADR-0008).
  */
 export function _mergeServedRows(
   current: (string | null)[],
@@ -92,6 +95,17 @@ export function _mergeServedRows(
   if (options?.clearFrom !== undefined) {
     for (let i = options.clearFrom; i < updated.length; i++) updated[i] = null;
   }
+  // Build index of existing hashes and heal duplicates already in the array
+  const index = new Map<string, number>();
+  for (let i = 0; i < updated.length; i++) {
+    const h = updated[i];
+    if (h === null) continue;
+    const prev = index.get(h);
+    if (prev !== undefined) {
+      updated[prev] = null;
+    }
+    index.set(h, i);
+  }
   for (const entry of rows) {
     if (!Number.isInteger(entry.position) || entry.position < 0) {
       throw new TypeError(`Invalid served position: ${entry.position}`);
@@ -100,6 +114,21 @@ export function _mergeServedRows(
       throw new TypeError(`Invalid served hash: ${String(entry.hash)}`);
     }
     while (updated.length <= entry.position) updated.push(null);
+    if (entry.hash !== null) {
+      const existing = index.get(entry.hash);
+      if (existing !== undefined && existing !== entry.position) {
+        updated[existing] = null;
+        index.delete(entry.hash);
+      }
+      const oldAtPos = updated[entry.position];
+      if (oldAtPos !== null && oldAtPos !== entry.hash) {
+        index.delete(oldAtPos);
+      }
+      index.set(entry.hash, entry.position);
+    } else {
+      const oldAtPos = updated[entry.position];
+      if (oldAtPos !== null) index.delete(oldAtPos);
+    }
     updated[entry.position] = entry.hash;
   }
   while (updated.length > 0 && updated[updated.length - 1] === null) updated.pop();
@@ -118,6 +147,7 @@ export async function recordServed(sessionKey: string, path: string, rows: Serve
     withStore(() => {
       const current = store.getServed(sessionKey, path);
       const updated = _mergeServedRows(current, rows, lineCount === undefined ? undefined : { truncateTo: lineCount });
+      if (current.length === updated.length && current.every((v, i) => v === updated[i])) return;
       store.upsertServed(sessionKey, path, JSON.stringify(updated));
     });
   } catch (error) {
@@ -132,6 +162,8 @@ export async function recordServedTruncated(sessionKey: string, path: string, ro
     withStore(() => {
       const current = store.getServed(sessionKey, path);
       const updated = _mergeServedRows(current, rows, { truncateTo: lineCount, clearFrom });
+      // Avoid no-op writes (perf: O(1) check, no extra I/O beyond current read)
+      if (current.length === updated.length && current.every((v, i) => v === updated[i])) return;
       store.upsertServed(sessionKey, path, JSON.stringify(updated));
     });
   } catch (error) {
@@ -215,8 +247,7 @@ export function currentPositionOfDrifted(served: (string | null)[], currentPosit
   return servedIndex + delta;
 }
 
-// --- drift (owned here) ---
-export const DRIFT_NOTICE_HEADING = "Drift notice:";
+export const DRIFT_NOTICE_HEADING = "drift:";
 
 export interface DriftRow extends ServedRow {
   content: string;
@@ -281,7 +312,7 @@ export function computeDrift(input: ComputeDriftInput): DriftNoticeResult | unde
   const countLabel = `${total} line(s)`;
   if (!anyNotReported) {
     return {
-      text: `${DRIFT_NOTICE_HEADING} ${countLabel} outside the edited range drifted and were already reported — call read to refresh.`,
+      text: `${DRIFT_NOTICE_HEADING} ${countLabel} changed outside the range (already reported) — re-read to refresh.`,
       rows: [],
       total,
       allAlreadyReported: true,
@@ -304,9 +335,9 @@ export function computeDrift(input: ComputeDriftInput): DriftNoticeResult | unde
     drifted: driftedSet.has(position),
   }));
   const rowsText = fmtServedRows(rows, resultLines);
-  const moreText = unshown > 0 ? `\n[... ${unshown} more line(s) — call read to see them]` : "";
+  const moreText = unshown > 0 ? `\n[... ${unshown} more — re-read to see]` : "";
   return {
-    text: `${DRIFT_NOTICE_HEADING} ${countLabel} outside the edited range drifted. Current content around the drift:\n${rowsText}${moreText}`,
+    text: `${DRIFT_NOTICE_HEADING} ${countLabel} changed outside the range:\n${rowsText}${moreText}`,
     rows,
     total,
     allAlreadyReported: false,
