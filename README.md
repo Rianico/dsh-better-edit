@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/banner.svg" alt="dsh-better-edit banner" width="900">
+  <img src="assets/logo.svg" alt="dsh-better-edit" width="200">
 </p>
 
 <h1 align="center">dsh-better-edit</h1>
@@ -37,6 +37,10 @@
   <img src="https://img.shields.io/github/stars/Rianico/dsh-better-edit?style=social" alt="GitHub Stars">
 </p>
 
+<p align="center">
+  <img src="assets/banner.svg" alt="file.ts → read → hashed lines → edit by hash → diff" width="900">
+</p>
+
 ---
 
 > *"The harness — not the model — is the bottleneck."* — Can Bölük, [*The Harness Problem*](https://stencil.so/blog/the-harness-problem)
@@ -57,6 +61,7 @@
 
 > [!TIP]
 > **Shining points — honest and measured:**
+>
 > - **Self-healing, not silent.** External edits never get overwritten — stale ranges are rejected and re-served as fresh `HASH│content` to retry; orphaned serves heal without a full re-read (ADR-0008). Fail-closed, not auto-merge.
 > - **Formatter-tolerant.** ASCII-whitespace-insensitive anchors survive `prettier`/`black`/`eslint --fix` between edits (`formatOnSave`, watcher, CI). Linter-only assumption — whitespace inside string literals is not distinguished (ADR-0005).
 > - **Chained & batched, no re-read ritual.** Anchors for untouched lines stay valid; diff/echo/reject rows count as serves. `edit` batches up to 32 same-file edits atomically (`[E_BATCH_ABORT]`), ~-40% envelope vs `str_replace` on the pinned 12-edit corpus.
