@@ -9,7 +9,6 @@ import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import {
-	BATCH_EDIT_GUIDANCE,
 	EDIT_GUIDANCE,
 	READ_GUIDANCE,
 	UNDO_GUIDANCE,
@@ -19,7 +18,7 @@ import { errCode } from "../utils.js";
 import { isBlankOverride, parseSectionFile } from "./parse.js";
 
 /**
- * Render one tool's guidance as its intro line, a blank line, then bullets.
+* Render one tool's guidance as its intro line, a blank line, then bullets.
  * Uniform across the four sections: no tool-schema description is duplicated
  * (that already reaches the model through the tool catalog).
  */
@@ -43,7 +42,7 @@ export interface GuidanceSection {
 	renderDefault(): string;
 }
 
-/** The four sections, in default-order sequence. */
+/** The three sections, in default-order sequence. */
 export const GUIDANCE_SECTIONS: readonly GuidanceSection[] = [
 	{
 		name: "tool:read",
@@ -57,13 +56,7 @@ export const GUIDANCE_SECTIONS: readonly GuidanceSection[] = [
 		defaultOrder: 131,
 		renderDefault: () => guidanceText(EDIT_GUIDANCE),
 	},
-	{
-		name: "tool:batch_edit",
-		file: "batch_edit.md",
-		defaultOrder: 132,
-		renderDefault: () => guidanceText(BATCH_EDIT_GUIDANCE),
-	},
-	{
+		{
 		name: "tool:undo_last_edit",
 		file: "undo_last_edit.md",
 		defaultOrder: 133,
@@ -158,7 +151,7 @@ export interface SectionOverride {
 }
 
 /**
- * Resolve all four sections for a preset. `presetId === undefined` skips the
+ * Resolve all three sections for a preset. `presetId === undefined` skips the
  * `<preset>/` layer and resolves straight to the compiled defaults.
  */
 export async function composeSections(
