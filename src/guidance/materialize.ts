@@ -3,7 +3,7 @@
  * and README generation. Idempotent and concurrent-safe (wx).
  * @module dsh-better-edit/guidance/materialize
  */
-import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { errCode } from "../utils.js";
@@ -33,7 +33,6 @@ Each file is one tool section:
 
 - \`read.md\` -> \`tool:read\`
 - \`edit.md\` -> \`tool:edit\`
-- \`batch_edit.md\` -> \`tool:batch_edit\`
 - \`undo_last_edit.md\` -> \`tool:undo_last_edit\`
 
 ## Customize
@@ -72,7 +71,6 @@ export const GUIDANCE_HOME_README_ZH = `# dsh-better-edit 指引
 
 - \`read.md\` -> \`tool:read\`
 - \`edit.md\` -> \`tool:edit\`
-- \`batch_edit.md\` -> \`tool:batch_edit\`
 - \`undo_last_edit.md\` -> \`tool:undo_last_edit\`
 
 ## 自定义
@@ -129,7 +127,7 @@ async function healBlankOverride(
 /**
  * Materialize per-preset guidance directories in the plugin home.
  *
- * For each of `DEFAULT_PRESETS` creates `<preset>/{read,edit,batch_edit,
+ * For each of `DEFAULT_PRESETS` creates `<preset>/{read,edit,
  * undo_last_edit}.md` rendered from the compiled defaults (with order
  * front-matter), plus a root `README.md` documenting the convention.
  * Idempotent: a user-edited file survives repeated calls. A blank override file
@@ -166,6 +164,18 @@ export async function ensurePresetGuidance(homeDir: string): Promise<void> {
 			);
 		}),
 	);
+	// Ghost seam cleanup (ADR-0003): remove orphan batch_edit.md override files left
+	// from pre-0.3.0 homes. The payload contract merged batch_edit into edit's
+	// {path, edits:[[hash,hash,text]]} arity — the file is dead. Best-effort,
+	// idempotent, concurrent-safe (ignore ENOENT).
+	for (const preset of DEFAULT_PRESETS) {
+		const ghost = join(homeDir, preset, "batch_edit.md");
+		await unlink(ghost).catch((error: unknown) => {
+			if (errCode(error) === "ENOENT") return;
+			throw error;
+		});
+	}
+
 	// Custom presets present on disk: heal existing blank section files only.
 	// Absence is respected — a custom preset's files are never fabricated, and
 	// malformed / non-blank / deliberate-blank files are left untouched.
@@ -186,6 +196,16 @@ export async function ensurePresetGuidance(homeDir: string): Promise<void> {
 				);
 			}),
 	);
+	// Ghost seam cleanup for custom presets (same ADR-0003 dead file).
+	for (const entry of entries) {
+		if (!entry.isDirectory() || DEFAULT_PRESETS.includes(entry.name)) continue;
+		const ghost = join(homeDir, entry.name, "batch_edit.md");
+		await unlink(ghost).catch((error: unknown) => {
+			if (errCode(error) === "ENOENT") return;
+			throw error;
+		});
+	}
+
 	const homeFiles = new Set(await readdir(homeDir));
 	const readmes: Array<[string, string]> = [
 		["README.md", GUIDANCE_HOME_README],

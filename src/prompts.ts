@@ -56,6 +56,12 @@ export const UNDO_GUIDANCE: ToolGuidance = {
   ],
 };
 
-// legacy exports removed — batch_edit guidance deleted (ADR-0007). Keep alias for test shims that import BATCH_EDIT_GUIDANCE
+/**
+ * @deprecated batch_edit guidance seam was removed with ADR-0003 (payload contract
+ * merged batch_edit into edit's {path, edits:[[hash,hash,text]]} arity). This alias
+ * is kept for backwards compat — use EDIT_DESCRIPTION. The guidance system no
+ * longer includes tool:batch_edit.
+ */
 export const BATCH_EDIT_DESCRIPTION = EDIT_DESCRIPTION;
+/** @deprecated see BATCH_EDIT_DESCRIPTION — use EDIT_GUIDANCE */
 export const BATCH_EDIT_GUIDANCE: ToolGuidance = EDIT_GUIDANCE;

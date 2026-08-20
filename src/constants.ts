@@ -6,6 +6,7 @@ export const MAX_READ_LINE_BYTES = 200 * 1024;
 export const HASH_STORE_BUSY_TIMEOUT = 1000;
 export const HASH_STORE_VERSION = 6;
 export const EDITS_MAX_ITEMS = 32;
+/** @deprecated batch_edit seam removed (ADR-0003) — use EDITS_MAX_ITEMS */
 export const BATCH_EDIT_MAX_ITEMS = EDITS_MAX_ITEMS;
 export const SERVED_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 export const SERVED_ECHO_CAP = 150;

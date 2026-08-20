@@ -24,7 +24,6 @@ import {
 	resolveSection,
 } from "../src/guidance.js";
 import {
-	BATCH_EDIT_GUIDANCE,
 	EDIT_GUIDANCE,
 	READ_GUIDANCE,
 	UNDO_GUIDANCE,
@@ -56,21 +55,19 @@ const bullets = (lines: readonly string[]) =>
 	lines.map((line) => `- ${line}`).join("\n");
 
 describe("guidance sections", () => {
-	it("exposes the four sections with stable order, file names, and defaults", () => {
+	it("exposes the three sections with stable order, file names, and defaults", () => {
 		expect(GUIDANCE_SECTIONS.map((s) => s.name)).toEqual([
 			"tool:read",
 			"tool:edit",
-			"tool:batch_edit",
 			"tool:undo_last_edit",
 		]);
 		expect(GUIDANCE_SECTIONS.map((s) => s.file)).toEqual([
 			"read.md",
 			"edit.md",
-			"batch_edit.md",
 			"undo_last_edit.md",
 		]);
 		expect(GUIDANCE_SECTIONS.map((s) => s.defaultOrder)).toEqual([
-			130, 131, 132, 133,
+			130, 131, 133,
 		]);
 	});
 
@@ -80,11 +77,6 @@ describe("guidance sections", () => {
 		);
 		expect(renderSectionDefault("tool:edit")).toBe(
 			[EDIT_GUIDANCE.intro, "", bullets(EDIT_GUIDANCE.lines)].join("\n"),
-		);
-		expect(renderSectionDefault("tool:batch_edit")).toBe(
-			[BATCH_EDIT_GUIDANCE.intro, "", bullets(BATCH_EDIT_GUIDANCE.lines)].join(
-				"\n",
-			),
 		);
 		expect(renderSectionDefault("tool:undo_last_edit")).toBe(
 			[UNDO_GUIDANCE.intro, "", bullets(UNDO_GUIDANCE.lines)].join("\n"),
@@ -411,16 +403,15 @@ describe("resolveSection", () => {
 });
 
 describe("composeSections", () => {
-	it("returns the four sections in default-order sequence", async () => {
+	it("returns the three sections in default-order sequence", async () => {
 		await withHome(async (home) => {
 			const sections = await composeSections(undefined, home);
 			expect(sections.map((s) => s.name)).toEqual([
 				"tool:read",
 				"tool:edit",
-				"tool:batch_edit",
 				"tool:undo_last_edit",
 			]);
-			expect(sections.map((s) => s.order)).toEqual([130, 131, 132, 133]);
+			expect(sections.map((s) => s.order)).toEqual([130, 131, 133]);
 			expect(sections.map((s) => s.text)).toEqual(
 				GUIDANCE_SECTIONS.map((s) => s.renderDefault()),
 			);
@@ -452,7 +443,7 @@ describe("composeSections", () => {
 });
 
 describe("ensurePresetGuidance", () => {
-	it("seeds each shipped preset with the four section files plus a root README", async () => {
+	it("seeds each shipped preset with the section files plus a root README", async () => {
 		await withHome(async (home) => {
 			await ensurePresetGuidance(home);
 			for (const preset of DEFAULT_PRESETS) {
@@ -615,7 +606,7 @@ describe("ensurePresetGuidance", () => {
 		});
 	});
 
-	it("re-seeds all four section files after a shipped preset dir is deleted", async () => {
+	it("re-seeds all section files after a shipped preset dir is deleted", async () => {
 		await withHome(async (home) => {
 			await ensurePresetGuidance(home);
 			await rm(join(home, "standard"), { recursive: true, force: true });
