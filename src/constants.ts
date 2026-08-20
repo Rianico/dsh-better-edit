@@ -5,7 +5,8 @@ export const MAX_READ_LINE_BYTES = 200 * 1024;
 
 export const HASH_STORE_BUSY_TIMEOUT = 1000;
 export const HASH_STORE_VERSION = 6;
-export const BATCH_EDIT_MAX_ITEMS = 32;
+export const EDITS_MAX_ITEMS = 32;
+export const BATCH_EDIT_MAX_ITEMS = EDITS_MAX_ITEMS;
 export const SERVED_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 export const SERVED_ECHO_CAP = 150;
 export const NOOP_LOOP_THRESHOLD = 3;
