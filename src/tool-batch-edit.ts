@@ -22,9 +22,9 @@ import {
 	type BatchEditParams,
 } from "./contract.js";
 import {
-	persistUndoAndWrite,
+	commit,
 	resolveMissingPath,
-	runFileEdits,
+	applySequence,
 	type FileEditResult,
 	type PreparedItem,
 } from "./mutation.js";
@@ -182,14 +182,14 @@ export function buildBatchEditTool(io: FileIO, sandbox: FsSandboxController) {
 				for (const groupItems of groups.values()) {
 					abortIf(signal);
 					processed.push(
-						await runFileEdits(io, groupItems, {
+						await applySequence(io, groupItems, {
 							signal,
 							sessionKey,
 						}),
 					);
 				}
 
-				await persistUndoAndWrite({
+				await commit({
 					io,
 					files: processed
 						.filter((file) => file.appliedCount > 0)
