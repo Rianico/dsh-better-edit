@@ -10,7 +10,7 @@ import { defineTool } from "@deepseek-ai/dsh-tools";
 import { toLF, stripBOM, genDiff, restoreEndings } from "./edit-diff.js";
 import { cntDiff, splitLines } from "./utils.js";
 import { assertUndoRequest } from "./contract.js";
-import { normReq } from "./edit-normalize.js";
+import { normalizeRequest as normReq } from "./contract.js";
 import { upsertSnapshotFor } from "./hash-store.js";
 import { contentChecksum } from "./hashline/hasher.js";
 import { lineHashes, changedRange } from "./hashline/index.js";

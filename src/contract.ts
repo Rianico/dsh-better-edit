@@ -44,7 +44,7 @@ export interface UndoParams {
 	path: string;
 }
 
-// ---- field sets (declared once) ---------------------------------------------
+// ---- filed sets (declared once) ---------------------------------------------
 
 const EDIT_KS = new Set([
 	"path",
@@ -69,6 +69,23 @@ const BATCH_ITEM_KS = new Set([
 ]);
 
 const READ_KS = new Set(["path", "offset", "limit"]);
+
+// ---- normalization -----------------------------------------------------------
+
+/**
+ * Normalize `file_path` → `path` alias on the request record. Returns the
+ * input unchanged when not a record; otherwise returns a shallow copy with
+ * the alias applied so callers never mutate the original `args` object.
+ */
+export function normalizeRequest(input: unknown): unknown {
+	if (!isRec(input)) return input;
+	const record: Record<string, unknown> = { ...input };
+	normalizeFilePath(record);
+	return record;
+}
+
+/** @deprecated use normalizeRequest — kept as alias for migration */
+export const normReq = normalizeRequest;
 
 // ---- assertions ---------------------------------------------------------------
 
@@ -171,3 +188,37 @@ export function assertUndoRequest(
 		);
 	}
 }
+
+// ---- shared JSON Schema literals (co-located with field sets) ---------------
+
+/**
+ * Shared model-facing parameter schemas for the hashline tools, expressed in
+ * the dsh schema DSL (not TypeBox). `path` is deliberately NOT `required` at
+ * the schema level: the tools accept the built-in `file_path` spelling too
+ * (the implicit parameter root stays open), and enforce path presence in
+ * `assertEditRequest` after `normalizeFilePath` aliasing.
+ */
+
+export const replacementTextSchema = {
+	type: 'string',
+	description:
+		'Replacement text as a single string with \\n line separators; every \\n separates lines, so a trailing \\n adds a final empty line. Mirror the removed lines exactly, blank lines included. A replacement that is only blank lines is written as one \\n per blank line. Use "" to delete the range.',
+} as const
+
+export const removeFromSchema = {
+	type: 'string',
+	description:
+		'Bare 3-char HASH only (e.g. "aB3") — copy just the hash from the leftmost column of a read row like `aB3│content`; never the line content. Marks the FIRST line to remove (inclusive)',
+} as const
+
+export const removeToSchema = {
+	type: 'string',
+	description:
+		'Bare 3-char HASH only (e.g. "aB3") — copy just the hash from the leftmost column of a read row like `aB3│content`; never the line content. Marks the LAST line to remove (inclusive)',
+} as const
+
+export const pathSchema = {
+	type: 'string',
+	description:
+		'Path to edit. Required — always provide it explicitly; it is only auto-resolved from the anchors as a fallback when omitted by mistake.',
+} as const

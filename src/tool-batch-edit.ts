@@ -18,9 +18,9 @@ import {
 } from "./utils.js";
 import {
 	assertBatchEditRequest,
+	normalizeRequest as normReq,
 	type BatchEditParams,
 } from "./contract.js";
-import { normReq } from "./edit-normalize.js";
 import {
 	persistUndoAndWrite,
 	resolveMissingPath,
@@ -36,7 +36,7 @@ import {
 	removeFromSchema,
 	removeToSchema,
 	replacementTextSchema,
-} from "./schema.js";
+} from "./contract.js";
 import type { FileIO } from "./fs-bridge.js";
 import { execCwd, execSessionKey } from "./dsh-context.js";
 import type { FsSandboxController, FsEscalationArgs } from "./sandbox.js";

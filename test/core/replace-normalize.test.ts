@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { normReq } from "../../src/edit-normalize.js";
+import { normalizeRequest as normReq } from "../../src/contract.js";
 
 describe("normReq", () => {
 	it("returns non-record input as-is", () => {
