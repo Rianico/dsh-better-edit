@@ -10,8 +10,8 @@ import type { Context } from '@deepseek-ai/cordis'
 import type { PostToolDecision, ToolExecution, ToolExecutionResult } from '@deepseek-ai/dsh-tools'
 import { readAndServe } from './read-and-serve.js'
 import type { FileIO } from './fs-bridge.js'
-import { execCwd, execSessionKey } from './dsh-context.js'
-import { withWorkspace } from './workspace.js'
+import { execCwd, execSessionKey } from './session-view.js'
+import { withWorkspace } from './session-view.js'
 
 const AUTO_READ_HEADING = '--- Auto-read (hashline anchors) ---'
 

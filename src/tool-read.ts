@@ -14,8 +14,8 @@ import { readAndServe } from "./read-and-serve.js";
 import { READ_DESCRIPTION } from "./prompts.js";
 
 import type { FileIO } from "./fs-bridge.js";
-import { execCwd, execSessionKey } from "./dsh-context.js";
-import { withWorkspace } from "./workspace.js";
+import { execCwd, execSessionKey } from "./session-view.js";
+import { withWorkspace } from "./session-view.js";
 
 /**
  * Register the hash-anchored `read` tool on the calling agent's scope.

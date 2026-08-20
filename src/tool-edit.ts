@@ -15,23 +15,23 @@ import {
 	enforceNoopLoop,
 	persistUndoAndWrite,
 	resolveMissingPath,
-} from "./edit-engine.js";
+} from "./mutation.js";
 import {
 	execPipeline,
 	snapshotIdFor,
-} from "./edit-pipeline.js";
+} from "./mutation.js";
 import {
 	clearNoopLoop,
 	noopPayloadKey,
 	trackNoopPayload,
 } from "./noop-guard.js";
-import { buildNoop, buildChanged, type RMeta } from "./edit-response.js";
-import { recordServedTruncated } from "./served-store.js";
+import { buildNoop, buildChanged, type RMeta } from "./mutation.js";
+import { recordServedTruncated } from "./session-view.js";
 import { EDIT_DESCRIPTION } from "./prompts.js";
 import type { FileIO } from "./fs-bridge.js";
-import { execCwd, execSessionKey } from "./dsh-context.js";
+import { execCwd, execSessionKey } from "./session-view.js";
 import type { FsSandboxController, FsEscalationArgs } from "./sandbox.js";
-import { withWorkspace } from "./workspace.js";
+import { withWorkspace } from "./session-view.js";
 
 /**
  * Register the hash-anchored `edit` tool on the calling agent's scope.
