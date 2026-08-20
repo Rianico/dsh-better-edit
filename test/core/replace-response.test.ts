@@ -95,7 +95,7 @@ describe("buildChanged", () => {
       snapshotId: "snap1",
       editMeta: { editsAttempted: 1, noopEditsCount: 0, firstChangedLine: 2, lastChangedLine: 2, addedLines: 1, removedLines: 1 },
     });
-    expect(output.content[0].text).toContain("Warnings:");
+    expect(output.content[0].text).toContain("Boundary duplication")
     expect(output.content[0].text).toContain("Boundary duplication (leading)");
     expect(output.details.warnings).toEqual(["Boundary duplication (leading)"]);
   });
@@ -189,21 +189,21 @@ describe("finalizeResult", () => {
 
   it("appends a warnings block after the diff", () => {
     const text = finalizeResult({ diff: "+a\n-b", warnings: ["W1", "W2"] });
-    expect(text).toBe("+a\n-b\n\nWarnings:\nW1\nW2");
+    expect(text).toBe("+a\n-b\n\nW1\nW2");
   });
 
   it("appends the drift notice after the diff", () => {
-    const text = finalizeResult({ diff: "+a", driftNotice: "Drift notice: ..." });
-    expect(text).toBe("+a\n\nDrift notice: ...");
+    const text = finalizeResult({ diff: "+a", driftNotice: "drift: ..." });
+    expect(text).toBe("+a\n\ndrift: ...");
   });
 
   it("orders diff, warnings, then drift notice", () => {
     const text = finalizeResult({
       diff: "+a",
       warnings: ["W1"],
-      driftNotice: "Drift notice: ...",
+      driftNotice: "drift: ...",
     });
-    expect(text).toBe("+a\n\nWarnings:\nW1\n\nDrift notice: ...");
+    expect(text).toBe("+a\n\nW1\n\ndrift: ...");
   });
 
   it("ignores an empty warnings array", () => {

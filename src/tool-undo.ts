@@ -70,7 +70,7 @@ export function buildUndoTool(io: FileIO, sandbox: FsSandboxController) {
 				const message = error instanceof Error ? error.message : String(error);
 				if (message.includes("[E_NOT_FOUND]")) {
 					await clearUndo(absolutePath);
-					return `[E_UNDO_STALE] Cannot undo last edit on ${path}: the file no longer exists. Call read() to inspect the current state.`;
+					return `[E_UNDO_STALE] cannot undo on ${path}: file no longer exists.`;
 				}
 				throw error;
 			}
@@ -79,7 +79,7 @@ export function buildUndoTool(io: FileIO, sandbox: FsSandboxController) {
 				undo.bom + restoreEndings(undo.resultContent, undo.originalEnding)
 			) {
 				await clearUndo(absolutePath);
-				return `[E_UNDO_STALE] Cannot undo last edit on ${path}: the file was modified after the edit, so undoing would overwrite those changes. Call read() to inspect the current state.`;
+				return `[E_UNDO_STALE] cannot undo on ${path}: file modified after edit — undo would overwrite changes.`;
 			}
 
 			const { text: currentStripped } = stripBOM(currentRaw);

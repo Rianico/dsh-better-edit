@@ -72,13 +72,13 @@ describe("finalizeToolResult", () => {
 		const result = finalizeToolResult({
 			diff: "+a\n-b",
 			warnings: ["W1"],
-			driftNotice: "Drift notice: 1 line(s) outside the edited range drifted.",
+			driftNotice: "drift: 1 line(s) changed outside the range:",
 			servedRows: [{ position: 0, hash: "abc" }],
 		});
 		expect(result.content).toEqual([
 			{
 				type: "text",
-				text: "+a\n-b\n\nWarnings:\nW1\n\nDrift notice: 1 line(s) outside the edited range drifted.",
+				text: "+a\n-b\n\nW1\n\ndrift: 1 line(s) changed outside the range:",
 			},
 		]);
 		expect(result.servedRows).toEqual([{ position: 0, hash: "abc" }]);

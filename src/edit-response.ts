@@ -121,7 +121,7 @@ export function finalizeToolResult(details: EditDetails): {
 }
 
 function warnBlock(warnings: string[] | undefined): string {
-	return warnings?.length ? `\n\nWarnings:\n${warnings.join("\n")}` : "";
+	return warnings?.length ? `\n\n${warnings.join("\n")}` : "";
 }
 
 function driftBlock(driftNotice: string | undefined): string {

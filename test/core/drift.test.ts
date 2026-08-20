@@ -39,7 +39,7 @@ describe("computeDrift", () => {
 			{ position: 2, hash: "h02", content: "c", drifted: false },
 			{ position: 3, hash: "X03", content: "changed", drifted: true },
 		]);
-		expect(result!.text).toContain("Drift notice:");
+		expect(result!.text).toContain("drift:");
 		expect(result!.text).toContain("X03│changed");
 	});
 
@@ -194,7 +194,7 @@ describe("computeDrift", () => {
 		expect(result).toBeDefined();
 		expect(result!.rows).toHaveLength(150);
 		expect(result!.total).toBe(100);
-		expect(result!.text).toContain("[... 50 more line(s)");
+		expect(result!.text).toContain("[... 50 more");
 	});
 
 	it("ignores never-served markers", () => {
