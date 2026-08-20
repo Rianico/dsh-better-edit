@@ -8,9 +8,9 @@
 
 import type { Context } from "@deepseek-ai/cordis";
 import { defineTool } from "@deepseek-ai/dsh-tools";
-import { normReq } from "./edit-normalize.js";
+import { normalizeRequest as normReq, assertEditRequest, pathSchema, removeFromSchema, removeToSchema, replacementTextSchema } from "./contract.js";
 import { abortIf, isRec, splitLines } from "./utils.js";
-import { assertEditRequest } from "./contract.js";
+
 import {
 	enforceNoopLoop,
 	persistUndoAndWrite,
@@ -28,12 +28,6 @@ import {
 import { buildNoop, buildChanged, type RMeta } from "./edit-response.js";
 import { recordServedTruncated } from "./served-store.js";
 import { EDIT_DESCRIPTION } from "./prompts.js";
-import {
-	pathSchema,
-	removeFromSchema,
-	removeToSchema,
-	replacementTextSchema,
-} from "./schema.js";
 import type { FileIO } from "./fs-bridge.js";
 import { execCwd, execSessionKey } from "./dsh-context.js";
 import type { FsSandboxController, FsEscalationArgs } from "./sandbox.js";

@@ -8,11 +8,11 @@
 
 import type { Context } from "@deepseek-ai/cordis";
 import { defineTool } from "@deepseek-ai/dsh-tools";
-import { normReq } from "./edit-normalize.js";
-import { assertReadRequest } from "./contract.js";
+import { normalizeRequest as normReq, assertReadRequest, pathSchema } from "./contract.js";
+
 import { readAndServe } from "./read-and-serve.js";
 import { READ_DESCRIPTION } from "./prompts.js";
-import { pathSchema } from "./schema.js";
+
 import type { FileIO } from "./fs-bridge.js";
 import { execCwd, execSessionKey } from "./dsh-context.js";
 import { withWorkspace } from "./workspace.js";
