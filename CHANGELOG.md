@@ -6,6 +6,18 @@ Entries link to the originating spec issue in [pi-hashline-edit-lsz](https://git
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-08-20
+
+### Changed
+
+- **BREAKING** — `edit` now requires `{ path, edits: [[remove_from, remove_to, replacement_text], ...] }` tuple payload (ADR-0003); `batch_edit` removed — single `edit` covers single and batched edits via `edits` arity (ADR-0007). `EDITS_MAX_ITEMS=32`, path nullable (`null` infers from anchors). Old top-level `{remove_from,remove_to,replacement_text}` shape now fails with `[E_BAD_SHAPE]`.
+- Whitespace-insensitive anchors (ADR-0002): `canon()` strips all ASCII whitespace `[ \t\r\n]` (`CANON_VERSION=2`, memoized `getCanon`), snapshot cache versioned so pre-upgrade caches invalidate; formatter-only drift (prettier/black) no longer rotates anchors. String-internal whitespace caveat documented.
+- Orphaned serve healing & served robustness (ADR-0004): `SessionView.patchServed` eagerly heals stale duplicates, `verifyServedRange` disambiguates candidate spans, truncation on rejection-echo/external-shrink ends the `E_RANGE_UNVERIFIED` self-loop.
+- Hashline purity & store seams (ARCH C1-C4): `HashSnapshotIO` injection keeps hashing pure, `recordDiffServes` helper, one `applyOneEdit` composition, `DebouncedPreview` (150ms) extracted, noop-loop folded, per-domain stmt slices.
+- Notices & prompts hygiene: Zed-style terse drift/noop/rejection notices (codes unchanged), lean guidelines (dedupe tool descriptions), tool schema descriptions trimmed to one-liners.
+- README brooks-lint reorg + CONTEXT glossary merge: hook, shining points, Why Hashline before Tools, benchmark section referencing `pi-better-edit/benchmarks/results/` (same hashline algorithm).
+
+
 ## [0.2.2] - 2026-08-19
 
 ### Added
