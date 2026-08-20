@@ -11,18 +11,9 @@ import { defineTool } from "@deepseek-ai/dsh-tools";
 import {
   normalizeRequest as normReq,
   assertEditRequest,
-  editPathSchema,
-  editTupleSchema,
 } from "./contract.js";
-import { abortIf, isRec, splitLines } from "./utils.js";
-import { EDITS_MAX_ITEMS } from "./constants.js";
-import {
-  applySequence,
-  commit,
-  resolveMissingPath,
-} from "./mutation.js";
-import { buildBatchResult, buildChanged, type BatchSection } from "./mutation.js";
-import { recordServedTruncated } from "./session-view.js";
+import { abortIf } from "./utils.js";
+import { execute } from "./mutation.js";
 import { EDIT_DESCRIPTION } from "./prompts.js";
 import type { FileIO } from "./fs-bridge.js";
 import { execCwd, execSessionKey } from "./session-view.js";
@@ -84,7 +75,6 @@ export function buildEditTool(io: FileIO, sandbox: FsSandboxController) {
         const signal = exec.signal;
 
         const canonical = normReq(args);
-        // normalizeRequest marks valid tuple payload with symbol; assert checks it
         assertEditRequest(canonical);
         const req = canonical as unknown as { path: string | null; edits: Array<{ remove_from: string; remove_to: string; replacement_text: string }> & { [key: symbol]: unknown } };
         let resolvedPath = req.path;
@@ -105,7 +95,6 @@ export function buildEditTool(io: FileIO, sandbox: FsSandboxController) {
         );
 
         abortIf(signal);
-        // Build PreparedItems for the single-file batch
         const items: PreparedItem[] = [];
         for (let index = 0; index < req.edits.length; index++) {
           const e = req.edits[index]!;
@@ -120,136 +109,8 @@ export function buildEditTool(io: FileIO, sandbox: FsSandboxController) {
           });
         }
 
-        // Single call handles both single and batch atomically
-        const fileResult = await applySequence(io, items, { signal, sessionKey });
-
-        // For single-edit ergonomics, render as single diff; for multi, batch result
-        if (req.edits.length === 1 && fileResult.appliedCount + fileResult.noopCount === 1) {
-          // If noop, fileResult contains noop metadata but applySequence already handled warnings
-          // Reuse mutation's single-file rendering path? Use batch result with one file for uniformity,
-          // but for single we want buildChanged semantics when not batch? The batch result also works for single
-          // but to preserve old single-edit output shape, branch:
-          if (fileResult.appliedCount === 0) {
-            // noop case — buildBatchResult will produce noop classification, which matches old batch noop but single expected buildNoop.
-            // Use batch result for simplicity — it is accepted as "noop" classification and passes tests that check for "Classification: noop"
-            const section: BatchSection = {
-              path: fileResult.displayPath,
-              originalNormalized: fileResult.originalNormalized,
-              result: fileResult.result,
-              originalHashes: fileResult.originalHashes,
-              resultHashes: fileResult.resultHashes,
-              warnings: fileResult.warnings,
-              driftNotice: fileResult.driftNotice,
-              appliedCount: fileResult.appliedCount,
-              noopCount: fileResult.noopCount,
-              totalAddedLines: fileResult.totalAddedLines,
-              totalRemovedLines: fileResult.totalRemovedLines,
-            };
-            // Commit nothing for noop (no write)
-            const result = buildBatchResult([section]);
-            if (result.details.servedRows && result.details.servedRows.length > 0) {
-              const entry = result.details.servedByPath?.[0];
-              if (entry) {
-                await recordServedTruncated(sessionKey, fileResult.absolutePath, entry.servedRows, splitLines(fileResult.result).length, fileResult.range.startLine - 1);
-              }
-            }
-            if (fileResult.warnings.length === 0 && result.details.warnings) {
-              // preserve warnings?
-            }
-            return result.content[0]!.text;
-          }
-          // applied single
-          await commit({
-            io,
-            files: [
-              {
-                absolutePath: fileResult.absolutePath,
-                displayPath: fileResult.displayPath,
-                originalNormalized: fileResult.originalNormalized,
-                bom: fileResult.bom,
-                originalEnding: fileResult.originalEnding,
-                originalHashes: fileResult.originalHashes,
-                result: fileResult.result,
-              },
-            ],
-            exec,
-            sandbox,
-            sandboxPolicy,
-            signal,
-            undoUnavailableMessage: (displayPath) => `[E_UNDO_UNAVAILABLE] Cannot persist undo history to the hash store; the edit was NOT applied and ${displayPath} is unchanged. Retry the edit, or use write if the store cannot be recovered.`,
-            restoreUnwrittenUndos: true,
-          });
-          const section: BatchSection = {
-            path: fileResult.displayPath,
-            originalNormalized: fileResult.originalNormalized,
-            result: fileResult.result,
-            originalHashes: fileResult.originalHashes,
-            resultHashes: fileResult.resultHashes,
-            warnings: fileResult.warnings,
-            driftNotice: fileResult.driftNotice,
-            appliedCount: fileResult.appliedCount,
-            noopCount: fileResult.noopCount,
-            totalAddedLines: fileResult.totalAddedLines,
-            totalRemovedLines: fileResult.totalRemovedLines,
-          };
-          const result = buildBatchResult([section]);
-          // batch result for single file is similar to buildChanged but we need to ensure served truncation
-          if (result.details.servedRows && result.details.servedRows.length > 0) {
-            const entry = result.details.servedByPath?.[0];
-            if (entry) {
-              await recordServedTruncated(sessionKey, fileResult.absolutePath, entry.servedRows, splitLines(fileResult.result).length, fileResult.range.startLine - 1);
-            }
-          }
-          return result.content[0]!.text;
-        }
-
-        // Multi-edit batch
-        if (fileResult.appliedCount === 0 && fileResult.noopCount > 0) {
-          // all noops — no commit
-        } else if (fileResult.appliedCount > 0) {
-          await commit({
-            io,
-            files: [
-              {
-                absolutePath: fileResult.absolutePath,
-                displayPath: fileResult.displayPath,
-                originalNormalized: fileResult.originalNormalized,
-                bom: fileResult.bom,
-                originalEnding: fileResult.originalEnding,
-                originalHashes: fileResult.originalHashes,
-                result: fileResult.result,
-              },
-            ],
-            exec,
-            sandbox,
-            sandboxPolicy,
-            signal,
-            undoUnavailableMessage: () => "[E_UNDO_UNAVAILABLE] Cannot persist undo history to the hash store; the batch was NOT applied and no file was written. Retry the batch, or use write if the store cannot be recovered.",
-            restoreUnwrittenUndos: false,
-          });
-        }
-
-        const section: BatchSection = {
-          path: fileResult.displayPath,
-          originalNormalized: fileResult.originalNormalized,
-          result: fileResult.result,
-          originalHashes: fileResult.originalHashes,
-          resultHashes: fileResult.resultHashes,
-          warnings: fileResult.warnings,
-          driftNotice: fileResult.driftNotice,
-          appliedCount: fileResult.appliedCount,
-          noopCount: fileResult.noopCount,
-          totalAddedLines: fileResult.totalAddedLines,
-          totalRemovedLines: fileResult.totalRemovedLines,
-        };
-        const result = buildBatchResult([section]);
-        if (result.details.servedRows && result.details.servedRows.length > 0) {
-          const entry = result.details.servedByPath?.[0];
-          if (entry) {
-            await recordServedTruncated(sessionKey, fileResult.absolutePath, entry.servedRows, splitLines(fileResult.result).length, fileResult.range.startLine - 1);
-          }
-        }
-        return result.content[0]!.text;
+        // Deep seam: one interface, all lifecycle branching concentrates in Mutation
+        return execute({ io, items, sessionKey, signal, exec, sandbox, sandboxPolicy });
       });
     },
   });

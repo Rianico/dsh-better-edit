@@ -8,13 +8,16 @@
  * by mutation across 5 hops; bugs hid in wiring, not pure helpers.
  *
  * This seam owns: read → normalize → loadServed → applyOne* → stableRehash →
- * drift → persist. Tools become thin adapters: validate → delegate → render.
+ * drift → persist → render. Tools become thin adapters: validate → delegate → return.
  * edit-diff, drift, noop-guard are private helpers of this seam.
  *
  * Public surface:
- *   applySingle(io, params, {cwd, sessionKey, signal}) → PipelineResult
- *   applySequence(io, items, {cwd, sessionKey, signal}) → FileEditResult[]
- *   commit(io, files, {exec, sandboxPolicy, signal}) → void
+ *   execute(io, items, {sessionKey, exec, sandbox, signal}) → string  — deep seam: ONE interface
+ *   applySingle(io, params, cwd, opts) → PipelineResult               — single-edit helper
+ *   applySequence(io, items, ctx) → FileEditResult                    — per-file sequencer
+ *   commit(io, files, {exec, sandboxPolicy, signal}) → void           — transaction
+ *
+ * Depth: small interface (execute) with large implementation — locality and leverage.
  *
  * Internals (private): verifyServedRange, resToSpan, assemble, scanDrift,
  * boundaryDups, noopGuard. Tested via PipelineResult/FileEditResult, not via split e2e.
@@ -41,7 +44,7 @@ import {
   recordEchoServes,
   type ServeRecordPolicy,
 } from "./hashline/anchor-pipeline.js";
-import { loadServed, sessionKeyFor, scanDrift } from "./session-view.js";
+import { loadServed, sessionKeyFor, scanDrift, recordServedTruncated } from "./session-view.js";
 import { abortIf, splitLines } from "./utils.js";
 import { applyOne } from "./edit-engine.js";
 import {
@@ -244,7 +247,125 @@ export { genDiff, restoreEndings, toLF, stripBOM };
 export { computeDrift, scanDrift };
 export { trackNoopPayload, clearNoopLoop, noopPayloadKey };
 
-// --- Deep seam: unified mutation API (one interface, twoAdapters) ---
+// --- Deep seam: unified mutation API (one interface, thin adapters) ---
+
+/**
+ * Deep seam: execute the full mutation lifecycle.
+ *
+ * Owns: applySequence → branch (single/multi × noop/applied) → commit →
+ * buildBatchResult → recordServedTruncated → return text.
+ *
+ * The tool layer (adapter) only validates and resolves the nullable path; all
+ * lifecycle branching concentrates here (locality). One interface serves N
+ * call sites (leverage). Deleting this module would scatter the lifecycle
+ * across every tool — it concentrates (deep).
+ */
+export async function execute(opts: {
+  io: FileIO;
+  items: PreparedItem[];
+  sessionKey: string;
+  signal?: AbortSignal;
+  exec: ToolExecution;
+  sandbox: FsSandboxController;
+  sandboxPolicy: SandboxExecutionPolicy | undefined;
+}): Promise<string> {
+  const { io, items, sessionKey, signal, exec, sandbox, sandboxPolicy } = opts;
+
+  const fileResult = await applySequence(io, items, { signal, sessionKey });
+
+  const toSection = (): BatchSection => ({
+    path: fileResult.displayPath,
+    originalNormalized: fileResult.originalNormalized,
+    result: fileResult.result,
+    originalHashes: fileResult.originalHashes,
+    resultHashes: fileResult.resultHashes,
+    warnings: fileResult.warnings,
+    driftNotice: fileResult.driftNotice,
+    appliedCount: fileResult.appliedCount,
+    noopCount: fileResult.noopCount,
+    totalAddedLines: fileResult.totalAddedLines,
+    totalRemovedLines: fileResult.totalRemovedLines,
+  });
+
+  const recordIfNeeded = async (built: ReturnType<typeof buildBatchResult>) => {
+    if (built.details.servedRows && built.details.servedRows.length > 0) {
+      const entry = built.details.servedByPath?.[0];
+      if (entry) {
+        await recordServedTruncated(
+          sessionKey,
+          fileResult.absolutePath,
+          entry.servedRows,
+          splitLines(fileResult.result).length,
+          fileResult.range.startLine - 1,
+        );
+      }
+    }
+  };
+
+  const isSingleCall = items.length === 1 && fileResult.appliedCount + fileResult.noopCount === 1;
+
+  if (isSingleCall) {
+    if (fileResult.appliedCount === 0) {
+      const built = buildBatchResult([toSection()]);
+      await recordIfNeeded(built);
+      return built.content[0]!.text;
+    }
+    await commit({
+      io,
+      files: [
+        {
+          absolutePath: fileResult.absolutePath,
+          displayPath: fileResult.displayPath,
+          originalNormalized: fileResult.originalNormalized,
+          bom: fileResult.bom,
+          originalEnding: fileResult.originalEnding,
+          originalHashes: fileResult.originalHashes,
+          result: fileResult.result,
+        },
+      ],
+      exec,
+      sandbox,
+      sandboxPolicy,
+      signal,
+      undoUnavailableMessage: (displayPath) =>
+        `[E_UNDO_UNAVAILABLE] Cannot persist undo history to the hash store; the edit was NOT applied and ${displayPath} is unchanged. Retry the edit, or use write if the store cannot be recovered.`,
+      restoreUnwrittenUndos: true,
+    });
+    const built = buildBatchResult([toSection()]);
+    await recordIfNeeded(built);
+    return built.content[0]!.text;
+  }
+
+  if (fileResult.appliedCount === 0 && fileResult.noopCount > 0) {
+    // all noops — no commit
+  } else if (fileResult.appliedCount > 0) {
+    await commit({
+      io,
+      files: [
+        {
+          absolutePath: fileResult.absolutePath,
+          displayPath: fileResult.displayPath,
+          originalNormalized: fileResult.originalNormalized,
+          bom: fileResult.bom,
+          originalEnding: fileResult.originalEnding,
+          originalHashes: fileResult.originalHashes,
+          result: fileResult.result,
+        },
+      ],
+      exec,
+      sandbox,
+      sandboxPolicy,
+      signal,
+      undoUnavailableMessage: () =>
+        "[E_UNDO_UNAVAILABLE] Cannot persist undo history to the hash store; the batch was NOT applied and no file was written. Retry the batch, or use write if the store cannot be recovered.",
+      restoreUnwrittenUndos: false,
+    });
+  }
+
+  const built = buildBatchResult([toSection()]);
+  await recordIfNeeded(built);
+  return built.content[0]!.text;
+}
 
 /** Apply a single edit — owns read→normalize→loadServed→applyOne→stableRehash→drift. */
 export async function applySingle(
