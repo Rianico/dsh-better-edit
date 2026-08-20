@@ -21,7 +21,7 @@ import { DatabaseSync } from "node:sqlite";
 import { hashStorePath } from "./paths.js";
 import { workspaceCwd } from "./workspace.js";
 import { errCode, splitLines } from "./utils.js";
-import { initHasher, contentChecksum, HASH_RE } from "./hashline/hash-assign.js";
+import { initHasher, contentChecksum, HASH_RE, CANON_VERSION } from "./hashline/hash-assign.js";
 import { HASH_STORE_VERSION, HASH_STORE_BUSY_TIMEOUT, SERVED_TTL_MS } from "./constants.js";
 
 // ---- validators (owned here; the store's corruption handling uses them) ----
@@ -55,6 +55,10 @@ export function isValidServedList(value: unknown): value is (string | null)[] {
 		if (typeof entry !== "string" || !HASH_RE.test(entry)) return false;
 	}
 	return true;
+}
+
+function cacheKey(checksum: string): string {
+	return `${CANON_VERSION}:${checksum}`;
 }
 
 /** The undo row contract shared by undo-edit and the store. */
@@ -401,7 +405,7 @@ function makeDomainStore(stmts: Prepared): HashStore {
 		engine: "node:sqlite",
 
 		getSnapshot(path, content, deleteCorrupt = true) {
-			const checksum = contentChecksum(content);
+			const checksum = cacheKey(contentChecksum(content));
 			const lineCount = splitLines(content).length;
 			const row = stmts.get(path, checksum, lineCount);
 			if (!row) return undefined;
@@ -418,7 +422,7 @@ function makeDomainStore(stmts: Prepared): HashStore {
 		upsertSnapshot(path, checksum, lineCount, hashes) {
 			stmts.upsert(
 				path,
-				checksum,
+				cacheKey(checksum),
 				lineCount,
 				JSON.stringify(hashes),
 				Date.now(),

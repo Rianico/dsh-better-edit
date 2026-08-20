@@ -140,7 +140,7 @@ describe("edit-sequence engine — end-to-end through the tool builders", () => 
 			expect(getText(first)).toContain("Classification: noop");
 
 			const second = await batchTool(harness).execute("batch_edit", { edits: [edit] });
-			expect(getText(second)).toContain("has produced no changes twice in a row");
+			expect(getText(second)).toContain("no-op'd twice");
 
 			await expect(
 				batchTool(harness).execute("batch_edit", { edits: [edit] }),

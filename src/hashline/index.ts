@@ -4,6 +4,7 @@
  * @module dsh-better-edit/hashline
  */
 export {
+ CANON_VERSION,
  ANCHOR_LEN,
  HASH_SEP,
  HASH_SPACE,

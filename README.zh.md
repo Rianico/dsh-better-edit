@@ -23,7 +23,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-0.1.9-blue.svg" alt="Version">
+  <img src="https://img.shields.io/badge/version-0.3.0-blue.svg" alt="Version">
   <img src="https://img.shields.io/badge/license-MIT-green.svg" alt="MIT License">
   <img src="https://img.shields.io/badge/DeepSeek_Harness-Plugin-blueviolet.svg" alt="DeepSeek Harness Plugin">
   <img src="https://img.shields.io/npm/v/dsh-better-edit" alt="npm version">
@@ -38,7 +38,11 @@
 ---
 
 > *"瓶颈在于 harness——而不是模型。"*
-> —— Can Bölük，[*The Harness Problem*](https://stencil.so/blog/the-harness-problem)
+> —— Can Bölük，[*The Harness Problem*]
+>
+> **这是 harness 的修复。** 内容哈希取代行号——上方编辑永不使下方锚点移位。每个范围都对照 Agent 实际看到的内容校验。过期或未见的行被硬拒绝并回传新锚点重试——无需 `read`。
+>
+> **3 次调用 vs 6 次 · -55.8% tokens · 23/23 正确性。** 同样的外部漂移重构，同样正确的文件（单次随机运行 vs OMP；[完整方法](https://github.com/Rianico/pi-better-edit/blob/main/benchmarks/results/2026-08-17-practical-token-benchmark.md)）。
 
 大多数编辑工具要求模型在改动任何东西之前，先**逐 token** 复述旧代码——而这正是 Agent 最容易出错的地方：多个模型在 replace 式编辑下的补丁格式失败率高达 46–51%。**dsh-better-edit** 走得更远。文件的每一行都分配一个唯一的 3 字符内容哈希，编辑时按哈希定位。旧文本从不回显，锚点在编辑后依然有效，每个解析出的范围都会与模型实际看到的内容逐一核对——错行编辑不可能悄悄落盘。
 
@@ -47,6 +51,14 @@
 `str_replace` 会让模型逐字复述它要替换的代码——纯粹的转录成本（输出 token，按约 5-6 倍输入计费），也是 Agent 最容易出错的地方：真实模型补丁失败率高达 46–51%，块越大越糟，每次失败都要重新读取并重试。
 
 Hashline 用两个哈希代替旧文本——**编辑 token 减少 31%**（多行范围达 43%）——并对照模型所见内容校验每个范围：编辑要么落在你想要的行的位置，要么响亮失败并回传新锚点。锚点是内容地址，上方编辑后依然有效，连续编辑无需重读；上下文更精简，模型的注意力也保持在代码上，而不是复述上。
+
+> [!TIP]
+> **亮点——诚实且可衡量：**
+> - **自愈而非静默。** 外部编辑永不被覆盖——过期范围被拒绝并以全新 `HASH│content` 重发重试；孤儿 served 条目无需全量重读即可自愈（ADR-0008）。Fail-closed，而非自动合并。
+> - **格式化容忍。** ASCII 空白不敏感锚点在 `prettier`/`black`/`eslint --fix` 之间存活（`formatOnSave`、监听、CI）。仅限 linter 场景——字符串内的空白不区分（ADR-0005）。
+> - **链式与批量，无重读仪式。** 未受影响行的锚点保持有效；diff/回显/拒绝行即视为已提供。`edit` 最多 32 个同文件编辑原子执行（`[E_BATCH_ABORT]`），相比 `str_replace` 信封约 -40%。
+> - **读守卫。** 从未展示过的行永不被编辑——`[E_RANGE_UNSERVED]`/`[E_RANGE_UNVERIFIED]`/`[E_STALE_ANCHOR]` 在写入前拒绝，随后 `reject-and-serve`。
+> - **更少往返。** 实测：同样外部漂移重构，OMP 封装需 6 次调用，hashline 仅 3 次；信封 vs `str_replace` 的节省是稳定值—— upstream 电池可复现（算法相同）。
 
 不适用于单行小改动（接近持平）或新建文件（用 `write`）。它的价值在长会话与结构性编辑中体现——任何不允许改错行的场景。
 
@@ -85,9 +97,7 @@ kQm│}
 ```json
 {
   "path": "src/main.ts",
-  "remove_from": "szJ",
-  "remove_to": "szJ",
-  "replacement_text": "  console.log('hi');"
+  "edits": [["szJ", "szJ", "  console.log('hi');"]]
 }
 ```
 
@@ -101,7 +111,7 @@ kQm│}
 
 ## 按 preset 配置指引
 
-`tool:read` / `tool:edit` / `tool:batch_edit` / `tool:undo_last_edit` 四个提示词片段的指引是
+`tool:read` / `tool:edit` / `tool:undo_last_edit` 三个提示词片段的指引是
 纯 Markdown 文件，可以按 agent preset 覆盖。覆盖文件位于插件的共享主目录——绝不放在工作区存储中：
 
 ```
@@ -114,10 +124,9 @@ $DSH_HOME/plugins/dsh-better-edit/<preset>/<section>.md
 | --- | --- | --- |
 | `read.md` | `tool:read` | 130 |
 | `edit.md` | `tool:edit` | 131 |
-| `batch_edit.md` | `tool:batch_edit` | 132 |
 | `undo_last_edit.md` | `tool:undo_last_edit` | 133 |
 
-首次启动时插件会为四个随附 preset——`standard/`、`code/`、`minimal/`、`cordis/`——各自写入编译内置的
+首次启动时插件会为三个随附 preset——`standard/`、`code/`、`minimal/`、`cordis/`——各自写入编译内置的
 可编辑指引文件（含 `order` front-matter），让每个 preset 的指引一开始就可编辑，而不是空白。插件主目录
 根的 `README.md` 说明整套机制。文件只在首次写入时生成、之后绝不被覆盖，因此你的修改会保留——唯一的例外是重置（见下文 *重置 / 恢复默认*）。preset 目录
 里可以只放你想覆盖的片段文件，其余自动回退到编译内置默认值。
@@ -199,7 +208,7 @@ token 基准测试衡量的是模型发出的负载——它假设模型每次�
 | 重复/相同文本 | 每行哈希唯一（冲突已消解）；歧义 → `[E_AMBIGUOUS_ANCHOR]` | 基于位置，重复不会混淆——但位置本身未被校验 |
 | 从未展示给模型的行 | `[E_RANGE_UNSERVED]`——硬拒绝并回传新锚点 | 未展示的 hunk 被拒绝——同样依赖模型知道自己看过什么 |
 | 表达式中间 / 错误的块节点 | 无关——任何已校验的行范围都合法 | 语法规则 + `PUT N*:` 节点选择；点错（锚在 `def` 会让装饰器变成孤儿）会悄悄落错；无语法检查 |
-| 多编辑批量中途失败 | `batch_edit`——原子、全有或全无；失败项以新锚点回显 | 多段补丁先预检——同样原子 |
+| 多编辑批量中途失败 | `edit` 多条目——原子、全有或全无；失败项以新锚点回显 | 多段补丁先预检——同样原子 |
 
 > oh-my-pi 42–53% 的负载节省来自更轻的线格式；上表才是该格式反过来要求模型记在脑中的东西——重新编号、追标签、选节点——而这恰恰是最容易出错的组件（替换式编辑的补丁失败率 46–51%）。本插件 31% 的代价买来的是一个“错编辑落不了地、任何拒绝都不需要重读”的契约。
 
@@ -238,8 +247,7 @@ token 基准测试衡量的是模型发出的负载——它假设模型每次�
 | 工具 | 作用 |
 | ------ | ------ |
 | `read` | 以 `HASH│内容` 形式返回文件。参数：`offset`（1 起始）、`limit`。分页输出以 `[Showing lines N-M of T. Use offset=… to continue.]` 结尾。超过 200KB 的行显示为标记并附 `sed` 提示——哈希锚点需要完整行。 |
-| `edit` | 按哈希替换行范围。`path` · `remove_from` · `remove_to` · `replacement_text`（`""` 表示删除）。对解析出的范围内**每一行**对照已提供状态校验；`[E_RANGE_STALE]` / `[E_RANGE_UNSERVED]` / `[E_RANGE_UNVERIFIED]` 拒绝并回传新锚点。 |
-| `batch_edit` | 单次原子调用最多 32 项编辑：`{ edits: [{ path?, remove_from, remove_to, replacement_text }, …] }`。全有或全无；失败项的范围会以新锚点的形式回显。 |
+| `edit` | 对象根负载 `{ "path": path, "edits": [[remove_from, remove_to, replacement_text], …] }`；`path` 可为 `null` 以通过锚点推断。单个条目编辑一个范围；多条目对同一文件原子批量（最多 32）。对每个包含范围内的每一行校验，reject-and-serve 返回新锚点。 |
 | `undo_last_edit` | `{ path }` 撤销该文件上一次 hashline 编辑，仅当文件仍与存储的编辑后内容一致时生效；重启后依然有效。 |
 
 ### 错误码
