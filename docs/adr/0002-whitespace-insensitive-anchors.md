@@ -1,12 +1,10 @@
-<!-- Adapted from pi-better-edit ADR-0005 for dsh-better-edit deep seams: HashAssign owns canon, snapshot cache versioned via CANON_VERSION in hash-store.ts, anchor-pipeline remains pure. -->
-
 # Whitespace-insensitive anchors — ASCII strip, no fingerprint
 
-Date: 2026-08-16
+Date: 2026-08-20 (adapted for dsh-better-edit from pi-better-edit)
 
 ## Status
 
-accepted
+accepted (adapted for dsh-better-edit — same hashline algorithm; tool layer is dsh plugin API)
 
 ## Context
 
