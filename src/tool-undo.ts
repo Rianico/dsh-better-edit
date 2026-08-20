@@ -12,15 +12,15 @@ import { cntDiff, splitLines } from "./utils.js";
 import { assertUndoRequest } from "./contract.js";
 import { normalizeRequest as normReq } from "./contract.js";
 import { upsertSnapshotFor } from "./hash-store.js";
-import { contentChecksum } from "./hashline/hasher.js";
-import { lineHashes, changedRange } from "./hashline/index.js";
+import { contentChecksum, lineHashes } from "./hashline/hash-assign.js";
+import { changedRange } from "./hashline/anchor-pipeline.js";
 import { getUndo, clearUndo } from "./undo-edit.js";
-import { recordServedTruncated } from "./served-store.js";
+import { recordServedTruncated } from "./session-view.js";
 import { UNDO_DESCRIPTION } from "./prompts.js";
 import type { FileIO } from "./fs-bridge.js";
-import { execCwd, execSessionKey } from "./dsh-context.js";
+import { execCwd, execSessionKey } from "./session-view.js";
 import type { FsSandboxController, FsEscalationArgs } from "./sandbox.js";
-import { withWorkspace } from "./workspace.js";
+import { withWorkspace } from "./session-view.js";
 
 /**
  * Register the `undo_last_edit` tool on the calling agent's scope.

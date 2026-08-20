@@ -15,20 +15,16 @@ import type { FileIO } from './fs-bridge.js'
 import { normFromText, fileSnap } from './file-reader.js'
 import type { LineEnding } from './edit-diff.js'
 import { toCwd } from './paths.js'
-import {
-	resEdit,
-	MAX_HASH_LINES,
-	type NEdit,
-} from './hashline/index.js'
-import type { ResolvedRange } from './hashline/served.js'
+import { resEdit, type NEdit } from './hashline/anchor-pipeline.js'
+import { MAX_HASH_LINES } from './hashline/hash-assign.js'
+import type { ResolvedRange } from './hashline/anchor-pipeline.js'
 import {
 	AnchorMismatchError,
 	ServedRejectionError,
 	recordEchoServes,
 	type ServeRecordPolicy,
-} from './hashline/served.js'
-import { loadServed, sessionKeyFor } from './served-store.js'
-import { scanDrift } from './drift.js'
+} from './hashline/anchor-pipeline.js'
+import { loadServed, sessionKeyFor, scanDrift } from './session-view.js'
 import { abortIf, splitLines } from './utils.js'
 import type { EditParams } from './contract.js'
 import { applyOne } from './edit-engine.js'

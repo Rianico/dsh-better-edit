@@ -33,5 +33,11 @@ export {
  verifyServedRange,
  buildRangeEcho,
  fmtServedRows,
+ recordEchoServes,
 } from "./served.js";
-export type { ServedRow, ResolvedRange, ServedCode } from "./served.js";
+export type {
+ ServedRow,
+ ResolvedRange,
+ ServedCode,
+ ServeRecordPolicy,
+} from "./served.js";

@@ -27,7 +27,7 @@ import { registerBatchEditTool } from "./tool-batch-edit.js";
 import { registerUndoTool } from "./tool-undo.js";
 import { registerWriteHook } from "./write-hook.js";
 
-import { initHasher } from "./hashline/hasher.js";
+import { initHasher } from "./hashline/hash-assign.js";
 import {
 	composeSections,
 	ensurePresetGuidance,

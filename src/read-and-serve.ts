@@ -10,7 +10,7 @@
 
 import { abortIf } from "./utils.js";
 import { readView } from "./file-view.js";
-import { recordServed, clearDriftReported } from "./served-store.js";
+import { recordServed, clearDriftReported } from "./session-view.js";
 import type { FileIO } from "./fs-bridge.js";
 import type { ServedRow } from "./hashline/served.js";
 

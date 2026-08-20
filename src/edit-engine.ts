@@ -18,16 +18,15 @@ import type { HashStore } from "./hash-store.js";
 import type { LineEnding } from "./edit-diff.js";
 import { restoreEndings } from "./edit-diff.js";
 import { normFromText } from "./file-reader.js";
-import { scanDrift } from "./drift.js";
+import { scanDrift, loadServed } from "./session-view.js";
 import {
 	applyEdit,
-	lineHashes,
 	resEdit,
 	parseHashRef,
-	MAX_HASH_LINES,
 	type HEdit,
 	type NEdit,
-} from "./hashline/index.js";
+} from "./hashline/anchor-pipeline.js";
+import { lineHashes, MAX_HASH_LINES } from "./hashline/hash-assign.js";
 import {
 	AnchorMismatchError,
 	ServedRejectionError,
@@ -37,8 +36,7 @@ import {
 	type ResolvedRange,
 	type ServeRecordPolicy,
 	type ServedRow,
-} from "./hashline/served.js";
-import { loadServed } from "./served-store.js";
+} from "./hashline/anchor-pipeline.js";
 import { findSnapshotPathsByHashes } from "./hash-store.js";
 import { saveUndo } from "./undo-edit.js";
 import {

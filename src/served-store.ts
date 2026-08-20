@@ -16,7 +16,7 @@
  */
 
 import { randomUUID } from "node:crypto";
-import { HASH_RE } from "./hashline/alphabet.js";
+import { HASH_RE } from "./hashline/hash-assign.js";
 import { loadHashStore, withStore } from "./hash-store.js";
 
 export type ServedEntry = { position: number; hash: string | null };

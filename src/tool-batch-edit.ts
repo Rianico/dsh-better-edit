@@ -27,9 +27,9 @@ import {
 	runFileEdits,
 	type FileEditResult,
 	type PreparedItem,
-} from "./edit-engine.js";
-import { buildBatchResult, type BatchSection } from "./edit-response.js";
-import { recordServedTruncated } from "./served-store.js";
+} from "./mutation.js";
+import { buildBatchResult, type BatchSection } from "./mutation.js";
+import { recordServedTruncated } from "./session-view.js";
 import { BATCH_EDIT_DESCRIPTION } from "./prompts.js";
 import {
 	pathSchema,
@@ -38,9 +38,9 @@ import {
 	replacementTextSchema,
 } from "./contract.js";
 import type { FileIO } from "./fs-bridge.js";
-import { execCwd, execSessionKey } from "./dsh-context.js";
+import { execCwd, execSessionKey } from "./session-view.js";
 import type { FsSandboxController, FsEscalationArgs } from "./sandbox.js";
-import { withWorkspace } from "./workspace.js";
+import { withWorkspace } from "./session-view.js";
 
 async function prepareItems(
 	io: FileIO,
