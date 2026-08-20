@@ -17,7 +17,7 @@ import { shutdownHashStore } from "../../src/hash-store.js";
 import { localIO, type FileIO } from "../../src/fs-bridge.js";
 import { buildEditTool } from "../../src/tool-edit.js";
 import { buildReadTool } from "../../src/tool-read.js";
-import { buildBatchEditTool } from "../../src/tool-batch-edit.js";
+// batch_edit removed (ADR-0007) — shim via edit tuples for test compatibility
 import { buildUndoTool } from "../../src/tool-undo.js";
 import { FsSandboxController } from "../../src/sandbox.js";
 
@@ -219,10 +219,46 @@ export function setupIntegrationTest(cwd: string) {
 	const sessionKey = "test-session";
 	const makeExecFor = makeExec(cwd, sessionKey);
 	const sandbox = makeTestSandbox();
+	const editTool = buildEditTool(io, sandbox);
+	function wrapEdit(tool: ReturnType<typeof buildEditTool>) {
+		const base = wrapTool(tool, makeExecFor);
+		return {
+			async execute(_callId: string, params: unknown) {
+				const rec = params as Record<string, unknown>;
+				if (rec && "edits" in rec) {
+					return (base as any).execute(_callId, params);
+				}
+				// old shape {path, remove_from,...} → {path, edits:[[h,h,t]]}
+				if (rec && typeof rec.remove_from === "string") {
+					const converted = {
+						path: (rec.path ?? (rec as any).file_path ?? null) as string | null,
+						edits: [[rec.remove_from, rec.remove_to, rec.replacement_text]],
+					};
+					return (base as any).execute(_callId, converted);
+				}
+				return (base as any).execute(_callId, params);
+			},
+		} as unknown as ReturnType<typeof wrapTool>;
+	}
 	const tools = {
 		read: wrapTool(buildReadTool(io), makeExecFor),
-		edit: wrapTool(buildEditTool(io, sandbox), makeExecFor),
-		batch_edit: wrapTool(buildBatchEditTool(io, sandbox), makeExecFor),
+		edit: wrapEdit(editTool),
+		batch_edit: {
+			async execute(_callId: string, params: unknown) {
+				const rec = params as { edits?: Array<{ path?: string; file_path?: string; remove_from: string; remove_to: string; replacement_text: string }> };
+				const edits = rec.edits ?? [];
+				if (edits.length === 0) throw new Error("[E_BAD_SHAPE] batch_edit shim: edits empty");
+				const path = (edits[0] as any).path ?? (edits[0] as any).file_path ?? null;
+				// verify all same file (new edit is single-file)
+				for (const e of edits) {
+					const ep = (e as any).path ?? (e as any).file_path ?? path;
+					if (ep !== path) throw new Error("[E_BAD_SHAPE] batch_edit shim: cross-file batches removed — use one edit call per file");
+				}
+				const tuples = edits.map(e => [e.remove_from, e.remove_to, e.replacement_text] as [string,string,string]);
+				const text = await editTool.execute({ path, edits: tuples } as unknown as never, { signal: new AbortController().signal, agent: { id: sessionKey, session: { id: sessionKey, header: { cwd } } } } as unknown as never);
+				return { content: [{ type: "text", text: String(text) }] };
+			},
+		} as unknown as ReturnType<typeof wrapTool>,
 		undo_last_edit: wrapTool(buildUndoTool(io, sandbox), makeExecFor),
 	};
 	return {
