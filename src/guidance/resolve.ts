@@ -18,7 +18,7 @@ import { errCode } from "../utils.js";
 import { isBlankOverride, parseSectionFile } from "./parse.js";
 
 /**
-* Render one tool's guidance as its intro line, a blank line, then bullets.
+ * Render one tool's guidance as its intro line, a blank line, then bullets.
  * Uniform across the four sections: no tool-schema description is duplicated
  * (that already reaches the model through the tool catalog).
  */
@@ -56,7 +56,7 @@ export const GUIDANCE_SECTIONS: readonly GuidanceSection[] = [
 		defaultOrder: 131,
 		renderDefault: () => guidanceText(EDIT_GUIDANCE),
 	},
-		{
+	{
 		name: "tool:undo_last_edit",
 		file: "undo_last_edit.md",
 		defaultOrder: 133,
