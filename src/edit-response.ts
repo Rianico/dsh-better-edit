@@ -202,6 +202,10 @@ export function buildChanged(input: SuccessInput): TResult {
 		addedLines,
 		removedLines,
 	});
+	const denseServedRows: typeof diffResult.servedRows = [];
+	for (let i = 0; i < resultHashes.length; i++) {
+		denseServedRows.push({ position: i, hash: resultHashes[i]! });
+	}
 
 	return {
 		content: [{ type: "text", text }],
@@ -211,7 +215,7 @@ export function buildChanged(input: SuccessInput): TResult {
 			snapshotId,
 			metrics,
 			...(warnings !== undefined && warnings.length > 0 ? { warnings } : {}),
-			servedRows: diffResult.servedRows,
+			servedRows: denseServedRows,
 			...(driftNotice === undefined ? {} : { driftNotice }),
 		},
 	};
@@ -280,8 +284,12 @@ export function buildBatchResult(sections: BatchSection[]): TResult {
 			s.originalHashes,
 		);
 		diffParts.push(`--- ${s.path} ---\n${diffResult.diff}`);
-		if (diffResult.servedRows.length > 0) {
-			servedByPath.push({ path: s.path, servedRows: diffResult.servedRows });
+		const denseRows: typeof diffResult.servedRows = [];
+		for (let i = 0; i < s.resultHashes.length; i++) {
+			denseRows.push({ position: i, hash: s.resultHashes[i]! });
+		}
+		if (denseRows.length > 0) {
+			servedByPath.push({ path: s.path, servedRows: denseRows });
 		}
 	}
 	const diff = diffParts.join("\n\n");

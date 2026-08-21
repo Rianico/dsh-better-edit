@@ -107,6 +107,10 @@ export function buildUndoTool(io: FileIO, sandbox: FsSandboxController) {
 					currentHashes,
 				);
 				const undoDiff = undoDiffResult.diff;
+				const undoDenseRows: typeof undoDiffResult.servedRows = [];
+				for (let i = 0; i < undo.hashes.length; i++) {
+					undoDenseRows.push({ position: i, hash: undo.hashes[i]! });
+				}
 				const restoredRange = changedRange(currentNormalized, undo.content);
 
 				try {
@@ -144,13 +148,13 @@ export function buildUndoTool(io: FileIO, sandbox: FsSandboxController) {
 					"File reverted to previous state. The post-edit diff rows carry the restored file\u2019s fresh anchors for follow-up edits.",
 				);
 
-				if (undoDiffResult.servedRows.length > 0) {
+				if (undoDenseRows.length > 0) {
 					await recordServedTruncated(
 						sessionKey,
 						absolutePath,
-						undoDiffResult.servedRows,
+						undoDenseRows,
 						splitLines(undo.content).length,
-						restoredRange?.firstChangedLine ?? 0,
+						restoredRange?.firstChangedLine ?? undoDiffResult.firstChangedLine ?? 0,
 					);
 				}
 
