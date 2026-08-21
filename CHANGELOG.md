@@ -6,6 +6,8 @@ Entries link to the originating spec issue in [pi-hashline-edit-lsz](https://git
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-08-21
+
 ### Changed
 
 - Deepen `Mutation` owns edit lifecycle (C01, #21): collapse `tool-edit` orchestrator (260→121 lines) into `mutation.ts:execute()` deep seam — one interface owning `applySequence → commit → buildBatchResult → recordServedTruncated` with correct `undoUnavailableMessage`/`restoreUnwrittenUndos` branching; `tool-edit` thin adapter `validate → execute`.
