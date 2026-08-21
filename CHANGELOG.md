@@ -6,6 +6,25 @@ Entries link to the originating spec issue in [pi-hashline-edit-lsz](https://git
 
 ## [Unreleased]
 
+### Changed
+
+- Deepen `Mutation` owns edit lifecycle (C01, #21): collapse `tool-edit` orchestrator (260→121 lines) into `mutation.ts:execute()` deep seam — one interface owning `applySequence → commit → buildBatchResult → recordServedTruncated` with correct `undoUnavailableMessage`/`restoreUnwrittenUndos` branching; `tool-edit` thin adapter `validate → execute`.
+
+- Heal guidance ghost (C02, #21): remove `batch_edit` seam — `GUIDANCE_SECTIONS` 4→3, `materialize.ts` ghost `batch_edit.md` cleanup (shipped + custom presets, `ENOENT`-tolerant), keep `BATCH_EDIT_*` as `@deprecated` aliases; order gap `132` preserved.
+
+### Fixed
+
+- Dense `servedRows` port `pi-better-edit@7b91958` (post-v1.1.4): `edit-response:buildChanged/buildBatchResult` and `tool-undo` now emit dense `0..n-1` `servedRows` instead of sparse diff rows; `firstChangedLine` fallback to `undoDiffResult` — fixes `E_RANGE_UNVERIFIED` on chained edits.
+
+- Fix `tool-undo` SAFETY cast `canonical as unknown as FsEscalationArgs` + `withWorkspace` indentation (2→4 tabs) and `edit-response` biome fixes (no behavior change).
+
+- Fix `guidance/resolve.ts` double-tab indent left by `batch_edit` removal on `tool:undo_last_edit` entry.
+
+### Added
+
+- Docs: `CLAUDE.md` upstream sync section — last absorbed checkpoint `7b91958` (dense `servedRows`), procedure, checkpoint history, `upstream` remote.
+
+
 ## [0.3.0] - 2026-08-20
 
 ### Changed
