@@ -2,7 +2,6 @@ import type { ServedRow } from "./hashline/served.js";
 import { genDiff } from "./edit-diff.js";
 import { visLines, clipLine } from "./utils.js";
 
-
 export type EditDetails = {
 	diff: string;
 	firstChangedLine?: number;
@@ -92,8 +91,7 @@ export function buildMetrics(args: {
 		};
 	}
 	if (args.addedLines !== undefined) metrics.added_lines = args.addedLines;
-	if (args.removedLines !== undefined)
-		metrics.removed_lines = args.removedLines;
+	if (args.removedLines !== undefined) metrics.removed_lines = args.removedLines;
 	return metrics;
 }
 
@@ -153,7 +151,7 @@ export function buildNoop(input: NoopInput): TResult {
 			classification: "noop" as const,
 			metrics,
 			...(warnings !== undefined && warnings.length > 0 ? { warnings } : {}),
-			...(driftNotice !== undefined ? { driftNotice } : {}),
+			...(driftNotice === undefined ? {} : { driftNotice }),
 		},
 	};
 }
@@ -209,13 +207,12 @@ export function buildChanged(input: SuccessInput): TResult {
 		content: [{ type: "text", text }],
 		details: {
 			diff: diffResult.diff,
-			firstChangedLine:
-				editMeta.firstChangedLine ?? diffResult.firstChangedLine,
+			firstChangedLine: editMeta.firstChangedLine ?? diffResult.firstChangedLine,
 			snapshotId,
 			metrics,
 			...(warnings !== undefined && warnings.length > 0 ? { warnings } : {}),
 			servedRows: diffResult.servedRows,
-			...(driftNotice !== undefined ? { driftNotice } : {}),
+			...(driftNotice === undefined ? {} : { driftNotice }),
 		},
 	};
 }
@@ -267,7 +264,7 @@ export function buildBatchResult(sections: BatchSection[]): TResult {
 					warningsCount: warnings.length,
 				}),
 				...(warnings.length > 0 ? { warnings } : {}),
-				...(driftNotice !== undefined ? { driftNotice } : {}),
+				...(driftNotice === undefined ? {} : { driftNotice }),
 			},
 		};
 	}
@@ -281,7 +278,7 @@ export function buildBatchResult(sections: BatchSection[]): TResult {
 			1,
 			s.resultHashes,
 			s.originalHashes,
-			);
+		);
 		diffParts.push(`--- ${s.path} ---\n${diffResult.diff}`);
 		if (diffResult.servedRows.length > 0) {
 			servedByPath.push({ path: s.path, servedRows: diffResult.servedRows });
@@ -311,7 +308,7 @@ export function buildBatchResult(sections: BatchSection[]): TResult {
 			...(warnings.length > 0 ? { warnings } : {}),
 			servedRows: servedByPath.flatMap((e) => e.servedRows),
 			servedByPath,
-			...(driftNotice !== undefined ? { driftNotice } : {}),
+			...(driftNotice === undefined ? {} : { driftNotice }),
 		},
 	};
 }
