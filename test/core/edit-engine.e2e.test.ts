@@ -1,10 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { readFile } from "node:fs/promises";
+import { readFile, stat as nodeStat, writeFile } from "node:fs/promises";
+import { isAbsolute, resolve as resolvePath } from "node:path";
 import {
 	withTempFile,
+	withTempBytes,
 	setupIntegrationTest,
 	getText,
 } from "../support/fixtures.js";
+import { ctxFsIO, type FileIO } from "../../src/fs-bridge.js";
 
 type Tool = {
 	execute: (
@@ -26,6 +29,67 @@ function undoTool(
 }
 
 const CONTENT = "line one\nline two\nline three\n";
+
+/**
+ * Disk-backed ctx.fs double with the host decoder's BOM-stripping semantics.
+ * Raw reads enforce the real API's whole-file maxBytes contract.
+ */
+function bomStrippingCtxIO(): FileIO {
+	const fs = {
+		sandboxMode: undefined,
+		resolve: async (path: string, opts?: { cwd?: string }) => {
+			const absolutePath = isAbsolute(path)
+				? path
+				: resolvePath(opts?.cwd ?? process.cwd(), path);
+			return { targetKey: absolutePath, displayPath: absolutePath };
+		},
+		processPath: (target: { displayPath: string }) => target.displayPath,
+		readText: async (target: { displayPath: string }) =>
+			new TextDecoder("utf-8", { fatal: true }).decode(
+				await readFile(target.displayPath),
+			),
+		readBytes: async (
+			target: { displayPath: string },
+			signal: AbortSignal | undefined,
+			maxBytes: number,
+		) => {
+			signal?.throwIfAborted();
+			const bytes = await readFile(target.displayPath);
+			if (bytes.length > maxBytes) {
+				throw Object.assign(new Error("file exceeds byte limit"), {
+					code: "FS_TOO_LARGE",
+				});
+			}
+			return bytes;
+		},
+		stat: async (target: { displayPath: string }) => {
+			const info = await nodeStat(target.displayPath);
+			return {
+				version: `${info.mtimeMs}:${info.size}`,
+				type: "file",
+				size: info.size,
+			};
+		},
+		writeText: async (
+			target: { displayPath: string },
+			content: string,
+		) => {
+			await writeFile(target.displayPath, content, "utf-8");
+			const info = await nodeStat(target.displayPath);
+			return {
+				version: `${info.mtimeMs}:${info.size}`,
+				operation: "update",
+				before: null,
+				after: content,
+			};
+		},
+	};
+	const ctx = {
+		waterfall: async () => undefined,
+		emit: () => undefined,
+	};
+	return ctxFsIO(fs as never, ctx as never);
+}
 
 /** Read through the hashline `read` tool so anchors are served, then parse rows. */
 async function servedRows(
@@ -100,6 +164,31 @@ describe("edit-sequence engine — end-to-end through the tool builders", () => 
 			const res = await undoTool(harness).execute("undo_last_edit", { path: "t.txt" });
 			expect(getText(res)).toContain("Undone last edit on t.txt.");
 			expect(await readFile(path, "utf-8")).toBe(CONTENT);
+		});
+	});
+
+	it("ctxFsIO preserves exact UTF-8 BOM and CRLF bytes through edit and undo", async () => {
+		const original = Buffer.from("\uFEFFline one\r\nline two\r\n", "utf-8");
+		await withTempBytes("t.txt", original, async ({ cwd, path }) => {
+			const harness = setupIntegrationTest(cwd, bomStrippingCtxIO());
+			const served = await servedRows(harness, "t.txt");
+			const one = served.find((r) => r.content === "line one")!;
+
+			await harness.editTool.execute("edit", {
+				path: "t.txt",
+				remove_from: one.hash,
+				remove_to: one.hash,
+				replacement_text: "line ONE",
+			});
+			expect(await readFile(path)).toEqual(
+				Buffer.from("\uFEFFline ONE\r\nline two\r\n", "utf-8"),
+			);
+
+			const res = await undoTool(harness).execute("undo_last_edit", {
+				path: "t.txt",
+			});
+			expect(getText(res)).toContain("Undone last edit on t.txt.");
+			expect(await readFile(path)).toEqual(original);
 		});
 	});
 

@@ -17,7 +17,7 @@
 
 import { readFile } from "node:fs/promises";
 import type { Context } from "@deepseek-ai/cordis";
-import type { FileSystem } from "@deepseek-ai/dsh-fs";
+import type { FileSystem, FsTarget } from "@deepseek-ai/dsh-fs";
 import type { ToolExecution } from "@deepseek-ai/dsh-tools";
 import type { SandboxExecutionPolicy } from "@deepseek-ai/dsh-sandbox";
 import { writeAtomic } from "./fs-write.js";
@@ -106,6 +106,44 @@ export function mapFsError(error: unknown, displayPath: string): never {
 	throw error;
 }
 
+/**
+ * Restore a UTF-8 BOM consumed by a backend's {@link TextDecoder}. The raw
+ * byte seam reads whole files rather than prefixes, so first use stat size to
+ * narrow the expensive probe to the only possible BOM case: exactly three
+ * storage bytes are missing from the decoded UTF-8 representation.
+ */
+async function restoreStrippedUtf8Bom(
+	fs: FileSystem,
+	target: FsTarget,
+	text: string,
+	signal?: AbortSignal,
+): Promise<string> {
+	if (text.startsWith("\uFEFF")) return text;
+
+	const info = await fs.stat(target, signal);
+	if (
+		info?.size === undefined ||
+		info.size !== Buffer.byteLength(text, "utf-8") + 3
+	) {
+		return text;
+	}
+
+	const bytes = await fs.readBytes(target, signal, info.size);
+	const encodedText = Buffer.from(text, "utf-8");
+	if (
+		bytes.length !== encodedText.length + 3 ||
+		bytes[0] !== 0xef ||
+		bytes[1] !== 0xbb ||
+		bytes[2] !== 0xbf
+	) {
+		return text;
+	}
+	for (let i = 0; i < encodedText.length; i += 1) {
+		if (bytes[i + 3] !== encodedText[i]) return text;
+	}
+	return `\uFEFF${text}`;
+}
+
 /** FileIO over the deployment's `ctx.fs` service. */
 export function ctxFsIO(fs: FileSystem, ctx: Context): FileIO {
 	return {
@@ -121,7 +159,8 @@ export function ctxFsIO(fs: FileSystem, ctx: Context): FileIO {
 				const target = await fs.resolve(absolutePath, {
 					...(signal !== undefined ? { signal } : {}),
 				});
-				return await fs.readText(target, signal);
+				const text = await fs.readText(target, signal);
+				return await restoreStrippedUtf8Bom(fs, target, text, signal);
 			} catch (error) {
 				return mapFsError(error, absolutePath);
 			}

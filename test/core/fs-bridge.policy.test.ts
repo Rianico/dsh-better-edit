@@ -21,6 +21,7 @@ function makeFs(overrides: Partial<Record<string, unknown>> = {}) {
 		})),
 		processPath: vi.fn(() => "/abs/file.txt"),
 		readText: vi.fn(async () => "hello\n"),
+		readBytes: vi.fn(async () => new Uint8Array()),
 		writeText: vi.fn(async () => ({
 			version: "v2",
 			operation: "update",
@@ -61,6 +62,124 @@ function makeCtx() {
 }
 
 const exec = { agent: { session: { id: "sess-1" } } } as never;
+
+describe("ctxFsIO readText", () => {
+	it("restores a UTF-8 BOM stripped by the backend decoder", async () => {
+		const text = "hello\r\n";
+		const bytes = Buffer.from(`\uFEFF${text}`, "utf-8");
+		const { fs } = makeFs({
+			readText: vi.fn(async () => text),
+			stat: vi.fn(async () => ({
+				version: "v1",
+				type: "file",
+				size: bytes.length,
+			})),
+			readBytes: vi.fn(async () => bytes),
+		});
+		const { ctx } = makeCtx();
+		const io: FileIO = ctxFsIO(fs as never, ctx);
+
+		await expect(io.readText("/abs/file.txt")).resolves.toBe(`\uFEFF${text}`);
+		expect(fs.readBytes).toHaveBeenCalledWith(
+			expect.objectContaining({ targetKey: "tk-1" }),
+			undefined,
+			bytes.length,
+		);
+	});
+
+	it("does not read raw bytes when stat size matches the decoded UTF-8 text", async () => {
+		const text = "hello\r\n";
+		const { fs } = makeFs({
+			readText: vi.fn(async () => text),
+			stat: vi.fn(async () => ({
+				version: "v1",
+				type: "file",
+				size: Buffer.byteLength(text, "utf-8"),
+			})),
+		});
+		const { ctx } = makeCtx();
+		const io: FileIO = ctxFsIO(fs as never, ctx);
+
+		await expect(io.readText("/abs/file.txt")).resolves.toBe(text);
+		expect(fs.readBytes).not.toHaveBeenCalled();
+	});
+
+	it("does not invent a BOM when the three-byte size gap is not a BOM", async () => {
+		const text = "hello\n";
+		const bytes = Buffer.from(`xyz${text}`, "utf-8");
+		const { fs } = makeFs({
+			readText: vi.fn(async () => text),
+			stat: vi.fn(async () => ({
+				version: "v1",
+				type: "file",
+				size: bytes.length,
+			})),
+			readBytes: vi.fn(async () => bytes),
+		});
+		const { ctx } = makeCtx();
+		const io: FileIO = ctxFsIO(fs as never, ctx);
+
+		await expect(io.readText("/abs/file.txt")).resolves.toBe(text);
+		expect(fs.readBytes).toHaveBeenCalledOnce();
+	});
+
+	it("does not restore a BOM when the file changes between decoded and raw reads", async () => {
+		const text = "hello\n";
+		const changedBytes = Buffer.from("\uFEFFjello\n", "utf-8");
+		const { fs } = makeFs({
+			readText: vi.fn(async () => text),
+			stat: vi.fn(async () => ({
+				version: "v1",
+				type: "file",
+				size: changedBytes.length,
+			})),
+			readBytes: vi.fn(async () => changedBytes),
+		});
+		const { ctx } = makeCtx();
+		const io: FileIO = ctxFsIO(fs as never, ctx);
+
+		await expect(io.readText("/abs/file.txt")).resolves.toBe(text);
+		expect(fs.readBytes).toHaveBeenCalledOnce();
+	});
+
+	it("propagates stat failures from the integrity probe", async () => {
+		const error = new Error("stat failed");
+		const { fs } = makeFs({ stat: vi.fn(async () => Promise.reject(error)) });
+		const { ctx } = makeCtx();
+		const io: FileIO = ctxFsIO(fs as never, ctx);
+
+		await expect(io.readText("/abs/file.txt")).rejects.toBe(error);
+	});
+
+	it("propagates raw-read failures for BOM candidates", async () => {
+		const text = "hello\n";
+		const error = new Error("raw read failed");
+		const { fs } = makeFs({
+			readText: vi.fn(async () => text),
+			stat: vi.fn(async () => ({
+				version: "v1",
+				type: "file",
+				size: Buffer.byteLength(text, "utf-8") + 3,
+			})),
+			readBytes: vi.fn(async () => Promise.reject(error)),
+		});
+		const { ctx } = makeCtx();
+		const io: FileIO = ctxFsIO(fs as never, ctx);
+
+		await expect(io.readText("/abs/file.txt")).rejects.toBe(error);
+	});
+
+	it("keeps a BOM already preserved by the backend without probing metadata", async () => {
+		const text = "\uFEFFhello\n";
+		const { fs } = makeFs({ readText: vi.fn(async () => text) });
+		const { ctx } = makeCtx();
+		const io: FileIO = ctxFsIO(fs as never, ctx);
+
+		await expect(io.readText("/abs/file.txt")).resolves.toBe(text);
+		expect(fs.stat).not.toHaveBeenCalled();
+		expect(fs.readBytes).not.toHaveBeenCalled();
+	});
+});
 
 describe("ctxFsIO writeText", () => {
 	it("dispatches fs/write-intent with (target, exec, default) and passes the returned intent to writeText", async () => {
