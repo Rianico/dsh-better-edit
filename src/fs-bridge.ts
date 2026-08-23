@@ -77,6 +77,7 @@ export function mapFsError(error: unknown, displayPath: string): never {
 		error instanceof Error &&
 		typeof (error as { code?: unknown }).code === "string"
 	) {
+		// SAFETY: `error` narrowed to Error with string `code` above — typed extraction for FS code switch
 		const code = (error as unknown as { code: string }).code;
 		if (code === "FS_NOT_FOUND") {
 			throw new Error(`[E_NOT_FOUND] File not found: ${displayPath}`);
@@ -159,15 +160,15 @@ export function ctxFsIO(fs: FileSystem, ctx: Context): FileIO {
 	return {
 		async resolve(path, cwd, signal) {
 			const target = await fs.resolve(path, {
-				...(cwd !== undefined ? { cwd } : {}),
-				...(signal !== undefined ? { signal } : {}),
+				...(cwd === undefined ? {} : { cwd }),
+				...(signal === undefined ? {} : { signal }),
 			});
 			return fs.processPath(target);
 		},
 		async readText(absolutePath, signal) {
 			try {
 				const target = await fs.resolve(absolutePath, {
-					...(signal !== undefined ? { signal } : {}),
+					...(signal === undefined ? {} : { signal }),
 				});
 				const text = await fs.readText(target, signal);
 				return await restoreStrippedUtf8Bom(fs, target, text, signal);
@@ -178,7 +179,7 @@ export function ctxFsIO(fs: FileSystem, ctx: Context): FileIO {
 		async writeText(absolutePath, content, signal, exec, sandboxPolicy) {
 			try {
 				const target = await fs.resolve(absolutePath, {
-					...(signal !== undefined ? { signal } : {}),
+					...(signal === undefined ? {} : { signal }),
 				});
 				// Single-slot decision: the observation policy produces
 				// createIfAbsent / replaceIfVersion; the bare default is
@@ -218,7 +219,7 @@ export function ctxFsIO(fs: FileSystem, ctx: Context): FileIO {
 		async emitObserved(absolutePath, exec, signal) {
 			try {
 				const target = await fs.resolve(absolutePath, {
-					...(signal !== undefined ? { signal } : {}),
+					...(signal === undefined ? {} : { signal }),
 				});
 				const info = await fs.stat(target, signal);
 				if (info !== undefined) {
@@ -239,7 +240,7 @@ export function ctxFsIO(fs: FileSystem, ctx: Context): FileIO {
 		async statVersion(absolutePath, signal) {
 			try {
 				const target = await fs.resolve(absolutePath, {
-					...(signal !== undefined ? { signal } : {}),
+					...(signal === undefined ? {} : { signal }),
 				});
 				const info = await fs.stat(target, signal);
 				return info?.version ?? undefined;
