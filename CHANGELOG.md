@@ -6,6 +6,8 @@ Entries link to the originating spec issue in [pi-hashline-edit-lsz](https://git
 
 ## [Unreleased]
 
+## [0.3.2] - 2026-08-23
+
 ### Fixed
 
 - Preserve a stripped UTF-8 BOM across `ctx.fs`-backed `edit` and `undo_last_edit` writes while retaining the file's original line endings (#23).
