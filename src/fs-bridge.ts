@@ -106,11 +106,21 @@ export function mapFsError(error: unknown, displayPath: string): never {
 	throw error;
 }
 
+const UTF8_BOM = "\uFEFF";
+const UTF8_BOM_BYTES = [0xef, 0xbb, 0xbf] as const;
+const UTF8_BOM_LEN = UTF8_BOM_BYTES.length;
+
 /**
  * Restore a UTF-8 BOM consumed by a backend's {@link TextDecoder}. The raw
  * byte seam reads whole files rather than prefixes, so first use stat size to
  * narrow the expensive probe to the only possible BOM case: exactly three
  * storage bytes are missing from the decoded UTF-8 representation.
+ *
+ * Compensation for upstream BOM stripping: `dsh-fs-local` decodes with
+ * `TextDecoder("utf-8",{fatal:true})` (`ignoreBOM:false` by default) and
+ * swallows leading `EF BB BF`.
+ * https://github.com/deepseek-ai/deepseek-harness/discussions/1026
+ * https://github.com/Rianico/dsh-better-edit/issues/23
  */
 async function restoreStrippedUtf8Bom(
 	fs: FileSystem,
@@ -118,12 +128,12 @@ async function restoreStrippedUtf8Bom(
 	text: string,
 	signal?: AbortSignal,
 ): Promise<string> {
-	if (text.startsWith("\uFEFF")) return text;
+	if (text.startsWith(UTF8_BOM)) return text;
 
 	const info = await fs.stat(target, signal);
 	if (
 		info?.size === undefined ||
-		info.size !== Buffer.byteLength(text, "utf-8") + 3
+		info.size !== Buffer.byteLength(text, "utf-8") + UTF8_BOM_LEN
 	) {
 		return text;
 	}
@@ -131,17 +141,17 @@ async function restoreStrippedUtf8Bom(
 	const bytes = await fs.readBytes(target, signal, info.size);
 	const encodedText = Buffer.from(text, "utf-8");
 	if (
-		bytes.length !== encodedText.length + 3 ||
-		bytes[0] !== 0xef ||
-		bytes[1] !== 0xbb ||
-		bytes[2] !== 0xbf
+		bytes.length !== encodedText.length + UTF8_BOM_LEN ||
+		bytes[0] !== UTF8_BOM_BYTES[0] ||
+		bytes[1] !== UTF8_BOM_BYTES[1] ||
+		bytes[2] !== UTF8_BOM_BYTES[2]
 	) {
 		return text;
 	}
 	for (let i = 0; i < encodedText.length; i += 1) {
-		if (bytes[i + 3] !== encodedText[i]) return text;
+		if (bytes[i + UTF8_BOM_LEN] !== encodedText[i]) return text;
 	}
-	return `\uFEFF${text}`;
+	return `${UTF8_BOM}${text}`;
 }
 
 /** FileIO over the deployment's `ctx.fs` service. */
