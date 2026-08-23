@@ -214,8 +214,7 @@ function makeTestSandbox() {
 }
 
 /** Drive the dsh tool builders end-to-end over a temp cwd, with a stable session key. */
-export function setupIntegrationTest(cwd: string) {
-	const io: FileIO = localIO();
+export function setupIntegrationTest(cwd: string, io: FileIO = localIO()) {
 	const sessionKey = "test-session";
 	const makeExecFor = makeExec(cwd, sessionKey);
 	const sandbox = makeTestSandbox();
