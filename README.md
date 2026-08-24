@@ -129,7 +129,64 @@ One fails, none write (`[E_BATCH_ABORT]`).
 > [!TIP]
 > **Want proof before you install?** The upstream [23/23 tool battery](https://github.com/Rianico/pi-better-edit/blob/main/benchmarks/README.md) runs with no LLM — stale edits are rejected before they corrupt a file, on every run. Same hashline algorithm, same verification.
 
+### Configuration
+
+Tenancy and prompt guidance are both declared once, read at `agent/session-start`, and need no code changes.
+
+#### Store tenancy — central by default
+
+No repo pollution. The store lives at `$DSH_HOME/plugins/dsh-better-edit/runtime/<name>-<hash8>/` by default (`central`). To opt into legacy co-location or a custom root:
+
+```yaml
+# $DSH_HOME/plugins/dsh-better-edit/config.yaml
+storeDir: central              # "central" | "workspace" | "/abs/path"
+autoGitignore: false           # only for workspace: append .dsh_better_edit/ to .gitignore
+undo_ttl_s: 604800              # int seconds, -1 = forever (default 7d)
+storeMaxAgeDays: 30
+storeMaxTotalBytes: 524288000   # 500MB
+```
+
+Env overrides yaml (`env > yaml > central`), malformed falls back to `central` with a warning:
+
+```sh
+DSH_BETTER_EDIT_STORE_DIR=central|workspace|/abs
+DSH_BETTER_EDIT_AUTO_GITIGNORE=true|false  # case-insensitive
+```
+
+Legacy `<workspace>/.dsh_better_edit/` is copied once on first central open; `runtime/<name>-<hash8>/` is `ls`-readable with a `.wsPath` sidecar. See `docs/specs/issue-24-store-tenancy.md` for lifecycle (janitor `mtime>30d` then LRU, WAL checkpoint, `undo` TTL).
+
+#### Guidance per preset
+
+The `tool:read` / `tool:edit` / `tool:undo_last_edit` prompt sections are plain-markdown files per agent preset, overridable without touching the plugin:
+
+```
+$DSH_HOME/plugins/dsh-better-edit/<preset>/<section>.md
+```
+
+(default home `~/.dsh`, so `~/.dsh/plugins/dsh-better-edit/`). The section table:
+
+| File | Section | Default order |
+| --- | --- | --- |
+| `read.md` | `tool:read` | 130 |
+| `edit.md` | `tool:edit` | 131 |
+| `undo_last_edit.md` | `tool:undo_last_edit` | 133 |
+
+On first boot the plugin seeds the three shipped presets — `standard/`, `code/`, `minimal/`, `cordis/` — each with the compiled guidance as editable files (plus `order` front-matter). See [Configuration details](#configuring-guidance-per-preset) for reset/restore. Full spec: `docs/specs/issue-24-store-tenancy.md` and guidance docs.
+
+##### Reset / restore defaults
+
+Emptying or deleting an override file restores that section's compiled default guidance and order: the default renders at session-start, and the file re-seeds at next boot.
+
+- **Reset = delete the file, or empty it AND remove the front-matter fence.** A whitespace-only file with no fence means "I want the default" — the compiled default renders, and the file re-seeds at next boot for any preset dir, shipped or custom.
+- **Blank on purpose = keep a valid fence.** Any well-formed `---` fence — even a keyless `---\n---\n`, even an empty body — is a deliberate-intent signal: the file is explicit content and is never reset or re-seeded.
+- **Broken fence = fast fail.** A `---` fence that does not parse (missing closing `---`, non-integer `order`, unknown key) is rejected: the malformed text is never injected into the context, the compiled default renders, a warning names the file and the reason, and the file is left untouched on disk for repair.
+- **Shipped vs custom.** Shipped preset files (`standard`, `code`, `minimal`, `cordis`) re-seed at boot; a deleted custom-preset override stays absent — absence is no override. Deleting a whole `<preset>/` directory re-seeds all three section files at boot (shipped presets).
+- **Reset restores the current bundle defaults** — a plugin upgrade yields new defaults.
+
+Re-seeding happens at boot, never mid-session.
+
 ## Why Hashline
+
 
 **Correctness, not just brevity.** Every resolved edit range is verified against the
 served rows — what `read`, a post-edit diff, or a rejection echo actually showed the model.
@@ -306,44 +363,7 @@ Reproduce via upstream: `npm run eval` in `pi-better-edit` (this plugin shares t
 Full method, per-scenario tables, and limitations: upstream [benchmarks/README.md](https://github.com/Rianico/pi-better-edit/blob/main/benchmarks/README.md)
 and [benchmarks/results/](https://github.com/Rianico/pi-better-edit/tree/main/benchmarks/results).
 
-## Configuring Guidance per Preset
-
-The `tool:read` / `tool:edit` / `tool:undo_last_edit` guidance sections are
-plain-markdown files, overridable per agent preset. Override files live in the plugin's shared
-home — never the workspace store:
-
-```
-$DSH_HOME/plugins/dsh-better-edit/<preset>/<section>.md
-```
-
-(default home `~/.dsh`, so `~/.dsh/plugins/dsh-better-edit/`). The section table:
-
-| File | Section | Default order |
-| --- | --- | --- |
-| `read.md` | `tool:read` | 130 |
-| `edit.md` | `tool:edit` | 131 |
-| `undo_last_edit.md` | `tool:undo_last_edit` | 133 |
-
-On first boot the plugin seeds the three shipped presets — `standard/`, `code/`,
-`minimal/`, `cordis/` — each with the compiled guidance as editable files (plus
-`order` front-matter), so every preset's guidance starts editable rather than
-blank. A `README.md` at the plugin-home root documents the scheme. Files are
-seeded once and never rewritten, so your edits survive — a reset is the one
-exception (see *Reset / restore defaults* below).
-
-### Reset / restore defaults
-
-Emptying or deleting an override file restores that section's compiled default
-guidance and order: the default renders at session-start, and the file re-seeds
-at next boot.
-
-- **Reset = delete the file, or empty it AND remove the front-matter fence.** A whitespace-only file with no fence means "I want the default" — the compiled default renders, and the file re-seeds at next boot for any preset dir, shipped or custom.
-- **Blank on purpose = keep a valid fence.** Any well-formed `---` fence — even a keyless `---\n---\n`, even an empty body — is a deliberate-intent signal: the file is explicit content and is never reset or re-seeded.
-- **Broken fence = fast fail.** A `---` fence that does not parse (missing closing `---`, non-integer `order`, unknown key) is rejected: the malformed text is never injected into the context, the compiled default renders, a warning names the file and the reason, and the file is left untouched on disk for repair.
-- **Shipped vs custom.** Shipped preset files (`standard`, `code`, `minimal`, `cordis`) re-seed at boot; a deleted custom-preset override stays absent — absence is no override. Deleting a whole `<preset>/` directory re-seeds all three section files at boot (shipped presets).
-- **Reset restores the current bundle defaults** — a plugin upgrade yields new defaults.
-
-Re-seeding happens at boot, never mid-session.
+> See [Configuration](#configuration) under [Quick Start](#quick-start) for guidance overrides and store tenancy.
 
 ## How Anchors Work
 
@@ -392,21 +412,9 @@ registration cannot replace them. This plugin:
 
 ## Store
 
-Hash snapshots, served-state rows, and undo history live in one SQLite store **co-located with the
-workspace being edited** — one store per session cwd:
+Hash snapshots, served-state rows, and undo history live in one SQLite store — **central by default** (`$DSH_HOME/plugins/dsh-better-edit/runtime/<name>-<hash8>/hash-store.sqlite`, `ls`-readable with `.wsPath` sidecar). Legacy co-located `<workspace>/.dsh_better_edit/` is still supported via `storeDir: workspace` in `config.yaml` and is copied once on first central open. Parallel sessions in different workspaces keep separate stores (the session cwd is carried through each tool call), so one project's anchors and undo history never leak into another's. Outside a tool call (tests, previews) the store falls back to the shared DeepSeek Harness home (`$DSH_HOME/plugins/dsh-better-edit/hash-store.sqlite`).
 
-```
-<workspace>/.dsh_better_edit/hash-store.sqlite
-```
-
-Parallel sessions in different workspaces keep separate stores (the session cwd is carried through
-each tool call), so one project's anchors and undo history never leak into another's. Outside a tool
-call (tests, previews) the store falls back to the shared DeepSeek Harness home
-(`$DSH_HOME/plugins/dsh-better-edit/hash-store.sqlite`).
-
-A 7-day TTL prunes served rows; missing-file snapshots are pruned at startup. Corrupt stores are
-quarantined and rebuilt automatically.
-
+A 7-day TTL prunes served rows; `undo_ttl_s` (default 7d, `-1` forever) prunes undo clones; missing-file snapshots are pruned on throttled `openStore`; corrupt stores are quarantined and rebuilt automatically. The central janitor (`apply` + `agent/session-start` throttled >24h) evicts `mtime>30d` then LRU to `count<100 && sum<500MB`, never deleting live `hash(workspaceCwd)`, with `wal_checkpoint(TRUNCATE)` on close.
 ## Project Structure
 
 ```

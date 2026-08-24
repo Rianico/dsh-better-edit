@@ -236,7 +236,7 @@ function openDb(storePath: string): { db: DatabaseSync; stmts: Prepared } {
 		try {
 			db.close();
 		} catch (error) {
-			// best-effort close when the store build fails
+			console.warn(error); // best-effort close when the store build fails
 		}
 		throw error;
 	}
@@ -471,7 +471,7 @@ function makeDomainStore(stmts: Prepared): HashStore {
 					if (!isValidHashList(parsed)) continue;
 					if (hashes.every((h) => parsed.includes(h))) matches.push(row.path);
 				} catch (error) {
-					// unparseable row → skip it
+					console.warn(error); // unparseable row → skip it
 				}
 			}
 			return matches;
@@ -798,8 +798,7 @@ export async function runCentralJanitorIfDue(): Promise<void> {
 				});
 				try {
 					tmpDb.exec("PRAGMA wal_checkpoint(TRUNCATE)");
-				} catch (error) {
-				} finally {
+				} catch (error) { console.warn(error); } finally {
 					try {
 						tmpDb.close();
 					} catch (error) { console.warn(`dsh-better-edit: suppressed error: ${error instanceof Error ? error.message : String(error)}`); }
@@ -938,7 +937,7 @@ export function withStore(fn: () => void): void {
 				try {
 					store.db.exec("ROLLBACK");
 				} catch (error) {
-					// best-effort rollback; the original error propagates
+					console.warn(error); // best-effort rollback; the original error propagates
 				}
 				throw e;
 			}

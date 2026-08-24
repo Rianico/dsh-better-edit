@@ -109,16 +109,44 @@ kQm│}
   kQm │ }
 ```
 
-## 按 preset 配置指引
+> 详见[快速开始](#快速开始)中[配置](#配置)一节的指引覆盖与存储租约。
 
-`tool:read` / `tool:edit` / `tool:undo_last_edit` 三个提示词片段的指引是
-纯 Markdown 文件，可以按 agent preset 覆盖。覆盖文件位于插件的共享主目录——绝不放在工作区存储中：
+
+### 配置
+
+租约与提示词指引都只需声明一次，在 `agent/session-start` 时读取，无需改代码。
+
+#### 存储租约 — 默认 central
+
+默认无仓库污染。存储位于 `$DSH_HOME/plugins/dsh-better-edit/runtime/<name>-<hash8>/`（`central`）。如需回退到旧的同址或自定义根：
+
+```yaml
+# $DSH_HOME/plugins/dsh-better-edit/config.yaml
+storeDir: central              # "central" | "workspace" | "/abs/path"
+autoGitignore: false           # 仅对 workspace：向 .gitignore 追加 .dsh_better_edit/
+undo_ttl_s: 604800              # 整数秒，-1 = 永久（默认 7 天）
+storeMaxAgeDays: 30
+storeMaxTotalBytes: 524288000   # 500MB
+```
+
+Env 覆盖 yaml（`env > yaml > central`），非法回退到 `central` 并告警：
+
+```sh
+DSH_BETTER_EDIT_STORE_DIR=central|workspace|/abs
+DSH_BETTER_EDIT_AUTO_GITIGNORE=true|false  # 大小写不敏感
+```
+
+旧的 `<workspace>/.dsh_better_edit/` 在首次以 central 打开时一次性拷贝；`runtime/<name>-<hash8>/` 可通过 `ls` 查看，带 `.wsPath` 旁路文件。生命周期详见 `docs/specs/issue-24-store-tenancy.md`（janitor `mtime>30d` 后 LRU、WAL checkpoint、`undo` TTL）。
+
+#### 按 preset 的指引
+
+`tool:read` / `tool:edit` / `tool:undo_last_edit` 的提示词片段是按 agent preset 覆盖的纯 Markdown 文件，无需改插件：
 
 ```
 $DSH_HOME/plugins/dsh-better-edit/<preset>/<section>.md
 ```
 
-（默认主目录为 `~/.dsh`，即 `~/.dsh/plugins/dsh-better-edit/`）。片段对照表：
+（默认主目录 `~/.dsh`，即 `~/.dsh/plugins/dsh-better-edit/`）。片段对照表：
 
 | 文件 | 提示词片段 | 默认 order |
 | --- | --- | --- |
@@ -126,28 +154,9 @@ $DSH_HOME/plugins/dsh-better-edit/<preset>/<section>.md
 | `edit.md` | `tool:edit` | 131 |
 | `undo_last_edit.md` | `tool:undo_last_edit` | 133 |
 
-首次启动时插件会为三个随附 preset——`standard/`、`code/`、`minimal/`、`cordis/`——各自写入编译内置的
-可编辑指引文件（含 `order` front-matter），让每个 preset 的指引一开始就可编辑，而不是空白。插件主目录
-根的 `README.md` 说明整套机制。文件只在首次写入时生成、之后绝不被覆盖，因此你的修改会保留——唯一的例外是重置（见下文 *重置 / 恢复默认*）。preset 目录
-里可以只放你想覆盖的片段文件，其余自动回退到编译内置默认值。
+首次启动时插件会为三个随附 preset——`standard/`、`code/`、`minimal/`、`cordis/`——各自写入编译内置的可编辑指引文件（含 `order` front-matter）。详见[配置详情](#按-preset-配置指引)的重置/恢复。完整规范：`docs/specs/issue-24-store-tenancy.md` 与指引文档。
 
-文件默认为纯文本；除非以 `order` front-matter 栅栏开头，它会改变该片段在组装后的系统提示中的位置：
-
-```md
----
-order: 150
----
-
-<片段文本>
-```
-
-每个片段的解析顺序为：读取 `<preset>/<section>.md`，否则回退到编译内置默认值。文件只在 agent 的
-session-start 时读取一次，因此修改只影响新会话——绝不影响进行中的会话。没有种子目录的 preset（例如
-用户自建的）会回退到编译内置默认值，除非你把某个种子目录复制成它的名字。没有 `agentPresets` 服务
-（即没有 preset 名册）的部署继续使用编译内置默认值，完全不会触碰这些文件；
-preset 从来不是必需的。
-
-### 重置 / 恢复默认
+##### 重置 / 恢复默认
 
 **想让指引“回到默认”？删掉覆盖文件，或把它清空（同时删掉开头的 `---` 栅栏）即可。**
 
@@ -166,6 +175,8 @@ preset 从来不是必需的。
 文件的重新生成只发生在插件启动时，绝不影响进行中的会话。
 
 ## 为什么用 Hashline
+
+
 
 **省 token。** 一次编辑调用只携带 `remove_from` / `remove_to`（两个 3 字符哈希）加替换文本——从不回显被替换的文本。`str_replace` 调用则必须逐字复现被替换的文本。在一个真实文件上的 12 次编辑会话中，这可以**减少 31% 的输出 token**（多行范围达 43%）——而且这些是*输出* token，按输入的约 5-6 倍计费。见[基准测试](#基准测试)。
 
@@ -285,15 +296,10 @@ dsh 的工具注册表按作用域解析：agent 看到的是 `agent → preset 
 
 ## 存储
 
-哈希快照、已提供状态行与撤销历史存放在一个 SQLite 库中，**与被编辑的工作区放在一起**——每个会话 cwd 一个库：
+哈希快照、已提供状态行与撤销历史存放在一个 SQLite 库中——**默认 central**（`$DSH_HOME/plugins/dsh-better-edit/runtime/<name>-<hash8>/hash-store.sqlite`，可通过 `ls` 查看，带 `.wsPath` 旁路文件）。旧的同址 `<workspace>/.dsh_better_edit/` 仍可通过 `config.yaml` 中 `storeDir: workspace` 启用，并在首次以 central 打开时一次性拷贝。不同工作区的并行会话各自持有独立的库（会话 cwd 会随每次工具调用传递），因此一个项目的锚点与撤销历史不会泄漏到另一个项目。在工具调用之外（测试、预览）会回退到共享的 DeepSeek Harness 主目录（`$DSH_HOME/plugins/dsh-better-edit/hash-store.sqlite`）。
 
-```
-<workspace>/.dsh_better_edit/hash-store.sqlite
-```
+7 天 TTL 清理已提供的行；`undo_ttl_s`（默认 7 天，`-1` 永久）清理撤销副本；缺失文件的快照在受控的 `openStore` 中清理；损坏的库会被隔离并自动重建。 central 的 janitor（`apply` + `agent/session-start` 受控节流 >24h）会先清理 `mtime>30d`，再按 LRU 至 `count<100 && sum<500MB`，永不删除存活的 `hash(workspaceCwd)`，并在关闭时执行 `wal_checkpoint(TRUNCATE)`。
 
-不同工作区中的并行会话各自持有独立的库（会话 cwd 会随每次工具调用传递），因此一个项目的锚点与撤销历史不会泄漏到另一个项目。在工具调用之外（测试、预览）会回退到共享的 DeepSeek Harness 主目录（`$DSH_HOME/plugins/dsh-better-edit/hash-store.sqlite`）。
-
-7 天 TTL 会清理已提供的行；启动时清理缺失文件的快照。损坏的库会被隔离并自动重建。迁移到按工作区布局**不会**迁移共享主目录中的早期撤销历史——把 0.1.2 之前的撤销记录视为已丢失。
 
 ## 项目结构
 
