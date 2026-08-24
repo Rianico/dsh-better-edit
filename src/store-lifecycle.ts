@@ -149,7 +149,7 @@ export async function runCentralJanitorIfDue(): Promise<void> {
 
   infos.sort((a, b) => a.mtimeMs - b.mtimeMs);
 
-  const maxAgeMs = cfg.storeMaxAgeDays * 24 * 60 * 60 * 1000;
+  const maxAgeMs = cfg.storeMaxAgeS * 1000;
   const toDelete: typeof infos = [];
   for (const info of infos) {
     if (now - info.mtimeMs > maxAgeMs) toDelete.push(info);

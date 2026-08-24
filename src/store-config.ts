@@ -75,11 +75,11 @@ const StoreConfigSchema = z.object({
 	storeDir: z
 		.string()
 		.default("central")
-		.transform((v) => normalizeStoreDir(v) ?? "central"),
-	autoGitignore: z.boolean().default(false),
-	undo_ttl_s: z.number().int().min(-1).default(604800),
-	storeMaxAgeDays: z.number().int().min(1).default(30),
-	storeMaxTotalBytes: z.number().int().min(0).default(524288000),
+		.transform((v) => normalizeStoreDir(v) ?? "central"), // where the store lives: "central" (default, in $DSH_HOME/.../runtime/<name>-<hash8>/) | "workspace" (legacy <ws>/.dsh_better_edit/) | "/abs/path" (custom root)
+	autoGitignore: z.boolean().default(false), // workspace only: auto-append ".dsh_better_edit/" to .gitignore when .git exists but entry missing (false = warn once)
+	undo_ttl_s: z.number().int().min(-1).default(604800), // undo history TTL in seconds; -1 = keep forever (default 604800 = 7 days)
+	storeMaxAgeS: z.number().int().min(1).default(2592000), // central janitor: max idle age in seconds before evicting runtime/<name>-<hash8>/ (default 2592000 = 30 days)
+	storeMaxTotalBytes: z.number().int().min(0).default(524288000), // central janitor: max total bytes under runtime/ before LRU eviction (default 524288000 = 500 MB)
 });
 
 export type StoreConfig = z.infer<typeof StoreConfigSchema>;
@@ -133,36 +133,74 @@ function fsAdapter(): Partial<StoreConfig> {
 		if (parsed.undo_ttl_s !== undefined) {
 			const n = Number(parsed.undo_ttl_s);
 			const res = z.number().int().min(-1).safeParse(n);
-			if (!res.success) {
+			if (res.success) {
+				out.undo_ttl_s = n;
+			} else {
 				console.warn(
 					`dsh-better-edit: undo_ttl_s "${parsed.undo_ttl_s}" invalid — expected int -1 or >=0, fallback to 604800`,
 				);
-			} else {
-				out.undo_ttl_s = n;
 			}
 		}
 
-		if (parsed.storeMaxAgeDays !== undefined) {
-			const n = Number(parsed.storeMaxAgeDays);
-			const res = z.number().int().min(1).safeParse(n);
-			if (!res.success) {
-				console.warn(
-					`dsh-better-edit: storeMaxAgeDays "${parsed.storeMaxAgeDays}" invalid — expected int >=1`,
-				);
-			} else {
-				out.storeMaxAgeDays = n;
+		// storeMaxAgeS — unified seconds (canonical); deprecated aliases: storeMaxAgeDays / store_max_age_days (days -> seconds), store_max_age_s (snake)
+		{
+			let rawMaxAge: string | undefined;
+			let rawSource: string | undefined;
+			if (parsed.storeMaxAgeS !== undefined) {
+				rawMaxAge = parsed.storeMaxAgeS;
+				rawSource = "storeMaxAgeS";
+			} else if (parsed.store_max_age_s !== undefined) {
+				rawMaxAge = parsed.store_max_age_s;
+				rawSource = "store_max_age_s";
+			} else if (parsed.storeMaxAgeDays !== undefined) {
+				rawMaxAge = parsed.storeMaxAgeDays;
+				rawSource = "storeMaxAgeDays";
+			} else if (parsed.store_max_age_days !== undefined) {
+				rawMaxAge = parsed.store_max_age_days;
+				rawSource = "store_max_age_days";
+			}
+			if (rawMaxAge !== undefined && rawSource !== undefined) {
+				const n = Number(rawMaxAge);
+				const isLegacyDays = rawSource === "storeMaxAgeDays" || rawSource === "store_max_age_days";
+				if (isLegacyDays) {
+					const res = z.number().int().min(1).safeParse(n);
+					if (res.success) {
+						out.storeMaxAgeS = n * 86400;
+						console.warn(
+							`dsh-better-edit: ${rawSource} is deprecated — use storeMaxAgeS (seconds) instead; converted ${n} days -> ${n * 86400} seconds`,
+						);
+					} else {
+						console.warn(
+							`dsh-better-edit: ${rawSource} "${rawMaxAge}" invalid — expected int >=1 (days)`,
+						);
+					}
+				} else {
+					const res = z.number().int().min(1).safeParse(n);
+					if (res.success) {
+						out.storeMaxAgeS = n;
+						if (rawSource !== "storeMaxAgeS") {
+							console.warn(
+								`dsh-better-edit: ${rawSource} is deprecated — use storeMaxAgeS instead`,
+							);
+						}
+					} else {
+						console.warn(
+							`dsh-better-edit: ${rawSource} "${rawMaxAge}" invalid — expected int >=1 (seconds)`,
+						);
+					}
+				}
 			}
 		}
 
 		if (parsed.storeMaxTotalBytes !== undefined) {
 			const n = Number(parsed.storeMaxTotalBytes);
 			const res = z.number().int().min(0).safeParse(n);
-			if (!res.success) {
+			if (res.success) {
+				out.storeMaxTotalBytes = n;
+			} else {
 				console.warn(
 					`dsh-better-edit: storeMaxTotalBytes "${parsed.storeMaxTotalBytes}" invalid — expected int >=0`,
 				);
-			} else {
-				out.storeMaxTotalBytes = n;
 			}
 		}
 
