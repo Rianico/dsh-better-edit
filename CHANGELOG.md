@@ -8,13 +8,13 @@ Entries link to the originating spec issue in [pi-hashline-edit-lsz](https://git
 
 ### Added
 
-- Configurable store tenancy with central default (`$DSH_HOME/plugins/dsh-better-edit/runtime/<name>-<hash8>/`), `workspace` legacy opt-in, and custom `/abs` root — yaml at `$DSH_HOME/plugins/dsh-better-edit/config.yaml` (`storeDir`, `autoGitignore`, `undo_ttl_s`, `storeMaxAgeDays`, `storeMaxTotalBytes`) + god envs `DSH_BETTER_EDIT_STORE_DIR`/`DSH_BETTER_EDIT_AUTO_GITIGNORE` (`env > yaml > central`) with malformed fallback to central and warnings ([#24](https://github.com/Rianico/dsh-better-edit/issues/24)). Thanks to [@MrWeiCodes](https://github.com/MrWeiCodes) for the proposal and design discussion.
+- Configurable store tenancy with central default (`$DSH_HOME/plugins/dsh-better-edit/runtime/<name>-<hash8>/`), `workspace` legacy opt-in, and custom `/abs` root — yaml at `$DSH_HOME/plugins/dsh-better-edit/config.yaml` (`storeDir` — where the store lives, `autoGitignore` — workspace .gitignore handling, `undo_ttl_s` — undo TTL in seconds (-1 = forever), `storeMaxAgeS` — central janitor max idle age in seconds (default 30 days), `storeMaxTotalBytes` — central janitor max total bytes) + god envs `DSH_BETTER_EDIT_STORE_DIR`/`DSH_BETTER_EDIT_AUTO_GITIGNORE` (`env > yaml > central`) with malformed fallback to central and warnings. DB files are disposable caches — safe to delete, rebuilt on next `read` ([#24](https://github.com/Rianico/dsh-better-edit/issues/24)). Thanks to [@MrWeiCodes](https://github.com/MrWeiCodes) for the proposal and design discussion.
 - Migration probe copies legacy `<workspace>/.dsh_better_edit/` once on first central open; readable `runtime/<name>-<hash8>/` with `.wsPath` sidecar for collision proof.
 
 ### Changed
 
 - Default store location moved from workspace-co-located to central `runtime/` to eliminate git pollution and zip privacy leakage — `workspace` now requires explicit `storeDir: workspace`. Existing workspace stores are migrated automatically on first access.
-- Store lifecycle now plugin-owned for central/custom (throttled janitor on `apply` + `agent/session-start` >24h, `mtime>30d` then LRU to `count<100 && sum<500MB`, never deleting live `hash(workspaceCwd)`), `wal_checkpoint(TRUNCATE)` on close/janitor, `undo` TTL `undo_ttl_s` (default 7d, `-1` = forever), `pruneMissing` batch 64 — workspace mode remains user-owned with row TTL only.
+- Store lifecycle now plugin-owned for central/custom (throttled janitor on `apply` + `agent/session-start` >24h, `mtime>storeMaxAgeS` (default 30 days / 2592000 s, unified to seconds with `undo_ttl_s`) then LRU to `count<100 && sum<500MB`, never deleting live `hash(workspaceCwd)`), `wal_checkpoint(TRUNCATE)` on close/janitor, `undo` TTL `undo_ttl_s` (default 7d, `-1` = forever, seconds), `pruneMissing` batch 64 — workspace mode remains user-owned with row TTL only. DB files are disposable caches — safe to delete, rebuilt on next `read`.
 
 ### Fixed
 

@@ -122,12 +122,15 @@ kQm│}
 
 ```yaml
 # $DSH_HOME/plugins/dsh-better-edit/config.yaml
-storeDir: central              # "central" | "workspace" | "/abs/path"
-autoGitignore: false           # 仅对 workspace：向 .gitignore 追加 .dsh_better_edit/
-undo_ttl_s: 604800              # 整数秒，-1 = 永久（默认 7 天）
-storeMaxAgeDays: 30
-storeMaxTotalBytes: 524288000   # 500MB
+storeDir: central              # 存储位置："central"（默认，位于 $DSH_HOME/.../runtime/<name>-<hash8>/）| "workspace"（旧版 <ws>/.dsh_better_edit/）| "/abs/path"（自定义根目录）
+autoGitignore: false           # 仅 workspace：当 .git 存在但 .gitignore 缺少 .dsh_better_edit/ 时，true = 自动追加 ".dsh_better_edit/"，false = 仅告警一次
+undo_ttl_s: 604800             # 撤销历史 TTL（秒）；-1 = 永久保留（默认 604800 = 7 天）
+storeMaxAgeS: 2592000          # central 清理：runtime/<name>-<hash8>/ 目录最大闲置时长（秒），超时后被清理（默认 2592000 = 30 天）
+storeMaxTotalBytes: 524288000  # central 清理：runtime/ 下总字节数上限，超限后按 LRU 清理（默认 524288000 = 500 MB）
 ```
+
+> [!NOTE]
+> DB 文件是**可丢弃的缓存**——下次调用 `read` 时会自动重建（哈希值由文件内容重新推导）。可随时 `rm -rf` 任意 `runtime/<name>-<hash8>/` 或 `hash-store.sqlite*` 以回收磁盘；不会丢失用户数据（仅丢失锚点历史和撤销快照）。
 
 Env 覆盖 yaml（`env > yaml > central`），非法回退到 `central` 并告警：
 
@@ -136,7 +139,7 @@ DSH_BETTER_EDIT_STORE_DIR=central|workspace|/abs
 DSH_BETTER_EDIT_AUTO_GITIGNORE=true|false  # 大小写不敏感
 ```
 
-旧的 `<workspace>/.dsh_better_edit/` 在首次以 central 打开时一次性拷贝；`runtime/<name>-<hash8>/` 可通过 `ls` 查看，带 `.wsPath` 旁路文件。生命周期详见 `docs/specs/issue-24-store-tenancy.md`（janitor `mtime>30d` 后 LRU、WAL checkpoint、`undo` TTL）。
+旧的 `<workspace>/.dsh_better_edit/` 在首次以 central 打开时一次性拷贝；`runtime/<name>-<hash8>/` 可通过 `ls` 查看，带 `.wsPath` 旁路文件。生命周期详见 `docs/specs/issue-24-store-tenancy.md`（janitor `mtime>storeMaxAgeS` 后 LRU、WAL checkpoint、`undo` TTL）。
 
 #### 按 preset 的指引
 
@@ -296,7 +299,7 @@ dsh 的工具注册表按作用域解析：agent 看到的是 `agent → preset 
 
 哈希快照、已提供状态行与撤销历史存放在一个 SQLite 库中——**默认 central**（`$DSH_HOME/plugins/dsh-better-edit/runtime/<name>-<hash8>/hash-store.sqlite`，可通过 `ls` 查看，带 `.wsPath` 旁路文件）。旧的同址 `<workspace>/.dsh_better_edit/` 仍可通过 `config.yaml` 中 `storeDir: workspace` 启用，并在首次以 central 打开时一次性拷贝。不同工作区的并行会话各自持有独立的库（会话 cwd 会随每次工具调用传递），因此一个项目的锚点与撤销历史不会泄漏到另一个项目。在工具调用之外（测试、预览）会回退到共享的 DeepSeek Harness 主目录（`$DSH_HOME/plugins/dsh-better-edit/hash-store.sqlite`）。
 
-7 天 TTL 清理已提供的行；`undo_ttl_s`（默认 7 天，`-1` 永久）清理撤销副本；缺失文件的快照在受控的 `openStore` 中清理；损坏的库会被隔离并自动重建。 central 的 janitor（`apply` + `agent/session-start` 受控节流 >24h）会先清理 `mtime>30d`，再按 LRU 至 `count<100 && sum<500MB`，永不删除存活的 `hash(workspaceCwd)`，并在关闭时执行 `wal_checkpoint(TRUNCATE)`。
+7 天 TTL 清理已提供的行；`undo_ttl_s`（默认 7 天，`-1` 永久）清理撤销副本；缺失文件的快照在受控的 `openStore` 中清理；损坏的库会被隔离并自动重建。 central 的 janitor（`apply` + `agent/session-start` 受控节流 >24h）会先清理 `mtime>storeMaxAgeS`（默认 2592000 秒 = 30 天），再按 LRU 至 `count<100 && sum<500MB`，永不删除存活的 `hash(workspaceCwd)`，并在关闭时执行 `wal_checkpoint(TRUNCATE)`。DB 文件为可丢弃缓存——可安全删除，下次 `read` 时重建。
 
 ## 项目结构
 

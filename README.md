@@ -135,15 +135,20 @@ Tenancy and prompt guidance are both declared once, read at `agent/session-start
 
 #### Store tenancy — central by default
 
-No repo pollution. The store lives at `$DSH_HOME/plugins/dsh-better-edit/runtime/<name>-<hash8>/` by default (`central`). To opt into legacy co-location or a custom root:
+The store lives at `$DSH_HOME/plugins/dsh-better-edit/runtime/<name>-<hash8>/` by default (`central`).
+
+> [!NOTE]
+> DB files are **disposable caches** — they are rebuilt automatically on the next `read` (hashes are re-derived from file content). Feel free to `rm -rf` any `runtime/<name>-<hash8>/` or `hash-store.sqlite*` to reclaim disk; no user data is lost (only anchor history and undo snapshots).
+
+To opt into legacy co-location or a custom root:
 
 ```yaml
 # $DSH_HOME/plugins/dsh-better-edit/config.yaml
-storeDir: central              # "central" | "workspace" | "/abs/path"
-autoGitignore: false           # only for workspace: append .dsh_better_edit/ to .gitignore
-undo_ttl_s: 604800              # int seconds, -1 = forever (default 7d)
-storeMaxAgeDays: 30
-storeMaxTotalBytes: 524288000   # 500MB
+storeDir: central              # where the store lives: "central" (default, in $DSH_HOME/.../runtime/<name>-<hash8>/) | "workspace" (legacy <ws>/.dsh_better_edit/) | "/abs/path" (custom root)
+autoGitignore: false           # workspace only: when .git exists but .gitignore lacks .dsh_better_edit/, true = auto-append ".dsh_better_edit/", false = warn once
+undo_ttl_s: 604800             # undo history TTL in seconds; -1 = keep forever (default 604800 = 7 days)
+storeMaxAgeS: 2592000          # central janitor: max idle age in seconds before a runtime/<name>-<hash8>/ dir is evicted (default 2592000 = 30 days)
+storeMaxTotalBytes: 524288000  # central janitor: max total bytes under runtime/ before LRU eviction (default 524288000 = 500 MB)
 ```
 
 Env overrides yaml (`env > yaml > central`), malformed falls back to `central` with a warning:
@@ -153,7 +158,7 @@ DSH_BETTER_EDIT_STORE_DIR=central|workspace|/abs
 DSH_BETTER_EDIT_AUTO_GITIGNORE=true|false  # case-insensitive
 ```
 
-Legacy `<workspace>/.dsh_better_edit/` is copied once on first central open; `runtime/<name>-<hash8>/` is `ls`-readable with a `.wsPath` sidecar. See `docs/specs/issue-24-store-tenancy.md` for lifecycle (janitor `mtime>30d` then LRU, WAL checkpoint, `undo` TTL).
+`runtime/<name>-<hash8>/` is `ls`-readable with a `.wsPath` sidecar. See `docs/specs/issue-24-store-tenancy.md` for lifecycle (janitor `mtime>storeMaxAgeS` then LRU, WAL checkpoint, `undo` TTL).
 
 #### Guidance per preset
 
@@ -413,7 +418,7 @@ registration cannot replace them. This plugin:
 
 Hash snapshots, served-state rows, and undo history live in one SQLite store — **central by default** (`$DSH_HOME/plugins/dsh-better-edit/runtime/<name>-<hash8>/hash-store.sqlite`, `ls`-readable with `.wsPath` sidecar). Legacy co-located `<workspace>/.dsh_better_edit/` is still supported via `storeDir: workspace` in `config.yaml` and is copied once on first central open. Parallel sessions in different workspaces keep separate stores (the session cwd is carried through each tool call), so one project's anchors and undo history never leak into another's. Outside a tool call (tests, previews) the store falls back to the shared DeepSeek Harness home (`$DSH_HOME/plugins/dsh-better-edit/hash-store.sqlite`).
 
-A 7-day TTL prunes served rows; `undo_ttl_s` (default 7d, `-1` forever) prunes undo clones; missing-file snapshots are pruned on throttled `openStore`; corrupt stores are quarantined and rebuilt automatically. The central janitor (`apply` + `agent/session-start` throttled >24h) evicts `mtime>30d` then LRU to `count<100 && sum<500MB`, never deleting live `hash(workspaceCwd)`, with `wal_checkpoint(TRUNCATE)` on close.
+A 7-day TTL prunes served rows; `undo_ttl_s` (default 7d, `-1` forever) prunes undo clones; missing-file snapshots are pruned on throttled `openStore`; corrupt stores are quarantined and rebuilt automatically. The central janitor (`apply` + `agent/session-start` throttled >24h) evicts `mtime>storeMaxAgeS` (default 2592000 s = 30 days) then LRU to `count<100 && sum<500MB`, never deleting live `hash(workspaceCwd)`, with `wal_checkpoint(TRUNCATE)` on close. DB files are disposable caches — safe to delete, rebuilt on next `read`.
 
 ## Project Structure
 
