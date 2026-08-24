@@ -18,7 +18,7 @@ import { appendFileSync, existsSync, readFileSync } from "node:fs";
 import { readFile, readdir, rename, rm, mkdir, stat } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import { hashStorePath, loadConfig } from "./paths.js";
+import { hashStorePath, loadConfig } from "./store-tenancy.js";
 import { resolveDshHome } from "@deepseek-ai/dsh-home-paths";
 import { workspaceCwd } from "./workspace.js";
 import { errCode, splitLines } from "./utils.js";
