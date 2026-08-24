@@ -1,96 +1,85 @@
 /**
- * Canonical path — single seam for symlink-resolved canonicalization.
- * Pure resParts shared by sync and async adapters (locality: ELOOP fix in one place).
+ * Canonical path resolution — single seam for symlink-aware canonicalization.
+ * Pure traversal owns the visited-set + ELOOP + ENOENT (lexical tail) invariant.
+ * Two adapters justify the seam: sync (hash8, sanitizedBasename, central tenancy)
+ * and async (resolveTarget). Byte-identical to the previous duplicated impl.
  * @module dsh-better-edit/canonical-path
  */
-import { lstat, readlink } from "node:fs/promises";
-import { lstatSync, readlinkSync } from "node:fs";
+
 import { dirname, join, parse, sep } from "node:path";
 import { resolve as resolvePath } from "node:path";
+import { lstat as lstatAsync, readlink as readlinkAsync } from "node:fs/promises";
+import { lstatSync, readlinkSync } from "node:fs";
 import { errCode } from "./utils.js";
 
-function resPartsSync(
-  current: string,
-  remaining: string[],
-  visited: Set<string>,
-  originalInput: string,
-): string {
-  let cur = current;
-  let rem = remaining.slice();
-  while (rem.length > 0) {
-    const [next, ...tail] = rem;
-    const candidate = join(cur, next!);
-    try {
-      const st = lstatSync(candidate);
-      if (!st.isSymbolicLink()) {
-        cur = candidate;
-        rem = tail;
-        continue;
-      }
-      if (visited.has(candidate)) {
-        const e = new Error(`Too many symbolic links while resolving ${originalInput}`) as NodeJS.ErrnoException;
-        e.code = "ELOOP";
-        throw e;
-      }
-      visited.add(candidate);
-      const linkTarget = resolvePath(dirname(candidate), readlinkSync(candidate));
-      const targetParts = linkTarget.slice(parse(linkTarget).root.length).split(sep).filter((p) => p.length > 0);
-      cur = parse(linkTarget).root;
-      rem = [...targetParts, ...tail];
-    } catch (error: unknown) {
-      if (errCode(error) === "ENOENT") return join(candidate, ...tail);
-      throw error;
-    }
-  }
-  return cur;
+function splitAfterRoot(absolutePath: string): { root: string; parts: string[] } {
+	const { root } = parse(absolutePath);
+	return {
+		root,
+		parts: absolutePath.slice(root.length).split(sep).filter((p) => p.length > 0),
+	};
 }
 
-export function canonicalSync(ws: string): string {
-  const absolutePath = resolvePath(ws);
-  const { root } = parse(absolutePath);
-  const parts = absolutePath.slice(root.length).split(sep).filter((p) => p.length > 0);
-  return resPartsSync(root, parts, new Set<string>(), ws);
+function eLoopError(ws: string): NodeJS.ErrnoException {
+	const e = new Error(`Too many symbolic links while resolving ${ws}`) as NodeJS.ErrnoException;
+	e.code = "ELOOP";
+	return e;
 }
 
-async function resPartsAsync(
-  current: string,
-  remaining: string[],
-  visited: Set<string>,
-  originalInput: string,
-): Promise<string> {
-  let cur = current;
-  let rem = remaining.slice();
-  while (rem.length > 0) {
-    const [next, ...tail] = rem;
-    const candidate = join(cur, next!);
-    try {
-      const st = await lstat(candidate);
-      if (!st.isSymbolicLink()) {
-        cur = candidate;
-        rem = tail;
-        continue;
-      }
-      if (visited.has(candidate)) {
-        const e = new Error(`Too many symbolic links while resolving ${originalInput}`) as NodeJS.ErrnoException;
-        e.code = "ELOOP";
-        throw e;
-      }
-      visited.add(candidate);
-      const linkTarget = resolvePath(dirname(candidate), await readlink(candidate));
-      const targetParts = linkTarget.slice(parse(linkTarget).root.length).split(sep).filter((p) => p.length > 0);
-      cur = parse(linkTarget).root;
-      rem = [...targetParts, ...tail];
-    } catch (error: unknown) {
-      if (errCode(error) === "ENOENT") return join(candidate, ...tail);
-      throw error;
-    }
-  }
-  return cur;
+/** Sync adapter — lstatSync + readlinkSync. */
+export function canonicalSync(inputPath: string): string {
+	const absolutePath = resolvePath(inputPath);
+	const { root, parts } = splitAfterRoot(absolutePath);
+	const visited = new Set<string>();
+	let current = root;
+	let remaining = parts.slice();
+	while (remaining.length > 0) {
+		const [next, ...tail] = remaining;
+		const candidate = join(current, next!);
+		try {
+			const st = lstatSync(candidate);
+			if (!st.isSymbolicLink()) {
+				current = candidate;
+				remaining = tail;
+				continue;
+			}
+			if (visited.has(candidate)) throw eLoopError(inputPath);
+			visited.add(candidate);
+			const linkTarget = resolvePath(dirname(candidate), readlinkSync(candidate));
+			const targetParts = splitAfterRoot(linkTarget);
+			current = targetParts.root;
+			remaining = [...targetParts.parts, ...tail];
+		} catch (error: unknown) {
+			if (errCode(error) === "ENOENT") return join(candidate, ...tail);
+			throw error;
+		}
+	}
+	return current;
 }
 
-export async function canonicalAsync(path: string): Promise<string> {
-  const absolutePath = resolvePath(path);
-  const { root } = parse(absolutePath);
-  const parts = absolutePath.slice(root.length).split(sep).filter((p) => p.length > 0);
-  return resPartsAsync(root, parts, new Set<string>(), path);
+/** Async adapter — lstat + readlink. Thin async shell over the same traversal. */
+export async function canonicalAsync(inputPath: string): Promise<string> {
+	const absolutePath = resolvePath(inputPath);
+	const { root, parts } = splitAfterRoot(absolutePath);
+	const visited = new Set<string>();
+
+	async function resParts(currentPath: string, remainingParts: string[]): Promise<string> {
+		if (remainingParts.length === 0) return currentPath;
+		const [nextPart, ...tail] = remainingParts;
+		const candidatePath = join(currentPath, nextPart);
+		try {
+			const candidateStats = await lstatAsync(candidatePath);
+			if (!candidateStats.isSymbolicLink()) return resParts(candidatePath, tail);
+			if (visited.has(candidatePath)) throw eLoopError(inputPath);
+			visited.add(candidatePath);
+			const linkTargetPath = resolvePath(dirname(candidatePath), await readlinkAsync(candidatePath));
+			const targetParts = splitAfterRoot(linkTargetPath);
+			return resParts(targetParts.root, [...targetParts.parts, ...tail]);
+		} catch (error: unknown) {
+			if (errCode(error) === "ENOENT") return join(candidatePath, ...tail);
+			throw error;
+		}
+	}
+
+	return resParts(root, parts);
 }
