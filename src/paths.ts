@@ -8,7 +8,7 @@ import {
 	sep,
 } from "node:path";
 import { lstat, readlink } from "node:fs/promises";
-import { existsSync, readFileSync, statSync } from "node:fs";
+import { cpSync, existsSync, lstatSync, mkdirSync, readFileSync, readlinkSync, statSync, writeFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { resolveDshHome } from "@deepseek-ai/dsh-home-paths";
 import { errCode } from "./utils.js";
@@ -258,16 +258,83 @@ export function _resetConfigCache(): void {
 
 // ---- path helpers ----
 
+function canonicalWsSync(ws: string): string {
+	const absolutePath = resolvePath(ws);
+	const { root } = parse(absolutePath);
+	const parts = absolutePath.slice(root.length).split(sep).filter((p) => p.length > 0);
+	const visited = new Set<string>();
+	let current = root;
+	let remaining = parts.slice();
+	while (remaining.length > 0) {
+		const [next, ...tail] = remaining;
+		const candidate = join(current, next!);
+		try {
+			const st = lstatSync(candidate);
+			if (!st.isSymbolicLink()) {
+				current = candidate;
+				remaining = tail;
+				continue;
+			}
+			if (visited.has(candidate)) {
+				const e = new Error(`Too many symbolic links while resolving ${ws}`) as NodeJS.ErrnoException;
+				e.code = "ELOOP";
+				throw e;
+			}
+			visited.add(candidate);
+			const linkTarget = resolvePath(dirname(candidate), readlinkSync(candidate));
+			const targetParts = linkTarget.slice(parse(linkTarget).root.length).split(sep).filter((p) => p.length > 0);
+			current = parse(linkTarget).root;
+			remaining = [...targetParts, ...tail];
+		} catch (error: unknown) {
+			if (errCode(error) === "ENOENT") return join(candidate, ...tail);
+			throw error;
+		}
+		}
+	return current;
+}
+
 function sanitizedBasename(ws: string): string {
-	const base = parse(resolvePath(ws)).base || "root";
+	const base = parse(canonicalWsSync(ws)).base || "root";
 	const sanitized = base.replace(/[^a-zA-Z0-9._-]/g, "_").slice(0, 32);
 	return sanitized.length > 0 ? sanitized : "root";
 }
 
 function hash8(ws: string): string {
-	// Use canonical path via resolvePath (sync); T2 will use resolveTarget if needed but sync is fine for configDir
-	const canonical = resolvePath(ws);
+	const canonical = canonicalWsSync(ws);
 	return createHash("sha1").update(canonical).digest("hex").slice(0, 8);
+}
+function ensureWsPathSidecar(dir: string, canonicalWs: string): void {
+	try {
+		const wsPathFile = join(dir, ".wsPath");
+		if (existsSync(wsPathFile)) {
+			const existing = readFileSync(wsPathFile, "utf-8").trim();
+			if (existing !== canonicalWs) {
+				console.warn(`dsh-better-edit: central store collision for ${dir}: stored wsPath "${existing}" != current "${canonicalWs}" — keeping existing, hash collision risk`);
+			}
+			return;
+		}
+		mkdirSync(dir, { recursive: true });
+		writeFileSync(wsPathFile, `${canonicalWs}\n`, "utf-8");
+	} catch {
+		// best-effort, never throw at path resolution
+	}
+}
+
+function migrateLegacyIfNeeded(cwd: string, centralDir: string): void {
+	try {
+		const legacyDir = join(resolvePath(cwd), ".dsh_better_edit");
+		const centralDb = join(centralDir, "hash-store.sqlite");
+		const legacyDb = join(legacyDir, "hash-store.sqlite");
+		if (!existsSync(centralDb) && existsSync(legacyDb)) {
+			mkdirSync(centralDir, { recursive: true });
+			cpSync(legacyDir, centralDir, { recursive: true, force: false, errorOnExist: false });
+			const canonical = canonicalWsSync(cwd);
+			try { writeFileSync(join(centralDir, ".wsPath"), `${canonical}\n`, "utf-8"); } catch {}
+			console.warn(`dsh-better-edit: migrated legacy workspace store ${legacyDir} -> ${centralDir}`);
+		}
+	} catch {
+		// best-effort
+	}
 }
 
 function resolveStoreDir(cwd?: string): string {
@@ -280,15 +347,22 @@ function resolveStoreDir(cwd?: string): string {
 		return join(resolvePath(cwd), ".dsh_better_edit");
 	}
 	if (sd === "central") {
+		const canonical = canonicalWsSync(cwd);
 		const name = sanitizedBasename(cwd);
 		const h = hash8(cwd);
-		return join(resolveDshHome(), "plugins", "dsh-better-edit", "runtime", `${name}-${h}`);
+		const dir = join(resolveDshHome(), "plugins", "dsh-better-edit", "runtime", `${name}-${h}`);
+		ensureWsPathSidecar(dir, canonical);
+		migrateLegacyIfNeeded(cwd, dir);
+		return dir;
 	}
 	// absolute custom root
+	const canonical = canonicalWsSync(cwd);
 	const h = hash8(cwd);
-	return join(sd, h);
+	const dir = join(sd, h);
+	ensureWsPathSidecar(dir, canonical);
+	migrateLegacyIfNeeded(cwd, dir);
+	return dir;
 }
-
 /**
  * On-disk home for dsh-better-edit state. Inside a tool call the store lives
  * according to tenancy config: `central` (default) → `$DSH_HOME/plugins/dsh-better-edit/runtime/<name>-<hash8>/`, `workspace` → `<workspace>/.dsh_better_edit/`, or custom absolute root. Outside a tool call — tests, previews, startup — the store
