@@ -1,18 +1,16 @@
 /**
  * StoreTenancy — deep module owning tenancy (where DB lives).
  * Owns config (yaml+env, validation, fallback, mtime cache), canonical path via
- * CanonicalPath seam, hash/sanitized basename, sidecar, migration, and
+ * CanonicalPath seam, hash/sanitized basename, sidecar, and
  * tenancyFor() → {dir, mode, runtimeDir, canonical}. File-per-workspace
  * central keeps static prepare() and isolated WAL; no PID level.
  * @module dsh-better-edit/store-tenancy
  */
-import { homedir } from "node:os";
-import { isAbsolute, join, dirname, parse } from "node:path";
+import { join, parse } from "node:path";
 import { resolve as resolvePath } from "node:path";
-import { cpSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { resolveDshHome } from "@deepseek-ai/dsh-home-paths";
-import { errCode } from "./utils.js";
 import { canonicalSync } from "./canonical-path.js";
 
 import { loadConfig } from "./store-config.js";
@@ -55,21 +53,6 @@ function ensureWsPathSidecar(dir: string, canonicalWs: string): void {
   }
 }
 
-function migrateLegacyIfNeeded(cwd: string, centralDir: string): void {
-  try {
-    const legacyDir = join(resolvePath(cwd), ".dsh_better_edit");
-    const centralDb = join(centralDir, "hash-store.sqlite");
-    const legacyDb = join(legacyDir, "hash-store.sqlite");
-    if (!existsSync(centralDb) && existsSync(legacyDb)) {
-      mkdirSync(centralDir, { recursive: true });
-      cpSync(legacyDir, centralDir, { recursive: true, force: false, errorOnExist: false });
-      ensureWsPathSidecar(centralDir, canonicalSync(cwd));
-      console.warn(`dsh-better-edit: migrated legacy workspace store ${legacyDir} -> ${centralDir}`);
-    }
-  } catch {
-    // best-effort
-  }
-}
 
 export function tenancyFor(cwd?: string): Tenancy {
   if (cwd === undefined) {
@@ -89,12 +72,10 @@ export function tenancyFor(cwd?: string): Tenancy {
   if (sd === "central") {
     const dir = join(resolveDshHome(), "plugins", "dsh-better-edit", "runtime", `${sanitizedBasename(cwd)}-${h}`);
     ensureWsPathSidecar(dir, canonical);
-    migrateLegacyIfNeeded(cwd, dir);
     return { dir, mode: "central", runtimeDir: join(resolveDshHome(), "plugins", "dsh-better-edit", "runtime"), canonical };
   }
   const dir = join(sd, h);
   ensureWsPathSidecar(dir, canonical);
-  migrateLegacyIfNeeded(cwd, dir);
   return { dir, mode: "custom", runtimeDir: sd, canonical };
 }
 

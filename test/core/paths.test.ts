@@ -132,7 +132,7 @@ describe("store tenancy — central default", () => {
 
   it("malformed storeDir falls back to central with warn", async () => {
     await withCleanEnv(
-      { DSH_BETTER_EDIT_STORE_DIR: "./relative" },
+      { DSH_HOME: "/tmp/dsh-home-test-malformed", DSH_BETTER_EDIT_STORE_DIR: "./relative" },
       async () => {
         const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
         try {
