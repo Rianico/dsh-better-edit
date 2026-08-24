@@ -8,7 +8,16 @@ import {
 	sep,
 } from "node:path";
 import { lstat, readlink } from "node:fs/promises";
-import { cpSync, existsSync, lstatSync, mkdirSync, readFileSync, readlinkSync, statSync, writeFileSync } from "node:fs";
+import {
+	cpSync,
+	existsSync,
+	lstatSync,
+	mkdirSync,
+	readFileSync,
+	readlinkSync,
+	statSync,
+	writeFileSync,
+} from "node:fs";
 import { createHash } from "node:crypto";
 import { resolveDshHome } from "@deepseek-ai/dsh-home-paths";
 import { errCode } from "./utils.js";
@@ -34,9 +43,27 @@ const DEFAULT_CONFIG: StoreConfig = {
 let cachedConfig: StoreConfig | undefined;
 let cachedMtimeMs: number | undefined;
 let cachedYamlPath: string | undefined;
+let cachedEnvStoreDir: string | undefined;
+let cachedEnvAutoGitignore: string | undefined;
 
 function configYamlPath(): string {
 	return join(resolveDshHome(), "plugins", "dsh-better-edit", "config.yaml");
+}
+
+function stripQuotes(value: string): string {
+	const t = value.trim();
+	if (
+		(t.startsWith('"') && t.endsWith('"')) ||
+		(t.startsWith("'") && t.endsWith("'"))
+	) {
+		return t.slice(1, -1).trim();
+	}
+	return t;
+}
+
+function stripInlineComment(value: string): string {
+	const idx = value.indexOf(" #");
+	return idx === -1 ? value : value.slice(0, idx).trim();
 }
 
 function parseSimpleYaml(content: string): Record<string, string> {
@@ -48,50 +75,23 @@ function parseSimpleYaml(content: string): Record<string, string> {
 		if (colon === -1) continue;
 		const key = line.slice(0, colon).trim();
 		let value = line.slice(colon + 1).trim();
-		// strip surrounding quotes
-		if (
-			(value.startsWith('"') && value.endsWith('"')) ||
-			(value.startsWith("'") && value.endsWith("'"))
-		) {
-			value = value.slice(1, -1);
-		}
-		// strip inline comment after value (e.g. storeDir: central # comment)
-		const hashIdx = value.indexOf(" #");
-		if (hashIdx !== -1) value = value.slice(0, hashIdx).trim();
+		value = stripQuotes(value);
+		value = stripInlineComment(value);
 		out[key] = value;
 	}
 	return out;
 }
 
 function expandHome(filePath: string): string {
-	const home = homeBase();
-	if (filePath === "~") return home;
-	if (filePath.startsWith("~/")) return home + filePath.slice(1);
-	return filePath;
-}
-
-function isValidStoreDirValue(v: string): boolean {
-	if (v === "workspace" || v === "central") return true;
-	const expanded = expandHome(v);
-	return isAbsolute(expanded);
+	return expand(filePath);
 }
 
 function normalizeStoreDir(v: string): string | undefined {
-	const trimmed = v.trim();
-	if (trimmed.length === 0) return undefined;
-	// strip surrounding quotes if env was quoted
-	let val = trimmed;
-	if (
-		(val.startsWith('"') && val.endsWith('"')) ||
-		(val.startsWith("'") && val.endsWith("'"))
-	) {
-		val = val.slice(1, -1).trim();
-	}
+	const val = stripQuotes(v.trim());
+	if (val.length === 0) return undefined;
 	if (val === "workspace" || val === "central") return val;
-	const expanded = expandHome(val);
-	if (isAbsolute(expanded)) return expanded;
-	// malformed -> fallback central with warn (caller logs)
-	return undefined;
+	const expanded = expand(val);
+	return isAbsolute(expanded) ? expanded : undefined;
 }
 
 function parseAutoGitIgnoreRaw(v: string): boolean | undefined {
@@ -104,18 +104,6 @@ function parseAutoGitIgnoreRaw(v: string): boolean | undefined {
 function loadYamlConfig(): Partial<StoreConfig> {
 	const yamlPath = configYamlPath();
 	try {
-		const st = statSync(yamlPath);
-		const mtime = st.mtimeMs;
-		if (
-			cachedYamlPath === yamlPath &&
-			cachedMtimeMs !== undefined &&
-			cachedMtimeMs === mtime &&
-			cachedConfig !== undefined
-		) {
-			// mtime unchanged, return cached raw parsed values via cachedConfig? Need to re-parse? We cache final merged, but yaml part unchanged
-			// For simplicity, keep cachedConfig as final; mtime hit means yaml unchanged, so we can skip re-read
-			return {};
-		}
 		const raw = readFileSync(yamlPath, "utf-8");
 		const parsed = parseSimpleYaml(raw);
 		const out: Partial<StoreConfig> = {};
@@ -131,10 +119,13 @@ function loadYamlConfig(): Partial<StoreConfig> {
 		}
 		if (parsed.autoGitignore !== undefined) {
 			const b = parseAutoGitIgnoreRaw(parsed.autoGitignore);
-			if (b === undefined) 
+			if (b === undefined) {
 				console.warn(
 					`dsh-better-edit: autoGitignore "${parsed.autoGitignore}" invalid — expected true|false, fallback to false`,
-				); else out.autoGitignore = b;
+				);
+			} else {
+				out.autoGitignore = b;
+			}
 		}
 		if (parsed.undo_ttl_s !== undefined) {
 			const n = Number(parsed.undo_ttl_s);
@@ -160,13 +151,9 @@ function loadYamlConfig(): Partial<StoreConfig> {
 					`dsh-better-edit: storeMaxTotalBytes "${parsed.storeMaxTotalBytes}" invalid — expected int >=0`,
 				);
 		}
-		cachedMtimeMs = mtime;
-		cachedYamlPath = yamlPath;
-		// we return parsed partial; caching of mtime handled via early return above, but we still need to store parsed for merge? We'll just return out and let caller merge
 		return out;
 	} catch (error: unknown) {
 		if (errCode(error) === "ENOENT") return {};
-		// other read errors -> warn and return empty
 		console.warn(
 			`dsh-better-edit: failed to read config yaml ${yamlPath}: ${error instanceof Error ? error.message : String(error)} — fallback to central`,
 		);
@@ -175,77 +162,68 @@ function loadYamlConfig(): Partial<StoreConfig> {
 }
 
 export function loadConfig(): StoreConfig {
-	// mtime cache: if yaml mtime unchanged, return cached final
 	const yamlPath = configYamlPath();
+	let mtime: number | undefined;
 	try {
-		const st = statSync(yamlPath);
-		if (
-			cachedYamlPath === yamlPath &&
-			cachedMtimeMs !== undefined &&
-			cachedMtimeMs === st.mtimeMs &&
-			cachedConfig !== undefined
-		) {
-			// check env overrides still need to be applied fresh — env may have changed without yaml mtime change
-			// So we still need to re-apply env on top of cached yaml
-			// For simplicity, invalidate cache when env changes, or just re-derive env each call
-			// We keep cached yaml partial, not final, so we re-merge env each time
-		}
-	} catch {
-		// no yaml file -> no mtime cache
-	}
-
-	const yamlPartial = loadYamlConfig();
-	// start from defaults
-	const cfg: StoreConfig = { ...DEFAULT_CONFIG, ...yamlPartial };
-
-	// env overrides
+		mtime = statSync(yamlPath).mtimeMs;
+	} catch {}
 	const envStoreDir = process.env.DSH_BETTER_EDIT_STORE_DIR;
+	const envAuto = process.env.DSH_BETTER_EDIT_AUTO_GITIGNORE;
+	if (
+		cachedConfig !== undefined &&
+		cachedMtimeMs === mtime &&
+		cachedYamlPath === yamlPath &&
+		cachedEnvStoreDir === envStoreDir &&
+		cachedEnvAutoGitignore === envAuto
+	) {
+		return cachedConfig;
+	}
+	const yamlPartial = loadYamlConfig();
+	const cfg: StoreConfig = { ...DEFAULT_CONFIG, ...yamlPartial };
 	if (envStoreDir !== undefined) {
 		const trimmed = envStoreDir.trim();
-		if (trimmed.length > 0) {
-			const norm = normalizeStoreDir(trimmed);
-			if (norm === undefined) 
-				console.warn(
-					`dsh-better-edit: DSH_BETTER_EDIT_STORE_DIR "${envStoreDir}" illegal/malformed — not absolute after expand, fallback to central`,
-				); else cfg.storeDir = norm;
-		} else {
+		if (trimmed.length === 0) {
 			console.warn(
 				`dsh-better-edit: DSH_BETTER_EDIT_STORE_DIR empty — fallback to ${cfg.storeDir}`,
 			);
+		} else {
+			const norm = normalizeStoreDir(trimmed);
+			if (norm === undefined) {
+				console.warn(
+					`dsh-better-edit: DSH_BETTER_EDIT_STORE_DIR "${envStoreDir}" illegal/malformed — not absolute after expand, fallback to central`,
+				);
+			} else {
+				cfg.storeDir = norm;
+			}
 		}
 	}
-
-	const envAuto = process.env.DSH_BETTER_EDIT_AUTO_GITIGNORE;
 	if (envAuto !== undefined) {
 		const b = parseAutoGitIgnoreRaw(envAuto);
-		if (b === undefined) 
+		if (b === undefined) {
 			console.warn(
 				`dsh-better-edit: DSH_BETTER_EDIT_AUTO_GITIGNORE "${envAuto}" invalid — expected true|false, fallback to ${cfg.autoGitignore}`,
-			); else cfg.autoGitignore = b;
-	}
-
-	// validate absolute after expand for any remaining storeDir that is not enum (should have been normalized)
-	if (cfg.storeDir !== "workspace" && cfg.storeDir !== "central") {
-		const expanded = expandHome(cfg.storeDir);
-		if (isAbsolute(expanded)) {
-			cfg.storeDir = expanded;
-		} else {
-			console.warn(
-				`dsh-better-edit: storeDir "${cfg.storeDir}" illegal/malformed — fallback to central`,
 			);
-			cfg.storeDir = "central";
+		} else {
+			cfg.autoGitignore = b;
 		}
 	}
-
-	cachedConfig = cfg;
-	// update mtime for next call
-	try {
-		cachedMtimeMs = statSync(yamlPath).mtimeMs;
-		cachedYamlPath = yamlPath;
-	} catch {
-		cachedMtimeMs = undefined;
-		cachedYamlPath = yamlPath;
+	if (
+		cfg.storeDir !== "workspace" &&
+		cfg.storeDir !== "central" &&
+		!isAbsolute(expand(cfg.storeDir))
+	) {
+		console.warn(
+			`dsh-better-edit: storeDir "${cfg.storeDir}" illegal/malformed — fallback to central`,
+		);
+		cfg.storeDir = "central";
+	} else if (cfg.storeDir !== "workspace" && cfg.storeDir !== "central") {
+		cfg.storeDir = expand(cfg.storeDir);
 	}
+	cachedConfig = cfg;
+	cachedMtimeMs = mtime;
+	cachedYamlPath = yamlPath;
+	cachedEnvStoreDir = envStoreDir;
+	cachedEnvAutoGitignore = envAuto;
 	return cfg;
 }
 
@@ -254,6 +232,8 @@ export function _resetConfigCache(): void {
 	cachedConfig = undefined;
 	cachedMtimeMs = undefined;
 	cachedYamlPath = undefined;
+	cachedEnvStoreDir = undefined;
+	cachedEnvAutoGitignore = undefined;
 }
 
 // ---- path helpers ----
@@ -261,7 +241,10 @@ export function _resetConfigCache(): void {
 function canonicalWsSync(ws: string): string {
 	const absolutePath = resolvePath(ws);
 	const { root } = parse(absolutePath);
-	const parts = absolutePath.slice(root.length).split(sep).filter((p) => p.length > 0);
+	const parts = absolutePath
+		.slice(root.length)
+		.split(sep)
+		.filter((p) => p.length > 0);
 	const visited = new Set<string>();
 	let current = root;
 	let remaining = parts.slice();
@@ -276,20 +259,25 @@ function canonicalWsSync(ws: string): string {
 				continue;
 			}
 			if (visited.has(candidate)) {
-				const e = new Error(`Too many symbolic links while resolving ${ws}`) as NodeJS.ErrnoException;
+				const e = new Error(
+					`Too many symbolic links while resolving ${ws}`,
+				) as NodeJS.ErrnoException;
 				e.code = "ELOOP";
 				throw e;
 			}
 			visited.add(candidate);
 			const linkTarget = resolvePath(dirname(candidate), readlinkSync(candidate));
-			const targetParts = linkTarget.slice(parse(linkTarget).root.length).split(sep).filter((p) => p.length > 0);
+			const targetParts = linkTarget
+				.slice(parse(linkTarget).root.length)
+				.split(sep)
+				.filter((p) => p.length > 0);
 			current = parse(linkTarget).root;
 			remaining = [...targetParts, ...tail];
 		} catch (error: unknown) {
 			if (errCode(error) === "ENOENT") return join(candidate, ...tail);
 			throw error;
 		}
-		}
+	}
 	return current;
 }
 
@@ -303,13 +291,16 @@ function hash8(ws: string): string {
 	const canonical = canonicalWsSync(ws);
 	return createHash("sha1").update(canonical).digest("hex").slice(0, 8);
 }
+
 function ensureWsPathSidecar(dir: string, canonicalWs: string): void {
 	try {
 		const wsPathFile = join(dir, ".wsPath");
 		if (existsSync(wsPathFile)) {
 			const existing = readFileSync(wsPathFile, "utf-8").trim();
 			if (existing !== canonicalWs) {
-				console.warn(`dsh-better-edit: central store collision for ${dir}: stored wsPath "${existing}" != current "${canonicalWs}" — keeping existing, hash collision risk`);
+				console.warn(
+					`dsh-better-edit: central store collision for ${dir}: stored wsPath "${existing}" != current "${canonicalWs}" — keeping existing, hash collision risk`,
+				);
 			}
 			return;
 		}
@@ -327,10 +318,15 @@ function migrateLegacyIfNeeded(cwd: string, centralDir: string): void {
 		const legacyDb = join(legacyDir, "hash-store.sqlite");
 		if (!existsSync(centralDb) && existsSync(legacyDb)) {
 			mkdirSync(centralDir, { recursive: true });
-			cpSync(legacyDir, centralDir, { recursive: true, force: false, errorOnExist: false });
-			const canonical = canonicalWsSync(cwd);
-			try { writeFileSync(join(centralDir, ".wsPath"), `${canonical}\n`, "utf-8"); } catch {}
-			console.warn(`dsh-better-edit: migrated legacy workspace store ${legacyDir} -> ${centralDir}`);
+			cpSync(legacyDir, centralDir, {
+				recursive: true,
+				force: false,
+				errorOnExist: false,
+			});
+			ensureWsPathSidecar(centralDir, canonicalWsSync(cwd));
+			console.warn(
+				`dsh-better-edit: migrated legacy workspace store ${legacyDir} -> ${centralDir}`,
+			);
 		}
 	} catch {
 		// best-effort
@@ -346,18 +342,20 @@ function resolveStoreDir(cwd?: string): string {
 	if (sd === "workspace") {
 		return join(resolvePath(cwd), ".dsh_better_edit");
 	}
+	const canonical = canonicalWsSync(cwd);
+	const h = hash8(cwd);
 	if (sd === "central") {
-		const canonical = canonicalWsSync(cwd);
-		const name = sanitizedBasename(cwd);
-		const h = hash8(cwd);
-		const dir = join(resolveDshHome(), "plugins", "dsh-better-edit", "runtime", `${name}-${h}`);
+		const dir = join(
+			resolveDshHome(),
+			"plugins",
+			"dsh-better-edit",
+			"runtime",
+			`${sanitizedBasename(cwd)}-${h}`,
+		);
 		ensureWsPathSidecar(dir, canonical);
 		migrateLegacyIfNeeded(cwd, dir);
 		return dir;
 	}
-	// absolute custom root
-	const canonical = canonicalWsSync(cwd);
-	const h = hash8(cwd);
 	const dir = join(sd, h);
 	ensureWsPathSidecar(dir, canonical);
 	migrateLegacyIfNeeded(cwd, dir);
@@ -381,7 +379,13 @@ export function hashStorePath(cwd?: string): string {
 
 export function legacyHashStorePath(cwd?: string): string {
 	// legacy always was workspace co-located, regardless of current tenancy
-	if (cwd === undefined) return join(resolveDshHome(), "plugins", "dsh-better-edit", "hash-store.json");
+	if (cwd === undefined)
+		return join(
+			resolveDshHome(),
+			"plugins",
+			"dsh-better-edit",
+			"hash-store.json",
+		);
 	return join(resolvePath(cwd), ".dsh_better_edit", "hash-store.json");
 }
 
@@ -457,10 +461,7 @@ export async function resolveTarget(path: string): Promise<string> {
 				.slice(parse(linkTargetPath).root.length)
 				.split(sep)
 				.filter((part) => part.length > 0);
-			return resParts(parse(linkTargetPath).root, [
-				...targetParts,
-				...tail,
-			]);
+			return resParts(parse(linkTargetPath).root, [...targetParts, ...tail]);
 		} catch (error: unknown) {
 			if (errCode(error) === "ENOENT") {
 				return join(candidatePath, ...tail);

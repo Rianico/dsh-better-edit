@@ -37,60 +37,77 @@ describe("workspace context", () => {
 		}
 	});
 
+	async function withEnv(
+		env: Record<string, string | undefined>,
+		fn: () => Promise<void>,
+	): Promise<void> {
+		const prev: Record<string, string | undefined> = {};
+		for (const [k, v] of Object.entries(env)) {
+			prev[k] = process.env[k];
+			if (v === undefined) delete process.env[k];
+			else process.env[k] = v;
+		}
+		try {
+			await fn();
+		} finally {
+			for (const [k, v] of Object.entries(prev)) {
+				if (v === undefined) delete process.env[k];
+				else process.env[k] = v;
+			}
+		}
+	}
+
 	it("resolves the store file under <workspace>/.dsh_better_edit when storeDir=workspace", async () => {
 		const cwd = tempWorkspace("dsh-ws-path-");
-		const prevStore = process.env.DSH_BETTER_EDIT_STORE_DIR;
-		process.env.DSH_BETTER_EDIT_STORE_DIR = "workspace";
-		const { _resetConfigCache } = await import("../../src/paths.js");
-		_resetConfigCache();
-		try {
-			expect(hashStorePath(cwd)).toBe(
-				join(cwd, ".dsh_better_edit", "hash-store.sqlite"),
-			);
-			await withWorkspace(cwd, async () => {
-				await loadHashStore();
-			});
-			expect(
-				existsSync(join(cwd, ".dsh_better_edit", "hash-store.sqlite")),
-			).toBe(true);
-		} finally {
-			if (prevStore === undefined) delete process.env.DSH_BETTER_EDIT_STORE_DIR;
-			else process.env.DSH_BETTER_EDIT_STORE_DIR = prevStore;
-			const { _resetConfigCache: r } = await import("../../src/paths.js");
-			r();
-			shutdownHashStore();
-			rmSync(cwd, { recursive: true, force: true });
-		}
+		await withEnv({ DSH_BETTER_EDIT_STORE_DIR: "workspace" }, async () => {
+			const { _resetConfigCache } = await import("../../src/paths.js");
+			_resetConfigCache();
+			try {
+				expect(hashStorePath(cwd)).toBe(
+					join(cwd, ".dsh_better_edit", "hash-store.sqlite"),
+				);
+				await withWorkspace(cwd, async () => {
+					await loadHashStore();
+				});
+				expect(existsSync(join(cwd, ".dsh_better_edit", "hash-store.sqlite"))).toBe(
+					true,
+				);
+			} finally {
+				const { _resetConfigCache: r } = await import("../../src/paths.js");
+				r();
+				shutdownHashStore();
+				rmSync(cwd, { recursive: true, force: true });
+			}
+		});
 	});
 
 	it("resolves the store file under central runtime/<name>-<hash8> by default", async () => {
 		const cwd = tempWorkspace("dsh-ws-path-");
-		const prevStore = process.env.DSH_BETTER_EDIT_STORE_DIR;
-		delete process.env.DSH_BETTER_EDIT_STORE_DIR;
-		const { _resetConfigCache, hashStorePath: hsp } = await import("../../src/paths.js");
-		_resetConfigCache();
-		const prevDsh = process.env.DSH_HOME;
 		const tmpHome = mkdtempSync(join(tmpdir(), "dsh-home-"));
-		process.env.DSH_HOME = tmpHome;
-		try {
-			const p = hsp(cwd);
-			expect(p).toContain(join("runtime"));
-			expect(p.endsWith("hash-store.sqlite")).toBe(true);
-			await withWorkspace(cwd, async () => {
-				await loadHashStore();
-			});
-			expect(existsSync(p)).toBe(true);
-		} finally {
-			if (prevStore === undefined) delete process.env.DSH_BETTER_EDIT_STORE_DIR;
-			else process.env.DSH_BETTER_EDIT_STORE_DIR = prevStore;
-			if (prevDsh === undefined) delete process.env.DSH_HOME;
-			else process.env.DSH_HOME = prevDsh;
-			const { _resetConfigCache: r } = await import("../../src/paths.js");
-			r();
-			shutdownHashStore();
-			rmSync(cwd, { recursive: true, force: true });
-			rmSync(tmpHome, { recursive: true, force: true });
-		}
+		await withEnv(
+			{ DSH_BETTER_EDIT_STORE_DIR: undefined, DSH_HOME: tmpHome },
+			async () => {
+				const { _resetConfigCache, hashStorePath: hsp } = await import(
+					"../../src/paths.js"
+				);
+				_resetConfigCache();
+				try {
+					const p = hsp(cwd);
+					expect(p).toContain(join("runtime"));
+					expect(p.endsWith("hash-store.sqlite")).toBe(true);
+					await withWorkspace(cwd, async () => {
+						await loadHashStore();
+					});
+					expect(existsSync(p)).toBe(true);
+				} finally {
+					const { _resetConfigCache: r } = await import("../../src/paths.js");
+					r();
+					shutdownHashStore();
+					rmSync(cwd, { recursive: true, force: true });
+					rmSync(tmpHome, { recursive: true, force: true });
+				}
+			},
+		);
 	});
 });
 
@@ -110,17 +127,13 @@ describe("workspace isolation", () => {
 			// Workspace B must NOT see A's snapshot (separate store file).
 			await withWorkspace(b, async () => {
 				const store = await loadHashStore();
-				expect(
-					store.getSnapshot(join(a, "f.txt"), content, false),
-				).toBeUndefined();
+				expect(store.getSnapshot(join(a, "f.txt"), content, false)).toBeUndefined();
 			});
 
 			// Workspace A still sees it.
 			await withWorkspace(a, async () => {
 				const store = await loadHashStore();
-				expect(
-					store.getSnapshot(join(a, "f.txt"), content, false),
-				).toBeDefined();
+				expect(store.getSnapshot(join(a, "f.txt"), content, false)).toBeDefined();
 			});
 		} finally {
 			shutdownHashStore();

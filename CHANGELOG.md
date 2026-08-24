@@ -5,6 +5,7 @@ All notable changes to the `dsh-better-edit` plugin will be documented in this f
 Entries link to the originating spec issue in [pi-hashline-edit-lsz](https://github.com/Rianico/pi-hashline-edit-lsz) where one exists.
 
 ## [Unreleased]
+
 ### Added
 
 - Configurable store tenancy with central default (`$DSH_HOME/plugins/dsh-better-edit/runtime/<name>-<hash8>/`), `workspace` legacy opt-in, and custom `/abs` root — yaml at `$DSH_HOME/plugins/dsh-better-edit/config.yaml` (`storeDir`, `autoGitignore`, `undo_ttl_s`, `storeMaxAgeDays`, `storeMaxTotalBytes`) + god envs `DSH_BETTER_EDIT_STORE_DIR`/`DSH_BETTER_EDIT_AUTO_GITIGNORE` (`env > yaml > central`) with malformed fallback to central and warnings ([#24](https://github.com/Rianico/dsh-better-edit/issues/24)). Thanks to [@MrWeiCodes](https://github.com/MrWeiCodes) for the proposal and design discussion.
@@ -18,7 +19,6 @@ Entries link to the originating spec issue in [pi-hashline-edit-lsz](https://git
 ### Fixed
 
 - `.gitignore` pollution warning for `workspace` mode and idempotent `autoGitignore` opt-in (yaml+env `true|false`).
-
 
 ## [0.3.2] - 2026-08-23
 
@@ -46,7 +46,6 @@ Entries link to the originating spec issue in [pi-hashline-edit-lsz](https://git
 
 - Docs: `CLAUDE.md` upstream sync section — last absorbed checkpoint `7b91958` (dense `servedRows`), procedure, checkpoint history, `upstream` remote.
 
-
 ## [0.3.0] - 2026-08-20
 
 ### Changed
@@ -57,7 +56,6 @@ Entries link to the originating spec issue in [pi-hashline-edit-lsz](https://git
 - Hashline purity & store seams (ARCH C1-C4): `HashSnapshotIO` injection keeps hashing pure, `recordDiffServes` helper, one `applyOneEdit` composition, `DebouncedPreview` (150ms) extracted, noop-loop folded, per-domain stmt slices.
 - Notices & prompts hygiene: Zed-style terse drift/noop/rejection notices (codes unchanged), lean guidelines (dedupe tool descriptions), tool schema descriptions trimmed to one-liners.
 - README brooks-lint reorg + CONTEXT glossary merge: hook, shining points, Why Hashline before Tools, benchmark section referencing `pi-better-edit/benchmarks/results/` (same hashline algorithm).
-
 
 ## [0.2.2] - 2026-08-19
 

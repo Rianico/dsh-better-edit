@@ -22,8 +22,17 @@ import { hashStorePath, loadConfig } from "./paths.js";
 import { resolveDshHome } from "@deepseek-ai/dsh-home-paths";
 import { workspaceCwd } from "./workspace.js";
 import { errCode, splitLines } from "./utils.js";
-import { initHasher, contentChecksum, HASH_RE, CANON_VERSION } from "./hashline/hash-assign.js";
-import { HASH_STORE_VERSION, HASH_STORE_BUSY_TIMEOUT, SERVED_TTL_MS } from "./constants.js";
+import {
+	initHasher,
+	contentChecksum,
+	HASH_RE,
+	CANON_VERSION,
+} from "./hashline/hash-assign.js";
+import {
+	HASH_STORE_VERSION,
+	HASH_STORE_BUSY_TIMEOUT,
+	SERVED_TTL_MS,
+} from "./constants.js";
 
 // ---- validators (owned here; the store's corruption handling uses them) ----
 
@@ -138,7 +147,11 @@ export interface HashStore {
 	/** Persist the hashes JSON column for a session+path. */
 	upsertServed(sessionKey: string, path: string, hashesJson: string): void;
 	/** Persist the reported-drift JSON column for a session+path (inserting a fresh empty hashes row). */
-	upsertServedReported(sessionKey: string, path: string, reportedJson: string): void;
+	upsertServedReported(
+		sessionKey: string,
+		path: string,
+		reportedJson: string,
+	): void;
 	clearServedReported(sessionKey: string, path: string): void;
 	deleteServed(sessionKey: string, path: string): void;
 	deleteServedByPath(path: string): void;
@@ -222,7 +235,7 @@ function openDb(storePath: string): { db: DatabaseSync; stmts: Prepared } {
 	} catch (error) {
 		try {
 			db.close();
-		} catch {
+		} catch (error) {
 			// best-effort close when the store build fails
 		}
 		throw error;
@@ -262,8 +275,7 @@ function buildStore(db: DatabaseSync): { db: DatabaseSync; stmts: Prepared } {
 		.prepare("SELECT value FROM meta WHERE key = 'version'")
 		.get() as { value?: string } | undefined;
 	const versionChanged =
-		versionRow !== undefined &&
-		versionRow.value !== String(HASH_STORE_VERSION);
+		versionRow !== undefined && versionRow.value !== String(HASH_STORE_VERSION);
 	if (versionChanged) {
 		db.exec("DELETE FROM snapshots");
 		db.exec("DELETE FROM undo");
@@ -287,10 +299,12 @@ function buildStore(db: DatabaseSync): { db: DatabaseSync; stmts: Prepared } {
 			"PRIMARY KEY (session_id, path)" +
 			")",
 	);
-	db.prepare(
-		"INSERT INTO meta (key, value) VALUES ('version', ?) " +
-			"ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-	).run(String(HASH_STORE_VERSION));
+	db
+		.prepare(
+			"INSERT INTO meta (key, value) VALUES ('version', ?) " +
+				"ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+		)
+		.run(String(HASH_STORE_VERSION));
 	const getStmt = db.prepare(
 		"SELECT hashes FROM snapshots WHERE path = ? AND checksum = ? AND line_count = ?",
 	);
@@ -311,7 +325,9 @@ function buildStore(db: DatabaseSync): { db: DatabaseSync; stmts: Prepared } {
 		"SELECT content, bom, ending, hashes, result_content FROM undo WHERE path = ?",
 	);
 	const undoDelStmt = db.prepare("DELETE FROM undo WHERE path = ?");
-	const undoPruneOlderThanStmt = db.prepare("DELETE FROM undo WHERE updated_at < ?");
+	const undoPruneOlderThanStmt = db.prepare(
+		"DELETE FROM undo WHERE updated_at < ?",
+	);
 	const servedGetStmt = db.prepare(
 		"SELECT hashes, reported FROM served WHERE session_id = ? AND path = ?",
 	);
@@ -337,8 +353,7 @@ function buildStore(db: DatabaseSync): { db: DatabaseSync; stmts: Prepared } {
 	const stmts: Prepared = {
 		get: (...params) =>
 			getStmt.get(...params) as Record<string, unknown> | undefined,
-		allPaths: (...params) =>
-			allStmt.all(...params) as Record<string, unknown>[],
+		allPaths: (...params) => allStmt.all(...params) as Record<string, unknown>[],
 		allHashes: (...params) =>
 			allHashesStmt.all(...params) as Record<string, unknown>[],
 		deleteOne: (...params) => {
@@ -424,7 +439,7 @@ function makeDomainStore(stmts: Prepared): HashStore {
 				if (isValidHashList(parsed)) return parsed;
 				if (deleteCorrupt) stmts.deleteOne(path);
 				return undefined;
-			} catch {
+			} catch (error) {
 				if (deleteCorrupt) stmts.deleteOne(path);
 				return undefined;
 			}
@@ -455,7 +470,7 @@ function makeDomainStore(stmts: Prepared): HashStore {
 					const parsed = JSON.parse(row.hashes) as unknown;
 					if (!isValidHashList(parsed)) continue;
 					if (hashes.every((h) => parsed.includes(h))) matches.push(row.path);
-				} catch {
+				} catch (error) {
 					// unparseable row → skip it
 				}
 			}
@@ -478,7 +493,7 @@ function makeDomainStore(stmts: Prepared): HashStore {
 					hashes: parsed as string[],
 					resultContent: row.result_content as string,
 				};
-			} catch {
+			} catch (error) {
 				stmts.undoDelete(path);
 				return undefined;
 			}
@@ -506,7 +521,7 @@ function makeDomainStore(stmts: Prepared): HashStore {
 				if (isValidServedList(parsed)) return parsed;
 				stmts.servedDelete(sessionKey, path);
 				return [];
-			} catch {
+			} catch (error) {
 				stmts.servedDelete(sessionKey, path);
 				return [];
 			}
@@ -524,7 +539,7 @@ function makeDomainStore(stmts: Prepared): HashStore {
 						(h): h is string => typeof h === "string" && HASH_RE.test(h),
 					),
 				);
-			} catch {
+			} catch (error) {
 				return new Set();
 			}
 		},
@@ -596,8 +611,8 @@ async function quarantineStore(storePath: string): Promise<void> {
 function shutdownDb(db: DatabaseSync): void {
 	try {
 		db.exec("PRAGMA wal_checkpoint(TRUNCATE)");
-	} catch {
-		// best-effort checkpoint before close
+	} catch (error) {
+		console.warn(`dsh-better-edit: wal_checkpoint failed on shutdown: ${error instanceof Error ? error.message : String(error)}`); // best-effort checkpoint before close
 	}
 	db.close();
 }
@@ -619,7 +634,7 @@ async function statMissing(rows: { path: string }[]): Promise<string[]> {
 				try {
 					await stat(row.path);
 					return undefined;
-				} catch {
+				} catch (error) {
 					return row.path;
 				}
 			}),
@@ -633,132 +648,167 @@ async function statMissing(rows: { path: string }[]): Promise<string[]> {
 
 const warnedGitWarn = new Set<string>();
 function gitignoreHasEntry(ws: string): boolean {
-  try {
-    const content = readFileSync(join(ws, ".gitignore"), "utf-8");
-    return content.split("\n").some((l) => {
-      const t = l.trim();
-      return t === ".dsh_better_edit" || t === ".dsh_better_edit/" || t.startsWith(".dsh_better_edit/");
-    });
-  } catch {
-    return false;
-  }
+	try {
+		const content = readFileSync(join(ws, ".gitignore"), "utf-8");
+		return content.split("\n").some((l) => {
+			const t = l.trim();
+			return (
+				t === ".dsh_better_edit" ||
+				t === ".dsh_better_edit/" ||
+				t.startsWith(".dsh_better_edit/")
+			);
+		});
+	} catch (error) {
+		return false;
+	}
 }
 function handleGitPollution(storePath: string): void {
-  try {
-    const cfg = loadConfig();
-    if (cfg.storeDir !== "workspace") return;
-    // derive ws from storePath for workspace mode: <ws>/.dsh_better_edit/hash-store.sqlite
-    const ws = dirname(dirname(storePath));
-    if (!existsSync(join(ws, ".git"))) return;
-    if (gitignoreHasEntry(ws)) return;
-    if (cfg.autoGitignore) {
-      try {
-        const gitignorePath = join(ws, ".gitignore");
-        if (!existsSync(gitignorePath)) {
-          appendFileSync(gitignorePath, ".dsh_better_edit/\n");
-        } else if (!gitignoreHasEntry(ws)) {
-          // idempotent append
-          const content = readFileSync(gitignorePath, "utf-8");
-          const needsNewline = content.length > 0 && !content.endsWith("\n");
-          appendFileSync(gitignorePath, `${needsNewline ? "\n" : ""}.dsh_better_edit/\n`);
-        }
-      } catch (error) {
-        console.warn(`dsh-better-edit: failed to update .gitignore for ${ws}: ${error instanceof Error ? error.message : String(error)}`);
-      }
-      return;
-    }
-    if (!warnedGitWarn.has(ws)) {
-      warnedGitWarn.add(ws);
-      console.warn(`dsh-better-edit: workspace store at ${ws}/.dsh_better_edit/ not in .gitignore — add ".dsh_better_edit/" to .gitignore or set storeDir: central / autoGitignore: true`);
-    }
-  } catch {
-    // best-effort, never throw at store open
-  }
+	try {
+		const cfg = loadConfig();
+		if (cfg.storeDir !== "workspace") return;
+		const ws = dirname(dirname(storePath));
+		if (!existsSync(join(ws, ".git")) || gitignoreHasEntry(ws)) return;
+
+		if (cfg.autoGitignore) {
+			const gitignorePath = join(ws, ".gitignore");
+			try {
+				if (!existsSync(gitignorePath)) {
+					appendFileSync(gitignorePath, ".dsh_better_edit/\n");
+				} else {
+					const content = readFileSync(gitignorePath, "utf-8");
+					const prefix = content.length > 0 && !content.endsWith("\n") ? "\n" : "";
+					appendFileSync(gitignorePath, `${prefix}.dsh_better_edit/\n`);
+				}
+			} catch (error) {
+				console.warn(
+					`dsh-better-edit: failed to update .gitignore for ${ws}: ${error instanceof Error ? error.message : String(error)}`,
+				);
+			}
+			return;
+		}
+
+		if (warnedGitWarn.has(ws)) return;
+		warnedGitWarn.add(ws);
+		console.warn(
+			`dsh-better-edit: workspace store at ${ws}/.dsh_better_edit/ not in .gitignore — add ".dsh_better_edit/" to .gitignore or set storeDir: central / autoGitignore: true`,
+		);
+	} catch (error) {
+		console.warn(`dsh-better-edit: handleGitPollution failed: ${error instanceof Error ? error.message : String(error)}`); // best-effort, never throw at store open
+	}
 }
 export async function runCentralJanitorIfDue(): Promise<void> {
 	const now = Date.now();
 	if (now - lastJanitorMs < JANITOR_THROTTLE_MS) return;
 	lastJanitorMs = now;
+
 	let cfg: ReturnType<typeof loadConfig>;
-	try { cfg = loadConfig(); } catch { return; }
-	// only for central/custom central — workspace mode is user-owned, skip directory GC
+	try {
+		cfg = loadConfig();
+	} catch (error) {
+		console.warn(`dsh-better-edit: loadConfig failed in janitor: ${error instanceof Error ? error.message : String(error)}`);
+		return;
+	}
 	if (cfg.storeDir === "workspace") return;
-	const runtimeDir = join(resolveDshHome(), "plugins", "dsh-better-edit", "runtime");
+
+	const runtimeDir = join(
+		resolveDshHome(),
+		"plugins",
+		"dsh-better-edit",
+		"runtime",
+	);
 	let entries: string[];
-	try { entries = await readdir(runtimeDir); } catch (e: unknown) { if (errCode(e) === "ENOENT") return; console.error("central janitor readdir failed:", e); return; }
-	// live central dirs = basenames of currently open central stores
+	try {
+		entries = await readdir(runtimeDir);
+	} catch (error: unknown) {
+		if (errCode(error) === "ENOENT") return;
+		console.error("central janitor readdir failed:", error);
+		return;
+	}
+
 	const liveDirs = new Set<string>();
-	for (const [p] of stores) {
-		if (p.startsWith(runtimeDir + "/")) {
-			const base = p.slice(runtimeDir.length + 1).split("/")[0];
-			if (base) liveDirs.add(base);
-		}
-		// also check openings map for in-flight
-	}
-	for (const [p] of openings) {
-		// openings keys are storePath strings as well
-		if (typeof p === "string" && p.startsWith(runtimeDir + "/")) {
-			const base = (p as string).slice(runtimeDir.length + 1).split("/")[0];
+	for (const storePath of stores.keys()) {
+		if (storePath.startsWith(runtimeDir + "/")) {
+			const base = storePath.slice(runtimeDir.length + 1).split("/")[0];
 			if (base) liveDirs.add(base);
 		}
 	}
-	// stat all entries
-	const infos: { name: string; dir: string; mtimeMs: number; totalBytes: number }[] = [];
+	for (const storePath of openings.keys()) {
+		if (storePath.startsWith(runtimeDir + "/")) {
+			const base = storePath.slice(runtimeDir.length + 1).split("/")[0];
+			if (base) liveDirs.add(base);
+		}
+	}
+
+	const infos: {
+		name: string;
+		dir: string;
+		mtimeMs: number;
+		totalBytes: number;
+	}[] = [];
 	for (const name of entries) {
+		if (liveDirs.has(name)) continue;
 		const dir = join(runtimeDir, name);
-		if (liveDirs.has(name)) continue; // never delete live
 		try {
 			const st = await stat(dir);
 			if (!st.isDirectory()) continue;
-			const mtimeMs = st.mtimeMs;
-			// sum sqlite + wal + shm + .wsPath
 			let totalBytes = 0;
-			for (const f of ["hash-store.sqlite", "hash-store.sqlite-wal", "hash-store.sqlite-shm", ".wsPath"]) {
-				try { const s = await stat(join(dir, f)); totalBytes += s.size; } catch {}
+			for (const file of [
+				"hash-store.sqlite",
+				"hash-store.sqlite-wal",
+				"hash-store.sqlite-shm",
+				".wsPath",
+			] as const) {
+				try {
+					totalBytes += (await stat(join(dir, file))).size;
+				} catch (error) { console.warn(`dsh-better-edit: suppressed error: ${error instanceof Error ? error.message : String(error)}`); }
 			}
-			infos.push({ name, dir, mtimeMs, totalBytes });
-		} catch {}
+			infos.push({ name, dir, mtimeMs: st.mtimeMs, totalBytes });
+		} catch (error) { console.warn(`dsh-better-edit: stat failed for central dir ${dir}: ${error instanceof Error ? error.message : String(error)}`); }
 	}
-	infos.sort((a,b) => a.mtimeMs - b.mtimeMs);
+
+	infos.sort((a, b) => a.mtimeMs - b.mtimeMs);
+
+	const maxAgeMs = cfg.storeMaxAgeDays * 24 * 60 * 60 * 1000;
 	const toDelete: typeof infos = [];
-	let totalCount = infos.length + liveDirs.size;
-	let totalBytes = infos.reduce((s,x)=>s+x.totalBytes,0);
-	// also include live sizes? For threshold, count all dirs (live+cold) — but we never delete live, so threshold applies to cold+live total
-	// first evict mtime>30d
-	const maxAgeMs = cfg.storeMaxAgeDays * 24*60*60*1000;
 	for (const info of infos) {
 		if (now - info.mtimeMs > maxAgeMs) toDelete.push(info);
 	}
-	let remaining = infos.filter(i => !toDelete.includes(i));
-	// then LRU until count<100 && sum<500MB (or config)
-	remaining.sort((a,b)=>a.mtimeMs-b.mtimeMs);
-	let curCount = toDelete.length + liveDirs.size + remaining.length;
-	let curBytes = toDelete.reduce((s,x)=>s+x.totalBytes,0) + remaining.reduce((s,x)=>s+x.totalBytes,0);
-	// we need to count live bytes too? live not in infos, so approximate: totalCount already includes live, totalBytes currently only cold — use cold for bytes throttling as live are hot and not counted for eviction trigger?
-	// Simpler: evict oldest remaining until cold count thresholds satisfied
-	for (const info of [...remaining]) {
-		if (toDelete.includes(info)) continue;
-		if (curCount < 100 && curBytes < cfg.storeMaxTotalBytes) break;
-		// need to evict oldest
+
+	let remaining = infos.filter((info) => !toDelete.includes(info));
+	let currentCount = liveDirs.size + remaining.length + toDelete.length;
+	let currentBytes = [...remaining, ...toDelete].reduce(
+		(sum, info) => sum + info.totalBytes,
+		0,
+	);
+
+	for (const info of [...remaining].sort((a, b) => a.mtimeMs - b.mtimeMs)) {
+		if (currentCount < 100 && currentBytes < cfg.storeMaxTotalBytes) break;
 		toDelete.push(info);
-		curCount--;
-		curBytes -= info.totalBytes;
-		remaining = remaining.filter(x=>x!==info);
+		currentCount--;
+		currentBytes -= info.totalBytes;
+		remaining = remaining.filter((x) => x !== info);
 	}
+
 	for (const info of toDelete) {
-		if (liveDirs.has(info.name)) continue;
 		try {
-			if (!existsSync(info.dir)) continue;
-			// checkpoint WAL before delete if possible — best-effort open and checkpoint
-			try {
-				const dbPath = join(info.dir, "hash-store.sqlite");
-				if (existsSync(dbPath)) {
-					const tmpDb = new DatabaseSync(dbPath, { timeout: HASH_STORE_BUSY_TIMEOUT });
-					try { tmpDb.exec("PRAGMA wal_checkpoint(TRUNCATE)"); } catch {} finally { try { tmpDb.close(); } catch {} }
+			const dbPath = join(info.dir, "hash-store.sqlite");
+			if (existsSync(dbPath)) {
+				const tmpDb = new DatabaseSync(dbPath, {
+					timeout: HASH_STORE_BUSY_TIMEOUT,
+				});
+				try {
+					tmpDb.exec("PRAGMA wal_checkpoint(TRUNCATE)");
+				} catch (error) {
+				} finally {
+					try {
+						tmpDb.close();
+					} catch (error) { console.warn(`dsh-better-edit: suppressed error: ${error instanceof Error ? error.message : String(error)}`); }
 				}
-			} catch {}
+			}
 			await rm(info.dir, { recursive: true, force: true });
-		} catch (e) { console.error("central janitor delete failed for", info.dir, e); }
+		} catch (error) {
+			console.error("central janitor delete failed for", info.dir, error);
+		}
 	}
 }
 
@@ -801,7 +851,7 @@ async function openStore(storePath: string): Promise<HashStore> {
 				stmts.undoPruneOlderThan(Date.now() - cfg.undo_ttl_s * 1000);
 			});
 		}
-	} catch {}
+	} catch (error) { console.warn(`dsh-better-edit: suppressed error: ${error instanceof Error ? error.message : String(error)}`); }
 	const store = makeDomainStore(stmts);
 	stores.set(storePath, { path: storePath, db, stmts, store });
 	// best-effort pruneMissing — throttled per-store 24h to avoid stat storm, but row TTL above is always
@@ -812,8 +862,7 @@ async function openStore(storePath: string): Promise<HashStore> {
 			// fire-and-forget, but use the just-created store directly (no currentStore lookup)
 			store.pruneMissing().catch((e) => console.error("pruneMissing failed:", e));
 		}
-	} catch {}
-
+	} catch (error) { console.warn(`dsh-better-edit: suppressed error: ${error instanceof Error ? error.message : String(error)}`); }
 
 	if (!exitHandlerRegistered) {
 		exitHandlerRegistered = true;
@@ -888,9 +937,9 @@ export function withStore(fn: () => void): void {
 			} catch (e) {
 				try {
 					store.db.exec("ROLLBACK");
-			} catch {
-				// best-effort rollback; the original error propagates
-			}
+				} catch (error) {
+					// best-effort rollback; the original error propagates
+				}
 				throw e;
 			}
 		});
@@ -899,7 +948,10 @@ export function withStore(fn: () => void): void {
 	}
 }
 
-async function migrateLegacy(db: DatabaseSync, storePath: string): Promise<void> {
+async function migrateLegacy(
+	db: DatabaseSync,
+	storePath: string,
+): Promise<void> {
 	const legacyPath = join(dirname(storePath), "hash-store.json");
 	let content: string;
 	try {
@@ -982,4 +1034,3 @@ export async function upsertSnapshotFor(
 	const store = await loadHashStore();
 	store.upsertSnapshot(path, checksum, lineCount, hashes);
 }
-
