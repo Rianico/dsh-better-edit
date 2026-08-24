@@ -15,10 +15,11 @@
  */
 
 import { appendFileSync, existsSync, readFileSync } from "node:fs";
-import { readFile, rename, mkdir, stat } from "node:fs/promises";
+import { readFile, readdir, rename, rm, mkdir, stat } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { hashStorePath, loadConfig } from "./paths.js";
+import { resolveDshHome } from "@deepseek-ai/dsh-home-paths";
 import { workspaceCwd } from "./workspace.js";
 import { errCode, splitLines } from "./utils.js";
 import { initHasher, contentChecksum, HASH_RE, CANON_VERSION } from "./hashline/hash-assign.js";
@@ -83,6 +84,7 @@ interface Prepared {
 	undoUpsert: (...params: SqlParams) => void;
 	undoGet: (...params: SqlParams) => Record<string, unknown> | undefined;
 	undoDelete: (...params: SqlParams) => void;
+	undoPruneOlderThan: (...params: SqlParams) => void;
 	servedGet: (...params: SqlParams) => Record<string, unknown> | undefined;
 	servedUpsert: (...params: SqlParams) => void;
 	servedReportedUpsert: (...params: SqlParams) => void;
@@ -126,6 +128,7 @@ export interface HashStore {
 	getUndo(path: string): UndoRecord | undefined;
 	upsertUndo(path: string, entry: UndoRecord): void;
 	deleteUndo(path: string): void;
+	pruneUndoOlderThan(ts: number): void;
 
 	// ---- served rows (what the model has seen, per session+path) ------------
 	/** The served hashes array for a session+path, healing a corrupt row; [] when nothing was served. */
@@ -141,6 +144,7 @@ export interface HashStore {
 	deleteServedByPath(path: string): void;
 	wipeServed(sessionKey: string): void;
 	pruneServedOlderThan(ts: number): void;
+	pruneUndoOlderThan(ts: number): void;
 
 	// ---- maintenance ---------------------------------------------------------
 	/** Delete every row family's entries for paths that no longer exist on disk. */
@@ -307,6 +311,7 @@ function buildStore(db: DatabaseSync): { db: DatabaseSync; stmts: Prepared } {
 		"SELECT content, bom, ending, hashes, result_content FROM undo WHERE path = ?",
 	);
 	const undoDelStmt = db.prepare("DELETE FROM undo WHERE path = ?");
+	const undoPruneOlderThanStmt = db.prepare("DELETE FROM undo WHERE updated_at < ?");
 	const servedGetStmt = db.prepare(
 		"SELECT hashes, reported FROM served WHERE session_id = ? AND path = ?",
 	);
@@ -356,6 +361,11 @@ function buildStore(db: DatabaseSync): { db: DatabaseSync; stmts: Prepared } {
 		undoDelete: (...params) => {
 			withBusyRetry(() => {
 				undoDelStmt.run(...params);
+			});
+		},
+		undoPruneOlderThan: (...params) => {
+			withBusyRetry(() => {
+				undoPruneOlderThanStmt.run(...params);
 			});
 		},
 		servedGet: (...params) =>
@@ -539,6 +549,9 @@ function makeDomainStore(stmts: Prepared): HashStore {
 		pruneServedOlderThan(ts) {
 			stmts.servedPruneOlderThan(ts);
 		},
+		pruneUndoOlderThan(ts) {
+			stmts.undoPruneOlderThan(ts);
+		},
 
 		async pruneMissing() {
 			const rows = stmts.allPaths() as { path: string }[];
@@ -590,6 +603,12 @@ function shutdownDb(db: DatabaseSync): void {
 }
 
 const STAT_BATCH = 64;
+
+// ---- throttled maintenance (central GC + row TTL) ----
+let lastPruneMsByStore = new Map<string, number>();
+let lastJanitorMs = 0;
+const PRUNE_THROTTLE_MS = 24 * 60 * 60 * 1000;
+const JANITOR_THROTTLE_MS = 24 * 60 * 60 * 1000;
 
 async function statMissing(rows: { path: string }[]): Promise<string[]> {
 	const missing: string[] = [];
@@ -656,6 +675,92 @@ function handleGitPollution(storePath: string): void {
     // best-effort, never throw at store open
   }
 }
+export async function runCentralJanitorIfDue(): Promise<void> {
+	const now = Date.now();
+	if (now - lastJanitorMs < JANITOR_THROTTLE_MS) return;
+	lastJanitorMs = now;
+	let cfg: ReturnType<typeof loadConfig>;
+	try { cfg = loadConfig(); } catch { return; }
+	// only for central/custom central — workspace mode is user-owned, skip directory GC
+	if (cfg.storeDir === "workspace") return;
+	const runtimeDir = join(resolveDshHome(), "plugins", "dsh-better-edit", "runtime");
+	let entries: string[];
+	try { entries = await readdir(runtimeDir); } catch (e: unknown) { if (errCode(e) === "ENOENT") return; console.error("central janitor readdir failed:", e); return; }
+	// live central dirs = basenames of currently open central stores
+	const liveDirs = new Set<string>();
+	for (const [p] of stores) {
+		if (p.startsWith(runtimeDir + "/")) {
+			const base = p.slice(runtimeDir.length + 1).split("/")[0];
+			if (base) liveDirs.add(base);
+		}
+		// also check openings map for in-flight
+	}
+	for (const [p] of openings) {
+		// openings keys are storePath strings as well
+		if (typeof p === "string" && p.startsWith(runtimeDir + "/")) {
+			const base = (p as string).slice(runtimeDir.length + 1).split("/")[0];
+			if (base) liveDirs.add(base);
+		}
+	}
+	// stat all entries
+	const infos: { name: string; dir: string; mtimeMs: number; totalBytes: number }[] = [];
+	for (const name of entries) {
+		const dir = join(runtimeDir, name);
+		if (liveDirs.has(name)) continue; // never delete live
+		try {
+			const st = await stat(dir);
+			if (!st.isDirectory()) continue;
+			const mtimeMs = st.mtimeMs;
+			// sum sqlite + wal + shm + .wsPath
+			let totalBytes = 0;
+			for (const f of ["hash-store.sqlite", "hash-store.sqlite-wal", "hash-store.sqlite-shm", ".wsPath"]) {
+				try { const s = await stat(join(dir, f)); totalBytes += s.size; } catch {}
+			}
+			infos.push({ name, dir, mtimeMs, totalBytes });
+		} catch {}
+	}
+	infos.sort((a,b) => a.mtimeMs - b.mtimeMs);
+	const toDelete: typeof infos = [];
+	let totalCount = infos.length + liveDirs.size;
+	let totalBytes = infos.reduce((s,x)=>s+x.totalBytes,0);
+	// also include live sizes? For threshold, count all dirs (live+cold) — but we never delete live, so threshold applies to cold+live total
+	// first evict mtime>30d
+	const maxAgeMs = cfg.storeMaxAgeDays * 24*60*60*1000;
+	for (const info of infos) {
+		if (now - info.mtimeMs > maxAgeMs) toDelete.push(info);
+	}
+	let remaining = infos.filter(i => !toDelete.includes(i));
+	// then LRU until count<100 && sum<500MB (or config)
+	remaining.sort((a,b)=>a.mtimeMs-b.mtimeMs);
+	let curCount = toDelete.length + liveDirs.size + remaining.length;
+	let curBytes = toDelete.reduce((s,x)=>s+x.totalBytes,0) + remaining.reduce((s,x)=>s+x.totalBytes,0);
+	// we need to count live bytes too? live not in infos, so approximate: totalCount already includes live, totalBytes currently only cold — use cold for bytes throttling as live are hot and not counted for eviction trigger?
+	// Simpler: evict oldest remaining until cold count thresholds satisfied
+	for (const info of [...remaining]) {
+		if (toDelete.includes(info)) continue;
+		if (curCount < 100 && curBytes < cfg.storeMaxTotalBytes) break;
+		// need to evict oldest
+		toDelete.push(info);
+		curCount--;
+		curBytes -= info.totalBytes;
+		remaining = remaining.filter(x=>x!==info);
+	}
+	for (const info of toDelete) {
+		if (liveDirs.has(info.name)) continue;
+		try {
+			if (!existsSync(info.dir)) continue;
+			// checkpoint WAL before delete if possible — best-effort open and checkpoint
+			try {
+				const dbPath = join(info.dir, "hash-store.sqlite");
+				if (existsSync(dbPath)) {
+					const tmpDb = new DatabaseSync(dbPath, { timeout: HASH_STORE_BUSY_TIMEOUT });
+					try { tmpDb.exec("PRAGMA wal_checkpoint(TRUNCATE)"); } catch {} finally { try { tmpDb.close(); } catch {} }
+				}
+			} catch {}
+			await rm(info.dir, { recursive: true, force: true });
+		} catch (e) { console.error("central janitor delete failed for", info.dir, e); }
+	}
+}
 
 async function openStore(storePath: string): Promise<HashStore> {
 	// Multi-store: never close another workspace's store when opening this one.
@@ -689,8 +794,26 @@ async function openStore(storePath: string): Promise<HashStore> {
 	withBusyRetry(() => {
 		stmts.servedPruneOlderThan(Date.now() - SERVED_TTL_MS);
 	});
+	try {
+		const cfg = loadConfig();
+		if (cfg.undo_ttl_s !== -1) {
+			withBusyRetry(() => {
+				stmts.undoPruneOlderThan(Date.now() - cfg.undo_ttl_s * 1000);
+			});
+		}
+	} catch {}
 	const store = makeDomainStore(stmts);
 	stores.set(storePath, { path: storePath, db, stmts, store });
+	// best-effort pruneMissing — throttled per-store 24h to avoid stat storm, but row TTL above is always
+	try {
+		const lastPrune = lastPruneMsByStore.get(storePath) ?? 0;
+		if (Date.now() - lastPrune > PRUNE_THROTTLE_MS) {
+			lastPruneMsByStore.set(storePath, Date.now());
+			// fire-and-forget, but use the just-created store directly (no currentStore lookup)
+			store.pruneMissing().catch((e) => console.error("pruneMissing failed:", e));
+		}
+	} catch {}
+
 
 	if (!exitHandlerRegistered) {
 		exitHandlerRegistered = true;
