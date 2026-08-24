@@ -139,29 +139,33 @@ export interface HashStore {
 	deleteUndo(path: string): void;
 	pruneUndoOlderThan(ts: number): void;
 
-	// ---- served rows (what the model has seen, per session+path) ------------
-	/** The served hashes array for a session+path, healing a corrupt row; [] when nothing was served. */
-	getServed(sessionKey: string, path: string): (string | null)[];
-	/** The reported-drift hash set for a session+path (lenient parse, never deletes). */
-	getServedReported(sessionKey: string, path: string): Set<string>;
-	/** Persist the hashes JSON column for a session+path. */
-	upsertServed(sessionKey: string, path: string, hashesJson: string): void;
-	/** Persist the reported-drift JSON column for a session+path (inserting a fresh empty hashes row). */
-	upsertServedReported(
-		sessionKey: string,
-		path: string,
-		reportedJson: string,
-	): void;
-	clearServedReported(sessionKey: string, path: string): void;
-	deleteServed(sessionKey: string, path: string): void;
-	deleteServedByPath(path: string): void;
-	wipeServed(sessionKey: string): void;
-	pruneServedOlderThan(ts: number): void;
-	pruneUndoOlderThan(ts: number): void;
 
 	// ---- maintenance ---------------------------------------------------------
 	/** Delete every row family's entries for paths that no longer exist on disk. */
 	pruneMissing(): Promise<void>;
+}
+
+/**
+ * Served persistence — internal, owned by SessionView. Not part of the public HashStore API.
+ * SessionView is the sole owner of the served merge invariant; HashStore is the persistence adapter.
+ */
+export interface ServedPersistence {
+  getServed(sessionKey: string, path: string): (string | null)[];
+  getServedReported(sessionKey: string, path: string): Set<string>;
+  upsertServed(sessionKey: string, path: string, hashesJson: string): void;
+  upsertServedReported(sessionKey: string, path: string, reportedJson: string): void;
+  clearServedReported(sessionKey: string, path: string): void;
+  deleteServed(sessionKey: string, path: string): void;
+  deleteServedByPath(path: string): void;
+  wipeServed(sessionKey: string): void;
+  pruneServedOlderThan(ts: number): void;
+}
+
+export type InternalHashStore = HashStore & ServedPersistence;
+
+/** Load the store as served persistence — internal, for SessionView only. */
+export function loadServedStore(cwd?: string): Promise<ServedPersistence> {
+  return loadHashStore(cwd) as unknown as Promise<ServedPersistence>;
 }
 
 // ---- db plumbing (private) --------------------------------------------------
@@ -221,7 +225,7 @@ function openDbWithBusyRetry(storePath: string): {
 /** One open store per store path (per workspace); parallel sessions share per-workspace dbs. */
 const stores = new Map<
 	string,
-	{ path: string; db: DatabaseSync; stmts: Prepared; store: HashStore }
+	{ path: string; db: DatabaseSync; stmts: Prepared; store: InternalHashStore }
 >();
 const openings = new Map<string, Promise<HashStore>>();
 setStoresGetter(() => stores as Map<string, { path: string }>, () => openings as Map<string, Promise<any>>);
@@ -426,7 +430,7 @@ function buildStore(db: DatabaseSync): { db: DatabaseSync; stmts: Prepared } {
 }
 
 /** Wire the domain methods over the prepared statements. */
-function makeDomainStore(stmts: Prepared): HashStore {
+function makeDomainStore(stmts: Prepared): InternalHashStore {
 	return {
 		engine: "node:sqlite",
 
@@ -703,7 +707,7 @@ export function loadHashStore(cwd?: string): Promise<HashStore> {
 
 /** The cached store entry for the active workspace (or the shared-home fallback), if open. */
 function currentStore():
-	| { db: DatabaseSync; stmts: Prepared; store: HashStore }
+	| { db: DatabaseSync; stmts: Prepared; store: InternalHashStore }
 	| undefined {
 	const entry = stores.get(storePathFor());
 	return entry?.db.isOpen ? entry : undefined;

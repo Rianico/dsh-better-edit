@@ -32,7 +32,7 @@ import { randomUUID } from "node:crypto";
 import { AsyncLocalStorage } from "node:async_hooks";
 import type { ToolExecution } from "@deepseek-ai/dsh-tools";
 import { HASH_RE } from "./hashline/hash-assign.js";
-import { loadHashStore, withStore } from "./hash-store.js";
+import { loadHashStore, loadServedStore, withStore } from "./hash-store.js";
 import { SERVED_ECHO_CAP } from "./constants.js";
 import type { ServedRow, ResolvedRange } from "./hashline/served.js";
 import { fmtServedRows } from "./hashline/served.js";
@@ -70,7 +70,7 @@ export function execSessionKey(exec: ToolExecution): string {
 export { configDir, hashStorePath, resolveTarget };
 
 // --- hash-store re-export (persistence note) ---
-export { loadHashStore, shutdownHashStore, withStore } from "./hash-store.js";
+export { loadHashStore, loadServedStore, shutdownHashStore, withStore } from "./hash-store.js";
 export type { HashStore } from "./hash-store.js";
 
 // --- served state (owned here) ---
@@ -136,14 +136,14 @@ export function _mergeServedRows(
 }
 
 export async function loadServed(sessionKey: string, path: string): Promise<(string | null)[]> {
-  const store = await loadHashStore();
+  const store = await loadServedStore();
   return store.getServed(sessionKey, path);
 }
 
 export async function recordServed(sessionKey: string, path: string, rows: ServedEntry[], lineCount?: number): Promise<void> {
   if (rows.length === 0) return;
   try {
-    const store = await loadHashStore();
+    const store = await loadServedStore();
     withStore(() => {
       const current = store.getServed(sessionKey, path);
       const updated = _mergeServedRows(current, rows, lineCount === undefined ? undefined : { truncateTo: lineCount });
@@ -158,7 +158,7 @@ export async function recordServed(sessionKey: string, path: string, rows: Serve
 export async function recordServedTruncated(sessionKey: string, path: string, rows: ServedEntry[], lineCount: number, clearFrom = 0): Promise<void> {
   if (rows.length === 0) return;
   try {
-    const store = await loadHashStore();
+    const store = await loadServedStore();
     withStore(() => {
       const current = store.getServed(sessionKey, path);
       const updated = _mergeServedRows(current, rows, { truncateTo: lineCount, clearFrom });
@@ -173,7 +173,7 @@ export async function recordServedTruncated(sessionKey: string, path: string, ro
 
 export async function driftReported(sessionKey: string, path: string): Promise<Set<string>> {
   try {
-    const store = await loadHashStore();
+    const store = await loadServedStore();
     return store.getServedReported(sessionKey, path);
   } catch (error) {
     console.error("Failed to load reported drift set:", error);
@@ -185,7 +185,7 @@ export async function markDriftReported(sessionKey: string, path: string, hashes
   try {
     const valid = hashes.filter((hash) => HASH_RE.test(hash));
     if (valid.length === 0) return;
-    const store = await loadHashStore();
+    const store = await loadServedStore();
     withStore(() => {
       const current = store.getServedReported(sessionKey, path);
       for (const hash of valid) current.add(hash);
@@ -198,7 +198,7 @@ export async function markDriftReported(sessionKey: string, path: string, hashes
 
 export async function clearDriftReported(sessionKey: string, path: string): Promise<void> {
   try {
-    const store = await loadHashStore();
+    const store = await loadServedStore();
     withStore(() => {
       store.clearServedReported(sessionKey, path);
     });
@@ -209,7 +209,7 @@ export async function clearDriftReported(sessionKey: string, path: string): Prom
 
 export async function wipeServedState(sessionKey: string): Promise<void> {
   try {
-    const store = await loadHashStore();
+    const store = await loadServedStore();
     store.wipeServed(sessionKey);
   } catch (error) {
     console.error("Failed to wipe served state:", error);
