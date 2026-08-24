@@ -14,15 +14,25 @@
  * @module dsh-better-edit/hash-store
  */
 
-import { existsSync } from "node:fs";
-import { readFile, rename, mkdir, stat } from "node:fs/promises";
+import { appendFileSync, existsSync, readFileSync } from "node:fs";
+import { readFile, readdir, rename, rm, mkdir, stat } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import { hashStorePath } from "./paths.js";
+import { hashStorePath } from "./store-tenancy.js";
+import { onStoreOpen, setStoresGetter } from "./store-lifecycle.js";
 import { workspaceCwd } from "./workspace.js";
 import { errCode, splitLines } from "./utils.js";
-import { initHasher, contentChecksum, HASH_RE, CANON_VERSION } from "./hashline/hash-assign.js";
-import { HASH_STORE_VERSION, HASH_STORE_BUSY_TIMEOUT, SERVED_TTL_MS } from "./constants.js";
+import {
+	initHasher,
+	contentChecksum,
+	HASH_RE,
+	CANON_VERSION,
+} from "./hashline/hash-assign.js";
+import {
+	HASH_STORE_VERSION,
+	HASH_STORE_BUSY_TIMEOUT,
+	SERVED_TTL_MS,
+} from "./constants.js";
 
 // ---- validators (owned here; the store's corruption handling uses them) ----
 
@@ -83,6 +93,7 @@ interface Prepared {
 	undoUpsert: (...params: SqlParams) => void;
 	undoGet: (...params: SqlParams) => Record<string, unknown> | undefined;
 	undoDelete: (...params: SqlParams) => void;
+	undoPruneOlderThan: (...params: SqlParams) => void;
 	servedGet: (...params: SqlParams) => Record<string, unknown> | undefined;
 	servedUpsert: (...params: SqlParams) => void;
 	servedReportedUpsert: (...params: SqlParams) => void;
@@ -126,25 +137,35 @@ export interface HashStore {
 	getUndo(path: string): UndoRecord | undefined;
 	upsertUndo(path: string, entry: UndoRecord): void;
 	deleteUndo(path: string): void;
+	pruneUndoOlderThan(ts: number): void;
 
-	// ---- served rows (what the model has seen, per session+path) ------------
-	/** The served hashes array for a session+path, healing a corrupt row; [] when nothing was served. */
-	getServed(sessionKey: string, path: string): (string | null)[];
-	/** The reported-drift hash set for a session+path (lenient parse, never deletes). */
-	getServedReported(sessionKey: string, path: string): Set<string>;
-	/** Persist the hashes JSON column for a session+path. */
-	upsertServed(sessionKey: string, path: string, hashesJson: string): void;
-	/** Persist the reported-drift JSON column for a session+path (inserting a fresh empty hashes row). */
-	upsertServedReported(sessionKey: string, path: string, reportedJson: string): void;
-	clearServedReported(sessionKey: string, path: string): void;
-	deleteServed(sessionKey: string, path: string): void;
-	deleteServedByPath(path: string): void;
-	wipeServed(sessionKey: string): void;
-	pruneServedOlderThan(ts: number): void;
 
 	// ---- maintenance ---------------------------------------------------------
 	/** Delete every row family's entries for paths that no longer exist on disk. */
 	pruneMissing(): Promise<void>;
+}
+
+/**
+ * Served persistence — internal, owned by SessionView. Not part of the public HashStore API.
+ * SessionView is the sole owner of the served merge invariant; HashStore is the persistence adapter.
+ */
+export interface ServedPersistence {
+  getServed(sessionKey: string, path: string): (string | null)[];
+  getServedReported(sessionKey: string, path: string): Set<string>;
+  upsertServed(sessionKey: string, path: string, hashesJson: string): void;
+  upsertServedReported(sessionKey: string, path: string, reportedJson: string): void;
+  clearServedReported(sessionKey: string, path: string): void;
+  deleteServed(sessionKey: string, path: string): void;
+  deleteServedByPath(path: string): void;
+  wipeServed(sessionKey: string): void;
+  pruneServedOlderThan(ts: number): void;
+}
+
+export type InternalHashStore = HashStore & ServedPersistence;
+
+/** Load the store as served persistence — internal, for SessionView only. */
+export function loadServedStore(cwd?: string): Promise<ServedPersistence> {
+  return loadHashStore(cwd) as unknown as Promise<ServedPersistence>;
 }
 
 // ---- db plumbing (private) --------------------------------------------------
@@ -204,9 +225,10 @@ function openDbWithBusyRetry(storePath: string): {
 /** One open store per store path (per workspace); parallel sessions share per-workspace dbs. */
 const stores = new Map<
 	string,
-	{ path: string; db: DatabaseSync; stmts: Prepared; store: HashStore }
+	{ path: string; db: DatabaseSync; stmts: Prepared; store: InternalHashStore }
 >();
 const openings = new Map<string, Promise<HashStore>>();
+setStoresGetter(() => stores as Map<string, { path: string }>, () => openings as Map<string, Promise<any>>);
 let exitHandlerRegistered = false;
 
 function openDb(storePath: string): { db: DatabaseSync; stmts: Prepared } {
@@ -218,8 +240,8 @@ function openDb(storePath: string): { db: DatabaseSync; stmts: Prepared } {
 	} catch (error) {
 		try {
 			db.close();
-		} catch {
-			// best-effort close when the store build fails
+		} catch (error) {
+			console.warn(error); // best-effort close when the store build fails
 		}
 		throw error;
 	}
@@ -258,8 +280,7 @@ function buildStore(db: DatabaseSync): { db: DatabaseSync; stmts: Prepared } {
 		.prepare("SELECT value FROM meta WHERE key = 'version'")
 		.get() as { value?: string } | undefined;
 	const versionChanged =
-		versionRow !== undefined &&
-		versionRow.value !== String(HASH_STORE_VERSION);
+		versionRow !== undefined && versionRow.value !== String(HASH_STORE_VERSION);
 	if (versionChanged) {
 		db.exec("DELETE FROM snapshots");
 		db.exec("DELETE FROM undo");
@@ -283,10 +304,12 @@ function buildStore(db: DatabaseSync): { db: DatabaseSync; stmts: Prepared } {
 			"PRIMARY KEY (session_id, path)" +
 			")",
 	);
-	db.prepare(
-		"INSERT INTO meta (key, value) VALUES ('version', ?) " +
-			"ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-	).run(String(HASH_STORE_VERSION));
+	db
+		.prepare(
+			"INSERT INTO meta (key, value) VALUES ('version', ?) " +
+				"ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+		)
+		.run(String(HASH_STORE_VERSION));
 	const getStmt = db.prepare(
 		"SELECT hashes FROM snapshots WHERE path = ? AND checksum = ? AND line_count = ?",
 	);
@@ -307,6 +330,9 @@ function buildStore(db: DatabaseSync): { db: DatabaseSync; stmts: Prepared } {
 		"SELECT content, bom, ending, hashes, result_content FROM undo WHERE path = ?",
 	);
 	const undoDelStmt = db.prepare("DELETE FROM undo WHERE path = ?");
+	const undoPruneOlderThanStmt = db.prepare(
+		"DELETE FROM undo WHERE updated_at < ?",
+	);
 	const servedGetStmt = db.prepare(
 		"SELECT hashes, reported FROM served WHERE session_id = ? AND path = ?",
 	);
@@ -332,8 +358,7 @@ function buildStore(db: DatabaseSync): { db: DatabaseSync; stmts: Prepared } {
 	const stmts: Prepared = {
 		get: (...params) =>
 			getStmt.get(...params) as Record<string, unknown> | undefined,
-		allPaths: (...params) =>
-			allStmt.all(...params) as Record<string, unknown>[],
+		allPaths: (...params) => allStmt.all(...params) as Record<string, unknown>[],
 		allHashes: (...params) =>
 			allHashesStmt.all(...params) as Record<string, unknown>[],
 		deleteOne: (...params) => {
@@ -356,6 +381,11 @@ function buildStore(db: DatabaseSync): { db: DatabaseSync; stmts: Prepared } {
 		undoDelete: (...params) => {
 			withBusyRetry(() => {
 				undoDelStmt.run(...params);
+			});
+		},
+		undoPruneOlderThan: (...params) => {
+			withBusyRetry(() => {
+				undoPruneOlderThanStmt.run(...params);
 			});
 		},
 		servedGet: (...params) =>
@@ -400,7 +430,7 @@ function buildStore(db: DatabaseSync): { db: DatabaseSync; stmts: Prepared } {
 }
 
 /** Wire the domain methods over the prepared statements. */
-function makeDomainStore(stmts: Prepared): HashStore {
+function makeDomainStore(stmts: Prepared): InternalHashStore {
 	return {
 		engine: "node:sqlite",
 
@@ -414,7 +444,7 @@ function makeDomainStore(stmts: Prepared): HashStore {
 				if (isValidHashList(parsed)) return parsed;
 				if (deleteCorrupt) stmts.deleteOne(path);
 				return undefined;
-			} catch {
+			} catch (error) {
 				if (deleteCorrupt) stmts.deleteOne(path);
 				return undefined;
 			}
@@ -445,8 +475,8 @@ function makeDomainStore(stmts: Prepared): HashStore {
 					const parsed = JSON.parse(row.hashes) as unknown;
 					if (!isValidHashList(parsed)) continue;
 					if (hashes.every((h) => parsed.includes(h))) matches.push(row.path);
-				} catch {
-					// unparseable row → skip it
+				} catch (error) {
+					console.warn(error); // unparseable row → skip it
 				}
 			}
 			return matches;
@@ -468,7 +498,7 @@ function makeDomainStore(stmts: Prepared): HashStore {
 					hashes: parsed as string[],
 					resultContent: row.result_content as string,
 				};
-			} catch {
+			} catch (error) {
 				stmts.undoDelete(path);
 				return undefined;
 			}
@@ -496,7 +526,7 @@ function makeDomainStore(stmts: Prepared): HashStore {
 				if (isValidServedList(parsed)) return parsed;
 				stmts.servedDelete(sessionKey, path);
 				return [];
-			} catch {
+			} catch (error) {
 				stmts.servedDelete(sessionKey, path);
 				return [];
 			}
@@ -514,7 +544,7 @@ function makeDomainStore(stmts: Prepared): HashStore {
 						(h): h is string => typeof h === "string" && HASH_RE.test(h),
 					),
 				);
-			} catch {
+			} catch (error) {
 				return new Set();
 			}
 		},
@@ -538,6 +568,9 @@ function makeDomainStore(stmts: Prepared): HashStore {
 		},
 		pruneServedOlderThan(ts) {
 			stmts.servedPruneOlderThan(ts);
+		},
+		pruneUndoOlderThan(ts) {
+			stmts.undoPruneOlderThan(ts);
 		},
 
 		async pruneMissing() {
@@ -583,8 +616,8 @@ async function quarantineStore(storePath: string): Promise<void> {
 function shutdownDb(db: DatabaseSync): void {
 	try {
 		db.exec("PRAGMA wal_checkpoint(TRUNCATE)");
-	} catch {
-		// best-effort checkpoint before close
+	} catch (error) {
+		console.warn(`dsh-better-edit: wal_checkpoint failed on shutdown: ${error instanceof Error ? error.message : String(error)}`); // best-effort checkpoint before close
 	}
 	db.close();
 }
@@ -617,7 +650,6 @@ async function openStore(storePath: string): Promise<HashStore> {
 
 	await initHasher();
 	await mkdir(dirname(storePath), { recursive: true });
-
 	let existed = existsSync(storePath);
 	let opened: { db: DatabaseSync; stmts: Prepared };
 	try {
@@ -640,22 +672,9 @@ async function openStore(storePath: string): Promise<HashStore> {
 	if (!existed) {
 		await migrateLegacy(db, storePath);
 	}
-	withBusyRetry(() => {
-		stmts.servedPruneOlderThan(Date.now() - SERVED_TTL_MS);
-	});
 	const store = makeDomainStore(stmts);
 	stores.set(storePath, { path: storePath, db, stmts, store });
-
-	if (!exitHandlerRegistered) {
-		exitHandlerRegistered = true;
-		process.once("exit", () => shutdownHashStore());
-		for (const sig of ["SIGINT", "SIGTERM"] as const) {
-			process.once(sig, () => {
-				shutdownHashStore();
-				process.kill(process.pid, sig);
-			});
-		}
-	}
+	await onStoreOpen(storePath, stmts, store);
 
 	return store;
 }
@@ -688,7 +707,7 @@ export function loadHashStore(cwd?: string): Promise<HashStore> {
 
 /** The cached store entry for the active workspace (or the shared-home fallback), if open. */
 function currentStore():
-	| { db: DatabaseSync; stmts: Prepared; store: HashStore }
+	| { db: DatabaseSync; stmts: Prepared; store: InternalHashStore }
 	| undefined {
 	const entry = stores.get(storePathFor());
 	return entry?.db.isOpen ? entry : undefined;
@@ -719,9 +738,9 @@ export function withStore(fn: () => void): void {
 			} catch (e) {
 				try {
 					store.db.exec("ROLLBACK");
-			} catch {
-				// best-effort rollback; the original error propagates
-			}
+				} catch (error) {
+					console.warn(error); // best-effort rollback; the original error propagates
+				}
 				throw e;
 			}
 		});
@@ -730,7 +749,10 @@ export function withStore(fn: () => void): void {
 	}
 }
 
-async function migrateLegacy(db: DatabaseSync, storePath: string): Promise<void> {
+async function migrateLegacy(
+	db: DatabaseSync,
+	storePath: string,
+): Promise<void> {
 	const legacyPath = join(dirname(storePath), "hash-store.json");
 	let content: string;
 	try {
@@ -813,4 +835,3 @@ export async function upsertSnapshotFor(
 	const store = await loadHashStore();
 	store.upsertSnapshot(path, checksum, lineCount, hashes);
 }
-

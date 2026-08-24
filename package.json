@@ -1,6 +1,6 @@
 {
   "name": "dsh-better-edit",
-  "version": "0.3.2",
+  "version": "0.4.0-rc.1",
   "type": "module",
   "description": "Hash-anchored read/edit/undo_last_edit tools for DeepSeek Harness (dsh). Every line gets a unique 3-char hash (A-Za-z0-9) that stays stable across edits; stale or ambiguous anchors are rejected, never fuzzy-matched. Undo persists across restarts.",
   "main": "lib/index.js",
@@ -56,7 +56,8 @@
   "dependencies": {
     "diff": "^8.0.2",
     "file-type": "^21.3.0",
-    "xxhash-wasm": "^1.1.0"
+    "xxhash-wasm": "^1.1.0",
+    "zod": "^3.25.76"
   },
   "engines": {
     "node": "^22.19.0 || >=24.0.0"
@@ -76,9 +77,9 @@
     "@deepseek-ai/dsh-agent": "0.1.0-rc.6",
     "@deepseek-ai/dsh-fs": "0.1.0-rc.6",
     "@deepseek-ai/dsh-home-paths": "0.1.0-rc.6",
+    "@deepseek-ai/dsh-sandbox": "^0.1.0-rc.6",
     "@deepseek-ai/dsh-session": "0.1.0-rc.6",
     "@deepseek-ai/dsh-tools": "0.1.0-rc.6",
-    "@deepseek-ai/dsh-sandbox": "^0.1.0-rc.6",
     "@types/node": "^24.0.0",
     "@vitest/coverage-v8": "^4.1.10",
     "js-tiktoken": "1.0.21",

@@ -34,6 +34,8 @@ import {
 	type SectionOverride,
 } from "./guidance.js";
 import { configDir } from "./paths.js";
+import { ensureDefaultConfig } from "./store-config.js";
+import { onAppStart, onSessionStart } from "./store-lifecycle.js";
 
 /** Cordis plugin name used by loader diagnostics. */
 export const name = "dsh-better-edit";
@@ -136,6 +138,11 @@ function installAgentTools(rootCtx: Context, agent: Agent): void {
 
 /** Mount the bundle: initialize the store, then install tools per agent. */
 export function apply(rootCtx: Context): void {
+	// Central lifecycle janitor — throttled 24h, never deletes live hash (mtime hot)
+	// Runs once at app start and on each session-start (central mode only)
+	queueMicrotask(() => {
+		onAppStart().catch((e) => rootCtx.logger.warn(`dsh-better-edit: central janitor failed: ${e instanceof Error ? e.message : String(e)}`));
+	});
 	// Warm the hasher once; the per-workspace stores are opened lazily on the
 	// first tool call in each workspace (there is no shared store to prune at
 	// boot anymore).
@@ -148,6 +155,11 @@ export function apply(rootCtx: Context): void {
 	// Seed each shipped preset's guidance directory once, so users have
 	// editable per-preset overrides (idempotent: never rewrites existing
 	// files). A failure must never fail the boot.
+	ensureDefaultConfig().catch((error) => {
+		rootCtx.logger.warn(
+			`dsh-better-edit: default config materialization failed: ${error instanceof Error ? error.message : String(error)}`,
+		);
+	});
 	ensurePresetGuidance(configDir()).catch((error) => {
 		rootCtx.logger.warn(
 			`dsh-better-edit: guidance materialization failed: ${error instanceof Error ? error.message : String(error)}`,
@@ -156,6 +168,8 @@ export function apply(rootCtx: Context): void {
 
 	const registered = new WeakSet<Agent>();
 	rootCtx.on("agent/session-start", ({ agent }) => {
+		// throttled central janitor on session-start (inside same handler to avoid extra listener)
+		onSessionStart().catch((e) => rootCtx.logger.warn(`dsh-better-edit: central janitor failed: ${e instanceof Error ? e.message : String(e)}`));
 		if (registered.has(agent)) return;
 		registered.add(agent);
 		try {
