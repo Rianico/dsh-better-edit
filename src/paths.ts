@@ -5,19 +5,16 @@ import {
 	join,
 	dirname,
 	parse,
-	sep,
 } from "node:path";
-import { lstat, readlink } from "node:fs/promises";
 import {
 	cpSync,
 	existsSync,
-	lstatSync,
 	mkdirSync,
 	readFileSync,
-	readlinkSync,
 	statSync,
 	writeFileSync,
 } from "node:fs";
+import { canonicalAsync, canonicalSync } from "./canonical-path.js";
 import { createHash } from "node:crypto";
 import { resolveDshHome } from "@deepseek-ai/dsh-home-paths";
 import { errCode } from "./utils.js";
@@ -239,46 +236,7 @@ export function _resetConfigCache(): void {
 // ---- path helpers ----
 
 function canonicalWsSync(ws: string): string {
-	const absolutePath = resolvePath(ws);
-	const { root } = parse(absolutePath);
-	const parts = absolutePath
-		.slice(root.length)
-		.split(sep)
-		.filter((p) => p.length > 0);
-	const visited = new Set<string>();
-	let current = root;
-	let remaining = parts.slice();
-	while (remaining.length > 0) {
-		const [next, ...tail] = remaining;
-		const candidate = join(current, next!);
-		try {
-			const st = lstatSync(candidate);
-			if (!st.isSymbolicLink()) {
-				current = candidate;
-				remaining = tail;
-				continue;
-			}
-			if (visited.has(candidate)) {
-				const e = new Error(
-					`Too many symbolic links while resolving ${ws}`,
-				) as NodeJS.ErrnoException;
-				e.code = "ELOOP";
-				throw e;
-			}
-			visited.add(candidate);
-			const linkTarget = resolvePath(dirname(candidate), readlinkSync(candidate));
-			const targetParts = linkTarget
-				.slice(parse(linkTarget).root.length)
-				.split(sep)
-				.filter((p) => p.length > 0);
-			current = parse(linkTarget).root;
-			remaining = [...targetParts, ...tail];
-		} catch (error: unknown) {
-			if (errCode(error) === "ENOENT") return join(candidate, ...tail);
-			throw error;
-		}
-	}
-	return current;
+	return canonicalSync(ws);
 }
 
 function sanitizedBasename(ws: string): string {
@@ -419,56 +377,5 @@ export function toCwd(filePath: string, cwd: string): string {
  * @param path - the path to canonicalize (absolute or relative).
  */
 export async function resolveTarget(path: string): Promise<string> {
-	const absolutePath = resolvePath(path);
-	const { root } = parse(absolutePath);
-	const parts = absolutePath
-		.slice(root.length)
-		.split(sep)
-		.filter((part) => part.length > 0);
-	const visitedSymlinks = new Set<string>();
-
-	async function resParts(
-		currentPath: string,
-		remainingParts: string[],
-	): Promise<string> {
-		if (remainingParts.length === 0) {
-			return currentPath;
-		}
-
-		const [nextPart, ...tail] = remainingParts;
-		const candidatePath = join(currentPath, nextPart);
-
-		try {
-			const candidateStats = await lstat(candidatePath);
-			if (!candidateStats.isSymbolicLink()) {
-				return resParts(candidatePath, tail);
-			}
-
-			if (visitedSymlinks.has(candidatePath)) {
-				const error = new Error(
-					`Too many symbolic links while resolving ${path}`,
-				) as NodeJS.ErrnoException;
-				error.code = "ELOOP";
-				throw error;
-			}
-			visitedSymlinks.add(candidatePath);
-
-			const linkTargetPath = resolvePath(
-				dirname(candidatePath),
-				await readlink(candidatePath),
-			);
-			const targetParts = linkTargetPath
-				.slice(parse(linkTargetPath).root.length)
-				.split(sep)
-				.filter((part) => part.length > 0);
-			return resParts(parse(linkTargetPath).root, [...targetParts, ...tail]);
-		} catch (error: unknown) {
-			if (errCode(error) === "ENOENT") {
-				return join(candidatePath, ...tail);
-			}
-			throw error;
-		}
-	}
-
-	return resParts(root, parts);
+	return canonicalAsync(path);
 }
