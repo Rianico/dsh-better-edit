@@ -42,7 +42,9 @@ function ensureWsPathSidecar(dir: string, canonicalWs: string): void {
     if (existsSync(wsPathFile)) {
       const existing = readFileSync(wsPathFile, "utf-8").trim();
       if (existing !== canonicalWs) {
-        console.warn(`dsh-better-edit: central store collision for ${dir}: stored wsPath "${existing}" != current "${canonicalWs}" — keeping existing, hash collision risk`);
+        console.warn(
+          `dsh-better-edit: central store collision for ${dir}: stored wsPath "${existing}" != current "${canonicalWs}" — keeping existing, hash collision risk`,
+        );
       }
       return;
     }
@@ -52,7 +54,6 @@ function ensureWsPathSidecar(dir: string, canonicalWs: string): void {
     // best-effort, never throw at path resolution
   }
 }
-
 
 export function tenancyFor(cwd?: string): Tenancy {
   if (cwd === undefined) {
@@ -65,16 +66,36 @@ export function tenancyFor(cwd?: string): Tenancy {
   const cfg = loadConfig();
   const sd = cfg.storeDir;
   if (sd === "workspace") {
-    return { dir: join(resolvePath(cwd), ".dsh_better_edit"), mode: "workspace", canonical: canonicalSync(cwd) };
+    return {
+      dir: join(resolvePath(cwd), ".dsh_better_edit"),
+      mode: "workspace",
+      canonical: canonicalSync(cwd),
+    };
   }
   const canonical = canonicalSync(cwd);
   const h = hash8(cwd);
   if (sd === "central") {
-    const dir = join(resolveDshHome(), "plugins", "dsh-better-edit", "runtime", `${sanitizedBasename(cwd)}-${h}`);
+    const dir = join(
+      resolveDshHome(),
+      "plugins",
+      "dsh-better-edit",
+      "runtime",
+      `${sanitizedBasename(cwd)}-${h}`,
+    );
     ensureWsPathSidecar(dir, canonical);
-    return { dir, mode: "central", runtimeDir: join(resolveDshHome(), "plugins", "dsh-better-edit", "runtime"), canonical };
+    return {
+      dir,
+      mode: "central",
+      runtimeDir: join(
+        resolveDshHome(),
+        "plugins",
+        "dsh-better-edit",
+        "runtime",
+      ),
+      canonical,
+    };
   }
-  const dir = join(sd, h);
+  const dir = join(sd, `${sanitizedBasename(cwd)}-${h}`);
   ensureWsPathSidecar(dir, canonical);
   return { dir, mode: "custom", runtimeDir: sd, canonical };
 }
@@ -93,6 +114,12 @@ export function hashStoreDir(cwd?: string): string {
 }
 
 export function legacyHashStorePath(cwd?: string): string {
-  if (cwd === undefined) return join(resolveDshHome(), "plugins", "dsh-better-edit", "hash-store.json");
+  if (cwd === undefined)
+    return join(
+      resolveDshHome(),
+      "plugins",
+      "dsh-better-edit",
+      "hash-store.json",
+    );
   return join(resolvePath(cwd), ".dsh_better_edit", "hash-store.json");
 }
