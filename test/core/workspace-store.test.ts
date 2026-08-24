@@ -37,8 +37,12 @@ describe("workspace context", () => {
 		}
 	});
 
-	it("resolves the store file under <workspace>/.dsh_better_edit", async () => {
+	it("resolves the store file under <workspace>/.dsh_better_edit when storeDir=workspace", async () => {
 		const cwd = tempWorkspace("dsh-ws-path-");
+		const prevStore = process.env.DSH_BETTER_EDIT_STORE_DIR;
+		process.env.DSH_BETTER_EDIT_STORE_DIR = "workspace";
+		const { _resetConfigCache } = await import("../../src/paths.js");
+		_resetConfigCache();
 		try {
 			expect(hashStorePath(cwd)).toBe(
 				join(cwd, ".dsh_better_edit", "hash-store.sqlite"),
@@ -50,8 +54,42 @@ describe("workspace context", () => {
 				existsSync(join(cwd, ".dsh_better_edit", "hash-store.sqlite")),
 			).toBe(true);
 		} finally {
+			if (prevStore === undefined) delete process.env.DSH_BETTER_EDIT_STORE_DIR;
+			else process.env.DSH_BETTER_EDIT_STORE_DIR = prevStore;
+			const { _resetConfigCache: r } = await import("../../src/paths.js");
+			r();
 			shutdownHashStore();
 			rmSync(cwd, { recursive: true, force: true });
+		}
+	});
+
+	it("resolves the store file under central runtime/<name>-<hash8> by default", async () => {
+		const cwd = tempWorkspace("dsh-ws-path-");
+		const prevStore = process.env.DSH_BETTER_EDIT_STORE_DIR;
+		delete process.env.DSH_BETTER_EDIT_STORE_DIR;
+		const { _resetConfigCache, hashStorePath: hsp } = await import("../../src/paths.js");
+		_resetConfigCache();
+		const prevDsh = process.env.DSH_HOME;
+		const tmpHome = mkdtempSync(join(tmpdir(), "dsh-home-"));
+		process.env.DSH_HOME = tmpHome;
+		try {
+			const p = hsp(cwd);
+			expect(p).toContain(join("runtime"));
+			expect(p.endsWith("hash-store.sqlite")).toBe(true);
+			await withWorkspace(cwd, async () => {
+				await loadHashStore();
+			});
+			expect(existsSync(p)).toBe(true);
+		} finally {
+			if (prevStore === undefined) delete process.env.DSH_BETTER_EDIT_STORE_DIR;
+			else process.env.DSH_BETTER_EDIT_STORE_DIR = prevStore;
+			if (prevDsh === undefined) delete process.env.DSH_HOME;
+			else process.env.DSH_HOME = prevDsh;
+			const { _resetConfigCache: r } = await import("../../src/paths.js");
+			r();
+			shutdownHashStore();
+			rmSync(cwd, { recursive: true, force: true });
+			rmSync(tmpHome, { recursive: true, force: true });
 		}
 	});
 });
