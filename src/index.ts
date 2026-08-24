@@ -34,6 +34,7 @@ import {
 	type SectionOverride,
 } from "./guidance.js";
 import { configDir } from "./paths.js";
+import { ensureDefaultConfig } from "./store-config.js";
 import { onAppStart, onSessionStart } from "./store-lifecycle.js";
 
 /** Cordis plugin name used by loader diagnostics. */
@@ -154,6 +155,11 @@ export function apply(rootCtx: Context): void {
 	// Seed each shipped preset's guidance directory once, so users have
 	// editable per-preset overrides (idempotent: never rewrites existing
 	// files). A failure must never fail the boot.
+	ensureDefaultConfig().catch((error) => {
+		rootCtx.logger.warn(
+			`dsh-better-edit: default config materialization failed: ${error instanceof Error ? error.message : String(error)}`,
+		);
+	});
 	ensurePresetGuidance(configDir()).catch((error) => {
 		rootCtx.logger.warn(
 			`dsh-better-edit: guidance materialization failed: ${error instanceof Error ? error.message : String(error)}`,

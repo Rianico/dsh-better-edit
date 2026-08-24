@@ -7,6 +7,7 @@
 import { homedir } from "node:os";
 import { isAbsolute, join } from "node:path";
 import { readFileSync, statSync } from "node:fs";
+import { mkdir, writeFile } from "node:fs/promises";
 import { resolveDshHome } from "@deepseek-ai/dsh-home-paths";
 import { z } from "zod";
 import { errCode } from "./utils.js";
@@ -94,6 +95,49 @@ let cachedEnvAutoGitignore: string | undefined;
 
 function configYamlPath(): string {
 	return join(resolveDshHome(), "plugins", "dsh-better-edit", "config.yaml");
+}
+
+/** Default config.yaml content with comments — generated when the file does not exist. */
+export const DEFAULT_CONFIG_YAML = `# dsh-better-edit config
+# Location: $DSH_HOME/plugins/dsh-better-edit/config.yaml
+# Docs: https://github.com/Rianico/dsh-better-edit#configuration
+# Generated with defaults on first load — edit or delete freely.
+# DB files are disposable caches — safe to delete, rebuilt on next \`read\`.
+
+# where the store lives: "central" (default, in $DSH_HOME/.../runtime/<name>-<hash8>/) | "workspace" (legacy <ws>/.dsh_better_edit/) | "/abs/path" (custom root)
+storeDir: central
+
+# workspace only: when .git exists but .gitignore lacks .dsh_better_edit/, true = auto-append ".dsh_better_edit/", false = warn once
+autoGitignore: false
+
+# undo history TTL in seconds; -1 = keep forever (default 604800 = 7 days)
+undo_ttl_s: 604800
+
+# central janitor: max idle age in seconds before evicting runtime/<name>-<hash8>/ (default 2592000 = 30 days)
+storeMaxAgeS: 2592000
+
+# central janitor: max total bytes under runtime/ before LRU eviction (default 524288000 = 500 MB)
+storeMaxTotalBytes: 524288000
+`;
+
+/**
+ * Ensure a default config.yaml exists in the plugin home.
+ * Idempotent and concurrent-safe (wx) — never overwrites an existing file.
+ * Best-effort: failures are logged but never throw to the caller.
+ */
+export async function ensureDefaultConfig(homeDir?: string): Promise<void> {
+	const dir = homeDir ?? join(resolveDshHome(), "plugins", "dsh-better-edit");
+	const yamlPath = join(dir, "config.yaml");
+	try {
+		await mkdir(dir, { recursive: true });
+		await writeFile(yamlPath, DEFAULT_CONFIG_YAML, { encoding: "utf-8", flag: "wx" });
+	} catch (error: unknown) {
+		if (errCode(error) === "EEXIST") return;
+		// ENOENT for missing parent is handled by mkdir, other errors are best-effort
+		console.warn(
+			`dsh-better-edit: failed to materialize default config at ${yamlPath}: ${error instanceof Error ? error.message : String(error)}`,
+		);
+	}
 }
 
 // ---- adapters ----
