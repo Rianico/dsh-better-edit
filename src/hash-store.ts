@@ -14,12 +14,12 @@
  * @module dsh-better-edit/hash-store
  */
 
-import { appendFileSync, existsSync, readFileSync } from "node:fs";
-import { readFile, readdir, rename, rm, mkdir, stat } from "node:fs/promises";
+import { existsSync } from "node:fs";
+import { readFile, rename, mkdir, stat } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import { hashStorePath, loadConfig } from "./paths.js";
-import { resolveDshHome } from "@deepseek-ai/dsh-home-paths";
+import { hashStorePath } from "./paths.js";
+import { onStoreOpen, setStoresGetter } from "./store-lifecycle.js";
 import { workspaceCwd } from "./workspace.js";
 import { errCode, splitLines } from "./utils.js";
 import {
@@ -224,6 +224,7 @@ const stores = new Map<
 	{ path: string; db: DatabaseSync; stmts: Prepared; store: HashStore }
 >();
 const openings = new Map<string, Promise<HashStore>>();
+setStoresGetter(() => stores as Map<string, { path: string }>, () => openings as Map<string, Promise<any>>);
 let exitHandlerRegistered = false;
 
 function openDb(storePath: string): { db: DatabaseSync; stmts: Prepared } {
@@ -619,12 +620,6 @@ function shutdownDb(db: DatabaseSync): void {
 
 const STAT_BATCH = 64;
 
-// ---- throttled maintenance (central GC + row TTL) ----
-let lastPruneMsByStore = new Map<string, number>();
-let lastJanitorMs = 0;
-const PRUNE_THROTTLE_MS = 24 * 60 * 60 * 1000;
-const JANITOR_THROTTLE_MS = 24 * 60 * 60 * 1000;
-
 async function statMissing(rows: { path: string }[]): Promise<string[]> {
 	const missing: string[] = [];
 	for (let i = 0; i < rows.length; i += STAT_BATCH) {
@@ -634,7 +629,7 @@ async function statMissing(rows: { path: string }[]): Promise<string[]> {
 				try {
 					await stat(row.path);
 					return undefined;
-				} catch (error) {
+				} catch {
 					return row.path;
 				}
 			}),
@@ -646,179 +641,11 @@ async function statMissing(rows: { path: string }[]): Promise<string[]> {
 	return missing;
 }
 
-const warnedGitWarn = new Set<string>();
-function gitignoreHasEntry(ws: string): boolean {
-	try {
-		const content = readFileSync(join(ws, ".gitignore"), "utf-8");
-		return content.split("\n").some((l) => {
-			const t = l.trim();
-			return (
-				t === ".dsh_better_edit" ||
-				t === ".dsh_better_edit/" ||
-				t.startsWith(".dsh_better_edit/")
-			);
-		});
-	} catch (error) {
-		return false;
-	}
-}
-function handleGitPollution(storePath: string): void {
-	try {
-		const cfg = loadConfig();
-		if (cfg.storeDir !== "workspace") return;
-		const ws = dirname(dirname(storePath));
-		if (!existsSync(join(ws, ".git")) || gitignoreHasEntry(ws)) return;
-
-		if (cfg.autoGitignore) {
-			const gitignorePath = join(ws, ".gitignore");
-			try {
-				if (!existsSync(gitignorePath)) {
-					appendFileSync(gitignorePath, ".dsh_better_edit/\n");
-				} else {
-					const content = readFileSync(gitignorePath, "utf-8");
-					const prefix = content.length > 0 && !content.endsWith("\n") ? "\n" : "";
-					appendFileSync(gitignorePath, `${prefix}.dsh_better_edit/\n`);
-				}
-			} catch (error) {
-				console.warn(
-					`dsh-better-edit: failed to update .gitignore for ${ws}: ${error instanceof Error ? error.message : String(error)}`,
-				);
-			}
-			return;
-		}
-
-		if (warnedGitWarn.has(ws)) return;
-		warnedGitWarn.add(ws);
-		console.warn(
-			`dsh-better-edit: workspace store at ${ws}/.dsh_better_edit/ not in .gitignore — add ".dsh_better_edit/" to .gitignore or set storeDir: central / autoGitignore: true`,
-		);
-	} catch (error) {
-		console.warn(`dsh-better-edit: handleGitPollution failed: ${error instanceof Error ? error.message : String(error)}`); // best-effort, never throw at store open
-	}
-}
-export async function runCentralJanitorIfDue(): Promise<void> {
-	const now = Date.now();
-	if (now - lastJanitorMs < JANITOR_THROTTLE_MS) return;
-	lastJanitorMs = now;
-
-	let cfg: ReturnType<typeof loadConfig>;
-	try {
-		cfg = loadConfig();
-	} catch (error) {
-		console.warn(`dsh-better-edit: loadConfig failed in janitor: ${error instanceof Error ? error.message : String(error)}`);
-		return;
-	}
-	if (cfg.storeDir === "workspace") return;
-
-	const runtimeDir = join(
-		resolveDshHome(),
-		"plugins",
-		"dsh-better-edit",
-		"runtime",
-	);
-	let entries: string[];
-	try {
-		entries = await readdir(runtimeDir);
-	} catch (error: unknown) {
-		if (errCode(error) === "ENOENT") return;
-		console.error("central janitor readdir failed:", error);
-		return;
-	}
-
-	const liveDirs = new Set<string>();
-	for (const storePath of stores.keys()) {
-		if (storePath.startsWith(runtimeDir + "/")) {
-			const base = storePath.slice(runtimeDir.length + 1).split("/")[0];
-			if (base) liveDirs.add(base);
-		}
-	}
-	for (const storePath of openings.keys()) {
-		if (storePath.startsWith(runtimeDir + "/")) {
-			const base = storePath.slice(runtimeDir.length + 1).split("/")[0];
-			if (base) liveDirs.add(base);
-		}
-	}
-
-	const infos: {
-		name: string;
-		dir: string;
-		mtimeMs: number;
-		totalBytes: number;
-	}[] = [];
-	for (const name of entries) {
-		if (liveDirs.has(name)) continue;
-		const dir = join(runtimeDir, name);
-		try {
-			const st = await stat(dir);
-			if (!st.isDirectory()) continue;
-			let totalBytes = 0;
-			for (const file of [
-				"hash-store.sqlite",
-				"hash-store.sqlite-wal",
-				"hash-store.sqlite-shm",
-				".wsPath",
-			] as const) {
-				try {
-					totalBytes += (await stat(join(dir, file))).size;
-				} catch (error) { console.warn(`dsh-better-edit: suppressed error: ${error instanceof Error ? error.message : String(error)}`); }
-			}
-			infos.push({ name, dir, mtimeMs: st.mtimeMs, totalBytes });
-		} catch (error) { console.warn(`dsh-better-edit: stat failed for central dir ${dir}: ${error instanceof Error ? error.message : String(error)}`); }
-	}
-
-	infos.sort((a, b) => a.mtimeMs - b.mtimeMs);
-
-	const maxAgeMs = cfg.storeMaxAgeDays * 24 * 60 * 60 * 1000;
-	const toDelete: typeof infos = [];
-	for (const info of infos) {
-		if (now - info.mtimeMs > maxAgeMs) toDelete.push(info);
-	}
-
-	let remaining = infos.filter((info) => !toDelete.includes(info));
-	let currentCount = liveDirs.size + remaining.length + toDelete.length;
-	let currentBytes = [...remaining, ...toDelete].reduce(
-		(sum, info) => sum + info.totalBytes,
-		0,
-	);
-
-	for (const info of [...remaining].sort((a, b) => a.mtimeMs - b.mtimeMs)) {
-		if (currentCount < 100 && currentBytes < cfg.storeMaxTotalBytes) break;
-		toDelete.push(info);
-		currentCount--;
-		currentBytes -= info.totalBytes;
-		remaining = remaining.filter((x) => x !== info);
-	}
-
-	for (const info of toDelete) {
-		try {
-			const dbPath = join(info.dir, "hash-store.sqlite");
-			if (existsSync(dbPath)) {
-				const tmpDb = new DatabaseSync(dbPath, {
-					timeout: HASH_STORE_BUSY_TIMEOUT,
-				});
-				try {
-					tmpDb.exec("PRAGMA wal_checkpoint(TRUNCATE)");
-				} catch (error) {
-				} finally {
-					try {
-						tmpDb.close();
-					} catch (error) { console.warn(`dsh-better-edit: suppressed error: ${error instanceof Error ? error.message : String(error)}`); }
-				}
-			}
-			await rm(info.dir, { recursive: true, force: true });
-		} catch (error) {
-			console.error("central janitor delete failed for", info.dir, error);
-		}
-	}
-}
-
 async function openStore(storePath: string): Promise<HashStore> {
 	// Multi-store: never close another workspace's store when opening this one.
 
 	await initHasher();
 	await mkdir(dirname(storePath), { recursive: true });
-	handleGitPollution(storePath);
-
 	let existed = existsSync(storePath);
 	let opened: { db: DatabaseSync; stmts: Prepared };
 	try {
@@ -841,39 +668,9 @@ async function openStore(storePath: string): Promise<HashStore> {
 	if (!existed) {
 		await migrateLegacy(db, storePath);
 	}
-	withBusyRetry(() => {
-		stmts.servedPruneOlderThan(Date.now() - SERVED_TTL_MS);
-	});
-	try {
-		const cfg = loadConfig();
-		if (cfg.undo_ttl_s !== -1) {
-			withBusyRetry(() => {
-				stmts.undoPruneOlderThan(Date.now() - cfg.undo_ttl_s * 1000);
-			});
-		}
-	} catch (error) { console.warn(`dsh-better-edit: suppressed error: ${error instanceof Error ? error.message : String(error)}`); }
 	const store = makeDomainStore(stmts);
 	stores.set(storePath, { path: storePath, db, stmts, store });
-	// best-effort pruneMissing — throttled per-store 24h to avoid stat storm, but row TTL above is always
-	try {
-		const lastPrune = lastPruneMsByStore.get(storePath) ?? 0;
-		if (Date.now() - lastPrune > PRUNE_THROTTLE_MS) {
-			lastPruneMsByStore.set(storePath, Date.now());
-			// fire-and-forget, but use the just-created store directly (no currentStore lookup)
-			store.pruneMissing().catch((e) => console.error("pruneMissing failed:", e));
-		}
-	} catch (error) { console.warn(`dsh-better-edit: suppressed error: ${error instanceof Error ? error.message : String(error)}`); }
-
-	if (!exitHandlerRegistered) {
-		exitHandlerRegistered = true;
-		process.once("exit", () => shutdownHashStore());
-		for (const sig of ["SIGINT", "SIGTERM"] as const) {
-			process.once(sig, () => {
-				shutdownHashStore();
-				process.kill(process.pid, sig);
-			});
-		}
-	}
+	await onStoreOpen(storePath, stmts, store);
 
 	return store;
 }
