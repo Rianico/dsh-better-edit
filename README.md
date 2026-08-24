@@ -187,7 +187,6 @@ Re-seeding happens at boot, never mid-session.
 
 ## Why Hashline
 
-
 **Correctness, not just brevity.** Every resolved edit range is verified against the
 served rows — what `read`, a post-edit diff, or a rejection echo actually showed the model.
 A line inside the range that changed on disk since it was served, or was never served, is
@@ -415,6 +414,7 @@ registration cannot replace them. This plugin:
 Hash snapshots, served-state rows, and undo history live in one SQLite store — **central by default** (`$DSH_HOME/plugins/dsh-better-edit/runtime/<name>-<hash8>/hash-store.sqlite`, `ls`-readable with `.wsPath` sidecar). Legacy co-located `<workspace>/.dsh_better_edit/` is still supported via `storeDir: workspace` in `config.yaml` and is copied once on first central open. Parallel sessions in different workspaces keep separate stores (the session cwd is carried through each tool call), so one project's anchors and undo history never leak into another's. Outside a tool call (tests, previews) the store falls back to the shared DeepSeek Harness home (`$DSH_HOME/plugins/dsh-better-edit/hash-store.sqlite`).
 
 A 7-day TTL prunes served rows; `undo_ttl_s` (default 7d, `-1` forever) prunes undo clones; missing-file snapshots are pruned on throttled `openStore`; corrupt stores are quarantined and rebuilt automatically. The central janitor (`apply` + `agent/session-start` throttled >24h) evicts `mtime>30d` then LRU to `count<100 && sum<500MB`, never deleting live `hash(workspaceCwd)`, with `wal_checkpoint(TRUNCATE)` on close.
+
 ## Project Structure
 
 ```

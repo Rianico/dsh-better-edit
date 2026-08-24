@@ -54,6 +54,7 @@ Hashline 用两个哈希代替旧文本——**编辑 token 减少 31%**（多�
 
 > [!TIP]
 > **亮点——诚实且可衡量：**
+>
 > - **自愈而非静默。** 外部编辑永不被覆盖——过期范围被拒绝并以全新 `HASH│content` 重发重试；孤儿 served 条目无需全量重读即可自愈（ADR-0008）。Fail-closed，而非自动合并。
 > - **格式化容忍。** ASCII 空白不敏感锚点在 `prettier`/`black`/`eslint --fix` 之间存活（`formatOnSave`、监听、CI）。仅限 linter 场景——字符串内的空白不区分（ADR-0005）。
 > - **链式与批量，无重读仪式。** 未受影响行的锚点保持有效；diff/回显/拒绝行即视为已提供。`edit` 最多 32 个同文件编辑原子执行（`[E_BATCH_ABORT]`），相比 `str_replace` 信封约 -40%。
@@ -110,7 +111,6 @@ kQm│}
 ```
 
 > 详见[快速开始](#快速开始)中[配置](#配置)一节的指引覆盖与存储租约。
-
 
 ### 配置
 
@@ -175,8 +175,6 @@ $DSH_HOME/plugins/dsh-better-edit/<preset>/<section>.md
 文件的重新生成只发生在插件启动时，绝不影响进行中的会话。
 
 ## 为什么用 Hashline
-
-
 
 **省 token。** 一次编辑调用只携带 `remove_from` / `remove_to`（两个 3 字符哈希）加替换文本——从不回显被替换的文本。`str_replace` 调用则必须逐字复现被替换的文本。在一个真实文件上的 12 次编辑会话中，这可以**减少 31% 的输出 token**（多行范围达 43%）——而且这些是*输出* token，按输入的约 5-6 倍计费。见[基准测试](#基准测试)。
 
@@ -299,7 +297,6 @@ dsh 的工具注册表按作用域解析：agent 看到的是 `agent → preset 
 哈希快照、已提供状态行与撤销历史存放在一个 SQLite 库中——**默认 central**（`$DSH_HOME/plugins/dsh-better-edit/runtime/<name>-<hash8>/hash-store.sqlite`，可通过 `ls` 查看，带 `.wsPath` 旁路文件）。旧的同址 `<workspace>/.dsh_better_edit/` 仍可通过 `config.yaml` 中 `storeDir: workspace` 启用，并在首次以 central 打开时一次性拷贝。不同工作区的并行会话各自持有独立的库（会话 cwd 会随每次工具调用传递），因此一个项目的锚点与撤销历史不会泄漏到另一个项目。在工具调用之外（测试、预览）会回退到共享的 DeepSeek Harness 主目录（`$DSH_HOME/plugins/dsh-better-edit/hash-store.sqlite`）。
 
 7 天 TTL 清理已提供的行；`undo_ttl_s`（默认 7 天，`-1` 永久）清理撤销副本；缺失文件的快照在受控的 `openStore` 中清理；损坏的库会被隔离并自动重建。 central 的 janitor（`apply` + `agent/session-start` 受控节流 >24h）会先清理 `mtime>30d`，再按 LRU 至 `count<100 && sum<500MB`，永不删除存活的 `hash(workspaceCwd)`，并在关闭时执行 `wal_checkpoint(TRUNCATE)`。
-
 
 ## 项目结构
 
