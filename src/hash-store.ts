@@ -14,11 +14,11 @@
  * @module dsh-better-edit/hash-store
  */
 
-import { existsSync } from "node:fs";
+import { appendFileSync, existsSync, readFileSync } from "node:fs";
 import { readFile, rename, mkdir, stat } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import { hashStorePath } from "./paths.js";
+import { hashStorePath, loadConfig } from "./paths.js";
 import { workspaceCwd } from "./workspace.js";
 import { errCode, splitLines } from "./utils.js";
 import { initHasher, contentChecksum, HASH_RE, CANON_VERSION } from "./hashline/hash-assign.js";
@@ -612,11 +612,57 @@ async function statMissing(rows: { path: string }[]): Promise<string[]> {
 	return missing;
 }
 
+const warnedGitWarn = new Set<string>();
+function gitignoreHasEntry(ws: string): boolean {
+  try {
+    const content = readFileSync(join(ws, ".gitignore"), "utf-8");
+    return content.split("\n").some((l) => {
+      const t = l.trim();
+      return t === ".dsh_better_edit" || t === ".dsh_better_edit/" || t.startsWith(".dsh_better_edit/");
+    });
+  } catch {
+    return false;
+  }
+}
+function handleGitPollution(storePath: string): void {
+  try {
+    const cfg = loadConfig();
+    if (cfg.storeDir !== "workspace") return;
+    // derive ws from storePath for workspace mode: <ws>/.dsh_better_edit/hash-store.sqlite
+    const ws = dirname(dirname(storePath));
+    if (!existsSync(join(ws, ".git"))) return;
+    if (gitignoreHasEntry(ws)) return;
+    if (cfg.autoGitignore) {
+      try {
+        const gitignorePath = join(ws, ".gitignore");
+        if (!existsSync(gitignorePath)) {
+          appendFileSync(gitignorePath, ".dsh_better_edit/\n");
+        } else if (!gitignoreHasEntry(ws)) {
+          // idempotent append
+          const content = readFileSync(gitignorePath, "utf-8");
+          const needsNewline = content.length > 0 && !content.endsWith("\n");
+          appendFileSync(gitignorePath, `${needsNewline ? "\n" : ""}.dsh_better_edit/\n`);
+        }
+      } catch (error) {
+        console.warn(`dsh-better-edit: failed to update .gitignore for ${ws}: ${error instanceof Error ? error.message : String(error)}`);
+      }
+      return;
+    }
+    if (!warnedGitWarn.has(ws)) {
+      warnedGitWarn.add(ws);
+      console.warn(`dsh-better-edit: workspace store at ${ws}/.dsh_better_edit/ not in .gitignore — add ".dsh_better_edit/" to .gitignore or set storeDir: central / autoGitignore: true`);
+    }
+  } catch {
+    // best-effort, never throw at store open
+  }
+}
+
 async function openStore(storePath: string): Promise<HashStore> {
 	// Multi-store: never close another workspace's store when opening this one.
 
 	await initHasher();
 	await mkdir(dirname(storePath), { recursive: true });
+	handleGitPollution(storePath);
 
 	let existed = existsSync(storePath);
 	let opened: { db: DatabaseSync; stmts: Prepared };
