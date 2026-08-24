@@ -118,7 +118,12 @@ kQm│}
 
 #### 存储租约 — 默认 central
 
-默认无仓库污染。存储位于 `$DSH_HOME/plugins/dsh-better-edit/runtime/<name>-<hash8>/`（`central`）。如需回退到旧的同址或自定义根：
+默认无仓库污染。存储位于 `$DSH_HOME/plugins/dsh-better-edit/runtime/<name>-<hash8>/`（`central`）。
+
+> [!NOTE]
+> DB 文件是**可丢弃的缓存**——下次调用 `read` 时会自动重建（哈希值由文件内容重新推导）。可随时 `rm -rf` 任意 `runtime/<name>-<hash8>/` 或 `hash-store.sqlite*` 以回收磁盘；不会丢失用户数据（仅丢失锚点历史和撤销快照）。
+
+如需回退到旧的同址或自定义根：
 
 ```yaml
 # $DSH_HOME/plugins/dsh-better-edit/config.yaml
@@ -126,11 +131,11 @@ storeDir: central              # 存储位置："central"（默认，位于 $DSH
 autoGitignore: false           # 仅 workspace：当 .git 存在但 .gitignore 缺少 .dsh_better_edit/ 时，true = 自动追加 ".dsh_better_edit/"，false = 仅告警一次
 undo_ttl_s: 604800             # 撤销历史 TTL（秒）；-1 = 永久保留（默认 604800 = 7 天）
 storeMaxAgeS: 2592000          # central 清理：runtime/<name>-<hash8>/ 目录最大闲置时长（秒），超时后被清理（默认 2592000 = 30 天）
-storeMaxTotalBytes: 524288000  # central 清理：runtime/ 下总字节数上限，超限后按 LRU 清理（默认 524288000 = 500 MB）
+storeMaxTotalBytes: 524288000  # central 清理：runtime/ 下总字节数上限，超限后按 LRU 清理（默认 524288000 = 500 MB)
 ```
 
-> [!NOTE]
-> DB 文件是**可丢弃的缓存**——下次调用 `read` 时会自动重建（哈希值由文件内容重新推导）。可随时 `rm -rf` 任意 `runtime/<name>-<hash8>/` 或 `hash-store.sqlite*` 以回收磁盘；不会丢失用户数据（仅丢失锚点历史和撤销快照）。
+> [!TIP]
+> 若文件不存在，首次启动时会自动生成带注释的默认 `config.yaml`（永不覆盖已有文件）。
 
 Env 覆盖 yaml（`env > yaml > central`），非法回退到 `central` 并告警：
 

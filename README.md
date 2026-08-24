@@ -151,6 +151,9 @@ storeMaxAgeS: 2592000          # central janitor: max idle age in seconds before
 storeMaxTotalBytes: 524288000  # central janitor: max total bytes under runtime/ before LRU eviction (default 524288000 = 500 MB)
 ```
 
+> [!TIP]
+> If the file does not exist, a default `config.yaml` with commented defaults is generated on first boot (never overwrites an existing file).
+
 Env overrides yaml (`env > yaml > central`), malformed falls back to `central` with a warning:
 
 ```sh
