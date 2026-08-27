@@ -1,25 +1,80 @@
 /**
- * Auto-read after `write`: when the built-in `write` tool succeeds, this scoped
- * `tools/post-execute` listener re-reads the written file and appends a fresh
- * hashline-anchored preview to the model-facing content, so the model gets new
- * anchors without an explicit read call (mirroring pi-hashline-edit-lsz).
+ * Guard + auto-read around `write`: a scoped `tools/pre-execute` listener
+ * rejects copied hashline preview rows before they can reach disk, then a
+ * `tools/post-execute` listener re-reads successful writes and appends fresh
+ * anchors to the model-facing content (mirroring pi-hashline-edit-lsz).
  * @module dsh-better-edit/write-hook
  */
 
 import type { Context } from '@deepseek-ai/cordis'
-import type { PostToolDecision, ToolExecution, ToolExecutionResult } from '@deepseek-ai/dsh-tools'
+import type { PostToolDecision, PreToolDecision, ToolExecution, ToolExecutionResult } from '@deepseek-ai/dsh-tools'
 import { readAndServe } from './read-and-serve.js'
 import type { FileIO } from './fs-bridge.js'
-import { execCwd, execSessionKey } from './session-view.js'
-import { withWorkspace } from './session-view.js'
+import { execCwd, execSessionKey, loadServed, withWorkspace } from './session-view.js'
+import { HASH_SEP } from './hashline/hash-assign.js'
+import { abortIf, splitLines } from './utils.js'
 
 const AUTO_READ_HEADING = '--- Auto-read (hashline anchors) ---'
 
+export interface ServedHashEcho {
+	/** One-based candidate line carrying the copied anchor. */
+	line: number
+	/** The exact anchor served for this session, path, and line. */
+	hash: string
+}
+
 /**
- * Register the post-write auto-read listener on the calling agent's scope.
- * Replaces the result content (never the canonical value) with the original
- * content plus the hashline preview; any failure falls back to the untouched
- * decision so a broken auto-read never breaks the write.
+ * Find a copied hashline prefix without treating arbitrary `3-char│` text as
+ * metadata. A match requires the exact hash currently recorded at the same
+ * line position for this session and canonical path.
+ */
+export function findServedHashEcho(
+	content: string,
+	served: readonly (string | null)[],
+): ServedHashEcho | undefined {
+	const lines = splitLines(content)
+	const compared = Math.min(lines.length, served.length)
+	for (let index = 0; index < compared; index += 1) {
+		const hash = served[index]
+		if (hash !== null && lines[index]!.startsWith(`${hash}${HASH_SEP}`)) {
+			return { line: index + 1, hash }
+		}
+	}
+	return undefined
+}
+
+/**
+ * Inspect one validated-looking built-in write request against session-scoped
+ * served state. Returns a pre-dispatch denial reason only for an exact
+ * same-session / same-canonical-path / same-line anchor echo.
+ */
+export async function servedHashEchoDenial(
+	io: FileIO,
+	rawPath: string,
+	content: string,
+	cwd: string,
+	sessionKey: string,
+	signal?: AbortSignal,
+): Promise<string | undefined> {
+	abortIf(signal)
+	const absolutePath = await io.resolve(rawPath, cwd, signal)
+	abortIf(signal)
+	const served = await loadServed(sessionKey, absolutePath)
+	const match = findServedHashEcho(content, served)
+	if (!match) return undefined
+	return (
+		`[E_WRITE_HASH_ECHO] Refused write to ${rawPath}: line ${match.line} begins with ` +
+		`the exact ${match.hash}${HASH_SEP} anchor served for this session, path, and line. ` +
+		`HASH${HASH_SEP} anchors are tool output, not file content. ` +
+		'Retry with file content only (remove the entire copied anchor chain). Nothing was written.'
+	)
+}
+
+/**
+ * Register the pre-write echo guard and post-write auto-read on the calling
+ * agent's scope. The guard denies before dispatch; the auto-read replaces only
+ * model-facing result content (never the canonical value). Infrastructure
+ * failures fail open so the plugin never breaks an otherwise valid write.
  * @param rootCtx - host context for diagnostics.
  * @param agentCtx - the agent's scoped context; the listener receives only
  *   this agent's tool results.
@@ -31,7 +86,41 @@ export function registerWriteHook(
 	agentCtx: Context,
 	io: FileIO,
 ): () => void {
-	return agentCtx.on(
+	const disposeGuard = agentCtx.on(
+		'tools/pre-execute',
+		async (
+			exec: ToolExecution,
+			next: () => Promise<PreToolDecision>,
+		): Promise<PreToolDecision> => {
+			if (exec.name !== 'write') return next()
+			const args = exec.arguments as Record<string, unknown> | undefined
+			const rawPath = args?.file_path ?? args?.path
+			const content = args?.content
+			if (typeof rawPath !== 'string' || typeof content !== 'string') return next()
+
+			const cwd = execCwd(exec)
+			return withWorkspace(cwd, async () => {
+				try {
+					const reason = await servedHashEchoDenial(
+						io,
+						rawPath,
+						content,
+						cwd,
+						execSessionKey(exec),
+						exec.signal,
+					)
+					return reason === undefined ? next() : { kind: 'deny', reason }
+				} catch (error) {
+					if (exec.signal.aborted) throw error
+					rootCtx.logger.warn(
+						`dsh-better-edit: pre-write hash-echo guard failed open: ${error instanceof Error ? error.message : String(error)}`,
+					)
+					return next()
+				}
+			})
+		},
+	)
+	const disposeAutoRead = agentCtx.on(
 		'tools/post-execute',
 		async (
 			exec: ToolExecution,
@@ -75,4 +164,8 @@ export function registerWriteHook(
 			})
 		},
 	)
+	return () => {
+		disposeGuard()
+		disposeAutoRead()
+	}
 }
