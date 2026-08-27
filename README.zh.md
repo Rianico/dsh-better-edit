@@ -267,6 +267,8 @@ token 基准测试衡量的是模型发出的负载——它假设模型每次�
 | `edit` | 对象根负载 `{ "path": path, "edits": [[remove_from, remove_to, replacement_text], …] }`；`path` 可为 `null` 以通过锚点推断。单个条目编辑一个范围；多条目对同一文件原子批量（最多 32）。对每个包含范围内的每一行校验，reject-and-serve 返回新锚点。 |
 | `undo_last_edit` | `{ path }` 撤销该文件上一次 hashline 编辑，仅当文件仍与存储的编辑后内容一致时生效；重启后依然有效。 |
 
+内置 `write` 仍用于整文件替换。执行前，插件只会在候选行以同一会话、规范路径及行位置所提供的精确 `HASH│` 锚点开头时拒绝；文件保持不变，并提示仅用文件正文重试。插件不会泛化地剥离类似哈希的文本。
+
 ### 错误码
 
 | 代码 | 含义 |
@@ -284,6 +286,7 @@ token 基准测试衡量的是模型发出的负载——它假设模型每次�
 | `[E_NOT_FOUND]` | 文件不存在。 |
 | `[E_NOT_OBSERVED]` | 该文件在本会话中尚未被观察（先读后写策略）；请先调用 `read`。 |
 | `[E_NOT_TEXT]` | 路径是目录、二进制或非 UTF-8 文件；hashline 只能编辑文本。 |
+| `[E_WRITE_HASH_ECHO]` | 内置 `write` 候选内容复制了同一会话、路径及行位置所提供的 `HASH│` 预览锚点。写入在执行前被拒绝；移除整条复制的锚点链后重试。 |
 | `[E_RANGE_STALE]` | 某行自被读取以来在磁盘上发生变化；范围以全新锚点回显。 |
 | `[E_RANGE_UNSERVED]` | 范围内包含从未提供给模型的行。 |
 | `[E_RANGE_UNVERIFIED]` | 边界锚点无法对照已提供状态验证。 |
@@ -298,7 +301,7 @@ dsh 的工具注册表按作用域解析：agent 看到的是 `agent → preset 
 
 1. 通过其 `cordis.patch.yml` bundle 补丁作为宿主层 Cordis 插件挂载。
 2. 在 `agent/session-start` 时，将 hashline 工具**以及** `tool:read` / `tool:edit` 提示词片段注册到 agent 自身的作用域层——从而为该 agent 遮蔽 preset 的内置工具，并在 agent 销毁时自动解除。
-3. 保留内置的 `write`，但通过一个作用域内的 `tools/post-execute` 监听器把 hashline 自动读取附加到 write 结果之后。
+3. 保留内置的 `write`，通过作用域内的 `tools/pre-execute` 监听器在执行前拒绝精确的同会话/同路径/同行锚点回显，并由 `tools/post-execute` 在成功结果后附加 hashline 自动读取。
 
 ## 存储
 

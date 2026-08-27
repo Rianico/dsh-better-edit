@@ -255,6 +255,8 @@ Both engines preserved the external change and produced the expected final file 
 | `edit` | An object-root payload `{ "path": path, "edits": [[remove_from, remove_to, replacement_text], …] }`; the path may be `null` for anchor-based inference. A single item edits one range; several items batch same-file edits atomically (up to 32). Verifies every line of each inclusive range and reject-and-serve returns fresh anchors. |
 | `undo_last_edit` | `{ path }` restores the most recent successful edit with its original content, BOM, line endings, and anchors; persisted across restarts. |
 
+The built-in `write` remains available for full-file replacement. Before it runs, the plugin refuses only a candidate line that begins with the exact `HASH│` anchor served for the same session, canonical path, and line; the file stays unchanged and the response asks for a retry with file content only. It never generically strips hash-like text.
+
 `edit` accepts `{ "path": path, "edits": [[remove_from, remove_to, replacement_text], …] }`. The path
 position is a non-empty string or `null` for unique anchor-based inference. Each range is inclusive,
 and an empty replacement deletes the range. All items are checked before file I/O and applied
@@ -276,6 +278,7 @@ atomically to that one file — one item per call is the norm, several same-file
 | `[E_ACCESS]` | The path is not readable or writable. |
 | `[E_NOT_TEXT]` | The path is a directory, binary file, image, or UTF-16/UTF-32 encoded text; hashline editing only supports text files. |
 | `[E_NOT_OBSERVED]` | The file has not been observed in this session (read-before-write); call `read` first. |
+| `[E_WRITE_HASH_ECHO]` | A built-in `write` candidate copied a `HASH│` preview anchor served for the same session, path, and line. The write is refused before dispatch; remove the entire copied anchor chain and retry. |
 | `[E_UNDO_STALE]` | `undo_last_edit` refused: the file was modified or deleted after the last edit. |
 | `[E_UNDO_UNAVAILABLE]` | Undo history could not be persisted to the hash store; the `edit` was refused and the file was left unchanged. |
 | `[E_FILE_TOO_LARGE]` | The file exceeds the 238,328-line hashline limit. |
@@ -414,8 +417,9 @@ registration cannot replace them. This plugin:
 2. On `agent/session-start`, registers the hashline tools **and** the `tool:read` / `tool:edit`
    prompt sections on the agent's own scope layer — they shadow the preset's built-ins for that
    agent and unwind automatically when the agent is disposed.
-3. Leaves the built-in `write` in place, but a scoped `tools/post-execute` listener appends the
-   hashline auto-read to write results.
+3. Leaves the built-in `write` in place: a scoped `tools/pre-execute` listener rejects an exact
+   same-session/path/line served-anchor echo before dispatch, and `tools/post-execute` appends the
+   hashline auto-read to successful results.
 
 ## Store
 

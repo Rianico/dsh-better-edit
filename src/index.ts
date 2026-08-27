@@ -7,8 +7,8 @@
  * the AGENT's own scope layer, so they shadow the preset's built-in `read` /
  * `edit` for that agent (nearest layer wins in dsh's tool registry) and unwind
  * automatically when the agent is disposed. The built-in `write` stays in
- * place; a scoped `tools/post-execute` listener appends the fresh hashline
- * preview to write results.
+ * place; scoped pre/post listeners reject copied same-line served anchors
+ * before dispatch and append a fresh hashline preview after successful writes.
  *
  * The four `tool:*` guidance sections resolve per agent preset from override
  * files in the shared home (see `src/guidance.ts`); deployments without the
