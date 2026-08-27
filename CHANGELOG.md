@@ -6,6 +6,8 @@ Entries link to the originating spec issue in [pi-hashline-edit-lsz](https://git
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-08-27
+
 ### Fixed
 
 - Refuse a built-in `write` before dispatch when a candidate line starts with the exact hashline anchor served for the same session, canonical path, and line. This prevents copied `HASH│` preview chains from entering Markdown while leaving the file byte-identical; unrelated hash-like text is not generically stripped (#29).
