@@ -17,7 +17,8 @@ export const EDIT_DESCRIPTION =
   'Use { "path": "file.ts", "edits": [[remove_from, remove_to, replacement_text], ...] } — path is the file to edit (or null to infer from anchors), edits is an array of [remove_from, remove_to, replacement_text] tuples. ' +
   "remove_from and remove_to must each be a BARE 3-character hash: copy only the hash from the " +
   'leftmost column of a read row (row `ve7│function hello() {` means `"remove_from": "ve7"`). ' +
-  "Never pass the line content, a code line, or a paragraph into these fields. The path is hoisted to the payload root so every edit in one call targets the same file; a length-1 edits array is a single edit.";
+  "HASH is the bare 3-char hash (e.g. \"wUp\") — the value before │ in a served row; HASH│content is the full served row. " +
+  "Never pass HASH│content or line content into these fields. The path is hoisted to the payload root so every edit in one call targets the same file; a length-1 edits array is a single edit.";
 
 export const EDIT_GUIDANCE: ToolGuidance = {
   intro: "Edit a range of lines via a bare 3-char HASH anchor — payload is { path, edits: [[hash,hash,text]] } (single-file atomic, null path infers).",
@@ -27,6 +28,7 @@ export const EDIT_GUIDANCE: ToolGuidance = {
     "`edit`: `\\n` is a line break, so a range ending on a blank line must end replacement_text with `\\n` and a non-blank last line must not; a blank-line run is one `\\n` per blank line.",
     "`edit`: the post-edit diff rows carry fresh anchors for follow-ups. A stale or never-served range is hard-rejected (`[E_RANGE_STALE]` / `[E_RANGE_UNSERVED]`); copy the echoed rows and retry — only tool-served rows count.",
     "`edit`: multiple edits to the same file in one call are atomic (all-or-nothing): if any tuple fails — stale, ambiguous, never-served — nothing is written and the failing tuple's current range is served back. Prefer one edit per call unless you have independent ranges.",
+    "`edit`: HASH vs HASH│content: served rows are HASH│content for you to copy the HASH from — never send HASH│content as an anchor or in replacement_text. Strip │ and everything after it for anchors; strip HASH│ prefix for replacement_text.",
   ],
 };
 
