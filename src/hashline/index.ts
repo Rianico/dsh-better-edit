@@ -33,17 +33,19 @@ export { resEdit } from "./anchor-pipeline.js";
 export type { HEdit, HTEdit, NEdit, BDup, AutoFix } from "./anchor-pipeline.js";
 
 export {
- applyEdit,
- fmtRegion,
- changedRange,
- buildIdx,
- ServedRejectionError,
- AnchorMismatchError,
- isServedRejection,
- isAnchorMismatch,
- verifyServedRange,
- buildRangeEcho,
- fmtServedRows,
+	applyEdit,
+	fmtRegion,
+	changedRange,
+	buildIdx,
+	ServedRejectionError,
+	AnchorMismatchError,
+	EditHashEchoError,
+	findEditHashEcho,
+	isServedRejection,
+	isAnchorMismatch,
+	verifyServedRange,
+	buildRangeEcho,
+	fmtServedRows,
 } from "./anchor-pipeline.js";
 export type {
  ServedRow,

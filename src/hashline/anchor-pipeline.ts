@@ -676,6 +676,27 @@ export function isAnchorMismatch(error: unknown): error is AnchorMismatchError {
 	return error instanceof AnchorMismatchError;
 }
 
+export function findEditHashEcho(
+	replacementLines: string[],
+	served: readonly (string | null)[],
+	startLine: number,
+): { k: number; hash: string } | undefined {
+	for (let k = 0; k < replacementLines.length; k++) {
+		const pos = startLine + k - 1;
+		if (pos < served.length && served[pos] !== null && replacementLines[k]!.startsWith(served[pos]! + HASH_SEP)) {
+			return { k: k + 1, hash: served[pos]! };
+		}
+	}
+	return undefined;
+}
+
+export class EditHashEchoError extends AnchorMismatchError {
+	constructor(message: string, servedRows: ServedRow[] = []) {
+		super(message, servedRows);
+		this.name = "EditHashEchoError";
+	}
+}
+
 export function buildRangeEcho(
 	startLine: number,
 	endLine: number,
@@ -1226,7 +1247,16 @@ export function applyEdit(
 		resolved = correctedResult.resolved;
 	}
 
-	if (served) {
+if (served) {
+		const startLineEcho = resolved.hash_bounds[0].line;
+		const rawEcho = findEditHashEcho(edit.content_lines, served, startLineEcho);
+		let echo = rawEcho;
+		if (!echo) echo = findEditHashEcho(resolved.content_lines, served, startLineEcho);
+		if (!echo) echo = findEditHashEcho(prefixFixed.content_lines, served, startLineEcho);
+		if (echo) {
+			const msg = `[E_EDIT_HASH_ECHO] Refused edit to ${filePath ?? "(unknown file)"}: replacement line ${echo.k} begins with the exact ${echo.hash}${HASH_SEP} anchor served for this session, path, and range-relative line. Remove the copied anchors and retry. Nothing was written.`;
+			throw new EditHashEchoError(msg, []);
+		}
 		const startAnchor = resolved.hash_bounds[0];
 		const endAnchor = resolved.hash_bounds[1];
 		verifyServedRange({
