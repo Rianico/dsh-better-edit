@@ -6,7 +6,7 @@ Entries link to the originating spec issue in [pi-hashline-edit-lsz](https://git
 
 ## [Unreleased]
 
-### Bug Fixes
+### Fixed
 
 - remove unused exitHandlerRegistered
 

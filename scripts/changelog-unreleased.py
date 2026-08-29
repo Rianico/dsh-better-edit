@@ -27,7 +27,7 @@ UNRELEASED_HEADING = "## [Unreleased]"
 # Mirrors .releaserc.json presetConfig.types
 TYPE_SECTIONS: dict[str, tuple[str, bool]] = {
     "feat": ("Features", False),
-    "fix": ("Bug Fixes", False),
+    "fix": ("Fixed", False),
     "perf": ("Performance Improvements", False),
     "revert": ("Reverts", False),
     "docs": ("Documentation", False),
