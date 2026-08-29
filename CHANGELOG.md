@@ -6,6 +6,14 @@ Entries link to the originating spec issue in [pi-hashline-edit-lsz](https://git
 
 ## [Unreleased]
 
+### Features
+
+- scaffold verify→release with biome+coverage 80%
+
+### Bug Fixes
+
+- **git:** wire pre-push hook via husky path
+
 ## [0.4.1] - 2026-08-27
 
 ### Fixed
