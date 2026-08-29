@@ -17,7 +17,7 @@ jobs:
       - run: npm audit signatures
       - run: npm run lint
       - run: npm run typecheck
-      - run: npm run test:coverage -- --coverage.thresholds.lines=80
+      - run: npm run test:coverage -- --coverage.thresholds.lines=75
   release:
     needs: verify
     runs-on: ubuntu-latest

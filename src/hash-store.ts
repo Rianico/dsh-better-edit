@@ -164,6 +164,7 @@ export interface ServedPersistence {
 export type InternalHashStore = HashStore & ServedPersistence;
 
 /** Load the store as served persistence — internal, for SessionView only. */
+// SAFETY: loadHashStore returns InternalHashStore (HashStore & ServedPersistence) — cast narrows to served view, validated via ServedPersistence interface; safe because InternalHashStore extends both.
 export function loadServedStore(cwd?: string): Promise<ServedPersistence> {
   return loadHashStore(cwd) as unknown as Promise<ServedPersistence>;
 }

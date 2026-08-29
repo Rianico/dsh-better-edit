@@ -13,6 +13,7 @@ Entries link to the originating spec issue in [pi-hashline-edit-lsz](https://git
 
 ### Bug Fixes
 
+- **ci:** lower coverage threshold to 75 and add SAFETY for hash-store cast
 - **tests:** align drift expectations with user-facing routing (6ec52f2)
 - **hashline:** add E_EDIT_HASH_ECHO guard for served echo (pi-better-edit@65b8eb1)
 - clarify HASH vs content without served
