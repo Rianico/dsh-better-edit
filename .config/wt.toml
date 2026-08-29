@@ -1,0 +1,11 @@
+[post-start]
+copy = "wt step copy-ignored"
+
+[pre-merge]
+gate = "npm run typecheck && npm test && npx commitlint --from=origin/main --to=HEAD --verbose"
+
+[list]
+url = "http://localhost:{{ branch | hash_port }}"
+
+[pre-remove]
+cleanup = "lsof -ti :{{ branch | hash_port }} | xargs kill 2>/dev/null || true"

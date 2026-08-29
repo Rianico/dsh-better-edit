@@ -9,20 +9,6 @@ Entries link to the originating spec issue in [pi-hashline-edit-lsz](https://git
 ### Added
 
 - Sync ADRs 0005-0009 and specs from upstream pi-better-edit 1.4.0: served-state range verification, session-keyed served state, compact JSON edit payload, bounded hash echo guard, user-facing drift signals; add `docs/spec/` with merged payload, session-keyed, served-state and compact payload specs
-
-### Changed
-
-- Route drift signals to user-facing details only (details-only, filtered from model content) and filter batch drift notes from model warnings (upstream ADR-0010)
-- Document `[E_EDIT_HASH_ECHO]` in README error table
-
-### Fixed
-
-- Harden payload contract with `file_path` alias via `effectivePath` and align `E_BAD_SHAPE` truncation for actionable errors (upstream #38)
-- Bounded hash echo guard: deny-not-strip at same session/path/range-relative line, refusing `HASH│` echo replays before verification (upstream ADR-0009, #42)
-
-### Added
-
-- Sync ADRs 0005-0009 and specs from upstream pi-better-edit 1.4.0: served-state range verification, session-keyed served state, compact JSON edit payload, bounded hash echo guard, user-facing drift signals; add `docs/spec/` with merged payload, session-keyed, served-state and compact payload specs
 - Scaffold verify→release with biome+coverage 80%
 
 ### Changed
