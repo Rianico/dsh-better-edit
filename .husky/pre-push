@@ -12,6 +12,10 @@ while read -r local_ref local_sha remote_ref remote_sha; do
   fi
   tmp=$(mktemp)
   cp CHANGELOG.md "$tmp" 2>/dev/null || touch "$tmp"
+  if ! command -v uv >/dev/null 2>&1; then
+    rm "$tmp"
+    continue
+  fi
   uv run python scripts/changelog-unreleased.py update >/dev/null
   if ! diff -q CHANGELOG.md "$tmp" >/dev/null; then
     cat >&2 <<'EOF'
