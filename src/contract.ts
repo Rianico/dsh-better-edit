@@ -74,15 +74,19 @@ export function itemFromTuple(value: unknown): EditItem | undefined {
 }
 
 export function editRequestFrom(input: unknown): NormalizedEditRequest | undefined {
-  if (!isRec(input) || !("path" in input) || !("edits" in input)) return undefined;
+  if (!isRec(input) || !("edits" in input)) return undefined;
   const rec = input as Record<string, unknown>;
-  // handle file_path alias before checking
-  if (typeof rec.path !== "string" && typeof rec.file_path === "string") {
-    // alias will be normalized by normalizeFilePath before editRequestFrom in normReq path,
-    // but handle here for direct calls
+  // provider-compatible alias: file_path → path (hoisted path contract, ADR-0007)
+  let effectivePath: unknown = rec.path;
+  if ((effectivePath === undefined || typeof effectivePath !== "string") && typeof rec.file_path === "string") {
+    effectivePath = rec.file_path;
   }
-  const { path, edits } = rec as { path?: unknown; edits?: unknown };
-  if (path !== null && (typeof path !== "string" || (path as string).length === 0)) return undefined;
+  // allow null inference: missing path is treated as null only if file_path also missing → undefined means not provided
+  if (effectivePath === undefined && !("path" in rec) && !("file_path" in rec)) return undefined;
+  const path = effectivePath as unknown;
+  const { edits } = rec as { edits?: unknown };
+  if (path !== null && path !== undefined && (typeof path !== "string" || (path as string).length === 0)) return undefined;
+  const normalizedPath = (path === undefined ? null : path) as string | null;
   if (!Array.isArray(edits) || edits.length === 0) return undefined;
   const items: EditItem[] = [];
   for (const item of edits) {
@@ -90,7 +94,7 @@ export function editRequestFrom(input: unknown): NormalizedEditRequest | undefin
     if (!normalized) return undefined;
     items.push(normalized);
   }
-  return { path: path as string | null, edits: items };
+  return { path: normalizedPath, edits: items };
 }
 
 export const EDIT_TUPLE_HINT =
@@ -105,7 +109,11 @@ function describeReceived(input: unknown): string {
   if (input === null) return "Received null.";
   if (typeof input === "string") return `Received a bare string (${JSON.stringify(input)}).`;
   const json = JSON.stringify(input);
-  const preview = typeof json === "string" && json.length > 160 ? `${json.slice(0, 160)}…` : json;
+  if (typeof json === "string" && json.length > 600) {
+    const truncated = json.slice(0, 600);
+    return `Received: ${truncated}… (+truncated, full path+edits in tool input)`;
+  }
+  const preview = json as string;
   return `Received: ${preview}`;
 }
 
