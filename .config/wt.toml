@@ -1,0 +1,39 @@
+# Worktrunk project template — copy to .config/wt.toml and customize per project
+# This project config overrides ~/.config/worktrunk/config.toml (global).
+# See worktrunk-guide skill: worktrunk-guide/references/automation.md
+# Usage: wt config create --project && merge this template into .config/wt.toml
+
+[post-start]
+# Copy gitignored artifacts (node_modules, target, .cache) between worktrees — avoids cold start.
+copy = "wt step copy-ignored"
+
+[pre-merge]
+# Blocking gate — wt merge runs this before merging worktree into parent/main.
+# Authoritative for this skill: every merge must pass this gate.
+# Default recommendation: typecheck + tests + commitlint (conventional commits since base).
+# commitlint checks header/body/footer per Conventional Commits 1.0.0 — fail loud before squash.
+# Uses origin/{{ default_branch }} so fork's base may be remote; for local-only, use {{ target }}.
+gate = "npm run typecheck && npm test && npx commitlint --from=origin/{{ default_branch }} --to=HEAD --verbose"
+# Pipeline form for concurrent steps (wt 0.58+: table = concurrent, [[ ]] = serial):
+# [[pre-merge]]
+# typecheck = "npm run typecheck"
+# test = "npm test"
+# lint-msg = "npx commitlint --from=origin/{{ default_branch }} --to=HEAD --verbose"
+# Examples for other stacks:
+# gate = "cargo test && cargo clippy && npx commitlint --from=origin/{{ default_branch }} --to=HEAD --verbose"
+# gate = "uv run pytest && ruff check . && npx commitlint --from=origin/{{ default_branch }} --to=HEAD --verbose"
+
+[list]
+# Per-worktree dev server URL preview in `wt list` — hash_port assigns 10000–19999 from branch hash.
+
+url = "http://localhost:{{ branch | hash_port }}"
+
+[pre-remove]
+# Cleanup per-worktree dev server on `wt remove` — prevents port leak.
+cleanup = "lsof -ti :{{ branch | hash_port }} | xargs kill 2>/dev/null || true"
+
+# [post-start] per-worktree dev server (optional — uncomment if needed):
+# [post-start]
+# server = "npm run dev -- --port {{ branch | hash_port }}"
+
+# [post-merge] / [post-remove] hooks — add project-specific post actions as needed.

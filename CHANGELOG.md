@@ -8,10 +8,17 @@ Entries link to the originating spec issue in [pi-hashline-edit-lsz](https://git
 
 ### Features
 
+- **edit:** route drift signals to user-facing details (pi-better-edit@6ec52f2)
 - scaffold verify→release with biome+coverage 80%
 
 ### Bug Fixes
 
+- **tests:** align drift expectations with user-facing routing (6ec52f2)
+- **hashline:** add E_EDIT_HASH_ECHO guard for served echo (pi-better-edit@65b8eb1)
+- clarify HASH vs content without served
+- **edit:** clarify HASH vs HASH│content and downgrade bare prefix warnings (pi-better-edit@a837e9d)
+- **fs-write:** log stale-temp and sync failures (pi-better-edit@671c66d)
+- **hashline:** heal multi-line staleness and stable anchoring (f94fb88)
 - **git:** wire pre-push hook via husky path
 
 ## [0.4.1] - 2026-08-27
