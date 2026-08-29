@@ -6,6 +6,10 @@ Entries link to the originating spec issue in [pi-hashline-edit-lsz](https://git
 
 ## [Unreleased]
 
+### Bug Fixes
+
+- remove unused exitHandlerRegistered
+
 ## [0.5.0] - 2026-08-29
 
 ### Features

@@ -230,7 +230,6 @@ const stores = new Map<
 >();
 const openings = new Map<string, Promise<HashStore>>();
 setStoresGetter(() => stores as Map<string, { path: string }>, () => openings as Map<string, Promise<any>>);
-const exitHandlerRegistered = false;
 
 function openDb(storePath: string): { db: DatabaseSync; stmts: Prepared } {
 	const db = new DatabaseSync(storePath, {
