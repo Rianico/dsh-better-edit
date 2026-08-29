@@ -6,6 +6,8 @@ Entries link to the originating spec issue in [pi-hashline-edit-lsz](https://git
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-08-29
+
 ### Features
 
 - **edit:** route drift signals to user-facing details (pi-better-edit@6ec52f2)
