@@ -54,8 +54,14 @@ The divergence between the served state and the current file: lines the model wa
 _Avoid_: modification, external change (the tool cannot know the source)
 
 **drift notice**:
-The informational section appended to a replace result (applied or noop, not undo) when drift lies in served territory outside the replacement range: the current content of the drifted lines, capped, with rows counting as serves. Fires once per drift episode — already-reported drift shrinks to a one-line pointer until a read re-serves the lines.
+The informational section appended to a replace result (applied or noop, not undo) when drift lies in served territory outside the replacement range: the current content of the drifted lines, capped, with rows counting as serves. Fires once per drift episode — already-reported drift shrinks to a one-line pointer until a read re-serves the lines. Classified as a user-facing signal (details only, not model content).
 _Avoid_: warning (the operation succeeded; it is information, not a warning)
+
+**model-facing signal**:
+A model-visible signal the tool must include in `content` for correctness (e.g. boundary staleness, range staleness, E_RANGE_*, E_EDIT_HASH_ECHO). The model needs it to retry correctly.
+
+**user-facing signal**:
+A model-visible signal informative for the human only, emitted in `details`/`warnings` and rendered collapsed in TUI (e.g. drift notice, Batch drift note). Not in model content.
 
 **orphaned serve**:
 An entry in served state whose hash no longer matches the current file at that position — the mirror retained a hash that the file has moved or removed elsewhere. Contrast with never-served. An orphan is drift, but at a single position rather than a range.
@@ -100,6 +106,18 @@ _Avoid_: optional path
 **compact JSON tuple**:
 A fixed three-position JSON array `[remove_from, remove_to, replacement_text]` — one edit item inside the payload's `edits` array, the model-facing unit of mutation. The path is not part of the item; it is hoisted to the payload root.
 _Avoid_: patch language, array shorthand
+
+**served hash echo**:
+A candidate line that begins with the exact `HASH│` anchor served for the same session, canonical path, and line — tool output mistaken for file content. For `write` the check is absolute line `i` vs `served[i]`; for `edit` it is range-relative line `k` vs `served[startLine + k]` (AA: E1). Detected before dispatch/write, file stays byte-identical. Not a generic `^[A-Za-z0-9]{3}│` strip.
+_Avoid_: hash echo (without served qualification), anchor echo
+
+**E_WRITE_HASH_ECHO**:
+Refusal of a built-in `write` that copied a served hash echo — `[E_WRITE_HASH_ECHO] Refused write to ${path}: line ${n} begins with the exact ${hash}│ anchor served for this session, path, and line. Remove the entire copied anchor chain and retry. Nothing was written.`
+_Avoid_: E_HASH_ECHO (ambiguous between write/edit)
+
+**E_EDIT_HASH_ECHO**:
+Refusal of an `edit` whose `replacement_text` contains a served hash echo at the range-relative position — `[E_EDIT_HASH_ECHO] Refused edit to ${path}: replacement line ${k} begins with the exact ${hash}│ anchor served for this session, path, and range-relative line. Remove the copied anchors and retry. Nothing was written.` Deny, not strip — fail-loud, compensable (AA: A).
+_Avoid_: E_WRITE_HASH_ECHO (write-only), generic strip
 
 ### Guidance
 

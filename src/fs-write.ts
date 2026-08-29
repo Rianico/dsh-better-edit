@@ -32,10 +32,12 @@ async function sweepStaleTemps(dir: string): Promise<void> {
         if (now - stats.mtimeMs > STALE_TEMP_MS) {
           await rm(tempPath, { force: true });
         }
-      } catch {
+      } catch (error: unknown) {
+        console.error("[fs-write] failed to inspect stale temp", error);
       }
     }
-  } catch {
+  } catch (error: unknown) {
+    console.error("[fs-write] failed to sweep stale temps", error);
   }
 }
 
@@ -48,7 +50,8 @@ async function syncDir(dir: string): Promise<void> {
     } finally {
       await handle.close();
     }
-  } catch {
+  } catch (error: unknown) {
+    console.error("[fs-write] failed to sync directory", error);
   }
 }
 
@@ -85,7 +88,11 @@ export async function writeAtomic(
     await tempHandle.sync();
   } catch (error: unknown) {
     await tempHandle.close();
-    try { await rm(tempPath, { force: true }); } catch {}
+    try {
+      await rm(tempPath, { force: true });
+    } catch (error: unknown) {
+      console.error("[fs-write] failed to remove temp file", error);
+    }
     throw error;
   }
   try {
@@ -98,10 +105,18 @@ export async function writeAtomic(
         await writeFile(targetPath, content, "utf-8");
         return;
       } finally {
-        try { await rm(tempPath, { force: true }); } catch {}
+        try {
+          await rm(tempPath, { force: true });
+        } catch (error: unknown) {
+          console.error("[fs-write] failed to remove temp file", error);
+        }
       }
     }
-    try { await rm(tempPath, { force: true }); } catch {}
+    try {
+      await rm(tempPath, { force: true });
+    } catch (error: unknown) {
+      console.error("[fs-write] failed to remove temp file", error);
+    }
     throw error;
   }
 }

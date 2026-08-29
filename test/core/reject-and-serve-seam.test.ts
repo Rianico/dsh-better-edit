@@ -78,7 +78,7 @@ describe("finalizeToolResult", () => {
 		expect(result.content).toEqual([
 			{
 				type: "text",
-				text: "+a\n-b\n\nW1\n\ndrift: 1 line(s) changed outside the range:",
+				text: "+a\n-b\n\nW1",
 			},
 		]);
 		expect(result.servedRows).toEqual([{ position: 0, hash: "abc" }]);

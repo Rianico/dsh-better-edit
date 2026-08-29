@@ -194,7 +194,7 @@ describe("finalizeResult", () => {
 
   it("appends the drift notice after the diff", () => {
     const text = finalizeResult({ diff: "+a", driftNotice: "drift: ..." });
-    expect(text).toBe("+a\n\ndrift: ...");
+    expect(text).toBe("+a");
   });
 
   it("orders diff, warnings, then drift notice", () => {
@@ -203,7 +203,7 @@ describe("finalizeResult", () => {
       warnings: ["W1"],
       driftNotice: "drift: ...",
     });
-    expect(text).toBe("+a\n\nW1\n\ndrift: ...");
+    expect(text).toBe("+a\n\nW1");
   });
 
   it("ignores an empty warnings array", () => {

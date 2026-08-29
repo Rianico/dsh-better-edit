@@ -13,20 +13,23 @@ export interface ToolGuidance {
 }
 
 export const EDIT_DESCRIPTION =
-  "Edit a range of lines in a text file, targeted by the 3-char HASH anchors from read output. " +
-  'Use { "path": "file.ts", "edits": [[remove_from, remove_to, replacement_text], ...] } — path is the file to edit (or null to infer from anchors), edits is an array of [remove_from, remove_to, replacement_text] tuples. ' +
-  "remove_from and remove_to must each be a BARE 3-character hash: copy only the hash from the " +
-  'leftmost column of a read row (row `ve7│function hello() {` means `"remove_from": "ve7"`). ' +
-  "Never pass the line content, a code line, or a paragraph into these fields. The path is hoisted to the payload root so every edit in one call targets the same file; a length-1 edits array is a single edit.";
+  "Edit a range of lines in a text file with `{ \"path\": path, \"edits\": [[remove_from, remove_to, replacement_text], ...] }`. " +
+  "`path` is the file path or `null`. `read` returns `HASH\u2502content` (e.g. `wUp\u2502    \"site\": {`) \u2014 for `edit`, " +
+  "`remove_from`/`remove_to` are HASH anchors (bare 3-char value before `\u2502`, e.g. \"wUp\", \"AU6\"), never `HASH\u2502content` or line content. " +
+  "`replacement_text` is bare content without `HASH\u2502`, lines joined by \\n (e.g. \"    \\\"site\\\": {\\n        \\\"class\\\": SiteScraper,\"); use \"\" to delete. " +
+  "Example: read shows `wUp\u2502    \"site\": {` + `AU6\u2502        \"name\": \"old\",` \u2192 edit " +
+  "`{\"path\":\"scrape.py\",\"edits\":[[\"wUp\",\"AU6\",\"    \\\"site\\\": {\\n        \\\"class\\\": SiteScraper,\"]]}`. " +
+  "Edits in one call apply atomically; after success reuse `HASH\u2502content` from the returned diff for the next edit (no re-read needed). On failure follow the error hint.";
 
 export const EDIT_GUIDANCE: ToolGuidance = {
-  intro: "Edit a range of lines via a bare 3-char HASH anchor — payload is { path, edits: [[hash,hash,text]] } (single-file atomic, null path infers).",
+  intro: "Edit a range of lines via a bare 3-char HASH anchor \u2014 payload is { path, edits: [[hash,hash,text]] } (single-file atomic, null path infers).",
   lines: [
-    "`edit`: payload is { \"path\": \"file.ts\"|null, \"edits\": [[remove_from, remove_to, replacement_text], ...] } — path at root, each item is a 3-position tuple with bare hashes (`ve7`, not `ve7│function…`). A single line uses the same hash in both fields.",
-    "`edit`: replacement_text is byte-exact for the whole range — every line inside it you do not reproduce byte-exact is deleted, and leading whitespace is preserved exactly.",
-    "`edit`: `\\n` is a line break, so a range ending on a blank line must end replacement_text with `\\n` and a non-blank last line must not; a blank-line run is one `\\n` per blank line.",
-    "`edit`: the post-edit diff rows carry fresh anchors for follow-ups. A stale or never-served range is hard-rejected (`[E_RANGE_STALE]` / `[E_RANGE_UNSERVED]`); copy the echoed rows and retry — only tool-served rows count.",
-    "`edit`: multiple edits to the same file in one call are atomic (all-or-nothing): if any tuple fails — stale, ambiguous, never-served — nothing is written and the failing tuple's current range is served back. Prefer one edit per call unless you have independent ranges.",
+    "`edit`: `HASH` vs `HASH\u2502content` \u2014 `HASH` is the bare 3-char (e.g. \"wUp\"), `HASH\u2502content` is the full line from `read`/`diff` (e.g. `wUp\u2502    \"site\": {`); never mix them.",
+    "`edit`: get `remove_from`/`remove_to` by copying only the 3 chars before `\u2502` from `read` output \u2014 never include `\u2502` or content after it.",
+    "`edit`: `replacement_text` is plain file content without `HASH\u2502` \u2014 e.g. \"    \\\"site\\\": {\\n        \\\"class\\\": SiteScraper,\" \u2014 never prefix lines with `HASH\u2502`.",
+    "`edit`: every `\\n` in `replacement_text` separates lines; mirror trailing blank lines explicitly (use \"\" to delete a range).",
+    "`edit`: after a successful edit the returned diff shows fresh anchors (`HASH\u2502content`) \u2014 copy new `HASH` values from there for the next edit; no need to re-read.",
+    "`edit`: `remove_from`/`remove_to` are inclusive; batch multiple edits to the same file only when independent \u2014 they apply atomically (fail \u2192 nothing written).",
   ],
 };
 
