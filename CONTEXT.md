@@ -54,8 +54,14 @@ The divergence between the served state and the current file: lines the model wa
 _Avoid_: modification, external change (the tool cannot know the source)
 
 **drift notice**:
-The informational section appended to a replace result (applied or noop, not undo) when drift lies in served territory outside the replacement range: the current content of the drifted lines, capped, with rows counting as serves. Fires once per drift episode — already-reported drift shrinks to a one-line pointer until a read re-serves the lines.
+The informational section appended to a replace result (applied or noop, not undo) when drift lies in served territory outside the replacement range: the current content of the drifted lines, capped, with rows counting as serves. Fires once per drift episode — already-reported drift shrinks to a one-line pointer until a read re-serves the lines. Classified as a user-facing signal (details only, not model content).
 _Avoid_: warning (the operation succeeded; it is information, not a warning)
+
+**model-facing signal**:
+A model-visible signal the tool must include in `content` for correctness (e.g. boundary staleness, range staleness, E_RANGE_*, E_EDIT_HASH_ECHO). The model needs it to retry correctly.
+
+**user-facing signal**:
+A model-visible signal informative for the human only, emitted in `details`/`warnings` and rendered collapsed in TUI (e.g. drift notice, Batch drift note). Not in model content.
 
 **orphaned serve**:
 An entry in served state whose hash no longer matches the current file at that position — the mirror retained a hash that the file has moved or removed elsewhere. Contrast with never-served. An orphan is drift, but at a single position rather than a range.

@@ -102,8 +102,11 @@ export interface FinalizeInput {
 }
 
 export function finalizeResult(input: FinalizeInput): string {
-	const base = input.diff + warnBlock(input.warnings);
-	return base + driftBlock(input.driftNotice);
+	const modelWarnings = input.warnings?.filter(
+		(w) => !w.startsWith("Batch drift note:"),
+	);
+	const base = input.diff + warnBlock(modelWarnings);
+	return base;
 }
 
 export function finalizeToolResult(details: EditDetails): {
@@ -132,8 +135,10 @@ export function buildNoop(input: NoopInput): TResult {
 	const noopDetailsText = noopEdit
 		? `Edit for ${noopEdit.loc} is identical to current content:\n  ${noopEdit.loc}: ${clipLine(noopEdit.currentContent)}`
 		: "The edit produced identical content.";
-	const noticeBlock = driftBlock(driftNotice);
-	const text = `No changes made to ${path}\nClassification: noop\n${noopDetailsText}${warnBlock(warnings)}${noticeBlock}`;
+	const modelWarnings = warnings?.filter(
+		(w) => !w.startsWith("Batch drift note:"),
+	);
+	const text = `No changes made to ${path}\nClassification: noop\n${noopDetailsText}${warnBlock(modelWarnings)}`;
 
 	const metrics = buildMetrics({
 		classification: "noop",
@@ -178,19 +183,21 @@ export function buildChanged(input: SuccessInput): TResult {
 	);
 	const addedLines = editMeta.addedLines;
 	const removedLines = editMeta.removedLines;
-	const warningsBlock = warnBlock(warnings);
+	const modelWarnings = warnings?.filter(
+		(w) => !w.startsWith("Batch drift note:"),
+	);
+	const warningsBlock = warnBlock(modelWarnings);
 	const successPrefix = `Successfully edited in ${path}.`;
 	const lineSummary =
 		addedLines > 0 || removedLines > 0
 			? ` Added ${addedLines} line(s), removed ${removedLines} line(s).`
 			: "";
-	const noticeBlock = driftBlock(driftNotice);
 	const text =
 		resultLines.length === 0
-			? "File is empty. Use edit to insert content." + noticeBlock
+			? "File is empty. Use edit to insert content."
 			: warningsBlock
-				? `${successPrefix}${lineSummary}${warningsBlock}${noticeBlock}`
-				: `${successPrefix}${lineSummary}${noticeBlock}`;
+				? `${successPrefix}${lineSummary}${warningsBlock}`
+				: `${successPrefix}${lineSummary}`;
 
 	const metrics = buildMetrics({
 		classification: "applied",
@@ -255,7 +262,10 @@ export function buildBatchResult(sections: BatchSection[]): TResult {
 		.join("\n\n");
 
 	if (allNoop) {
-		const text = `No changes made. All ${totalEdits} edit(s) in the batch produced identical content.\nClassification: noop${warnBlock(warnings)}${driftBlock(driftNotice)}`;
+		const modelWarnings = warnings.filter(
+			(w) => !w.startsWith("Batch drift note:"),
+		);
+		const text = `No changes made. All ${totalEdits} edit(s) in the batch produced identical content.\nClassification: noop${warnBlock(modelWarnings)}`;
 		return {
 			content: [{ type: "text", text }],
 			details: {
@@ -299,7 +309,10 @@ export function buildBatchResult(sections: BatchSection[]): TResult {
 			? ` Added ${addedLines} line(s), removed ${removedLines} line(s).`
 			: "";
 	const summary = `Successfully edited ${appliedFiles.length} file(s) — ${appliedTotal} of ${totalEdits} edit(s) applied${noopTotal > 0 ? ` (${noopTotal} noop)` : ""}.${lineSummary}`;
-	const text = `${summary}${warnBlock(warnings)}${driftBlock(driftNotice)}`;
+	const modelWarnings = warnings.filter(
+		(w) => !w.startsWith("Batch drift note:"),
+	);
+	const text = `${summary}${warnBlock(modelWarnings)}`;
 
 	return {
 		content: [{ type: "text", text }],
