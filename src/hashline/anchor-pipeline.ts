@@ -20,7 +20,7 @@
  */
 
 import { abortIf, splitLines, rejectUnknownFields, firstNonEmptyIndex, lastNonEmptyIndex, clipLine } from "../utils.js";
-import { HASH_CLASS, HL_BARE_PREFIX_RE, HL_PREFIX_PLUS_RE, HL_PREFIX_MINUS_RE, HASH_SEP, ANCHOR_LEN, ALPH_RE, canon, lineHashesPure } from "./hash-assign.js";
+import { HASH_CLASS, HL_BARE_PREFIX_RE, HL_PREFIX_PLUS_RE, HL_PREFIX_MINUS_RE, HASH_SEP, ANCHOR_LEN, ALPH_RE, canon, lineHashesPure, getCanonForHash, rememberHashCanon } from "./hash-assign.js";
 import { recordServed, servedPositionsOf } from "../served-store.js";
 import { SERVED_ECHO_CAP } from "../constants.js";
 import { NEW_CONTENT_NOT_STRING_MSG } from "../constants.js";
@@ -690,6 +690,19 @@ export function verifyServedRange(args: {
 		filePath,
 	} = args;
 	const where = filePath ? ` in ${filePath}` : "";
+	let isHealed = false;
+	for (let i = 0; i < fileHashes.length; i++) {
+		const h = fileHashes[i]!;
+		if (getCanonForHash(h) === undefined)
+			rememberHashCanon(h, canon(fileLines[i] ?? ""));
+	}
+	for (let i = 0; i < served.length; i++) {
+		const h = served[i];
+		if (h !== null && getCanonForHash(h) === undefined) {
+			const pos = fileHashes.indexOf(h);
+			if (pos >= 0) rememberHashCanon(h, canon(fileLines[pos] ?? ""));
+		}
+	}
 	const echoRows = buildRangeEcho(startLine, endLine, fileHashes);
 	const totalLen = endLine - startLine + 1;
 	const tail =
@@ -736,61 +749,204 @@ export function verifyServedRange(args: {
 		}
 	}
 	if (from === undefined || to === undefined) {
-		const problems: string[] = [];
-		if (startPositions.length === 0) {
-			problems.push(`remove_from "${startHash}" has no served position`);
-		} else if (startPositions.length > 1) {
-			problems.push(
-				`remove_from "${startHash}" was served at ${startPositions.length} positions`,
-			);
+		let healed: { from: number; to: number } | undefined;
+		if (startPositions.length === 1 && endPositions.length === 1) {
+			const sPos = startPositions[0]!;
+			const ePos = endPositions[0]!;
+			const servedFrom = Math.min(sPos, ePos);
+			const servedTo = Math.max(sPos, ePos);
+			const servedLen = servedTo - servedFrom + 1;
+			if (servedLen === currentLen) {
+				const expectedCanons: string[] = [];
+				let canBuild = true;
+				for (let k = 0; k < servedLen; k++) {
+					const h = served[servedFrom + k];
+					if (h === null) {
+						canBuild = false;
+						break;
+					}
+					const c = getCanonForHash(h);
+					if (c === undefined) {
+						canBuild = false;
+						break;
+					}
+					expectedCanons.push(c);
+				}
+				if (canBuild) {
+					const matches: number[] = [];
+					for (let i = 0; i <= fileLines.length - servedLen; i++) {
+						let ok = true;
+						for (let k = 0; k < servedLen; k++) {
+							if (canon(fileLines[i + k] ?? "") !== expectedCanons[k]) {
+								ok = false;
+								break;
+							}
+						}
+						if (ok) matches.push(i);
+						if (matches.length > 1) break;
+					}
+					if (matches.length === 1) {
+						healed = { from: matches[0]!, to: matches[0]! + servedLen - 1 };
+					}
+				}
+			}
 		}
-		if (endPositions.length === 0) {
-			problems.push(`remove_to "${endHash}" has no served position`);
-		} else if (endPositions.length > 1) {
-			problems.push(
-				`remove_to "${endHash}" was served at ${endPositions.length} positions`,
-			);
+		if (!healed) {
+			const hasServed = served.some((h) => h !== null);
+			const startInFile = fileHashes.includes(startHash);
+			const endInFile = fileHashes.includes(endHash);
+			if (hasServed && (!startInFile || !endInFile)) {
+				const startCanon = getCanonForHash(startHash);
+				const endCanon = getCanonForHash(endHash);
+				if (startCanon !== undefined && endCanon !== undefined) {
+					const startMatches: number[] = [];
+					const endMatches: number[] = [];
+					for (let i = 0; i < fileLines.length; i++) {
+						if (canon(fileLines[i] ?? "") === startCanon) startMatches.push(i);
+						if (canon(fileLines[i] ?? "") === endCanon) endMatches.push(i);
+						if (startMatches.length > 1 && endMatches.length > 1) break;
+					}
+					if (startMatches.length === 1 && endMatches.length === 1) {
+						const s = startMatches[0]!;
+						const e = endMatches[0]!;
+						const healedFrom = Math.min(s, e);
+						const healedTo = Math.max(s, e);
+						if (healedTo - healedFrom + 1 === currentLen) {
+							let interiorOk = true;
+							if (currentLen > 2) {
+								const healedCanons = [];
+								for (let k = 0; k < currentLen; k++)
+									healedCanons.push(canon(fileLines[healedFrom + k] ?? ""));
+								let count = 0;
+								for (let i = 0; i <= fileLines.length - currentLen; i++) {
+									let ok = true;
+									for (let k = 0; k < currentLen; k++)
+										if (canon(fileLines[i + k] ?? "") !== healedCanons[k]) {
+											ok = false;
+											break;
+										}
+									if (ok) count++;
+									if (count > 1) break;
+								}
+								if (count !== 1) interiorOk = false;
+							}
+							if (interiorOk) healed = { from: healedFrom, to: healedTo };
+						}
+					}
+				}
+			}
 		}
-		throw new ServedRejectionError({
-			code: "E_RANGE_UNVERIFIED",
-			message:
-				`[E_RANGE_UNVERIFIED] cannot verify range against served state${where}: ${problems.join("; ")}. ` +
-				`Current range:
-${echo}
-${retryHint()}`,
-			servedRows: echoRows,
-		});
-	}
-
-	for (let i = from; i <= to; i++) {
-		if (served[i] === null) {
+		if (healed) {
+			from = healed.from;
+			to = healed.to;
+			isHealed = true;
+		} else {
+			const problems: string[] = [];
+			if (startPositions.length === 0) {
+				problems.push(`remove_from "${startHash}" has no served position`);
+			} else if (startPositions.length > 1) {
+				problems.push(
+					`remove_from "${startHash}" was served at ${startPositions.length} positions`,
+				);
+			}
+			if (endPositions.length === 0) {
+				problems.push(`remove_to "${endHash}" has no served position`);
+			} else if (endPositions.length > 1) {
+				problems.push(
+					`remove_to "${endHash}" was served at ${endPositions.length} positions`,
+				);
+			}
 			throw new ServedRejectionError({
-				code: "E_RANGE_UNSERVED",
-				message: `[E_RANGE_UNSERVED] line ${i + 1}${where} was never served.\nCurrent range:\n${echo}\n${retryHint()}`,
-				firstOffendingLine: i + 1,
+				code: "E_RANGE_UNVERIFIED",
+				message:
+					`[E_RANGE_UNVERIFIED] cannot verify range against served state${where}: ${problems.join("; ")}. ` +
+					`No served span matched the current range (${currentLen} lines). ` +
+					`A full read will re-sync the served mirror — the echoed range below is current content, ` +
+					`but retrying without re-reading cannot clear a stale duplicate outside the echoed window.\n` +
+					`Current range:\n${echo}`,
 				servedRows: echoRows,
 			});
 		}
 	}
 
-	const servedLen = to - from + 1;
-	if (servedLen !== currentLen) {
-		throw new ServedRejectionError({
-			code: "E_RANGE_STALE",
-			message: `[E_RANGE_STALE] served span (${servedLen} lines) no longer matches current range (${currentLen} lines)${where}.\nCurrent range:\n${echo}\n${retryHint()}`,
-			firstOffendingLine: startLine,
-			servedRows: echoRows,
-		});
-	}
-	for (let k = 0; k < servedLen; k++) {
-		if (served[from + k] !== fileHashes[startLine - 1 + k]) {
-			const offendingLine = startLine + k;
-			throw new ServedRejectionError({
-				code: "E_RANGE_STALE",
-				message: `[E_RANGE_STALE] Line ${offendingLine}${where} differs from what you were served — the file changed on disk since it was read. Current range:\n${echo}\n${retryHint()}`,
-				firstOffendingLine: offendingLine,
-				servedRows: echoRows,
-			});
+	if (isHealed) {
+		for (let k = 0; k < currentLen; k++) {
+			const servedHash = served[from + k];
+			if (servedHash === null) continue;
+			const expectedCanon = getCanonForHash(servedHash);
+			const actualCanon = canon(fileLines[from + k] ?? "");
+			if (expectedCanon !== undefined && expectedCanon !== actualCanon) {
+				const offendingLine = from + k + 1;
+				throw new ServedRejectionError({
+					code: "E_RANGE_STALE",
+					message: `[E_RANGE_STALE] line ${offendingLine}${where} differs from what was served.\nCurrent range:\n${echo}\n${retryHint()}`,
+					firstOffendingLine: offendingLine,
+					servedRows: echoRows,
+				});
+			}
+		}
+	} else {
+		for (let i = from; i <= to; i++) {
+			if (served[i] === null) {
+				throw new ServedRejectionError({
+					code: "E_RANGE_UNSERVED",
+					message: `[E_RANGE_UNSERVED] line ${i + 1}${where} was never served.\nCurrent range:\n${echo}\n${retryHint()}`,
+					firstOffendingLine: i + 1,
+					servedRows: echoRows,
+				});
+			}
+		}
+		const servedLen = to - from + 1;
+		if (servedLen !== currentLen) {
+			let lenHealed = false;
+			const expectedCanons: string[] = [];
+			let canBuild = true;
+			for (let k = 0; k < servedLen; k++) {
+				const h = served[from + k];
+				if (h === null) {
+					canBuild = false;
+					break;
+				}
+				const c = getCanonForHash(h);
+				if (c === undefined) {
+					canBuild = false;
+					break;
+				}
+				expectedCanons.push(c);
+			}
+			if (canBuild) {
+				let matches = 0;
+				for (let i = 0; i <= fileLines.length - servedLen; i++) {
+					let ok = true;
+					for (let k = 0; k < servedLen; k++)
+						if (canon(fileLines[i + k] ?? "") !== expectedCanons[k]) {
+							ok = false;
+							break;
+						}
+					if (ok) matches++;
+					if (matches > 1) break;
+				}
+				if (matches === 1) lenHealed = true;
+			}
+			if (!lenHealed) {
+				throw new ServedRejectionError({
+					code: "E_RANGE_STALE",
+					message: `[E_RANGE_STALE] served span (${servedLen} lines) no longer matches current range (${currentLen} lines)${where}.\nCurrent range:\n${echo}\n${retryHint()}`,
+					firstOffendingLine: startLine,
+					servedRows: echoRows,
+				});
+			}
+		}
+		for (let k = 0; k < servedLen; k++) {
+			if (served[from + k] !== fileHashes[startLine - 1 + k]) {
+				const offendingLine = startLine + k;
+				throw new ServedRejectionError({
+					code: "E_RANGE_STALE",
+					message: `[E_RANGE_STALE] line ${offendingLine}${where} differs from what was served.\nCurrent range:\n${echo}\n${retryHint()}`,
+					firstOffendingLine: offendingLine,
+					servedRows: echoRows,
+				});
+			}
 		}
 	}
 }
