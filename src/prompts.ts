@@ -27,6 +27,7 @@ export const EDIT_GUIDANCE: ToolGuidance = {
     "`edit`: `\\n` is a line break, so a range ending on a blank line must end replacement_text with `\\n` and a non-blank last line must not; a blank-line run is one `\\n` per blank line.",
     "`edit`: the post-edit diff rows carry fresh anchors for follow-ups. A stale or never-served range is hard-rejected (`[E_RANGE_STALE]` / `[E_RANGE_UNSERVED]`); copy the echoed rows and retry — only tool-served rows count.",
     "`edit`: multiple edits to the same file in one call are atomic (all-or-nothing): if any tuple fails — stale, ambiguous, never-served — nothing is written and the failing tuple's current range is served back. Prefer one edit per call unless you have independent ranges.",
+    "edit: HASH vs HASH│content: served rows are HASH│content for you to copy the HASH from — never send HASH│content as an anchor or in replacement_text. Strip │ and everything after it for anchors; strip HASH│ prefix for replacement_text.",
   ],
 };
 

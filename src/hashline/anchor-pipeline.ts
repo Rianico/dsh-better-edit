@@ -38,6 +38,18 @@ function diagRef(ref: string): string {
 		return `[E_BAD_REF] Invalid anchor. Use the hash alone (e.g. "aB3") — no line numbers or trailing content.`;
 	}
 
+	if (trimmed.includes("│") && trimmed.includes("\n")) {
+		const lines = trimmed.split("\n");
+		const first = lines[0] ?? "";
+		const last = lines[lines.length - 1] ?? "";
+		const hashRe = new RegExp(HASH_CLASS);
+		const firstMatch = first.match(hashRe);
+		const lastMatch = last.match(hashRe);
+		const firstHash = firstMatch?.[0] ?? "wUp";
+		const lastHash = lastMatch?.[0] ?? "AU6";
+		const preview = first.slice(0, 60);
+		return `[E_BAD_REF] Invalid anchor — remove_from must be a single bare 3-char hash (e.g. "wUp"), not a block with HASH│. Received ${lines.length} lines starting "${preview}…" — use only the first hash "${firstHash}" as remove_from and "${lastHash}" as remove_to, and put the new content (without HASH│) in replacement_text.`;
+	}
 	if (trimmed.includes("│")) {
 		return `[E_BAD_REF] Invalid anchor "${trimmed}". remove_from and remove_to must contain the 3-char hash only — remove everything from "│" onward.`;
 	}
@@ -252,6 +264,15 @@ function assertItem(edit: Record<string, unknown>): void {
 }
 
 const ANCHOR_ROW_RE = new RegExp(`^([+-]?)(${HASH_CLASS})│`);
+function firstHashFromBlock(block: string): string | undefined {
+	for (const line of block.split("\n")) {
+		const m = line.match(ANCHOR_ROW_RE);
+		if (m) return m[2]!;
+		const bare = line.match(new RegExp(HASH_CLASS));
+		if (bare) return bare[0]!;
+	}
+	return undefined;
+}
 
 export function resEdit(edit: HTEdit, warnings?: string[]): HEdit {
 	assertItem(edit as Record<string, unknown>);
@@ -259,6 +280,14 @@ export function resEdit(edit: HTEdit, warnings?: string[]): HEdit {
 	const editLines = parseText(edit.replacement_text);
 	const bounds = [edit.remove_from, edit.remove_to].map((ref) => {
 		const trimmed = ref.trim();
+		if (trimmed.includes("\n")) {
+			const hash = firstHashFromBlock(trimmed);
+			if (hash) {
+				const lines = trimmed.split("\n").length;
+				warnings?.push(`[E_BAD_REF] extracted first hash "${hash}" from ${lines}-line block — use bare "${hash}" next time`);
+				return hash;
+			}
+		}
 		const match = trimmed.match(ANCHOR_ROW_RE);
 		if (match) {
 			let message: string;
@@ -308,9 +337,15 @@ function stripBarePrefixes(
 		.join(", ");
 	const matchedCount = stripped.filter((s) => s.matched).length;
 	const evidence = matchedCount === 0 ? "0 matched — verify literal 'HASH│' content" : `${matchedCount}/${stripped.length} matched`;
-	warnings.push(
-		`[E_BARE_HASH_PREFIX] stripped "HASH│" prefix from ${locations} (${evidence}).`,
-	);
+	if (matchedCount === stripped.length) {
+		warnings.push(
+			`[info E_BARE_HASH_PREFIX] stripped "HASH│" prefix from ${locations} (${evidence}) — use bare content without HASH│ next time.`,
+		);
+	} else {
+		warnings.push(
+			`[E_BARE_HASH_PREFIX] stripped "HASH│" prefix from ${locations} (${evidence}).`,
+		);
+	}
 	return { ...edit, content_lines: contentLines };
 }
 
