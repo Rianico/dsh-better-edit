@@ -1,0 +1,1 @@
+npx --no -- commitlint --from=origin/main --to=HEAD

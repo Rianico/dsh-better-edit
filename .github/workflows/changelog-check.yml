@@ -1,0 +1,69 @@
+name: Changelog Check
+on:
+  pull_request:
+    branches: [main]
+permissions:
+  contents: read
+concurrency:
+  group: changelog-check-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.12"
+      - name: Check Unreleased is up to date
+        run: |
+          # save committed version
+          cp CHANGELOG.md /tmp/before.md 2>/dev/null || touch /tmp/before.md
+          python scripts/changelog-unreleased.py update
+          if diff -q /tmp/before.md CHANGELOG.md >/dev/null; then
+            echo "CHANGELOG.md Unreleased ok"
+            exit 0
+          fi
+          echo "::error::CHANGELOG.md Unreleased stale"
+          echo ""
+          echo "Visible conventional commits in this PR require Unreleased update."
+          echo "Expected diff:"
+          diff -u /tmp/before.md CHANGELOG.md || true
+          echo ""
+          echo "Fix locally:"
+          echo "  uv run python scripts/changelog-unreleased.py update"
+          echo "  git add CHANGELOG.md && git commit --amend --no-edit --no-verify && git push --force-with-lease"
+          echo ""
+          echo "Hidden types (style/chore/refactor/test/build/ci) without BREAKING CHANGE don't need Unreleased."
+          # restore committed file so subsequent steps see original
+          cp /tmp/before.md CHANGELOG.md
+          exit 1
+      - name: Comment on failure
+        if: failure()
+        uses: actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea # v7
+        with:
+          script: |
+            const body = `> [!warning] CHANGELOG.md Unreleased stale
+            This PR contains visible conventional commits (\`feat|fix|perf|revert|docs\` or \`!\/BREAKING CHANGE\`) but \`## [Unreleased]\` doesn't match \`scripts/changelog-unreleased.py update\`.
+
+            Fix:
+            \`\`\`bash
+            uv run python scripts/changelog-unreleased.py update
+            git add CHANGELOG.md && git commit --amend --no-edit
+            git push --force-with-lease
+            \`\`\`
+            Hidden types \`style|chore|refactor|test|build|ci\` only need update when breaking.`;
+            // avoid duplicate comments
+            const {data: comments} = await github.rest.issues.listComments({
+              owner: context.repo.owner, repo: context.repo.repo, issue_number: context.issue.number
+            });
+            if (comments.some(c => c.body.includes('CHANGELOG.md Unreleased stale'))) return;
+            await github.rest.issues.createComment({
+              owner: context.repo.owner, repo: context.repo.repo, issue_number: context.issue.number, body
+            });

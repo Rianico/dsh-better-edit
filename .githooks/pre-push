@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+set -e
+# pre-push hook: warn if CHANGELOG.md Unreleased stale
+while read -r local_ref local_sha remote_ref remote_sha; do
+  [ "$local_sha" = "0000000000000000000000000000000000000000" ] && continue
+  range="$remote_sha..$local_sha"
+  [ "$remote_sha" = "0000000000000000000000000000000000000000" ] && range="$local_sha"
+  if ! git log "$range" --pretty=%s --no-merges | grep -Eq '^(feat|fix|perf|revert|docs)(\(.+\))?!?: '; then
+    if ! git log "$range" --pretty=%B --no-merges | grep -q "BREAKING CHANGE:"; then
+      continue
+    fi
+  fi
+  tmp=$(mktemp)
+  cp CHANGELOG.md "$tmp" 2>/dev/null || touch "$tmp"
+  uv run python scripts/changelog-unreleased.py update >/dev/null
+  if ! diff -q CHANGELOG.md "$tmp" >/dev/null; then
+    cat >&2 <<'EOF'
+> [!warning] CHANGELOG.md [Unreleased] stale
+Visible conventional commit in push range but Unreleased not updated.
+Fix:
+  uv run python scripts/changelog-unreleased.py update
+  git add CHANGELOG.md
+  git commit --amend --no-edit   # feature branch ok
+  git push --force-with-lease
+Bypass (human): git push --no-verify
+EOF
+    cp "$tmp" CHANGELOG.md
+    rm "$tmp"
+    exit 1
+  fi
+  rm "$tmp"
+done
