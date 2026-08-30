@@ -6,7 +6,7 @@
  */
 import { homedir } from "node:os";
 import { isAbsolute, join } from "node:path";
-import { readFileSync, statSync } from "node:fs";
+import { readFileSync, statSync, appendFileSync } from "node:fs";
 import { mkdir, writeFile } from "node:fs/promises";
 import { resolveDshHome } from "@deepseek-ai/dsh-home-paths";
 import { z } from "zod";
@@ -48,6 +48,11 @@ function parseSimpleYaml(content: string): Record<string, string> {
 		if (colon === -1) continue;
 		const key = line.slice(0, colon).trim();
 		let value = line.slice(colon + 1).trim();
+		if (value.startsWith("[") && value.endsWith("]")) {
+			value = value.slice(1, -1);
+			out[key] = value;
+			continue;
+		}
 		value = stripQuotes(value);
 		value = stripInlineComment(value);
 		out[key] = value;
@@ -70,6 +75,13 @@ function parseAutoGitIgnoreRaw(v: string): boolean | undefined {
 	return undefined;
 }
 
+function parseSupportedEncodingsRaw(v: string): string[] | undefined {
+	const inner = v.trim().replace(/^\[/, "").replace(/\]$/, "");
+	const items = inner.split(/[ ,;]+/).map((s) => s.trim().toLowerCase()).filter((s) => s.length > 0);
+	if (items.length === 0) return undefined;
+	return items;
+}
+
 // ---- Zod schema (single source of truth) ----
 
 const StoreConfigSchema = z.object({
@@ -78,6 +90,9 @@ const StoreConfigSchema = z.object({
 		.default("central")
 		.transform((v) => normalizeStoreDir(v) ?? "central"), // where the store lives: "central" (default, in $DSH_HOME/.../runtime/<name>-<hash8>/) | "workspace" (legacy <ws>/.dsh_better_edit/) | "/abs/path" (custom root)
 	autoGitignore: z.boolean().default(false), // workspace only: auto-append ".dsh_better_edit/" to .gitignore when .git exists but entry missing (false = warn once)
+	autoGuessEncoding: z.boolean().default(false), // VS Code files.autoGuessEncoding — deterministic BOM→UTF-8 first, model-assisted top-3 only when true
+	normalizeToUtf8: z.boolean().default(false), // when true, legacy files (GBK etc.) migrate to UTF-8 on first edit/write
+	supportedEncodings: z.array(z.string()).default(["gbk", "big5", "shift_jis", "euc-kr", "windows-1251", "iso-8859-1"]),
 	undo_ttl_s: z.number().int().min(-1).default(604800), // undo history TTL in seconds; -1 = keep forever (default 604800 = 7 days)
 	storeMaxAgeS: z.number().int().min(1).default(2592000), // central janitor: max idle age in seconds before evicting runtime/<name>-<hash8>/ (default 2592000 = 30 days)
 	storeMaxTotalBytes: z.number().int().min(0).default(524288000), // central janitor: max total bytes under runtime/ before LRU eviction (default 524288000 = 500 MB)
@@ -92,6 +107,9 @@ let cachedMtimeMs: number | undefined;
 let cachedYamlPath: string | undefined;
 let cachedEnvStoreDir: string | undefined;
 let cachedEnvAutoGitignore: string | undefined;
+let cachedEnvAutoGuessEncoding: string | undefined;
+let cachedEnvNormalizeToUtf8: string | undefined;
+let cachedEnvSupportedEncodings: string | undefined;
 
 function configYamlPath(): string {
 	return join(resolveDshHome(), "plugins", "dsh-better-edit", "config.yaml");
@@ -109,6 +127,14 @@ storeDir: central
 
 # workspace only: when .git exists but .gitignore lacks .dsh_better_edit/, true = auto-append ".dsh_better_edit/", false = warn once
 autoGitignore: false
+
+# encoding: deterministic BOM→UTF-8 first, guessing only when autoGuessEncoding:true
+# when true, FS_NOT_TEXT scores supportedEncodings and surfaces top-3 previews for model pick
+autoGuessEncoding: false
+# when true, legacy files (GBK etc.) migrate to UTF-8 on first write
+normalizeToUtf8: false
+# allowlist scored for top-3 previews when autoGuessEncoding:true
+supportedEncodings: [gbk, big5, shift_jis, euc-kr, windows-1251, iso-8859-1]
 
 # undo history TTL in seconds; -1 = keep forever (default 604800 = 7 days)
 undo_ttl_s: 604800
@@ -236,6 +262,21 @@ function fsAdapter(): Partial<StoreConfig> {
 			}
 		}
 
+		if (parsed.autoGuessEncoding !== undefined) {
+			const b = parseAutoGitIgnoreRaw(parsed.autoGuessEncoding);
+			if (b === undefined) console.warn(`dsh-better-edit: autoGuessEncoding "${parsed.autoGuessEncoding}" invalid — expected true|false`);
+			else out.autoGuessEncoding = b;
+		}
+		if (parsed.normalizeToUtf8 !== undefined) {
+			const b = parseAutoGitIgnoreRaw(parsed.normalizeToUtf8);
+			if (b === undefined) console.warn(`dsh-better-edit: normalizeToUtf8 "${parsed.normalizeToUtf8}" invalid — expected true|false`);
+			else out.normalizeToUtf8 = b;
+		}
+		if (parsed.supportedEncodings !== undefined) {
+			const arr = parseSupportedEncodingsRaw(parsed.supportedEncodings);
+			if (arr === undefined) console.warn(`dsh-better-edit: supportedEncodings "${parsed.supportedEncodings}" invalid`);
+			else out.supportedEncodings = arr;
+		}
 		if (parsed.storeMaxTotalBytes !== undefined) {
 			const n = Number(parsed.storeMaxTotalBytes);
 			const res = z.number().int().min(0).safeParse(n);
@@ -277,6 +318,24 @@ function envAdapter(base: StoreConfig): Partial<StoreConfig> {
 		}
 	}
 
+	const envGuess = process.env.DSH_BETTER_EDIT_AUTO_GUESS_ENCODING;
+	if (envGuess !== undefined) {
+		const b = parseAutoGitIgnoreRaw(envGuess);
+		if (b === undefined) console.warn(`dsh-better-edit: DSH_BETTER_EDIT_AUTO_GUESS_ENCODING invalid — expected true|false`);
+		else out.autoGuessEncoding = b;
+	}
+	const envNorm = process.env.DSH_BETTER_EDIT_NORMALIZE_TO_UTF8;
+	if (envNorm !== undefined) {
+		const b = parseAutoGitIgnoreRaw(envNorm);
+		if (b === undefined) console.warn(`dsh-better-edit: DSH_BETTER_EDIT_NORMALIZE_TO_UTF8 invalid — expected true|false`);
+		else out.normalizeToUtf8 = b;
+	}
+	const envSup = process.env.DSH_BETTER_EDIT_SUPPORTED_ENCODINGS;
+	if (envSup !== undefined) {
+		const arr = parseSupportedEncodingsRaw(envSup);
+		if (arr === undefined) console.warn(`dsh-better-edit: DSH_BETTER_EDIT_SUPPORTED_ENCODINGS invalid`);
+		else out.supportedEncodings = arr;
+	}
 	const envAuto = process.env.DSH_BETTER_EDIT_AUTO_GITIGNORE;
 	if (envAuto !== undefined) {
 		const b = parseAutoGitIgnoreRaw(envAuto);
@@ -291,8 +350,36 @@ function envAdapter(base: StoreConfig): Partial<StoreConfig> {
 	return out;
 }
 
+function complementMissingFieldsSync(yamlPath: string, yamlPartial: Partial<StoreConfig>): void {
+	// Best-effort: append missing canonical keys with defaults, preserving existing content.
+	// Only runs when the file exists (mtime !== undefined) and some canonical key is absent.
+	const missingLines: string[] = [];
+	if (yamlPartial.storeDir === undefined) missingLines.push("storeDir: central");
+	if (yamlPartial.autoGitignore === undefined) missingLines.push("autoGitignore: false");
+	if (yamlPartial.autoGuessEncoding === undefined) missingLines.push("autoGuessEncoding: false");
+	if (yamlPartial.normalizeToUtf8 === undefined) missingLines.push("normalizeToUtf8: false");
+	if (yamlPartial.supportedEncodings === undefined) missingLines.push("supportedEncodings: [gbk, big5, shift_jis, euc-kr, windows-1251, iso-8859-1]");
+	if (yamlPartial.undo_ttl_s === undefined) missingLines.push("undo_ttl_s: 604800");
+	if (yamlPartial.storeMaxAgeS === undefined) missingLines.push("storeMaxAgeS: 2592000");
+	if (yamlPartial.storeMaxTotalBytes === undefined) missingLines.push("storeMaxTotalBytes: 524288000");
+	if (missingLines.length === 0) return;
+	try {
+		// Ensure we don't duplicate if file was concurrently complemented — re-read raw keys.
+		const raw = readFileSync(yamlPath, "utf-8");
+		const parsed = parseSimpleYaml(raw);
+		// Re-check against raw parsed (aliases for storeMaxAgeS already handled via yamlPartial, but double-check).
+		const stillMissing = missingLines.filter((line) => {
+			const key = line.split(":")[0]!.trim();
+			return parsed[key] === undefined;
+		});
+		if (stillMissing.length === 0) return;
+		const suffix = (raw.endsWith("\n") || raw.length === 0 ? "" : "\n") + stillMissing.join("\n") + "\n";
+		appendFileSync(yamlPath, suffix, "utf-8");
+	} catch {
+		// best-effort: ENOENT (file deleted between stat and read) or permission — ignore
+	}
+}
 // ---- public load (merged, cached) ----
-
 export function loadConfig(): StoreConfig {
 	const yamlPath = configYamlPath();
 	let mtime: number | undefined;
@@ -302,6 +389,9 @@ export function loadConfig(): StoreConfig {
 		// no yaml file — fall through to defaults/cache miss
 	}
 	const envStoreDir = process.env.DSH_BETTER_EDIT_STORE_DIR;
+	const envGuess = process.env.DSH_BETTER_EDIT_AUTO_GUESS_ENCODING;
+	const envNorm = process.env.DSH_BETTER_EDIT_NORMALIZE_TO_UTF8;
+	const envSup = process.env.DSH_BETTER_EDIT_SUPPORTED_ENCODINGS;
 	const envAuto = process.env.DSH_BETTER_EDIT_AUTO_GITIGNORE;
 
 	if (
@@ -309,12 +399,21 @@ export function loadConfig(): StoreConfig {
 		cachedMtimeMs === mtime &&
 		cachedYamlPath === yamlPath &&
 		cachedEnvStoreDir === envStoreDir &&
-		cachedEnvAutoGitignore === envAuto
+		cachedEnvAutoGitignore === envAuto &&
+		cachedEnvAutoGuessEncoding === envGuess &&
+		cachedEnvNormalizeToUtf8 === envNorm &&
+		cachedEnvSupportedEncodings === envSup
 	) {
 		return cachedConfig;
 	}
 
 	const yamlPartial = fsAdapter();
+	if (mtime !== undefined) {
+		complementMissingFieldsSync(yamlPath, yamlPartial);
+		try {
+			mtime = statSync(yamlPath).mtimeMs;
+		} catch {}
+	}
 	const envPartial = envAdapter({ ...DEFAULT_CONFIG, ...yamlPartial });
 	const merged = { ...DEFAULT_CONFIG, ...yamlPartial, ...envPartial };
 
@@ -336,6 +435,9 @@ export function loadConfig(): StoreConfig {
 	cachedYamlPath = yamlPath;
 	cachedEnvStoreDir = envStoreDir;
 	cachedEnvAutoGitignore = envAuto;
+	cachedEnvAutoGuessEncoding = envGuess;
+	cachedEnvNormalizeToUtf8 = envNorm;
+	cachedEnvSupportedEncodings = envSup;
 	return cfg;
 }
 
@@ -346,4 +448,7 @@ export function _resetConfigCache(): void {
 	cachedYamlPath = undefined;
 	cachedEnvStoreDir = undefined;
 	cachedEnvAutoGitignore = undefined;
+	cachedEnvAutoGuessEncoding = undefined;
+	cachedEnvNormalizeToUtf8 = undefined;
+	cachedEnvSupportedEncodings = undefined;
 }

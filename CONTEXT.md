@@ -45,6 +45,32 @@ The condition where a resolved range's interior cannot be reconciled with served
 **never-served**:
 An interior line with no entry in the served record — the model was never shown that line. Reported as `[E_RANGE_UNSERVED]`; the response serves the current range so the model can retry.
 
+### File Encoding
+
+**file encoding state**:
+The `{encoding, hasBOM, lineEnding}` recorded at open and inverted on save — the buffer-level identity that guarantees round-trip fidelity. Distinct from `served state` (hash mirror) and from the file's byte content on disk. When the DSH provider supports it, the provider owns this state; otherwise the plugin maintains a per-`targetKey` fallback mirror invalidated by `FsVersion`.
+_Avoid_: encoding setting, charset cache
+
+**decoding error**:
+A byte sequence that cannot be decoded under a chosen encoding — e.g. `0xFF` under UTF-8 `fatal:true` → `FS_NOT_TEXT`. Deterministic, not a guess.
+_Avoid_: invalid text
+
+**detection error**:
+Choosing the wrong encoding for bytes that are valid under multiple code pages — e.g. `C4 E3` decoded as CP1251 `Дг` vs GBK `你`. The bytes are valid in both, the interpretation is wrong; surfaces as mojibake, not as `FS_NOT_TEXT`.
+_Avoid_: decoding error
+
+**autoGuessEncoding**:
+The opt-in gate (default `false`) that allows auto-decode after deterministic `BOM → strict UTF-8` has failed. Mirrors VS Code `files.autoGuessEncoding`; when off, `FS_NOT_TEXT` is thrown with **Top-3 candidates always pushed** (`Top-3 guesses: … Try read({encoding})`); when on, the file is auto-decoded and the same Top-3 is pushed as a second `ContentBlock` footer (`[Auto-guessed: enc, candidates: …]`). Probabilistic encodings are never hidden — Top-3 is always surfaced for the model to pick.
+_Avoid_: auto-detect
+
+**config complement**:
+When `config.yaml` is missing keys (e.g. after an upgrade adds `autoGuessEncoding`), `loadConfig()` complements the file with defaults (appends `key: default` lines, best-effort, preserving existing content) so the file stays complete without manual edit.
+_Avoid_: manual migration
+
+**manual override**:
+The status-bar-equivalent escape hatch: `read({encoding})` re-interprets bytes on disk (`Reopen with Encoding`) and `write({encoding})` transcodes the buffer on save (`Save with Encoding`). The agent-facing surface for correcting a `detection error` without corrupting disk.
+_Avoid_: force encoding
+
 **reject-and-serve**:
 The staleness policy: reject the edit and return the current range as fresh `HASH│content` rows, which themselves count as serves, so the retry needs no read.
 _Avoid_: reject-then-reread (the retry must not require a read)
@@ -76,11 +102,11 @@ The file condition where a line's content survives an external write and, becaus
 _Avoid_: duplicate content (implies same hash, which perfect hashing prevents)
 
 **read_skill**:
-To read a file's content as plain text — no hash prefixes, no served rows. The model's tool for loading skill content (SKILL.md or any file in its directory) to invoke and consume; `read` remains the hashed read for edit targets.
+To read a file's content as plain text — no hash prefixes, no served rows, but maintaining `file encoding state` for round-trip. The model's tool for loading skill content (SKILL.md or any file in its directory) to invoke and consume; `read` remains the hashed read for edit targets. `read_skill` follows the same `BOM → strict UTF-8 → autoGuess` capture path as `read`, records `file encoding state` (so a later `write` can round-trip), but never records `served state` — it cannot authorize `edit` anchors.
 _Avoid_: plain read, skill tool
 
 **reference read**:
-A read that serves no hashes and records no served state — the model consumes the content rather than editing it. `read_skill` is the only reference read.
+A read that serves no hashes and records no served state, but may record `file encoding state`. `read_skill` is the reference read that maintains encoding without serving.
 _Avoid_: unmanaged read
 
 **tool-name-as-intent**:
@@ -122,6 +148,7 @@ _Avoid_: E_WRITE_HASH_ECHO (write-only), generic strip
 ### Guidance
 
 **Prompt section**:
+
 A named unit in dsh's `systemPrompt` registry — one of `tool:read`, `tool:edit`, `tool:undo_last_edit` — carrying a name, an `order`, and rendered text. Registered per agent on the agent's own scope layer, so it shadows the preset's built-in section of the same name.
 _Avoid_: prompt, prompt entry
 
