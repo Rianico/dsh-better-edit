@@ -103,9 +103,9 @@ function scriptBonus(text: string, enc: string): number {
 	const cyrillic = (text.match(/[\u0400-\u04ff]/g) || []).length;
 	const hiragana = (text.match(/[\u3040-\u309f\u30a0-\u30ff]/g) || []).length;
 	const hangul = (text.match(/[\uac00-\ud7af]/g) || []).length;
-	if (enc === "gbk" || enc === "big5") bonus += cjk * 2;
+	if (enc === "gbk" || enc === "big5") bonus += cjk * 5;
 	if (enc === "windows-1251") bonus += cyrillic * 2;
-	if (enc === "shift_jis") bonus += hiragana * 4;
+	if (enc === "shift_jis") bonus += hiragana * 8;
 	if (enc === "euc-kr") bonus += hangul * 4;
 	return bonus;
 }
