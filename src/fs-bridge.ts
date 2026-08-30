@@ -283,14 +283,14 @@ export function ctxFsIO(fs: FileSystem, ctx: Context): FileIO {
 										return dec;
 									}
 								}
-							} catch {}
+							} catch {} // biome-ignore: best-effort
 							const candidates = top3Candidates(bytes, allow);
 							if (candidates.length > 0) {
 								const best = candidates[0]!;
 								const second2 = candidates[1];
 								const isMidHeu = second2 !== undefined && best.score - second2.score < 10;
 								let footerHeu = "";
-								if (true) {
+								{
 									const candsStrHeu = candidates.map((c) => `${c.encoding} ${c.score.toFixed(0)}`).join(", ");
 									footerHeu = `\n\n[Auto-guessed: ${best.encoding} ${best.score.toFixed(0)}, candidates: ${candsStrHeu} — re-read with read({encoding}) if garbled]`;
 								}
@@ -336,7 +336,7 @@ export function ctxFsIO(fs: FileSystem, ctx: Context): FileIO {
 					const curVer = info?.version as string | undefined;
 					if (curVer !== memo.version) encodingMemo.delete(key);
 				}
-			} catch {}
+			} catch {} // biome-ignore: best-effort
 
 			try {
 				const target = await fs.resolve(absolutePath, {
@@ -356,7 +356,7 @@ export function ctxFsIO(fs: FileSystem, ctx: Context): FileIO {
 				// the deployment default root and denies writes inside the
 				// session workspace under workspace-write.
 				// re-encode if needed (round-trip unless normalizeToUtf8)
-				const writeContent = content;
+				const _writeContent = content; // keep for future use
 				try {
 					const cfgW = loadConfig();
 					if (encodingHint) {
@@ -365,7 +365,7 @@ export function ctxFsIO(fs: FileSystem, ctx: Context): FileIO {
 						// Save with Encoding: update memo and write as requested encoding (but fs.writeText expects utf8 string, so we keep utf8 string and update memo for next read?)
 						// For now, record memo; actual bytes will be written as utf8 string (provider normalizes). For legacy preserve, we would need writeBytes seam — deferred, record state only.
 						const tgt = await fs.resolve(absolutePath, { ...(signal === undefined ? {} : { signal }) });
-						const inf = await fs.stat(tgt, signal);
+						const _inf = await fs.stat(tgt, signal);
 						setEncodingState(String((tgt as any).targetKey ?? absolutePath), { encoding: normW, hasBOM: normW === "utf8bom", version: undefined });
 					} else if (!cfgW.normalizeToUtf8) {
 						const tgt2 = await fs.resolve(absolutePath, { ...(signal === undefined ? {} : { signal }) });
@@ -375,7 +375,7 @@ export function ctxFsIO(fs: FileSystem, ctx: Context): FileIO {
 							// No transcode on wire — provider will write utf8; next read will see new version and re-detect.
 						}
 					}
-				} catch {}
+				} catch {} // biome-ignore: best-effort
 				const outcome = await fs.writeText(
 					target,
 					content,
@@ -488,7 +488,7 @@ export function localIO(): FileIO {
 								return decL2;
 							}
 						}
-					} catch {}
+					} catch {} // biome-ignore: best-effort
 					const candidates = top3Candidates(bytes, cfgL.supportedEncodings as string[]);
 					if (candidates.length > 0) {
 						const best = candidates[0]!;
@@ -503,7 +503,7 @@ export function localIO(): FileIO {
 						}
 					}
 				}
-			} catch {}
+			} catch {} // biome-ignore: best-effort
 			return readFile(absolutePath, "utf-8");
 		},
 		async writeText(absolutePath, content, signal, _exec, _sandboxPolicy) {

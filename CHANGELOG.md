@@ -8,6 +8,7 @@ Entries link to the originating spec issue in [pi-hashline-edit-lsz](https://git
 
 ### Fixed
 
+- **lint:** address biome blockers for release
 - **encoding:** support non-UTF-8 text files via VS Code model (#34) (#35)
 - **scripts:** map fix to Fixed for Keep a Changelog
 - remove unused exitHandlerRegistered
