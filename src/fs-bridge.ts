@@ -22,7 +22,7 @@ import type { ToolExecution } from "@deepseek-ai/dsh-tools";
 import type { SandboxExecutionPolicy } from "@deepseek-ai/dsh-sandbox";
 import { writeAtomic } from "./fs-write.js";
 import { loadConfig } from "./store-config.js";
-import { detectBom, isValidUtf8, decodeBytes, encodeText, normalizeEncoding, top3Candidates, isSupportedEncoding } from "./encoding.js";
+import { detectBom, isValidUtf8, decodeBytes, encodeText, normalizeEncoding, top3Candidates, isSupportedEncoding, detectWithChardet, chardetTop3Candidates, getTop3Candidates } from "./encoding.js";
 import { fileSnap } from "./file-reader.js";
 import { resolveTarget, toCwd } from "./paths.js";
 
@@ -253,13 +253,39 @@ export function ctxFsIO(fs: FileSystem, ctx: Context): FileIO {
 							}
 							// score allowlist top-3, pick best for now (model will pick via details.candidates in tool layer)
 							const allow = cfg.supportedEncodings as string[];
+							// try chardet (optional dep) first for more accurate top-1 — with footer for mid-confidence
+							try {
+								const chardetCands = await chardetTop3Candidates(bytes, allow);
+								if (chardetCands.length > 0) {
+									const top = chardetCands[0]!;
+									const second = chardetCands[1];
+									const isMid = top.confidence < 70 || (second !== undefined && top.confidence - second.confidence < 10);
+									const dec = decodeBytes(bytes, top.encoding);
+									if (dec !== undefined && !dec.includes("\uFFFD")) {
+										let footer = "";
+										if (isMid) {
+											const candsStr = chardetCands.map((c) => `${c.encoding} ${c.confidence}`).join(", ");
+											footer = `\n\n[Auto-guessed: ${top.encoding} ${top.confidence}, candidates: ${candsStr} — re-read with read({encoding}) if garbled]`;
+										}
+										setEncodingState(String((target as any).targetKey ?? absolutePath), { encoding: top.encoding, hasBOM: false, version: info?.version as string | undefined });
+										return dec + footer;
+									}
+								}
+							} catch {}
 							const candidates = top3Candidates(bytes, allow);
 							if (candidates.length > 0) {
 								const best = candidates[0]!;
-								const dec = decodeBytes(bytes, best.encoding);
-								if (dec !== undefined) {
+								const second2 = candidates[1];
+								const isMidHeu = second2 !== undefined && best.score - second2.score < 10;
+								let footerHeu = "";
+								if (true) {
+									const candsStrHeu = candidates.map((c) => `${c.encoding} ${c.score.toFixed(0)}`).join(", ");
+									footerHeu = `\n\n[Auto-guessed: ${best.encoding} ${best.score.toFixed(0)}, candidates: ${candsStrHeu} — re-read with read({encoding}) if garbled]`;
+								}
+								const decHeu = decodeBytes(bytes, best.encoding);
+								if (decHeu !== undefined) {
 									setEncodingState(String((target as any).targetKey ?? absolutePath), { encoding: best.encoding, hasBOM: false, version: info?.version as string | undefined });
-									return dec;
+									return decHeu + footerHeu;
 								}
 							}
 						}
@@ -270,7 +296,8 @@ export function ctxFsIO(fs: FileSystem, ctx: Context): FileIO {
 							const maxBytes2 = info2?.size ?? 10 * 1024 * 1024;
 							const bytes2 = await fs.readBytes(target2, signal, maxBytes2);
 							const allow2 = cfg.supportedEncodings as string[];
-							const cands = top3Candidates(bytes2, allow2);
+							const candsViaChardet = await chardetTop3Candidates(bytes2, allow2);
+							const cands = candsViaChardet.length > 0 ? candsViaChardet.map((c) => ({ encoding: c.encoding, sample: c.sample, score: c.confidence })) : top3Candidates(bytes2, allow2);
 							if (cands.length > 0) {
 								const candStr = cands.map((c) => `${c.encoding}("${c.sample.slice(0, 20).replace(/"/g, "'")}")`).join(", ");
 								throw new Error(`[E_NOT_TEXT] Path is not a readable UTF-8 text file: ${absolutePath}. Hashline editing only supports text files. Top-3 guesses: ${candStr}. Try read({encoding: "<encoding>"}) or set DSH_BETTER_EDIT_AUTO_GUESS_ENCODING=true to auto-decode.`);
@@ -428,14 +455,36 @@ export function localIO(): FileIO {
 				if (isValidUtf8(bytes)) return bytes.toString("utf-8");
 				const cfgL = loadConfig();
 				if (cfgL.autoGuessEncoding) {
+					// chardet first with footer
+					try {
+						const chardetCandsL = await chardetTop3Candidates(bytes, cfgL.supportedEncodings as string[]);
+						if (chardetCandsL.length > 0) {
+							const topL = chardetCandsL[0]!;
+							const secondL = chardetCandsL[1];
+							const isMidL = topL.confidence < 70 || (secondL !== undefined && topL.confidence - secondL.confidence < 10);
+							const decL2 = decodeBytes(bytes, topL.encoding);
+							if (decL2 !== undefined && !decL2.includes("\uFFFD")) {
+								let footerL = "";
+								if (isMidL) {
+									const candsStrL = chardetCandsL.map((c) => `${c.encoding} ${c.confidence}`).join(", ");
+									footerL = `\n\n[Auto-guessed: ${topL.encoding} ${topL.confidence}, candidates: ${candsStrL} — re-read with read({encoding}) if garbled]`;
+								}
+								const infoL2 = await fileSnap(absolutePath).catch(() => undefined);
+								setEncodingState(absolutePath, { encoding: topL.encoding, hasBOM: false, version: infoL2?.snapshotId });
+								return decL2 + footerL;
+							}
+						}
+					} catch {}
 					const candidates = top3Candidates(bytes, cfgL.supportedEncodings as string[]);
 					if (candidates.length > 0) {
 						const best = candidates[0]!;
+						const candsStrHeuL = candidates.map((c) => `${c.encoding} ${c.score.toFixed(0)}`).join(", ");
+						const footerHeuL = `\n\n[Auto-guessed: ${best.encoding} ${best.score.toFixed(0)}, candidates: ${candsStrHeuL} — re-read with read({encoding}) if garbled]`;
 						const dec = decodeBytes(bytes, best.encoding);
 						if (dec !== undefined) {
 							const info = await fileSnap(absolutePath).catch(() => undefined);
 							setEncodingState(absolutePath, { encoding: best.encoding, hasBOM: false, version: info?.snapshotId });
-							return dec;
+							return dec + footerHeuL;
 						}
 					}
 				}

@@ -183,3 +183,99 @@ export function top3Candidates(bytes: Uint8Array, allowlist: string[]): Candidat
 export function hasReplacementChar(text: string): boolean {
 	return text.includes("\uFFFD");
 }
+
+/**
+ * Try chardet (runk/node-chardet) for autoGuess when available.
+ * Dynamically imports 'chardet' (optionalDep) and returns canonical encoding
+ * if confidence >=45 and allowlist-accepted and decodable without �.
+ * Falls back to heuristic when chardet unavailable/low confidence.
+ */
+export async function detectWithChardet(bytes: Uint8Array, allowlist: string[]): Promise<string | undefined> {
+	try {
+		const mod: unknown = await import("chardet");
+		// chardet ESM: default export has analyse, CJS: named
+		const chardetLike = (mod as Record<string, unknown>).default ?? mod;
+		const analyse = (chardetLike as { analyse?: (b: Uint8Array | Buffer) => Array<{ name: string; confidence: number }> }).analyse;
+		if (typeof analyse !== "function") return undefined;
+		const buf = Buffer.isBuffer(bytes) ? (bytes as Buffer) : Buffer.from(bytes);
+		const results = analyse(buf) as Array<{ name: string; confidence: number }>;
+		if (!Array.isArray(results) || results.length === 0) return undefined;
+		const allowNorm = new Set(allowlist.map((a) => normalizeEncoding(a) ?? a.toLowerCase()));
+		for (const r of results) {
+			if (typeof r.name !== "string" || typeof r.confidence !== "number") continue;
+			if (r.confidence < 45) continue;
+			const norm = normalizeEncoding(r.name);
+			if (!norm) continue;
+			if (!allowNorm.has(norm)) continue;
+			// iconv-lite existence check (use try decode)
+			const encForCheck = norm;
+			if (!iconv.encodingExists(encForCheck) && !iconv.encodingExists(r.name)) continue;
+			const text = decodeBytes(bytes, encForCheck);
+			if (text === undefined) continue;
+			if (text.includes("\uFFFD")) continue;
+			// extra guard: printable ratio
+			if (text.length > 0) {
+				let printable = 0;
+				for (const ch of text) {
+					const c = ch.charCodeAt(0);
+					if (c === 10 || c === 13 || c === 9) printable += 1;
+					else if (c >= 32 && c !== 127) printable += 1;
+					else if (c > 127) printable += 1;
+				}
+				if (printable / text.length < 0.85) continue;
+			}
+			return norm;
+		}
+		return undefined;
+	} catch {
+		return undefined;
+	}
+}
+/**
+ * Chardet-based Top-3 for E_NOT_TEXT (primary) and autoGuess.
+ * Returns chardet candidates filtered by allowlist and decodable, else empty.
+ */
+export async function chardetTop3Candidates(bytes: Uint8Array, allowlist: string[]): Promise<Array<{ encoding: string; confidence: number; sample: string }>> {
+  try {
+    const mod: unknown = await import("chardet");
+    const chardetLike = (mod as Record<string, unknown>).default ?? mod;
+    const analyse = (chardetLike as { analyse?: (b: Uint8Array | Buffer) => Array<{ name: string; confidence: number }> }).analyse;
+    if (typeof analyse !== "function") return [];
+    const buf = Buffer.isBuffer(bytes) ? (bytes as Buffer) : Buffer.from(bytes);
+    const results = analyse(buf) as Array<{ name: string; confidence: number }>;
+    if (!Array.isArray(results) || results.length === 0) return [];
+    const allowNorm = new Set(allowlist.map((a) => normalizeEncoding(a) ?? a.toLowerCase()));
+    const out: Array<{ encoding: string; confidence: number; sample: string }> = [];
+    for (const r of results) {
+      if (typeof r.name !== "string" || typeof r.confidence !== "number") continue;
+      const norm = normalizeEncoding(r.name);
+      if (!norm) continue;
+      if (!allowNorm.has(norm)) continue;
+      if (!iconv.encodingExists(norm) && !iconv.encodingExists(r.name)) continue;
+      const text = decodeBytes(bytes, norm);
+      if (text === undefined) continue;
+      if (text.includes("\uFFFD")) continue;
+      const sample = (() => {
+        let idx = -1;
+        for (let i = 0; i < text.length; i += 1) if (text.charCodeAt(i) > 127) { idx = i; break; }
+        if (idx === -1) return text.slice(0, 50);
+        const start = Math.max(0, idx - 32);
+        return text.slice(start, start + 64).slice(0, 50).replace(/\s+/g, " ").trim();
+      })();
+      out.push({ encoding: norm, confidence: r.confidence, sample });
+      if (out.length >= 3) break;
+    }
+    return out;
+  } catch {
+    return [];
+  }
+}
+
+export async function getTop3Candidates(bytes: Uint8Array, allowlist: string[]): Promise<CandidatePreview[]> {
+  const chardetCands = await chardetTop3Candidates(bytes, allowlist);
+  if (chardetCands.length > 0) {
+    return chardetCands.map((c) => ({ encoding: c.encoding, sample: c.sample, score: c.confidence }));
+  }
+  return top3Candidates(bytes, allowlist);
+}
+

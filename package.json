@@ -101,5 +101,8 @@
     "semantic-release": "^25.0.9",
     "typescript": "^5.8.0",
     "vitest": "^4.1.8"
+  },
+  "optionalDependencies": {
+    "chardet": "2.2.0"
   }
 }
