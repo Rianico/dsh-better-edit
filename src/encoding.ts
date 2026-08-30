@@ -105,8 +105,8 @@ function scriptBonus(text: string, enc: string): number {
 	const hangul = (text.match(/[\uac00-\ud7af]/g) || []).length;
 	if (enc === "gbk" || enc === "big5") bonus += cjk * 2;
 	if (enc === "windows-1251") bonus += cyrillic * 2;
-	if (enc === "shift_jis") bonus += hiragana * 2;
-	if (enc === "euc-kr") bonus += hangul * 2;
+	if (enc === "shift_jis") bonus += hiragana * 4;
+	if (enc === "euc-kr") bonus += hangul * 4;
 	return bonus;
 }
 
