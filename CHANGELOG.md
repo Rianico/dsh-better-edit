@@ -1,5 +1,9 @@
 ## [Unreleased]
 
+### Features
+
+- **edit:** render diff card after tool calling
+
 ### Fixed
 
 - **ci:** add neural version check to Verify and Release

@@ -1,5 +1,6 @@
 import type { ServedRow } from "./hashline/served.js";
 import { genDiff } from "./edit-diff.js";
+import { truncateHead, formatSize } from "./file-view.js";
 import { visLines, clipLine } from "./utils.js";
 
 export type EditDetails = {
@@ -125,6 +126,24 @@ function warnBlock(warnings: string[] | undefined): string {
 	return warnings?.length ? `\n\n${warnings.join("\n")}` : "";
 }
 
+const DIFF_CARD_MAX_LINES = 400;
+const DIFF_CARD_MAX_BYTES = 80 * 1024;
+
+function formatDiffCard(diff: string): string {
+	if (!diff || diff.trim().length === 0) return "";
+	const truncation = truncateHead(diff, {
+		maxLines: DIFF_CARD_MAX_LINES,
+		maxBytes: DIFF_CARD_MAX_BYTES,
+	});
+	const fenced = `\n\n\`\`\`diff\n${truncation.content}\n\`\`\``;
+	if (!truncation.truncated) return fenced;
+	const hint =
+		truncation.firstLineExceedsLimit
+			? `[Diff truncated: first line exceeds ${formatSize(truncation.maxBytes)} — use read to inspect file]`
+			: `[Diff truncated: showing ${truncation.outputLines}/${truncation.totalLines} lines (${formatSize(truncation.outputBytes)}/${formatSize(truncation.totalBytes)}) — re-read file to see full content]`;
+	return `${fenced}\n\n${hint}`;
+}
+
 function driftBlock(driftNotice: string | undefined): string {
 	return driftNotice ? `\n\n${driftNotice}` : "";
 }
@@ -192,12 +211,14 @@ export function buildChanged(input: SuccessInput): TResult {
 		addedLines > 0 || removedLines > 0
 			? ` Added ${addedLines} line(s), removed ${removedLines} line(s).`
 			: "";
-	const text =
+	const baseText =
 		resultLines.length === 0
 			? "File is empty. Use edit to insert content."
 			: warningsBlock
 				? `${successPrefix}${lineSummary}${warningsBlock}`
 				: `${successPrefix}${lineSummary}`;
+	const diffSection = resultLines.length === 0 ? "" : formatDiffCard(diffResult.diff);
+	const text = `${baseText}${diffSection}`;
 
 	const metrics = buildMetrics({
 		classification: "applied",
@@ -312,7 +333,9 @@ export function buildBatchResult(sections: BatchSection[]): TResult {
 	const modelWarnings = warnings.filter(
 		(w) => !w.startsWith("Batch drift note:"),
 	);
-	const text = `${summary}${warnBlock(modelWarnings)}`;
+	const baseText = `${summary}${warnBlock(modelWarnings)}`;
+	const diffSection = formatDiffCard(diff);
+	const text = `${baseText}${diffSection}`;
 
 	return {
 		content: [{ type: "text", text }],
