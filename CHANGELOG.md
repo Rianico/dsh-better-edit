@@ -1,17 +1,17 @@
+## [0.5.1](https://github.com/Rianico/dsh-better-edit/compare/v0.5.0...v0.5.1) (2026-08-30)
+
+### Bug Fixes
+
+* **encoding:** support non-UTF-8 text files via VS Code model ([#34](https://github.com/Rianico/dsh-better-edit/issues/34)) ([#35](https://github.com/Rianico/dsh-better-edit/issues/35)) ([dd3e553](https://github.com/Rianico/dsh-better-edit/commit/dd3e553a3877e47b08aa2ba6336115e80b5d96f5))
+* **lint:** address biome blockers for release ([00b9270](https://github.com/Rianico/dsh-better-edit/commit/00b92704ac4093a627754e698bb1968acdc3d4e8))
+* remove unused exitHandlerRegistered ([f6a29f3](https://github.com/Rianico/dsh-better-edit/commit/f6a29f3f1dd694e4bb7c55a98d0eba80bc32a58f))
+* **scripts:** map fix to Fixed for Keep a Changelog ([bcd1850](https://github.com/Rianico/dsh-better-edit/commit/bcd18501e280b10d5075108c034de7352ece6922))
+
 # Changelog
 
 All notable changes to the `dsh-better-edit` plugin will be documented in this file.
 
 Entries link to the originating spec issue in [pi-hashline-edit-lsz](https://github.com/Rianico/pi-hashline-edit-lsz) where one exists.
-
-## [Unreleased]
-
-### Fixed
-
-- **lint:** address biome blockers for release
-- **encoding:** support non-UTF-8 text files via VS Code model (#34) (#35)
-- **scripts:** map fix to Fixed for Keep a Changelog
-- remove unused exitHandlerRegistered
 
 ## [0.5.0] - 2026-08-29
 
