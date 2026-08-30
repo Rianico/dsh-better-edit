@@ -8,6 +8,7 @@ Entries link to the originating spec issue in [pi-hashline-edit-lsz](https://git
 
 ### Features
 
+- **encoding:** add chardet top-3 and autoGuess
 - **encoding:** support non-UTF-8 text files (#34)
 
 ### Fixed
@@ -21,6 +22,7 @@ Entries link to the originating spec issue in [pi-hashline-edit-lsz](https://git
 
 ### Documentation
 
+- **spec:** add encoding libs research for chardet
 - **adr:** add VS Code encoding model ADR-0012 for #34
 
 ## [0.5.0] - 2026-08-29
