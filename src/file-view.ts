@@ -632,6 +632,7 @@ export interface PreviewOpts {
 }
 
 export interface ReadViewOpts extends PreviewOpts {
+  encoding?: string;
   signal?: AbortSignal;
 }
 

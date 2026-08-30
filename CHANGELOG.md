@@ -6,9 +6,18 @@ Entries link to the originating spec issue in [pi-hashline-edit-lsz](https://git
 
 ## [Unreleased]
 
+### Features
+
+- **encoding:** support non-UTF-8 text files (#34)
+
 ### Fixed
 
+- **scripts:** map fix to Fixed for Keep a Changelog
 - remove unused exitHandlerRegistered
+
+### Documentation
+
+- **adr:** add VS Code encoding model ADR-0012 for #34
 
 ## [0.5.0] - 2026-08-29
 

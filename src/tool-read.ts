@@ -12,6 +12,7 @@ import { normalizeRequest as normReq, assertReadRequest, pathSchema } from "./co
 
 import { readAndServe } from "./read-and-serve.js";
 import { READ_DESCRIPTION } from "./prompts.js";
+import { normalizeEncoding } from "./encoding.js";
 
 import type { FileIO } from "./fs-bridge.js";
 import { execCwd, execSessionKey } from "./session-view.js";
@@ -38,6 +39,10 @@ export function buildReadTool(io: FileIO) {
 				type: "number",
 				description: "Maximum number of lines to read",
 			},
+			encoding: {
+				type: "string",
+				description: "Text encoding for Reopen with Encoding (e.g. gbk, shift_jis, windows-1251). Case-insensitive.",
+			},
 		},
 		output: {
 			schema: { type: "string" },
@@ -49,6 +54,11 @@ export function buildReadTool(io: FileIO) {
 			const sessionKey = execSessionKey(exec);
 			const signal = exec.signal;
 
+			const encoding = (args as Record<string, unknown>).encoding as string | undefined;
+			if (encoding !== undefined) {
+				const norm = normalizeEncoding(String(encoding));
+				if (!norm) throw new Error(`[E_BAD_ENCODING] Unknown encoding: ${String(encoding)}. Supported: utf8, gbk, big5, shift_jis, euc-kr, windows-1251, iso-8859-1`);
+			}
 			const canonical = normReq(args);
 			assertReadRequest(canonical);
 			const rawPath = canonical.path;
@@ -62,6 +72,7 @@ export function buildReadTool(io: FileIO) {
 					signal,
 					offset: canonical.offset,
 					limit: canonical.limit,
+					encoding: encoding as string | undefined,
 				},
 			);
 			// Record the present observation with the fs policy gate so later

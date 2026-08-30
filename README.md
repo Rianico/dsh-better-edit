@@ -124,7 +124,7 @@ Chained edits stay cheap — anchors for untouched lines remain valid, diff/echo
 { "path": "src/main.ts", "edits": [["a1b", "a1b", "new line 1\n"], ["c3d", "c3d", "new line 2"]] }
 ```
 
-One fails, none write (`[E_BATCH_ABORT]`).
+One fails, none write (`[E_BATCH_ABORT]`). Encoding errors `[E_BAD_ENCODING]`/`[E_DECODE_FAILED]` are also emitted.
 
 > [!TIP]
 > **Want proof before you install?** The upstream [23/23 tool battery](https://github.com/Rianico/pi-better-edit/blob/main/benchmarks/README.md) runs with no LLM — stale edits are rejected before they corrupt a file, on every run. Same hashline algorithm, same verification.

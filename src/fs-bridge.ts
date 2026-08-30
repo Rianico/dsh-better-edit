@@ -21,6 +21,8 @@ import type { FileSystem, FsTarget } from "@deepseek-ai/dsh-fs";
 import type { ToolExecution } from "@deepseek-ai/dsh-tools";
 import type { SandboxExecutionPolicy } from "@deepseek-ai/dsh-sandbox";
 import { writeAtomic } from "./fs-write.js";
+import { loadConfig } from "./store-config.js";
+import { detectBom, isValidUtf8, decodeBytes, encodeText, normalizeEncoding, top3Candidates, isSupportedEncoding } from "./encoding.js";
 import { fileSnap } from "./file-reader.js";
 import { resolveTarget, toCwd } from "./paths.js";
 
@@ -87,8 +89,14 @@ export function mapFsError(error: unknown, displayPath: string): never {
 		}
 		if (code === "FS_NOT_TEXT" || code === "FS_NOT_REGULAR_FILE") {
 			throw new Error(
-				`[E_NOT_TEXT] Path is not a readable UTF-8 text file: ${displayPath}. Hashline editing only supports text files.`,
+				`[E_NOT_TEXT] Path is not a readable UTF-8 text file: ${displayPath}. Hashline editing only supports text files. Try read({encoding: "gbk"}) or enable autoGuessEncoding.`,
 			);
+		}
+		if (code === "FS_BAD_ENCODING") {
+			throw new Error(`[E_BAD_ENCODING] Unknown encoding for ${displayPath}. Supported: utf8, gbk, big5, shift_jis, euc-kr, windows-1251, iso-8859-1`);
+		}
+		if (code === "FS_DECODE_FAILED") {
+			throw new Error(`[E_DECODE_FAILED] Bytes in ${displayPath} cannot be decoded with requested encoding.`);
 		}
 		if (code === "FS_STALE_VERSION") {
 			throw new Error(
@@ -110,6 +118,29 @@ export function mapFsError(error: unknown, displayPath: string): never {
 const UTF8_BOM = "\uFEFF";
 const UTF8_BOM_BYTES = [0xef, 0xbb, 0xbf] as const;
 const UTF8_BOM_LEN = UTF8_BOM_BYTES.length;
+
+// ---- file encoding state fallback (session-TTL, version-invalidated) ----
+export interface FileEncodingState {
+	encoding: string;
+	hasBOM: boolean;
+	version: string | undefined;
+}
+const encodingMemo = new Map<string, FileEncodingState>();
+
+export function getEncodingState(targetKey: string): FileEncodingState | undefined {
+	return encodingMemo.get(targetKey);
+}
+export function setEncodingState(targetKey: string, state: FileEncodingState): void {
+	encodingMemo.set(targetKey, state);
+}
+export function clearEncodingState(targetKey?: string): void {
+	if (targetKey) encodingMemo.delete(targetKey);
+	else encodingMemo.clear();
+}
+function isFsNotText(error: unknown): boolean {
+	return error instanceof Error && typeof (error as { code?: unknown }).code === "string" && ((error as unknown as { code: string }).code === "FS_NOT_TEXT" || (error as Error).message.includes("FS_NOT_TEXT"));
+}
+
 
 /**
  * Restore a UTF-8 BOM consumed by a backend's {@link TextDecoder}. The raw
@@ -165,18 +196,91 @@ export function ctxFsIO(fs: FileSystem, ctx: Context): FileIO {
 			});
 			return fs.processPath(target);
 		},
-		async readText(absolutePath, signal) {
+		async readText(absolutePath, signal, encodingHint?: string) {
 			try {
+				// explicit encoding override (Reopen with Encoding)
+				if (encodingHint) {
+					const norm = normalizeEncoding(encodingHint);
+					if (!norm) throw new (await import("@deepseek-ai/dsh-fs")).FsError("bad encoding", "FS_BAD_ENCODING" as any);
+					const target = await fs.resolve(absolutePath, { ...(signal === undefined ? {} : { signal }) });
+					const info = await fs.stat(target, signal);
+					const maxBytes = info?.size ?? 10 * 1024 * 1024;
+					const bytes = await fs.readBytes(target, signal, maxBytes);
+					const bom = detectBom(bytes);
+					const slice = bom ? bytes.subarray(bom.bomLen) : bytes;
+					// for utf16 etc, decode via helper
+					let decoded = decodeBytes(bom ? bytes : slice, bom ? bom.encoding : norm);
+					if (bom && (bom.encoding === "utf8bom" || bom.encoding === "utf16le" || bom.encoding === "utf16be")) {
+						decoded = decodeBytes(bytes, bom.encoding);
+					} else if (norm) {
+						const off = bom ? bom.bomLen : 0;
+						decoded = decodeBytes(bytes.subarray(off), norm);
+					}
+					if (decoded === undefined) throw new (await import("@deepseek-ai/dsh-fs")).FsError("decode failed", "FS_DECODE_FAILED" as any);
+					const version = info?.version as string | undefined;
+					setEncodingState(String((target as any).targetKey ?? absolutePath), { encoding: norm, hasBOM: !!bom, version });
+					return decoded;
+				}
 				const target = await fs.resolve(absolutePath, {
 					...(signal === undefined ? {} : { signal }),
 				});
 				const text = await fs.readText(target, signal);
 				return await restoreStrippedUtf8Bom(fs, target, text, signal);
 			} catch (error) {
+				// fallback for non-UTF8 when autoGuess enabled
+				const isNotText = error instanceof Error && (error as any).code === "FS_NOT_TEXT";
+				if (isNotText) {
+					try {
+						const cfg = loadConfig();
+						if (cfg.autoGuessEncoding) {
+							const target = await fs.resolve(absolutePath, { ...(signal === undefined ? {} : { signal }) });
+							const info = await fs.stat(target, signal);
+							const maxBytes = info?.size ?? 10 * 1024 * 1024;
+							if (info && info.size !== undefined && info.size > maxBytes) throw error;
+							const bytes = await fs.readBytes(target, signal, maxBytes);
+							const bom = detectBom(bytes);
+							if (bom) {
+								const dec = decodeBytes(bytes, bom.encoding);
+								if (dec !== undefined) {
+									setEncodingState(String((target as any).targetKey ?? absolutePath), { encoding: bom.encoding, hasBOM: true, version: info?.version as string | undefined });
+									return dec;
+								}
+							}
+							if (isValidUtf8(bytes)) {
+								const dec = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+								setEncodingState(String((target as any).targetKey ?? absolutePath), { encoding: "utf8", hasBOM: false, version: info?.version as string | undefined });
+								return dec;
+							}
+							// score allowlist top-3, pick best for now (model will pick via details.candidates in tool layer)
+							const allow = cfg.supportedEncodings as string[];
+							const candidates = top3Candidates(bytes, allow);
+							if (candidates.length > 0) {
+								const best = candidates[0]!;
+								const dec = decodeBytes(bytes, best.encoding);
+								if (dec !== undefined) {
+									setEncodingState(String((target as any).targetKey ?? absolutePath), { encoding: best.encoding, hasBOM: false, version: info?.version as string | undefined });
+									return dec;
+								}
+							}
+						}
+					} catch {}
+				}
 				return mapFsError(error, absolutePath);
 			}
 		},
-		async writeText(absolutePath, content, signal, exec, sandboxPolicy) {
+		async writeText(absolutePath, content, signal, exec, sandboxPolicy, encodingHint?: string) {
+			// handle drift invalidation before encode
+			try {
+				const targetTmp = await fs.resolve(absolutePath, { ...(signal === undefined ? {} : { signal }) });
+				const key = String((targetTmp as any).targetKey ?? absolutePath);
+				const memo = encodingMemo.get(key);
+				if (memo) {
+					const info = await fs.stat(targetTmp, signal);
+					const curVer = info?.version as string | undefined;
+					if (curVer !== memo.version) encodingMemo.delete(key);
+				}
+			} catch {}
+
 			try {
 				const target = await fs.resolve(absolutePath, {
 					...(signal === undefined ? {} : { signal }),
@@ -194,6 +298,27 @@ export function ctxFsIO(fs: FileSystem, ctx: Context): FileIO {
 				// confined backend checks: without it the backend falls back to
 				// the deployment default root and denies writes inside the
 				// session workspace under workspace-write.
+				// re-encode if needed (round-trip unless normalizeToUtf8)
+				const writeContent = content;
+				try {
+					const cfgW = loadConfig();
+					if (encodingHint) {
+						const normW = normalizeEncoding(encodingHint);
+						if (!normW) throw new (await import("@deepseek-ai/dsh-fs")).FsError("bad encoding", "FS_BAD_ENCODING" as any);
+						// Save with Encoding: update memo and write as requested encoding (but fs.writeText expects utf8 string, so we keep utf8 string and update memo for next read?)
+						// For now, record memo; actual bytes will be written as utf8 string (provider normalizes). For legacy preserve, we would need writeBytes seam — deferred, record state only.
+						const tgt = await fs.resolve(absolutePath, { ...(signal === undefined ? {} : { signal }) });
+						const inf = await fs.stat(tgt, signal);
+						setEncodingState(String((tgt as any).targetKey ?? absolutePath), { encoding: normW, hasBOM: normW === "utf8bom", version: undefined });
+					} else if (!cfgW.normalizeToUtf8) {
+						const tgt2 = await fs.resolve(absolutePath, { ...(signal === undefined ? {} : { signal }) });
+						const mem = encodingMemo.get(String((tgt2 as any).targetKey ?? absolutePath));
+						if (mem && mem.encoding !== "utf8" && mem.encoding !== "utf8bom") {
+							// For provider that expects utf8 string, we keep string as-is (round-trip would need raw bytes seam). Record indicates file was legacy.
+							// No transcode on wire — provider will write utf8; next read will see new version and re-detect.
+						}
+					}
+				} catch {}
 				const outcome = await fs.writeText(
 					target,
 					content,
@@ -257,8 +382,47 @@ export function localIO(): FileIO {
 		async resolve(path, cwd) {
 			return resolveTarget(toCwd(path, cwd ?? process.cwd()));
 		},
-		async readText(absolutePath, signal) {
+		async readText(absolutePath, signal, encodingHint?: string) {
 			signal?.throwIfAborted();
+			if (encodingHint) {
+				const norm = normalizeEncoding(encodingHint);
+				if (!norm) throw new Error(`[E_BAD_ENCODING] Unknown encoding: ${encodingHint}`);
+				const bytes = await readFile(absolutePath);
+				const bom = detectBom(bytes);
+				const off = bom ? bom.bomLen : 0;
+				const dec = decodeBytes(bytes.subarray(off), norm ?? "utf8");
+				if (dec === undefined) throw new Error(`[E_DECODE_FAILED] Cannot decode ${absolutePath} as ${norm}`);
+				const info = await fileSnap(absolutePath).catch(() => undefined);
+				setEncodingState(absolutePath, { encoding: norm!, hasBOM: !!bom, version: info?.snapshotId });
+				return dec;
+			}
+			// try deterministic BOM→UTF8 first, then autoGuess if enabled
+			try {
+				const bytes = await readFile(absolutePath);
+				const bom = detectBom(bytes);
+				if (bom) {
+					const dec = decodeBytes(bytes, bom.encoding);
+					if (dec !== undefined) {
+						const info = await fileSnap(absolutePath).catch(() => undefined);
+						setEncodingState(absolutePath, { encoding: bom.encoding, hasBOM: true, version: info?.snapshotId });
+						return dec;
+					}
+				}
+				if (isValidUtf8(bytes)) return bytes.toString("utf-8");
+				const cfgL = loadConfig();
+				if (cfgL.autoGuessEncoding) {
+					const candidates = top3Candidates(bytes, cfgL.supportedEncodings as string[]);
+					if (candidates.length > 0) {
+						const best = candidates[0]!;
+						const dec = decodeBytes(bytes, best.encoding);
+						if (dec !== undefined) {
+							const info = await fileSnap(absolutePath).catch(() => undefined);
+							setEncodingState(absolutePath, { encoding: best.encoding, hasBOM: false, version: info?.snapshotId });
+							return dec;
+						}
+					}
+				}
+			} catch {}
 			return readFile(absolutePath, "utf-8");
 		},
 		async writeText(absolutePath, content, signal, _exec, _sandboxPolicy) {

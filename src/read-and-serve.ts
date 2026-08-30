@@ -19,6 +19,7 @@ export const UTF8_REWRITE_NOTE =
 	"[Non-UTF-8 bytes shown as U+FFFD; editing rewrites the file as UTF-8.]";
 
 export interface ReadAndServeOptions {
+	encoding?: string;
 	/** The session whose served rows these lines belong to. */
 	sessionKey: string;
 	signal?: AbortSignal;
@@ -55,6 +56,7 @@ export async function readAndServe(
 	const { sessionKey, signal } = options;
 	abortIf(signal);
 	const view = await readView(io, rawPath, cwd, {
+		encoding: options.encoding,
 		offset: options.offset,
 		limit: options.limit,
 		signal,

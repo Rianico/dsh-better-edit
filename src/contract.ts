@@ -37,6 +37,7 @@ export interface ReadParams {
   path: string;
   offset?: number;
   limit?: number;
+  encoding?: string;
 }
 
 export interface UndoParams {
@@ -112,7 +113,7 @@ function describeReceived(input: unknown): string {
 // ---- filed sets (declared once) ---------------------------------------------
 
 const EDIT_KS = new Set(["path", "edits", "sandbox_permissions", "justification"]);
-const READ_KS = new Set(["path", "offset", "limit"]);
+const READ_KS = new Set(["path", "offset", "limit", "encoding"]);
 
 // ---- normalization -----------------------------------------------------------
 
