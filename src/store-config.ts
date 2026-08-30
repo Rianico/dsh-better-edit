@@ -319,8 +319,23 @@ function envAdapter(base: StoreConfig): Partial<StoreConfig> {
 	}
 
 	const envGuess = process.env.DSH_BETTER_EDIT_AUTO_GUESS_ENCODING;
+	if (envGuess !== undefined) {
+		const b = parseAutoGitIgnoreRaw(envGuess);
+		if (b === undefined) console.warn(`dsh-better-edit: DSH_BETTER_EDIT_AUTO_GUESS_ENCODING invalid — expected true|false`);
+		else out.autoGuessEncoding = b;
+	}
 	const envNorm = process.env.DSH_BETTER_EDIT_NORMALIZE_TO_UTF8;
+	if (envNorm !== undefined) {
+		const b = parseAutoGitIgnoreRaw(envNorm);
+		if (b === undefined) console.warn(`dsh-better-edit: DSH_BETTER_EDIT_NORMALIZE_TO_UTF8 invalid — expected true|false`);
+		else out.normalizeToUtf8 = b;
+	}
 	const envSup = process.env.DSH_BETTER_EDIT_SUPPORTED_ENCODINGS;
+	if (envSup !== undefined) {
+		const arr = parseSupportedEncodingsRaw(envSup);
+		if (arr === undefined) console.warn(`dsh-better-edit: DSH_BETTER_EDIT_SUPPORTED_ENCODINGS invalid`);
+		else out.supportedEncodings = arr;
+	}
 	const envAuto = process.env.DSH_BETTER_EDIT_AUTO_GITIGNORE;
 	if (envAuto !== undefined) {
 		const b = parseAutoGitIgnoreRaw(envAuto);
