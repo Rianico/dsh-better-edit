@@ -60,8 +60,12 @@ Choosing the wrong encoding for bytes that are valid under multiple code pages �
 _Avoid_: decoding error
 
 **autoGuessEncoding**:
-The opt-in gate (default `false`) that allows statistical/model-assisted guessing after deterministic `BOM → strict UTF-8` has failed. Mirrors VS Code `files.autoGuessEncoding`; when off, `FS_NOT_TEXT` falls back to replacement rather than a guess.
+The opt-in gate (default `false`) that allows auto-decode after deterministic `BOM → strict UTF-8` has failed. Mirrors VS Code `files.autoGuessEncoding`; when off, `FS_NOT_TEXT` is thrown with **Top-3 candidates always pushed** (`Top-3 guesses: … Try read({encoding})`); when on, the file is auto-decoded and the same Top-3 is pushed as a second `ContentBlock` footer (`[Auto-guessed: enc, candidates: …]`). Probabilistic encodings are never hidden — Top-3 is always surfaced for the model to pick.
 _Avoid_: auto-detect
+
+**config complement**:
+When `config.yaml` is missing keys (e.g. after an upgrade adds `autoGuessEncoding`), `loadConfig()` complements the file with defaults (appends `key: default` lines, best-effort, preserving existing content) so the file stays complete without manual edit.
+_Avoid_: manual migration
 
 **manual override**:
 The status-bar-equivalent escape hatch: `read({encoding})` re-interprets bytes on disk (`Reopen with Encoding`) and `write({encoding})` transcodes the buffer on save (`Save with Encoding`). The agent-facing surface for correcting a `detection error` without corrupting disk.

@@ -11,13 +11,13 @@
 ## 2. DSH FS Seam Map (primary sources)
 
 | Role | Package | What it owns | Source |
-|------|---------|--------------|--------|
+| ------ | --------- | -------------- | -------- |
 | Service Definition | `@deepseek-ai/dsh-fs` | Abstract `FileSystem` class + 13 primitives + `FsError` taxonomy + `fs/*` events | `packages/fs/fs/src/index.ts`, `packages/fs/fs/src/types.ts` |
 | Provider — local | `@deepseek-ai/dsh-fs-local` | `realpath` identity, `probe`/`probeNoFollow`, `readWholeText`/`streamWholeText`/`readWholeBytes`, atomic `writeFileAtomic`, per-key lock | `packages/fs/fs-local/src/index.ts`, `packages/fs/fs-local/src/fsio.ts` |
 | Consumer — tools | `@deepseek-ai/dsh-tool-fs` | Model `read`/`write`/`edit` schemas (snake_case), `resolveRegularReadTarget` + windowing + `fs/observed` emit | `packages/fs/tool-fs/src/read.ts`, `read-target.ts`, `write.ts`, `edit.ts` |
 | Policy | `@deepseek-ai/dsh-fs-observation-policy` | `WeakMap<owner, Map<targetKey, FsObservation>>`, `fs/write-intent` + `fs/edit-intent` waterfalls + `fs/observed` recorder | `packages/fs/fs-observation-policy/src/index.ts`, `docs/subsystems/filesystem.md#Observed-file state` |
 
-** primitives (13):** `resolve`, `processPath`, `processPathFromHostPath`, `fileUrl`, `contains`, `stat`, `lstat`, `readText`, `streamText`, `readBytes`, `listDir`, `writeText`, `editText`. No delete/rename/copy/watch — deferred by design.
+**primitives (13):** `resolve`, `processPath`, `processPathFromHostPath`, `fileUrl`, `contains`, `stat`, `lstat`, `readText`, `streamText`, `readBytes`, `listDir`, `writeText`, `editText`. No delete/rename/copy/watch — deferred by design.
 
 **Note on rapid iteration:** `dsh-fs` is `0.1.0-rc.6` via `better-edit/package.json`, harness docs state `_Developer preview — THERE WILL BE COMPATIBILITY-BREAKING CHANGES_`. Issues disabled, Discussions used. Contract changes are normal now — ideal window for a charset proposal vs. a permanent shim.
 
@@ -111,6 +111,7 @@ const decoder = new TextDecoder("utf-8", {fatal:false, ignoreBOM:true})
 ```
 
 So:
+
 - On DSH (the product path) a GBK file **never reaches** `file-view` — it dies at `fs.readText` before `readView` runs. The `hadUtf8DecodeErrors` path is dead code on `ctxFsIO`.
 - On local/host (tests) the same file **succeeds** via `readFile("utf-8")` with replacement chars and a rewrite note — then edits normalize to UTF-8. Cross-backend inconsistency.
 - BOM handling in `file-view.ts:detectTextBom` detects UTF-32LE/BE, UTF-16LE/BE but then **rejects** them as `binary: "UTF-16LE encoded text"` rather than decoding — a missed 30-line fix.
@@ -140,7 +141,8 @@ write: Map<targetKey, {encoding, version}> → encode on writeText
 ```
 
 **Pros:** Ships without waiting on upstream; `readBytes` already exists; fixes GBK/CP1251/SJIS on `better-edit` alone.
-**Cons:** 
+**Cons:**
+
 - State persistence problem: `FileIO` is stateless, hashline works in UTF-8, write must re-encode. Requires `Map<absolutePath, encoding>` invalidated by `stat.version` — cross-session persistence needs `hash-store` or sidecar.
 - Binary guard duplication: must replicate `file-type` + NUL + `MAX_BYTES` checks or risk misclassifying `image/png` as CP1251.
 - `jschardet` false-positive rate on <1 KiB files, ~200-300 KiB bundle, extra dep for every user.

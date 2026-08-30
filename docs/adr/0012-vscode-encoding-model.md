@@ -25,9 +25,9 @@ flowchart TD
     B -->|no BOM| F{strict UTF-8 fatal:true}
     F -->|valid| G[utf8]
     F -->|invalid| H{autoGuessEncoding?}
-    H -->|false| I[E_NOT_TEXT + hint<br/>+ manual read encoding]
-    H -->|true| J[score allowlist via iconv-lite<br/>printable + scriptRange + langHint]
-    J --> K[top-3 previews<br/>50-char smart slice]
+    H -->|false| I[E_NOT_TEXT + Top-3 guesses<br/>+ hint + manual read encoding]
+    H -->|true| J[score allowlist via chardet+iconv-lite<br/>printable + scriptRange + confidence]
+    J --> K[top-3 previews (chardet Top-3 when conf>=45 else heuristic Top-3)<br/>50-char smart slice, always pushed]
     K --> L[model picks encoding]
     L --> M[read encoding canonical]
     C --> Z[record file encoding state<br/>targetKey→encoding,hasBOM,version]
@@ -39,10 +39,9 @@ flowchart TD
     Z --> N[hash internal UTF-8 view<br/>serve HASH│content]
 ```
 
-*Deterministic-first:* BOM sniff always precedes strict UTF-8, which always precedes guessing. Probabilities are last resort, gated by `autoGuessEncoding` (default `false`, mirrors VS Code).
+*Deterministic-first:* BOM sniff always precedes strict UTF-8, which always precedes guessing. Probabilities are last resort, gated by `autoGuessEncoding` (default `false`, mirrors VS Code) for **auto-decode**, but **Top-3 candidates are always pushed** — as `E_NOT_TEXT` details when `autoGuessEncoding:false` and as `[Auto-guessed: enc, candidates: …]` second `ContentBlock` footer when `true` (probabilistic encodings always surfaced, never hidden).
 
-*Model-assisted top-3:* On `FS_NOT_TEXT` with `autoGuessEncoding:true`, decode `bytes` under `SUPPORTED_ENCODINGS` (default `gbk, big5, shift_jis, euc-kr, windows-1251, iso-8859-1`; configurable via `config.yaml` / `DSH_BETTER_EDIT_SUPPORTED_ENCODINGS`), score each without `�` + printable ratio + script-range bonus, surface top-3 previews (50-char smart slice around first non-ASCII byte, ~36 tokens) in `details.candidates`. The model re-calls `read({encoding})` from that list only; `encoding` is canonical case-insensitive enum (`utf8`/`gbk`/`cp1251→windows-1251`, hyphens/underscores stripped).
-
+*Model-assisted top-3 (chardet + heuristic):* Always run `chardet` (maintained, MIT, 22KB) as Top-3 enhancer; `autoGuessEncoding:true` auto-decodes via `chardet` Top-1 when `confidence>=45`, otherwise heuristic (`iconv-lite` score without `�` + printable + script-range + cjk*5/hiragana*8). Top-3 (50-char smart slice around first non-ASCII, ~36 tokens) is **always surfaced** — in `E_NOT_TEXT` (`Top-3 guesses: … Try read({encoding})`) or in the auto-guess footer (`[Auto-guessed: enc conf, candidates: …]`). The model re-calls `read({encoding})` from that list only; `encoding` is canonical case-insensitive enum (`utf8`/`gbk`/`cp1251→windows-1251`, hyphens/underscores stripped). Missing `config.yaml` keys are complemented with defaults on next `loadConfig()` (see `store-config.ts` complement).
 ### Write flow
 
 ```mermaid

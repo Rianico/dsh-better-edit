@@ -6,7 +6,7 @@
  */
 import { homedir } from "node:os";
 import { isAbsolute, join } from "node:path";
-import { readFileSync, statSync } from "node:fs";
+import { readFileSync, statSync, appendFileSync } from "node:fs";
 import { mkdir, writeFile } from "node:fs/promises";
 import { resolveDshHome } from "@deepseek-ai/dsh-home-paths";
 import { z } from "zod";
@@ -350,8 +350,36 @@ function envAdapter(base: StoreConfig): Partial<StoreConfig> {
 	return out;
 }
 
+function complementMissingFieldsSync(yamlPath: string, yamlPartial: Partial<StoreConfig>): void {
+	// Best-effort: append missing canonical keys with defaults, preserving existing content.
+	// Only runs when the file exists (mtime !== undefined) and some canonical key is absent.
+	const missingLines: string[] = [];
+	if (yamlPartial.storeDir === undefined) missingLines.push("storeDir: central");
+	if (yamlPartial.autoGitignore === undefined) missingLines.push("autoGitignore: false");
+	if (yamlPartial.autoGuessEncoding === undefined) missingLines.push("autoGuessEncoding: false");
+	if (yamlPartial.normalizeToUtf8 === undefined) missingLines.push("normalizeToUtf8: false");
+	if (yamlPartial.supportedEncodings === undefined) missingLines.push("supportedEncodings: [gbk, big5, shift_jis, euc-kr, windows-1251, iso-8859-1]");
+	if (yamlPartial.undo_ttl_s === undefined) missingLines.push("undo_ttl_s: 604800");
+	if (yamlPartial.storeMaxAgeS === undefined) missingLines.push("storeMaxAgeS: 2592000");
+	if (yamlPartial.storeMaxTotalBytes === undefined) missingLines.push("storeMaxTotalBytes: 524288000");
+	if (missingLines.length === 0) return;
+	try {
+		// Ensure we don't duplicate if file was concurrently complemented — re-read raw keys.
+		const raw = readFileSync(yamlPath, "utf-8");
+		const parsed = parseSimpleYaml(raw);
+		// Re-check against raw parsed (aliases for storeMaxAgeS already handled via yamlPartial, but double-check).
+		const stillMissing = missingLines.filter((line) => {
+			const key = line.split(":")[0]!.trim();
+			return parsed[key] === undefined;
+		});
+		if (stillMissing.length === 0) return;
+		const suffix = (raw.endsWith("\n") || raw.length === 0 ? "" : "\n") + stillMissing.join("\n") + "\n";
+		appendFileSync(yamlPath, suffix, "utf-8");
+	} catch {
+		// best-effort: ENOENT (file deleted between stat and read) or permission — ignore
+	}
+}
 // ---- public load (merged, cached) ----
-
 export function loadConfig(): StoreConfig {
 	const yamlPath = configYamlPath();
 	let mtime: number | undefined;
@@ -380,6 +408,12 @@ export function loadConfig(): StoreConfig {
 	}
 
 	const yamlPartial = fsAdapter();
+	if (mtime !== undefined) {
+		complementMissingFieldsSync(yamlPath, yamlPartial);
+		try {
+			mtime = statSync(yamlPath).mtimeMs;
+		} catch {}
+	}
 	const envPartial = envAdapter({ ...DEFAULT_CONFIG, ...yamlPartial });
 	const merged = { ...DEFAULT_CONFIG, ...yamlPartial, ...envPartial };
 
