@@ -1,3 +1,9 @@
+## [Unreleased]
+
+### Fixed
+
+- **ci:** add neural version check to Verify and Release
+
 ## [0.5.1](https://github.com/Rianico/dsh-better-edit/compare/v0.5.0...v0.5.1) (2026-08-30)
 
 ### Bug Fixes
