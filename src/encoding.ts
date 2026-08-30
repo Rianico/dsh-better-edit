@@ -254,7 +254,6 @@ export async function chardetTop3Candidates(bytes: Uint8Array, allowlist: string
       if (!iconv.encodingExists(norm) && !iconv.encodingExists(r.name)) continue;
       const text = decodeBytes(bytes, norm);
       if (text === undefined) continue;
-      if (text.includes("\uFFFD")) continue;
       const sample = (() => {
         let idx = -1;
         for (let i = 0; i < text.length; i += 1) if (text.charCodeAt(i) > 127) { idx = i; break; }

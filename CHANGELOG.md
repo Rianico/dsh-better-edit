@@ -13,6 +13,7 @@ Entries link to the originating spec issue in [pi-hashline-edit-lsz](https://git
 
 ### Fixed
 
+- **encoding:** always show top-3 from chardet
 - **encoding:** tune scoring for autoGuess top-1
 - **encoding:** pass encoding param and surface top-3 in E_NOT_TEXT
 - **encoding:** prioritize hiragana and hangul in top-3 scoring
