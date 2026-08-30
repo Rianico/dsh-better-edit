@@ -45,8 +45,14 @@ export function buildReadTool(io: FileIO) {
 			},
 		},
 		output: {
-			schema: { type: "string" },
-			render: (_args, value) => [{ type: "text", text: value }],
+			schema: { type: "object", properties: { text: { type: "string", required: true }, warning: { type: "string" } }, additionalProperties: false },
+			render: (_args, value) => {
+				const v = value as { text: string; warning?: string } | string;
+				if (typeof v === "string") return [{ type: "text", text: v }];
+				const blocks: Array<{ type: "text"; text: string }> = [{ type: "text", text: v.text }];
+				if (v.warning) blocks.push({ type: "text", text: v.warning });
+				return blocks;
+			},
 		},
 		async execute(args, exec) {
 			return withWorkspace(execCwd(exec), async () => {
@@ -80,7 +86,7 @@ export function buildReadTool(io: FileIO) {
 			// version the model just read (a no-op when no policy listens).
 			await io.emitObserved(absolutePath, exec, signal);
 
-			return text;
+			return warning ? { text, warning } : { text };
 			})
 		},
 	});

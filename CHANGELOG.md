@@ -13,6 +13,7 @@ Entries link to the originating spec issue in [pi-hashline-edit-lsz](https://git
 
 ### Fixed
 
+- **encoding:** correctly split warning to second block
 - **encoding:** split auto-guess warning to second block
 - **encoding:** always show top-3 from chardet
 - **encoding:** tune scoring for autoGuess top-1

@@ -194,10 +194,15 @@ function wrapTool(
 } {
 	return {
 		async execute(_callId, params) {
-			const text = await tool.execute(params, makeExecFor(params));
-			return {
-				content: [{ type: "text", text: String(text) }],
-			};
+			const result = await tool.execute(params, makeExecFor(params)) as unknown;
+			if (typeof result === "string") return { content: [{ type: "text", text: result }] };
+			if (result && typeof result === "object" && "text" in (result as Record<string, unknown>)) {
+				const r = result as { text: string; warning?: string };
+				const blocks: Array<{ type: "text"; text: string }> = [{ type: "text", text: r.text }];
+				if (r.warning) blocks.push({ type: "text", text: r.warning });
+				return { content: blocks };
+			}
+			return { content: [{ type: "text", text: String(result) }] };
 		},
 	};
 }
