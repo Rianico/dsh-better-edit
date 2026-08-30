@@ -10,6 +10,7 @@
 
 import { abortIf } from "./utils.js";
 import { readView } from "./file-view.js";
+import { getAutoGuessFooter } from "./fs-bridge.js";
 import { recordServed, clearDriftReported } from "./session-view.js";
 import type { FileIO } from "./fs-bridge.js";
 import type { ServedRow } from "./hashline/served.js";
@@ -29,6 +30,8 @@ export interface ReadAndServeOptions {
 }
 
 export interface ReadAndServeResult {
+	/** Optional auto-guess warning, separate block. */
+	warning?: string;
 	/** The model-facing read text, including the UTF-8 note when applicable. */
 	text: string;
 	/** The rows recorded as served (empty when nothing was shown). */
@@ -70,6 +73,8 @@ export async function readAndServe(
 		);
 	}
 	await clearDriftReported(sessionKey, view.absolutePath);
+	const autoFooter = getAutoGuessFooter(view.absolutePath) ?? getAutoGuessFooter(rawPath) ?? getAutoGuessFooter(view.absolutePath.replace(/\\/g, "/")) ?? "";
+	const warning = autoFooter || undefined;
 	const text = view.hadUtf8DecodeErrors
 		? `${view.text}\n\n${UTF8_REWRITE_NOTE}`
 		: view.text;
@@ -78,5 +83,6 @@ export async function readAndServe(
 		served: view.served,
 		hadUtf8DecodeErrors: view.hadUtf8DecodeErrors,
 		absolutePath: view.absolutePath,
+	warning,
 	};
 }

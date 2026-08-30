@@ -126,6 +126,17 @@ export interface FileEncodingState {
 	version: string | undefined;
 }
 const encodingMemo = new Map<string, FileEncodingState>();
+const autoGuessFooterMemo = new Map<string, string>();
+export function getAutoGuessFooter(targetKey: string): string | undefined {
+	return autoGuessFooterMemo.get(targetKey);
+}
+export function setAutoGuessFooter(targetKey: string, footer: string): void {
+	autoGuessFooterMemo.set(targetKey, footer);
+}
+export function clearAutoGuessFooter(targetKey?: string): void {
+	if (targetKey) autoGuessFooterMemo.delete(targetKey);
+	else autoGuessFooterMemo.clear();
+}
 
 export function getEncodingState(targetKey: string): FileEncodingState | undefined {
 	return encodingMemo.get(targetKey);
@@ -268,7 +279,8 @@ export function ctxFsIO(fs: FileSystem, ctx: Context): FileIO {
 											footer = `\n\n[Auto-guessed: ${top.encoding} ${top.confidence}, candidates: ${candsStr} — re-read with read({encoding}) if garbled]`;
 										}
 										setEncodingState(String((target as any).targetKey ?? absolutePath), { encoding: top.encoding, hasBOM: false, version: info?.version as string | undefined });
-										return dec + footer;
+										if (footer) setAutoGuessFooter(String((target as any).targetKey ?? absolutePath), footer);
+										return dec;
 									}
 								}
 							} catch {}
@@ -285,7 +297,8 @@ export function ctxFsIO(fs: FileSystem, ctx: Context): FileIO {
 								const decHeu = decodeBytes(bytes, best.encoding);
 								if (decHeu !== undefined) {
 									setEncodingState(String((target as any).targetKey ?? absolutePath), { encoding: best.encoding, hasBOM: false, version: info?.version as string | undefined });
-									return decHeu + footerHeu;
+									if (footerHeu) setAutoGuessFooter(String((target as any).targetKey ?? absolutePath), footerHeu);
+										return decHeu;
 								}
 							}
 						}
@@ -471,7 +484,8 @@ export function localIO(): FileIO {
 								}
 								const infoL2 = await fileSnap(absolutePath).catch(() => undefined);
 								setEncodingState(absolutePath, { encoding: topL.encoding, hasBOM: false, version: infoL2?.snapshotId });
-								return decL2 + footerL;
+								if (footerL) setAutoGuessFooter(absolutePath, footerL);
+								return decL2;
 							}
 						}
 					} catch {}
@@ -484,7 +498,8 @@ export function localIO(): FileIO {
 						if (dec !== undefined) {
 							const info = await fileSnap(absolutePath).catch(() => undefined);
 							setEncodingState(absolutePath, { encoding: best.encoding, hasBOM: false, version: info?.snapshotId });
-							return dec + footerHeuL;
+							if (footerHeuL) setAutoGuessFooter(absolutePath, footerHeuL);
+							return dec;
 						}
 					}
 				}

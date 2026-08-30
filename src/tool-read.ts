@@ -63,7 +63,7 @@ export function buildReadTool(io: FileIO) {
 			assertReadRequest(canonical);
 			const rawPath = canonical.path;
 
-			const { text, absolutePath } = await readAndServe(
+			const { text, absolutePath, warning } = await readAndServe(
 				io,
 				rawPath,
 				cwd,
