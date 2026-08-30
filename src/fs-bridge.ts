@@ -31,7 +31,7 @@ export interface FileIO {
 	/** Resolve a (possibly relative) request path against the session cwd to a canonical absolute path. */
 	resolve(path: string, cwd: string, signal?: AbortSignal): Promise<string>;
 	/** Read whole text; missing files, directories, and binary content throw. */
-	readText(absolutePath: string, signal?: AbortSignal): Promise<string>;
+	readText(absolutePath: string, signal?: AbortSignal, encoding?: string): Promise<string>;
 	/**
 	 * Atomically write whole text, preserving mode when the file exists. On the
 	 * dsh backend this dispatches `fs/write-intent` (policy guard), stamps the
@@ -227,7 +227,7 @@ export function ctxFsIO(fs: FileSystem, ctx: Context): FileIO {
 				const text = await fs.readText(target, signal);
 				return await restoreStrippedUtf8Bom(fs, target, text, signal);
 			} catch (error) {
-				// fallback for non-UTF8 when autoGuess enabled
+				// fallback for non-UTF8 when autoGuess enabled; when disabled surface top-3 + hint
 				const isNotText = error instanceof Error && (error as any).code === "FS_NOT_TEXT";
 				if (isNotText) {
 					try {
@@ -263,7 +263,24 @@ export function ctxFsIO(fs: FileSystem, ctx: Context): FileIO {
 								}
 							}
 						}
-					} catch {}
+						// autoGuess disabled or no candidate succeeded — surface top-3 + env hint
+						try {
+							const target2 = await fs.resolve(absolutePath, { ...(signal === undefined ? {} : { signal }) });
+							const info2 = await fs.stat(target2, signal);
+							const maxBytes2 = info2?.size ?? 10 * 1024 * 1024;
+							const bytes2 = await fs.readBytes(target2, signal, maxBytes2);
+							const allow2 = cfg.supportedEncodings as string[];
+							const cands = top3Candidates(bytes2, allow2);
+							if (cands.length > 0) {
+								const candStr = cands.map((c) => `${c.encoding}("${c.sample.slice(0, 20).replace(/"/g, "'")}")`).join(", ");
+								throw new Error(`[E_NOT_TEXT] Path is not a readable UTF-8 text file: ${absolutePath}. Hashline editing only supports text files. Top-3 guesses: ${candStr}. Try read({encoding: "<encoding>"}) or set DSH_BETTER_EDIT_AUTO_GUESS_ENCODING=true to auto-decode.`);
+							}
+						} catch (inner) {
+							if (inner instanceof Error && inner.message.includes("[E_NOT_TEXT]")) throw inner;
+						}
+					} catch (e) {
+						if (e instanceof Error && e.message.includes("[E_NOT_TEXT]")) throw e;
+					}
 				}
 				return mapFsError(error, absolutePath);
 			}

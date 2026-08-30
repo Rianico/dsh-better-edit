@@ -12,6 +12,7 @@ Entries link to the originating spec issue in [pi-hashline-edit-lsz](https://git
 
 ### Fixed
 
+- **encoding:** pass encoding param and surface top-3 in E_NOT_TEXT
 - **encoding:** prioritize hiragana and hangul in top-3 scoring
 - **store-config:** wire encoding env vars
 - **scripts:** map fix to Fixed for Keep a Changelog

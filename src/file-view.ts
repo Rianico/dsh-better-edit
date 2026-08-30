@@ -658,7 +658,7 @@ export async function readView(
 ): Promise<FileView> {
   const { signal } = opts;
   const absolutePath = await io.resolve(path, cwd, signal);
-  const rawText = await io.readText(absolutePath, signal);
+  const rawText = await io.readText(absolutePath, signal, opts.encoding);
   const { normalized, fileHashes, hadUtf8DecodeErrors, bom, originalEnding } =
     await normFromText({
       absolutePath,
