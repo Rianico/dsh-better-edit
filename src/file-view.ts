@@ -29,7 +29,7 @@ import { visLines, abortIf, errCode } from "./utils.js";
 import { detectEnding, toLF, stripBOM, type LineEnding } from "./edit-diff.js";
 import { resolveTarget, toCwd } from "./paths.js";
 import type { FileIO } from "./fs-bridge.js";
-import type { ServedRow } from "./hashline/served.js";
+import type { ServedRow } from "./hashline/anchor-pipeline.js";
 import type { HashStore } from "./hash-store.js";
 
 export const MAX_HASH_LINES = HASH_SPACE;

@@ -1,7 +1,13 @@
 {
   "$schema": "https://biomejs.dev/schemas/2.1.0/schema.json",
-  "vcs": { "enabled": true, "clientKind": "git", "useIgnoreFile": true },
-  "files": { "ignoreUnknown": true },
+  "vcs": {
+    "enabled": true,
+    "clientKind": "git",
+    "useIgnoreFile": true
+  },
+  "files": {
+    "ignoreUnknown": true
+  },
   "formatter": {
     "enabled": false,
     "indentStyle": "space",
@@ -10,18 +16,125 @@
   },
   "linter": {
     "enabled": true,
-  "rules": {
+    "rules": {
       "recommended": true,
-      "style": { "noNonNullAssertion": "off", "useTemplate": "off", "useNodejsImportProtocol": "off" },
-      "suspicious": { "noExplicitAny": "off", "noTemplateCurlyInString": "off", "noImplicitAnyLet": "off", "noAssignInExpressions": "off" },
-      "correctness": { "noUnusedImports": "off", "noUnusedVariables": "off", "noUnusedFunctionParameters": "off" },
-      "complexity": { "useOptionalChain": "off", "useRegexLiterals": "off", "noUselessEscapeInRegex": "off", "noUselessContinue": "off" }
+      "style": {
+        "noNonNullAssertion": "off",
+        "useTemplate": "off",
+        "useNodejsImportProtocol": "off",
+        "noRestrictedImports": {
+          "level": "error",
+          "options": {
+            "paths": {
+              "./hashline/served.js": "Use ./hashline/anchor-pipeline.js \u2014 served is private to AnchorPipeline seam",
+              "./hashline/served": "Use ./hashline/anchor-pipeline.js \u2014 served is private",
+              "../hashline/served.js": "Use ../hashline/anchor-pipeline.js \u2014 served is private",
+              "../hashline/served": "Use ../hashline/anchor-pipeline.js \u2014 served is private",
+              "../../src/hashline/served.js": "Use ../../src/hashline/anchor-pipeline.js \u2014 served is private",
+              "../../src/hashline/served": "Use ../../src/hashline/anchor-pipeline.js \u2014 served is private",
+              "./hashline/resolve.js": "Use ./hashline/anchor-pipeline.js \u2014 resolve is private to AnchorPipeline seam",
+              "./hashline/resolve": "Use ./hashline/anchor-pipeline.js \u2014 resolve is private",
+              "../hashline/resolve.js": "Use ../hashline/anchor-pipeline.js \u2014 resolve is private",
+              "../hashline/resolve": "Use ../hashline/anchor-pipeline.js \u2014 resolve is private",
+              "../../src/hashline/resolve.js": "Use ../../src/hashline/anchor-pipeline.js \u2014 resolve is private",
+              "../../src/hashline/resolve": "Use ../../src/hashline/anchor-pipeline.js \u2014 resolve is private",
+              "./hashline/hasher.js": "Use ./hashline/anchor-pipeline.js \u2014 hasher is private to HashAssign seam",
+              "./hashline/hasher": "Use ./hashline/anchor-pipeline.js \u2014 hasher is private",
+              "../hashline/hasher.js": "Use ../hashline/anchor-pipeline.js \u2014 hasher is private",
+              "../hashline/hasher": "Use ../hashline/anchor-pipeline.js \u2014 hasher is private",
+              "../../src/hashline/hasher.js": "Use ../../src/hashline/anchor-pipeline.js \u2014 hasher is private",
+              "../../src/hashline/hasher": "Use ../../src/hashline/anchor-pipeline.js \u2014 hasher is private",
+              "./hashline/alphabet.js": "Use ./hashline/anchor-pipeline.js \u2014 alphabet is private to HashAssign seam",
+              "./hashline/alphabet": "Use ./hashline/anchor-pipeline.js \u2014 alphabet is private",
+              "../hashline/alphabet.js": "Use ../hashline/anchor-pipeline.js \u2014 alphabet is private",
+              "../hashline/alphabet": "Use ../hashline/anchor-pipeline.js \u2014 alphabet is private",
+              "../../src/hashline/alphabet.js": "Use ../../src/hashline/anchor-pipeline.js \u2014 alphabet is private",
+              "../../src/hashline/alphabet": "Use ../../src/hashline/anchor-pipeline.js \u2014 alphabet is private",
+              "./hashline/pure.js": "Use ./hashline/anchor-pipeline.js \u2014 pure is private to HashAssign seam",
+              "./hashline/pure": "Use ./hashline/anchor-pipeline.js \u2014 pure is private",
+              "../hashline/pure.js": "Use ../hashline/anchor-pipeline.js \u2014 pure is private",
+              "../hashline/pure": "Use ../hashline/anchor-pipeline.js \u2014 pure is private",
+              "../../src/hashline/pure.js": "Use ../../src/hashline/anchor-pipeline.js \u2014 pure is private",
+              "../../src/hashline/pure": "Use ../../src/hashline/anchor-pipeline.js \u2014 pure is private",
+              "./hashline/parse.js": "Use ./hashline/anchor-pipeline.js \u2014 parse is private to AnchorPipeline seam",
+              "./hashline/parse": "Use ./hashline/anchor-pipeline.js \u2014 parse is private",
+              "../hashline/parse.js": "Use ../hashline/anchor-pipeline.js \u2014 parse is private",
+              "../hashline/parse": "Use ../hashline/anchor-pipeline.js \u2014 parse is private",
+              "../../src/hashline/parse.js": "Use ../../src/hashline/anchor-pipeline.js \u2014 parse is private",
+              "../../src/hashline/parse": "Use ../../src/hashline/anchor-pipeline.js \u2014 parse is private",
+              "./hashline/apply.js": "Use ./hashline/anchor-pipeline.js \u2014 apply is private to AnchorPipeline seam",
+              "./hashline/apply": "Use ./hashline/anchor-pipeline.js \u2014 apply is private",
+              "../hashline/apply.js": "Use ../hashline/anchor-pipeline.js \u2014 apply is private",
+              "../hashline/apply": "Use ../hashline/anchor-pipeline.js \u2014 apply is private",
+              "../../src/hashline/apply.js": "Use ../../src/hashline/anchor-pipeline.js \u2014 apply is private",
+              "../../src/hashline/apply": "Use ../../src/hashline/anchor-pipeline.js \u2014 apply is private"
+            }
+          }
+        }
+      },
+      "suspicious": {
+        "noExplicitAny": "off",
+        "noTemplateCurlyInString": "off",
+        "noImplicitAnyLet": "off",
+        "noAssignInExpressions": "off"
+      },
+      "correctness": {
+        "noUnusedImports": "off",
+        "noUnusedVariables": "off",
+        "noUnusedFunctionParameters": "off"
+      },
+      "complexity": {
+        "useOptionalChain": "off",
+        "useRegexLiterals": "off",
+        "noUselessEscapeInRegex": "off",
+        "noUselessContinue": "off"
+      }
     }
   },
-  "javascript": { "formatter": { "quoteStyle": "double" } },
-  "assist": { "enabled": false },
+  "javascript": {
+    "formatter": {
+      "quoteStyle": "double"
+    }
+  },
+  "assist": {
+    "enabled": false
+  },
   "overrides": [
-    { "includes": ["**/*.json", "**/*.cjs"], "linter": { "enabled": false } },
-    { "includes": ["test/**"], "linter": { "rules": { "suspicious": { "noExplicitAny": "off" } } } }
+    {
+      "includes": [
+        "src/hashline/**"
+      ],
+      "linter": {
+        "rules": {
+          "style": {
+            "noRestrictedImports": "off"
+          }
+        }
+      }
+    },
+    {
+      "includes": [
+        "**/*.json",
+        "**/*.cjs"
+      ],
+      "linter": {
+        "enabled": false
+      }
+    },
+    {
+      "includes": [
+        "test/**"
+      ],
+      "linter": {
+        "rules": {
+          "suspicious": {
+            "noExplicitAny": "off"
+          },
+          "style": {
+            "noRestrictedImports": "off"
+          }
+        }
+      }
+    }
   ]
 }

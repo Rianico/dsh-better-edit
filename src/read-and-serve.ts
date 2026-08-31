@@ -13,7 +13,7 @@ import { readView } from "./file-view.js";
 import { getAutoGuessFooter } from "./fs-bridge.js";
 import { recordServed, clearDriftReported } from "./session-view.js";
 import type { FileIO } from "./fs-bridge.js";
-import type { ServedRow } from "./hashline/served.js";
+import type { ServedRow } from "./hashline/anchor-pipeline.js";
 
 /** Appended when the file had non-UTF-8 bytes; editing rewrites it as UTF-8. */
 export const UTF8_REWRITE_NOTE =

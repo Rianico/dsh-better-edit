@@ -25,8 +25,8 @@
 import { HASH_RE } from "./hashline/hash-assign.js";
 import { loadHashStore, loadServedStore, withStore } from "./hash-store.js";
 import { SERVED_ECHO_CAP } from "./constants.js";
-import type { ServedRow, ResolvedRange } from "./hashline/served.js";
-import { fmtServedRows } from "./hashline/served.js";
+import type { ServedRow, ResolvedRange } from "./hashline/anchor-pipeline.js";
+import { fmtServedRows } from "./hashline/anchor-pipeline.js";
 
 // --- hash-store re-export (persistence note) ---
 export { loadHashStore, loadServedStore, shutdownHashStore, withStore } from "./hash-store.js";
