@@ -47,19 +47,17 @@ import {
 import { sessionKeyFor } from "./workspace-context.js"
 import { loadServed, scanDrift, recordServedTruncated } from "./session-view.js";
 import { abortIf, splitLines } from "./utils.js";
-import { applyOne } from "./edit-engine.js";
+import { applyOne } from "./mutation/engine.js";
 import {
   runFileEdits,
   resolveMissingPath,
-  persistUndoAndWrite,
-  enforceNoopLoop,
-  collectRemovedHashes,
-  countLineChanges,
-} from "./edit-engine.js";
-import type { FileEditResult, PreparedItem } from "./edit-engine.js";
+} from "./mutation/engine.js";
+import type { FileEditResult, PreparedItem } from "./mutation/engine.js";
+import { saveUndo } from "./undo-edit.js";
+import { restoreEndings } from "./edit-diff.js";
 import { buildMetrics, buildNoop, buildChanged, buildBatchResult } from "./edit-response.js";
 import type { RMeta, BatchSection } from "./edit-response.js";
-import { genDiff, restoreEndings, toLF, stripBOM } from "./edit-diff.js";
+import { genDiff, toLF, stripBOM } from "./edit-diff.js";
 import { computeDrift } from "./session-view.js";
 import { trackNoopPayload, clearNoopLoop, noopPayloadKey } from "./noop-guard.js";
 
@@ -233,20 +231,109 @@ export async function snapshotIdFor(
 }
 
 
-export {
- runFileEdits,
- resolveMissingPath,
- persistUndoAndWrite,
- enforceNoopLoop,
- collectRemovedHashes,
- countLineChanges,
-};
+// Engine helpers are private to Mutation — not re-exported for new code.
+// Deprecated re-exports kept for existing tests (commitlint: ignore):
+export { runFileEdits, resolveMissingPath };
+export { persistUndoAndWrite };
 export type { FileEditResult, PreparedItem };
 export { buildMetrics, buildNoop, buildChanged, buildBatchResult };
 export type { RMeta, BatchSection };
 export { genDiff, restoreEndings, toLF, stripBOM };
 export { computeDrift, scanDrift };
 export { trackNoopPayload, clearNoopLoop, noopPayloadKey };
+
+
+// ---------------------------------------------------------------------------
+// Transaction (private to Mutation) — persist-undo → write → restore
+// ---------------------------------------------------------------------------
+
+interface UndoWriteFile {
+  absolutePath: string;
+  displayPath: string;
+  originalNormalized: string;
+  bom: string;
+  originalEnding: LineEnding;
+  originalHashes: string[];
+  result: string;
+}
+
+interface PersistWriteOptions {
+  io: FileIO;
+  files: UndoWriteFile[];
+  exec: ToolExecution;
+  sandbox: FsSandboxController;
+  sandboxPolicy: SandboxExecutionPolicy | undefined;
+  signal?: AbortSignal;
+  undoUnavailableMessage: (displayPath: string) => string;
+  restoreUnwrittenUndos: boolean;
+}
+
+async function persistUndoAndWrite(opts: PersistWriteOptions): Promise<void> {
+  const { io, files } = opts;
+  const undos: Array<{
+    file: UndoWriteFile;
+    restore: () => Promise<void>;
+  }> = [];
+  for (const file of files) {
+    const undo = await saveUndo(file.absolutePath, {
+      content: file.originalNormalized,
+      bom: file.bom,
+      originalEnding: file.originalEnding,
+      hashes: file.originalHashes,
+      resultContent: file.result,
+    });
+    if (!undo.persisted) {
+      for (const u of undos) {
+        try { await u.restore(); } catch (e) { console.error("Failed to restore undo entry after abort:", e); }
+      }
+      throw new Error(opts.undoUnavailableMessage(file.displayPath));
+    }
+    undos.push({ file, restore: undo.restore });
+  }
+
+  const written: typeof undos = [];
+  try {
+    for (const u of undos) {
+      abortIf(opts.signal);
+      await io.writeText(
+        u.file.absolutePath,
+        u.file.bom + restoreEndings(u.file.result, u.file.originalEnding),
+        opts.signal,
+        opts.exec,
+        opts.sandboxPolicy,
+      );
+      written.push(u);
+    }
+  } catch (error) {
+    for (const w of written) {
+      try {
+        await io.writeText(
+          w.file.absolutePath,
+          w.file.bom + restoreEndings(w.file.originalNormalized, w.file.originalEnding),
+          undefined,
+          opts.exec,
+          opts.sandboxPolicy,
+        );
+      } catch (e) { console.error("Failed to restore file after write failure:", e); }
+      try { await w.restore(); } catch (e) { console.error("Failed to restore undo entry after write failure:", e); }
+    }
+    if (opts.restoreUnwrittenUndos) {
+      for (const u of undos) {
+        if (written.includes(u)) continue;
+        try { await u.restore(); } catch (e) { console.error("Failed to restore undo entry after write failure:", e); }
+      }
+    }
+    throw opts.sandbox.mapError(error, opts.sandboxPolicy);
+  }
+}
+
+async function commitSingle(opts: Omit<PersistWriteOptions, "restoreUnwrittenUndos">): Promise<void> {
+  return persistUndoAndWrite({ ...opts, restoreUnwrittenUndos: true });
+}
+
+async function commitBatch(opts: Omit<PersistWriteOptions, "restoreUnwrittenUndos">): Promise<void> {
+  return persistUndoAndWrite({ ...opts, restoreUnwrittenUndos: false });
+}
 
 // --- Deep seam: unified mutation API (one interface, thin adapters) ---
 
@@ -311,7 +398,7 @@ export async function execute(opts: {
       await recordIfNeeded(built);
       return built.content[0]!.text;
     }
-    await commit({
+    await commitSingle({
       io,
       files: [
         {
@@ -330,7 +417,6 @@ export async function execute(opts: {
       signal,
       undoUnavailableMessage: (displayPath) =>
         `[E_UNDO_UNAVAILABLE] Cannot persist undo history to the hash store; the edit was NOT applied and ${displayPath} is unchanged. Retry the edit, or use write if the store cannot be recovered.`,
-      restoreUnwrittenUndos: true,
     });
     const built = buildBatchResult([toSection()]);
     await recordIfNeeded(built);
@@ -340,7 +426,7 @@ export async function execute(opts: {
   if (fileResult.appliedCount === 0 && fileResult.noopCount > 0) {
     // all noops — no commit
   } else if (fileResult.appliedCount > 0) {
-    await commit({
+    await commitBatch({
       io,
       files: [
         {
@@ -359,7 +445,6 @@ export async function execute(opts: {
       signal,
       undoUnavailableMessage: () =>
         "[E_UNDO_UNAVAILABLE] Cannot persist undo history to the hash store; the batch was NOT applied and no file was written. Retry the batch, or use write if the store cannot be recovered.",
-      restoreUnwrittenUndos: false,
     });
   }
 
@@ -419,6 +504,8 @@ export async function commit(opts: {
   sandboxPolicy: opts.sandboxPolicy,
   signal: opts.signal,
   undoUnavailableMessage: opts.undoUnavailableMessage,
-  restoreUnwrittenUndos: opts.restoreUnwrittenUndos,
+  restoreUnwrittenUndos: opts.restoreUnwrittenUndos ?? false,
  });
 }
+
+export { commitSingle, commitBatch };
