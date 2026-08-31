@@ -106,17 +106,19 @@ describe("coverage: anchor-pipeline applyEdit", () => {
     expect(result.content).toContain("X");
   });
 
-  it("detects boundary dups trailing/leading and auto-fixes", () => {
+  it("keeps boundary dups (no auto-fix) trailing/leading", () => {
     const content = "a\nb\nc\nd\ne";
     const hashes = lineHashesPure(content);
-    // edit replacing lines 2-3 (b,c) but include trailing dup d which equals file line after range
+    // edit replacing lines 2-3 (b,c) but include trailing dup d which equals file line after range — now kept
     const edit: any = { hash_bounds: [{ hash: hashes[1]! }, { hash: hashes[2]! }], content_lines: ["B", "C", "d"] };
     const result = applyEdit(content, edit, undefined, hashes);
-    expect(result.autoFixes?.length).toBeGreaterThan(0);
+    expect(result.autoFixes ?? []).toHaveLength(0);
+    expect(result.content).toBe("a\nB\nC\nd\nd\ne");
     // also test leading dup
     const edit2: any = { hash_bounds: [{ hash: hashes[1]! }, { hash: hashes[2]! }], content_lines: ["a", "B", "C"] };
     const result2 = applyEdit(content, edit2, undefined, hashes);
-    expect(result2.autoFixes?.length).toBeGreaterThan(0);
+    expect(result2.autoFixes ?? []).toHaveLength(0);
+    expect(result2.content).toBe("a\na\nB\nC\nd\ne");
   });
 
   it("throws on stale anchors", () => {
@@ -161,11 +163,11 @@ describe("coverage: anchor-pipeline applyEdit", () => {
     const edit: any = { hash_bounds: [{ hash: hashes[0]! }, { hash: hashes[0]! }], content_lines: [] };
     expect(() => applyEdit(content, edit, undefined, hashes)).toThrow(/E_WOULD_EMPTY/);
   });
-  it("findNewEdge works for leading/trailing new content", () => {
-    expect(findNewEdge(["new", "b", "c"], ["b", "c"], false)).toBeDefined();
-    expect(findNewEdge(["a", "b", "new"], ["a", "b"], true)).toBeDefined();
+  it("findNewEdge stub returns undefined (boundaryDups removed)", () => {
+    expect(findNewEdge(["new", "b", "c"], ["b", "c"], false)).toBeUndefined();
+    expect(findNewEdge(["a", "b", "new"], ["a", "b"], true)).toBeUndefined();
     expect(findNewEdge(["a", "b"], ["a", "b"], false)).toBeUndefined();
-    expect(findNewEdge(["", "new"], ["a"], false)).toBeDefined();
+    expect(findNewEdge(["", "new"], ["a"], false)).toBeUndefined();
   });
 
   it("warnUnicodeEsc adds warning", () => {

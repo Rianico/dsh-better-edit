@@ -2,16 +2,14 @@
  * AnchorPipeline — deep module owning the anchor autofix chain.
  *
  * Single ordering invariant (private):
- *   swapReversed → stripBare → stripDiff → valEdit → boundaryDups splice → valEdit → verifyServed → resToSpan
+ *   swapReversed → stripBare → stripDiff → valEdit → verifyServed → resToSpan
  *
- * Detection (valEdit → boundaryDups[]) and correction (splice + second valEdit)
- * were split across resolve.ts / apply.ts with an implicit coupling.
- * This seam co-locates that invariant. Public surface is two functions:
+ * This seam co-locates the ordering invariant. Public surface is two functions:
  *   resEdit  — pre-validation (tool-layer, no file state)
  *   applyEdit — full pipeline (file + hashes + served verification)
  *
  * Private to this seam (not re-exported): stripBarePrefixes, stripDiffPrefixes,
- * swapReversedRanges, valEdit, boundaryDups helpers, warnUnicodeEsc, findNewEdge,
+ * swapReversedRanges, valEdit, warnUnicodeEsc,
  * resAnchorFromMap, assertAligned, etc. They remain exported from resolve.ts
  * for backwards compat but are marked @internal and should be imported via this
  * module only.
@@ -19,7 +17,7 @@
  * @module dsh-better-edit/hashline/anchor-pipeline
  */
 
-import { abortIf, splitLines, rejectUnknownFields, firstNonEmptyIndex, lastNonEmptyIndex, clipLine } from "../utils.js";
+import { abortIf, splitLines, rejectUnknownFields, clipLine } from "../utils.js";
 import { HASH_CLASS, HL_BARE_PREFIX_RE, HL_PREFIX_PLUS_RE, HL_PREFIX_MINUS_RE, HASH_SEP, ANCHOR_LEN, ALPH_RE, canon, lineHashesPure, getCanonForHash, rememberHashCanon } from "./hash-assign.js";
 import { recordServed, servedPositionsOf } from "../session-view.js";
 import { SERVED_ECHO_CAP } from "../constants.js";
@@ -100,17 +98,6 @@ interface HMismatch {
 	kind: "not_found" | "ambiguous";
 	candidates?: number[];
 	context?: RAnchor;
-}
-
-export interface BDup {
-	kind: "trailing" | "leading" | "first-new-after" | "last-new-before";
-	replacementLineIndex: number;
-}
-
-export interface AutoFix {
-	kind: "trailing" | "leading" | "first-new-after" | "last-new-before";
-	removedLine: string;
-	removedLineIndex: number;
 }
 
 export interface NEdit {
@@ -401,148 +388,7 @@ function swapReversedRanges(
 	return { ...edit, hash_bounds: [endRef, startRef] as [Anchor, Anchor] };
 }
 
-function trailingDups(
-	contentLines: string[],
-	fileLines: string[],
-	endLine: number,
-): BDup[] {
-	const start = lastNonEmptyIndex(contentLines);
-	if (start < 0) return [];
-	const dups: BDup[] = [];
-	const maxK = Math.min(start + 1, fileLines.length - endLine);
-	for (let k = 0; k < maxK; k++) {
-		if (contentLines[start - k] !== fileLines[endLine + k]) break;
-		dups.push({ kind: "trailing", replacementLineIndex: start - k });
-	}
-	return dups;
-}
-
-function leadingDups(
-	contentLines: string[],
-	fileLines: string[],
-	startLine: number,
-): BDup[] {
-	const start = firstNonEmptyIndex(contentLines);
-	if (start < 0) return [];
-	const dups: BDup[] = [];
-	const maxK = Math.min(contentLines.length - start, startLine - 1);
-	for (let k = 0; k < maxK; k++) {
-		if (contentLines[start + k] !== fileLines[startLine - 2 - k]) break;
-		dups.push({ kind: "leading", replacementLineIndex: start + k });
-	}
-	return dups;
-}
-
-function sectionIsUnique(
-	canonLines: string[],
-	start: number,
-	length: number,
-): boolean {
-	let count = 0;
-	for (let i = 0; i + length <= canonLines.length; i++) {
-		let k = 0;
-		while (k < length && canonLines[i + k] === canonLines[start + k]) k++;
-		if (k < length) continue;
-		count++;
-		if (count > 1) return false;
-	}
-	return true;
-}
-
-function firstNewAfterDups(
-	contentLines: string[],
-	rangeLines: string[],
-	canonLines: string[],
-	endLine: number,
-): BDup[] {
-	const firstNew = findNewEdge(contentLines, rangeLines, false);
-	if (!firstNew) return [];
-	const maxK = Math.min(
-		contentLines.length - firstNew.index,
-		canonLines.length - endLine,
-	);
-	let runLen = 0;
-	while (
-		runLen < maxK &&
-		canon(contentLines[firstNew.index + runLen]!) ===
-			canonLines[endLine + runLen]!
-	) {
-		runLen++;
-	}
-	if (runLen === 0 || !sectionIsUnique(canonLines, endLine, runLen)) return [];
-	const dups: BDup[] = [];
-	for (let k = 0; k < runLen; k++) {
-		dups.push({
-			kind: "first-new-after",
-			replacementLineIndex: firstNew.index + k,
-		});
-	}
-	return dups;
-}
-
-function lastNewBeforeDups(
-	contentLines: string[],
-	rangeLines: string[],
-	canonLines: string[],
-	startLine: number,
-): BDup[] {
-	const lastNew = findNewEdge(contentLines, rangeLines, true);
-	if (!lastNew) return [];
-	const maxK = Math.min(lastNew.index + 1, startLine - 1);
-	let runLen = 0;
-	while (
-		runLen < maxK &&
-		canon(contentLines[lastNew.index - runLen]!) ===
-			canonLines[startLine - 2 - runLen]!
-	) {
-		runLen++;
-	}
-	if (runLen === 0) return [];
-	const sectionStart = startLine - 1 - runLen;
-	if (!sectionIsUnique(canonLines, sectionStart, runLen)) return [];
-	const dups: BDup[] = [];
-	for (let k = 0; k < runLen; k++) {
-		dups.push({
-			kind: "last-new-before",
-			replacementLineIndex: lastNew.index - k,
-		});
-	}
-	return dups;
-}
-
-function canonCounts(lines: string[]): Map<string, number> {
-	const counts = new Map<string, number>();
-	for (const line of lines) {
-		const key = canon(line);
-		counts.set(key, (counts.get(key) ?? 0) + 1);
-	}
-	return counts;
-}
-
 /** @internal — private to anchor-pipeline seam */
-export function findNewEdge(
-	contentLines: string[],
-	rangeLines: string[],
-	fromEnd: boolean,
-): { index: number; line: string } | undefined {
-	const multiset = canonCounts(rangeLines);
-	const step = fromEnd ? -1 : 1;
-	const start = fromEnd ? contentLines.length - 1 : 0;
-	for (let i = start; i >= 0 && i < contentLines.length; i += step) {
-		const line = contentLines[i]!;
-		if (line.length === 0) continue;
-		const key = canon(line);
-		const count = multiset.get(key) ?? 0;
-		if (count > 0) {
-			multiset.set(key, count - 1);
-		} else {
-			return { index: i, line };
-		}
-	}
-	return undefined;
-}
-
-/** @internal — private to anchor-pipeline seam: detection + boundaryDups belongs to AnchorPipeline ordering */
 function valEdit(
 	edit: HEdit,
 	fileLines: string[],
@@ -552,11 +398,9 @@ function valEdit(
 ): {
 	resolved: RHEdit | undefined;
 	mismatches: HMismatch[];
-	boundaryDups: BDup[];
 } {
 	assertAligned(fileLines, fileHashes, "valEdit");
 	const mismatches: HMismatch[] = [];
-	const boundaryDups: BDup[] = [];
 
 	const hashIndex = new Map<string, number[]>();
 	for (let i = 0; i < fileHashes.length; i++) {
@@ -592,7 +436,7 @@ function valEdit(
 			if (endMismatch && endMismatch.kind === "not_found")
 				endMismatch.context = startResolved;
 		}
-		return { resolved: undefined, mismatches, boundaryDups };
+		return { resolved: undefined, mismatches };
 	}
 	if (startResolved.line > endResolved.line) {
 		throw new Error(
@@ -600,29 +444,16 @@ function valEdit(
 		);
 	}
 	const endLine = endResolved.line;
-	const rangeLines = fileLines.slice(startResolved.line - 1, endLine);
-	const canonLines = fileLines.map((line) => canon(line));
-	boundaryDups.push(
-		...trailingDups(edit.content_lines, fileLines, endLine),
-		...leadingDups(edit.content_lines, fileLines, startResolved.line),
-		...firstNewAfterDups(edit.content_lines, rangeLines, canonLines, endLine),
-		...lastNewBeforeDups(
-			edit.content_lines,
-			rangeLines,
-			canonLines,
-			startResolved.line,
-		),
-	);
-
 	return {
 		resolved: {
 			content_lines: edit.content_lines,
 			hash_bounds: [startResolved, endResolved],
 		},
 		mismatches,
-		boundaryDups,
 	};
 }
+
+export function findNewEdge(): undefined { return undefined; }
 
 export { warnUnicodeEsc };
 
@@ -1169,7 +1000,6 @@ export function applyEdit(
 	range: ResolvedRange;
 	warnings?: string[];
 	noopEdit?: NEdit;
-	autoFixes?: AutoFix[];
 } {
 	abortIf(signal);
 
@@ -1186,7 +1016,6 @@ export function applyEdit(
 	const {
 		resolved: initialResolved,
 		mismatches,
-		boundaryDups,
 	} = valEdit(prefixFixed, lineIndex.fileLines, fileHashes, warnings, signal);
 	if (mismatches.length || !initialResolved) {
 		const { message, servedRows } = fmtMismatchWithServes(
@@ -1200,52 +1029,7 @@ export function applyEdit(
 
 	warnUnicodeEsc(prefixFixed, warnings);
 
-	let resolved = initialResolved;
-	let autoFixes: AutoFix[] | undefined;
-	if (boundaryDups.length > 0) {
-		autoFixes = [];
-		const correctedEdit: HEdit = {
-			...prefixFixed,
-			content_lines: [...prefixFixed.content_lines],
-		};
-		const seen = new Set<number>();
-		const uniqueDups: BDup[] = [];
-		for (const dup of boundaryDups) {
-			if (seen.has(dup.replacementLineIndex)) continue;
-			seen.add(dup.replacementLineIndex);
-			uniqueDups.push(dup);
-		}
-		const dupsByIndex = uniqueDups.sort(
-			(a, b) => b.replacementLineIndex - a.replacementLineIndex,
-		);
-		for (const dup of dupsByIndex) {
-			const idx = dup.replacementLineIndex;
-			if (idx < 0 || idx >= correctedEdit.content_lines.length) continue;
-			const removed = correctedEdit.content_lines.splice(idx, 1)[0];
-			autoFixes.push({
-				kind: dup.kind,
-				removedLine: removed,
-				removedLineIndex: idx,
-			});
-		}
-		const correctedResult = valEdit(
-			correctedEdit,
-			lineIndex.fileLines,
-			fileHashes,
-			warnings,
-			signal,
-		);
-		if (correctedResult.mismatches.length || !correctedResult.resolved) {
-			const { message, servedRows } = fmtMismatchWithServes(
-				correctedResult.mismatches,
-				lineIndex.fileLines,
-				fileHashes,
-				filePath,
-			);
-			throw new AnchorMismatchError(message, servedRows);
-		}
-		resolved = correctedResult.resolved;
-	}
+	const resolved = initialResolved;
 
 if (served) {
 		const startLineEcho = resolved.hash_bounds[0].line;
@@ -1296,7 +1080,6 @@ if (served) {
 		lastChangedLine: changed?.lastChangedLine,
 		range: resolvedRange(resolved),
 		...(warnings.length ? { warnings } : {}),
-		...(autoFixes ? { autoFixes } : {}),
 	};
 }
 

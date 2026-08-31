@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 import { applyEdit, lineHashes, resEdit, canon } from "../../src/hashline/index.js";
-import { findNewEdge } from "../../src/hashline/anchor-pipeline.js";
 import {
   firstNonEmptyIndex,
   lastNonEmptyIndex,
@@ -98,73 +97,8 @@ function applyAutoFix(
   s: number,
   e: number,
 ): { fixed: string[]; fixes: { kind: string; removedLine: string; removedLineIndex: number }[] } {
-  const dups: { kind: string; index: number }[] = [];
-  const lastIdx = lastNonEmptyIndex(repl);
-  if (lastIdx >= 0) {
-    for (let k = 0; lastIdx - k >= 0 && e + k < fileLines.length; k++) {
-      if (repl[lastIdx - k] !== fileLines[e + k]) break;
-      dups.push({ kind: "trailing", index: lastIdx - k });
-    }
-  }
-  const firstIdx = firstNonEmptyIndex(repl);
-  if (firstIdx >= 0) {
-    for (let k = 0; firstIdx + k < repl.length && s - 2 - k >= 0; k++) {
-      if (repl[firstIdx + k] !== fileLines[s - 2 - k]) break;
-      dups.push({ kind: "leading", index: firstIdx + k });
-    }
-  }
-  const rangeLines = fileLines.slice(s - 1, e);
-  const firstNew = findNewEdge(repl, rangeLines, false);
-  if (firstNew) {
-    let runLen = 0;
-    while (
-      firstNew.index + runLen < repl.length &&
-      e + runLen < fileLines.length &&
-      canon(repl[firstNew.index + runLen]!) === canon(fileLines[e + runLen]!)
-    ) {
-      runLen++;
-    }
-    if (runLen > 0 && sectionCount(fileLines, e, runLen) === 1) {
-      for (let k = 0; k < runLen; k++) {
-        dups.push({ kind: "first-new-after", index: firstNew.index + k });
-      }
-    }
-  }
-  const lastNew = findNewEdge(repl, rangeLines, true);
-  if (lastNew) {
-    let runLen = 0;
-    while (
-      lastNew.index - runLen >= 0 &&
-      s - 2 - runLen >= 0 &&
-      canon(repl[lastNew.index - runLen]!) === canon(fileLines[s - 2 - runLen]!)
-    ) {
-      runLen++;
-    }
-    if (runLen > 0) {
-      const sectionStart = s - 1 - runLen;
-      if (sectionCount(fileLines, sectionStart, runLen) === 1) {
-        for (let k = 0; k < runLen; k++) {
-          dups.push({ kind: "last-new-before", index: lastNew.index - k });
-        }
-      }
-    }
-  }
-  const seen = new Set<number>();
-  const unique: { kind: string; index: number }[] = [];
-  for (const dup of dups) {
-    if (seen.has(dup.index)) continue;
-    seen.add(dup.index);
-    unique.push(dup);
-  }
-  unique.sort((a, b) => b.index - a.index);
-  const fixed = [...repl];
-  const fixes: { kind: string; removedLine: string; removedLineIndex: number }[] = [];
-  for (const dup of unique) {
-    if (dup.index < 0 || dup.index >= fixed.length) continue;
-    fixes.push({ kind: dup.kind, removedLine: fixed[dup.index]!, removedLineIndex: dup.index });
-    fixed.splice(dup.index, 1);
-  }
-  return { fixed, fixes };
+  // boundaryDups removed — no auto-fix, pure replacement
+  return { fixed: [...repl], fixes: [] };
 }
 
 type StepResult = {
@@ -245,7 +179,7 @@ describe("fuzz: boundary-dup autocorrection with hash stability", () => {
       if (state.autofixed) autofixed++;
       if (state.noop) noop++;
     }
-    expect(autofixed).toBeGreaterThan(100);
+    expect(autofixed).toBe(0);
     expect(noop).toBeGreaterThan(20);
   }, 120_000);
 
@@ -270,6 +204,6 @@ describe("fuzz: boundary-dup autocorrection with hash stability", () => {
         expect(reloaded).toEqual(hashes);
       }
     }
-    expect(autofixed).toBeGreaterThan(50);
+    expect(autofixed).toBe(0);
   }, 120_000);
 });

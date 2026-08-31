@@ -276,7 +276,7 @@ export async function applyOne(
 		edit,
 		input.countHashes ?? input.hashes,
 		noop,
-		anchorResult.autoFixes?.length ?? 0,
+		0,
 	);
 
 	return {
