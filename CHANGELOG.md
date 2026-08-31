@@ -6,7 +6,12 @@
 
 ### Fixed
 
+- **hashline:** remove boundaryDups auto-fix (BREAKING CHANGE)
 - **ci:** add neural version check to Verify and Release
+
+### Documentation
+
+- **adr:** add ADR-0007 removing boundaryDups auto-fix
 
 ## [0.5.1](https://github.com/Rianico/dsh-better-edit/compare/v0.5.0...v0.5.1) (2026-08-30)
 
