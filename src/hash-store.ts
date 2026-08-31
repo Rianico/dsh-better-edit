@@ -20,7 +20,7 @@ import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { hashStorePath } from "./store-tenancy.js";
 import { onStoreOpen, setStoresGetter } from "./store-lifecycle.js";
-import { workspaceCwd } from "./workspace.js";
+import { workspaceCwd } from "./workspace-context.js";
 import { errCode, splitLines } from "./utils.js";
 import {
 	initHasher,

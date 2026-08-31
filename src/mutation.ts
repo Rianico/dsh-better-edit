@@ -44,7 +44,8 @@ import {
   recordEchoServes,
   type ServeRecordPolicy,
 } from "./hashline/anchor-pipeline.js";
-import { loadServed, sessionKeyFor, scanDrift, recordServedTruncated } from "./session-view.js";
+import { sessionKeyFor } from "./workspace-context.js"
+import { loadServed, scanDrift, recordServedTruncated } from "./session-view.js";
 import { abortIf, splitLines } from "./utils.js";
 import { applyOne } from "./edit-engine.js";
 import {
@@ -59,7 +60,7 @@ import type { FileEditResult, PreparedItem } from "./edit-engine.js";
 import { buildMetrics, buildNoop, buildChanged, buildBatchResult } from "./edit-response.js";
 import type { RMeta, BatchSection } from "./edit-response.js";
 import { genDiff, restoreEndings, toLF, stripBOM } from "./edit-diff.js";
-import { computeDrift } from "./drift.js";
+import { computeDrift } from "./session-view.js";
 import { trackNoopPayload, clearNoopLoop, noopPayloadKey } from "./noop-guard.js";
 
 export interface PipelineResult {

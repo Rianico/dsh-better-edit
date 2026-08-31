@@ -15,8 +15,8 @@ import { READ_DESCRIPTION } from "./prompts.js";
 import { normalizeEncoding } from "./encoding.js";
 
 import type { FileIO } from "./fs-bridge.js";
-import { execCwd, execSessionKey } from "./session-view.js";
-import { withWorkspace } from "./session-view.js";
+import { execCwd, execSessionKey } from "./workspace-context.js";
+import { withWorkspace } from "./workspace-context.js";
 
 /**
  * Register the hash-anchored `read` tool on the calling agent's scope.

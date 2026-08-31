@@ -3,7 +3,7 @@ import { mkdtemp, rm, writeFile, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { readAndServe } from "../../src/read-and-serve.js";
-import { withWorkspace } from "../../src/session-view.js";
+import { withWorkspace } from "../../src/workspace-context.js";
 import { localIO } from "../../src/fs-bridge.js";
 import { HASH_SEP } from "../../src/hashline/hash-assign.js";
 import { splitLines } from "../../src/utils.js";

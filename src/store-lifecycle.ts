@@ -16,7 +16,7 @@ import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { resolveDshHome } from "@deepseek-ai/dsh-home-paths";
 import { hashStorePath, loadConfig } from "./paths.js";
-import { workspaceCwd } from "./workspace.js";
+import { workspaceCwd } from "./workspace-context.js";
 import { errCode, splitLines } from "./utils.js";
 import { HASH_STORE_BUSY_TIMEOUT, SERVED_TTL_MS } from "./constants.js";
 import type { HashStore } from "./hash-store.js";

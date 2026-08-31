@@ -21,7 +21,7 @@
 
 import { abortIf, splitLines, rejectUnknownFields, firstNonEmptyIndex, lastNonEmptyIndex, clipLine } from "../utils.js";
 import { HASH_CLASS, HL_BARE_PREFIX_RE, HL_PREFIX_PLUS_RE, HL_PREFIX_MINUS_RE, HASH_SEP, ANCHOR_LEN, ALPH_RE, canon, lineHashesPure, getCanonForHash, rememberHashCanon } from "./hash-assign.js";
-import { recordServed, servedPositionsOf } from "../served-store.js";
+import { recordServed, servedPositionsOf } from "../session-view.js";
 import { SERVED_ECHO_CAP } from "../constants.js";
 import { NEW_CONTENT_NOT_STRING_MSG } from "../constants.js";
 

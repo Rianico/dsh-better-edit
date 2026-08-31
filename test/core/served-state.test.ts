@@ -11,7 +11,7 @@ import {
 	wipeServedState,
 	servedPositionsOf,
 	currentPositionOfDrifted,
-} from "../../src/served-store.js";
+} from "../../src/session-view.js";
 import { shutdownHashStore } from "../../src/hash-store.js";
 import { initHasher } from "../../src/hashline/hasher.js";
 import { getWritableTempRoot } from "../support/fixtures.js";

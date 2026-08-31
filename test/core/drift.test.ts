@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { computeDrift } from "../../src/drift.js";
+import { computeDrift } from "../../src/session-view.js";
 
 describe("computeDrift", () => {
 	it("returns undefined when nothing drifted outside the range", () => {

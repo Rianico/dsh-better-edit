@@ -1,10 +1,11 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { sessionKeyFor } from "../../src/workspace-context.js";
 import { mkdtemp, writeFile, mkdir, rm, symlink, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { existsSync } from "node:fs";
 import { canonicalSync, canonicalAsync } from "../../src/canonical-path.js";
-import { _mergeServedRows, sessionKeyFor, servedPositionsOf, currentPositionOfDrifted, computeDrift, DRIFT_NOTICE_HEADING } from "../../src/session-view.js";
+import { _mergeServedRows, servedPositionsOf, currentPositionOfDrifted, computeDrift, DRIFT_NOTICE_HEADING } from "../../src/session-view.js";
 import { expand, _resetConfigCache, loadConfig, DEFAULT_CONFIG_YAML } from "../../src/store-config.js";
 import { lineHashesPure } from "../../src/hashline/hash-assign.js";
 import { lineHashes } from "../../src/hashline/hash.js";

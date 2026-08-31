@@ -5,8 +5,8 @@ import {
 	loadServed,
 	markDriftReported,
 	driftReported,
-	sessionKeyFor,
-} from "../../src/served-store.js";
+} from "../../src/session-view.js";
+import { sessionKeyFor } from "../../src/workspace-context.js";
 import { withTempFile } from "../support/fixtures.js";
 import { initHasher } from "../../src/hashline/hasher.js";
 
