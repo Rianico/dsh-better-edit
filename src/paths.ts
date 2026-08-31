@@ -10,7 +10,7 @@ import { isAbsolute } from "node:path";
 import { resolve as resolvePath } from "node:path";
 import { expand } from "./store-tenancy.js";
 
-export * from "./store-tenancy.js";
+export * from "./store/index.js"; // Store seam — single answer for "which store, where" (tenancy+lifecycle+path)
 export { canonicalAsync as resolveTarget } from "./canonical-path.js";
 export { canonicalSync } from "./canonical-path.js";
 
