@@ -1,4 +1,4 @@
-import type { ServedRow } from "./hashline/served.js";
+import type { ServedRow } from "./hashline/anchor-pipeline.js";
 import { genDiff } from "./edit-diff.js";
 import { truncateHead, formatSize } from "./file-view.js";
 import { visLines, clipLine } from "./utils.js";

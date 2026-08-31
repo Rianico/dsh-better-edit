@@ -1366,3 +1366,33 @@ export function changedRange(
 		lastChangedLine: Math.max(first, lastRes) + 1,
 	};
 }
+
+// ---------------------------------------------------------------------------
+// Sealed seam — single public entry for hashline (Candidate 5)
+// HashAssign allocation + hash persistence re-exported here so callers import
+// only from anchor-pipeline. Private modules (hash-assign, hash, hasher,
+// alphabet, pure, parse, apply, resolve, served) are @internal and guarded
+// by biome noRestrictedImports. Deleting this re-export block would scatter
+// the hashline surface again — it concentrates (deep).
+// ---------------------------------------------------------------------------
+export {
+  HASH_RE,
+  HASH_CLASS,
+  HASH_SEP,
+  ANCHOR_LEN,
+  ALPH_RE,
+  ALPH,
+  HASH_LEN,
+  HASH_SPACE,
+  MAX_HASH_LINES,
+  HASH_PROBE_STRIDE,
+  CANON_VERSION,
+  canon,
+  lineHashesPure,
+  mapStableHashes,
+  initHasher,
+  contentChecksum,
+  getCanonForHash,
+  rememberHashCanon,
+} from "./hash-assign.js";
+export { lineHashes } from "./hash.js";

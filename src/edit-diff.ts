@@ -1,6 +1,6 @@
 import * as Diff from "diff";
 import { lineHashesPure, ANCHOR_LEN, HASH_SEP } from "./hashline/index.js";
-import type { ServedRow } from "./hashline/served.js";
+import type { ServedRow } from "./hashline/anchor-pipeline.js";
 
 export type LineEnding = "\r\n" | "\n" | "\r";
 
