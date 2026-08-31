@@ -1,13 +1,13 @@
-## [Unreleased]
+## [0.6.0](https://github.com/Rianico/dsh-better-edit/compare/v0.5.1...v0.6.0) (2026-08-31)
 
 ### Features
 
-- **hashline:** remove boundaryDups auto-fix (Closes #38)
-- **edit:** render diff card after tool calling
+* **edit:** render diff card after tool calling ([df7712c](https://github.com/Rianico/dsh-better-edit/commit/df7712cef265dfec424feefb60c19f833d380f9f))
+* **hashline:** remove boundaryDups auto-fix (Closes [#38](https://github.com/Rianico/dsh-better-edit/issues/38)) ([54d0bc6](https://github.com/Rianico/dsh-better-edit/commit/54d0bc6c9078fbcffa6f7a531e80e005774156a4))
 
-### Fixed
+### Bug Fixes
 
-- **ci:** add neural version check to Verify and Release
+* **ci:** add neural version check to Verify and Release ([7f85b56](https://github.com/Rianico/dsh-better-edit/commit/7f85b5605e228d19bcde802ce2b10affc90fbde7))
 
 ## [0.5.1](https://github.com/Rianico/dsh-better-edit/compare/v0.5.0...v0.5.1) (2026-08-30)
 
