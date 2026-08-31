@@ -33,9 +33,9 @@ import {
 	GUIDANCE_SECTIONS,
 	type SectionOverride,
 } from "./guidance.js";
-import { configDir } from "./paths.js";
+import { configDir } from "./store/index.js";
 import { ensureDefaultConfig } from "./store-config.js";
-import { onAppStart, onSessionStart } from "./store-lifecycle.js";
+import { onAppStart, onSessionStart } from "./store/index.js";
 
 /** Cordis plugin name used by loader diagnostics. */
 export const name = "dsh-better-edit";
