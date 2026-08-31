@@ -45,7 +45,12 @@ import {
   type ServeRecordPolicy,
 } from "./hashline/anchor-pipeline.js";
 import { sessionKeyFor } from "./workspace-context.js"
-import { loadServed, scanDrift, recordServedTruncated } from "./session-view.js";
+import {
+	loadServed,
+	scanDrift,
+	recordServedTruncated,
+	loadAnchorReservations,
+} from "./session-view.js";
 import { abortIf, splitLines } from "./utils.js";
 import { applyOne } from "./mutation/engine.js";
 import {
@@ -113,6 +118,7 @@ export async function execPipeline(
 
 	abortIf(signal)
 	const absolutePath = await io.resolve(path, cwd, signal)
+	const reservations = await loadAnchorReservations(absolutePath)
 	const rawText = await io.readText(absolutePath, signal)
 	const {
 		normalized: originalNormalized,
@@ -128,6 +134,8 @@ export async function execPipeline(
 		maxLines: MAX_HASH_LINES,
 		store: hashStore,
 		noPersist: options?.noPersist,
+		reservedHashes: reservations.reservedHashes,
+		retiredHashes: reservations.retiredHashes,
 	})
 
 	const sessionKey = options?.sessionKey ?? sessionKeyFor(undefined)
@@ -149,6 +157,7 @@ export async function execPipeline(
 			warnings: editWarnings,
 			store: hashStore,
 			persist: options?.noPersist !== true,
+			reservedHashes: reservations.reservedHashes,
 			edit,
 		},
 		async (error) => {

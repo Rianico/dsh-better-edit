@@ -59,9 +59,11 @@ export async function lineHashes(
   previous?: { content: string; hashes: string[]; removedHashes?: Set<string> },
   ioOrStore?: HashStore | HashSnapshotIO,
   persist?: boolean,
+  reservedHashes: ReadonlySet<string> = new Set(),
+  retiredHashes: ReadonlySet<string> = new Set(),
 ): Promise<string[]> {
   await initHasher();
-  if (!path) return lineHashesPure(content);
+  if (!path) return lineHashesPure(content, reservedHashes);
 
   // Back-compat: caller may pass HashStore as 4th arg; adapt to IO.
   const io: HashSnapshotIO | undefined =
@@ -70,7 +72,13 @@ export async function lineHashes(
       : (ioOrStore as HashSnapshotIO | undefined) ?? snapshotIOFor(undefined);
 
   if (previous) {
-    const newHashes = mapStableHashes(previous.content, previous.hashes, content, previous.removedHashes);
+    const newHashes = mapStableHashes(
+      previous.content,
+      previous.hashes,
+      content,
+      previous.removedHashes,
+      reservedHashes,
+    );
     if (persist !== false && io) {
       try {
         await io.upsert(path, contentChecksum(content), splitLines(content).length, newHashes);
@@ -88,8 +96,8 @@ export async function lineHashes(
       console.error("Failed to read hash store snapshot:", e);
     }
   }
-  if (cached) return cached;
-  const newHashes = lineHashesPure(content);
+  if (cached && !cached.some((hash) => retiredHashes.has(hash))) return cached;
+  const newHashes = lineHashesPure(content, reservedHashes);
   if (persist !== false && io) {
     try {
       await io.upsert(path, contentChecksum(content), splitLines(content).length, newHashes);

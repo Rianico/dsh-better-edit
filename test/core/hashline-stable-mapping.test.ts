@@ -304,7 +304,7 @@ describe("mapStableHashes — removedHashes edge cases", () => {
     expect(result[1]).toBe(secondBHash);
   });
 
-  it("removedHashes with all candidates removed reuses the first removed hash for identical re-insertion", async () => {
+  it("allocates a fresh hash when identical text replaces removed candidates", async () => {
     const oldContent = "a\nb\nb\nc";
     const oldHashes = await lineHashes(oldContent, home.testPath);
     const firstBHash = oldHashes[1]!;
@@ -318,10 +318,11 @@ describe("mapStableHashes — removedHashes edge cases", () => {
       removedHashes: new Set([firstBHash, secondBHash]),
     });
 
-    expect(result[1]).toBe(firstBHash);
+    expect(result[1]).not.toBe(firstBHash);
+    expect(result[1]).not.toBe(secondBHash);
   });
 
-  it("re-inserting identical text reuses the removed line's hash", async () => {
+  it("does not reuse a removed hash when identical text remains", async () => {
     const oldContent = "a\nb\nc";
     const oldHashes = await lineHashes(oldContent, home.testPath);
     const newContent = "a\nX\nc";
@@ -332,7 +333,7 @@ describe("mapStableHashes — removedHashes edge cases", () => {
       removedHashes: new Set([oldHashes[0]!]),
     });
 
-    expect(result[0]).toBe(oldHashes[0]);
+    expect(result[0]).not.toBe(oldHashes[0]);
     expect(result[1]).toMatch(/^[A-Za-z0-9_\\-]{3}$/);
     expect(result[1]).not.toBe(oldHashes[0]);
     expect(result[1]).not.toBe(oldHashes[1]);
@@ -360,7 +361,7 @@ describe("mapStableHashes — removedHashes edge cases", () => {
     expect(result[3]).toBe(oldHashes[3]);
   });
 
-  it("re-inserting identical text at the same position keeps its hash", async () => {
+  it("does not resurrect removed hashes at the same positions", async () => {
     const oldContent = "a\nb\nc";
     const oldHashes = await lineHashes(oldContent, home.testPath);
     const newContent = "a\nX\nc";
@@ -371,7 +372,8 @@ describe("mapStableHashes — removedHashes edge cases", () => {
       removedHashes: new Set(oldHashes.slice(0, 2)),
     });
 
-    expect(result[0]).toBe(oldHashes[0]);
+    expect(result[0]).not.toBe(oldHashes[0]);
+    expect(result[0]).not.toBe(oldHashes[1]);
     expect(result[1]).toMatch(/^[A-Za-z0-9]{3}$/);
     expect(result[1]).not.toBe(oldHashes[0]);
     expect(result[1]).not.toBe(oldHashes[1]);
@@ -390,9 +392,10 @@ describe("mapStableHashes — removedHashes edge cases", () => {
       removedHashes: new Set(oldHashes.slice(1, 4)),
     });
 
-    expect(result[1]).toBe(oldHashes[1]);
-    expect(result[2]).toBe(oldHashes[2]);
-    expect(result[4]).toBe(oldHashes[3]);
+    const removedHashes = new Set(oldHashes.slice(1, 4));
+    expect(removedHashes.has(result[1]!)).toBe(false);
+    expect(removedHashes.has(result[2]!)).toBe(false);
+    expect(removedHashes.has(result[4]!)).toBe(false);
     expect(result[6]).toBe(oldHashes[5]);
     expect(result[7]).toBe(oldHashes[6]);
     expect(result[8]).toBe(oldHashes[7]);
@@ -509,7 +512,7 @@ describe("mapStableHashes — nearest-candidate selection", () => {
     expect(result[0]).toBe(oldHashes[0]);
   });
 
-  it("reuses the first removed hash when every candidate is removed", async () => {
+  it("allocates outside the removed set when every candidate is removed", async () => {
     const oldContent = "same\nsame";
     const oldHashes = await lineHashes(oldContent, home.testPath);
     const removedHashes = new Set(oldHashes);
@@ -521,7 +524,7 @@ describe("mapStableHashes — nearest-candidate selection", () => {
     });
 
     expect(result).toHaveLength(1);
-    expect(result[0]).toBe(oldHashes[0]);
+    expect(removedHashes.has(result[0]!)).toBe(false);
   });
 
   it("keeps uniqueness when interleaving duplicates and removed candidates", async () => {
@@ -544,10 +547,7 @@ describe("mapStableHashes — nearest-candidate selection", () => {
 
     expect(result).toHaveLength(1_500);
     expect(new Set(result).size).toBe(1_500);
-    const reinserted = result.filter((hash) => removedHashes.has(hash));
-    expect(reinserted).toHaveLength(250);
-    const survivors = result.filter((hash) => !removedHashes.has(hash));
-    expect(survivors).toHaveLength(1_250);
+    expect(result.some((hash) => removedHashes.has(hash))).toBe(false);
   }, 120_000);
 
   it("keeps an untouched line's hash when the replacement contains identical content nearer to its old position", async () => {
