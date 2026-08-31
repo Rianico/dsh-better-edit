@@ -30,7 +30,7 @@ export { parseHashRef, parseText } from "./parse.js";
 export type { Anchor } from "./parse.js";
 
 export { resEdit } from "./anchor-pipeline.js";
-export type { HEdit, HTEdit, NEdit, BDup, AutoFix } from "./anchor-pipeline.js";
+export type { HEdit, HTEdit, NEdit } from "./anchor-pipeline.js";
 
 export {
 	applyEdit,

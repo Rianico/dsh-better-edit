@@ -103,22 +103,22 @@ describe("coverage-f: anchor-pipeline fmtMismatch", () => {
   });
 });
 
-describe("coverage-f: anchor-pipeline boundary dups & warnings", () => {
-  it("covers trailing/leading dup autoFix via applyEdit", () => {
+describe("coverage-f: anchor-pipeline no boundary dups (removed)", () => {
+  it("keeps trailing/leading dup (no autoFix)", () => {
     const content = "a\nb\nc\nd\ne";
     const hashes = lineHashesPure(content);
-    // trailing dup: replacement includes next line's content
+    // trailing dup: replacement includes next line's content — now kept
     const edit1: any = { hash_bounds: [{ hash: hashes[1]! }, { hash: hashes[2]! }], content_lines: ["B", "C", "d"] };
     const r1 = applyEdit(content, edit1, undefined, hashes);
-    expect(r1.autoFixes !== undefined).toBe(true);
+    expect((r1 as any).autoFixes ?? (r1 as any).nes).toBeUndefined();
     // leading dup
     const edit2: any = { hash_bounds: [{ hash: hashes[1]! }, { hash: hashes[2]! }], content_lines: ["a", "B", "C"] };
     const r2 = applyEdit(content, edit2, undefined, hashes);
-    expect(r2.autoFixes !== undefined).toBe(true);
+    expect((r2 as any).autoFixes ?? (r2 as any).nes).toBeUndefined();
   });
-  it("covers findNewEdge and buildRangeEcho", () => {
-    expect(findNewEdge(["new", "b"], ["b"], false)).toBeDefined();
-    expect(findNewEdge(["a", "new"], ["a"], true)).toBeDefined();
+  it("covers findNewEdge stub and buildRangeEcho", () => {
+    expect(findNewEdge(["new", "b"], ["b"], false)).toBeUndefined();
+    expect(findNewEdge(["a", "new"], ["a"], true)).toBeUndefined();
     expect(findNewEdge(["a"], ["a"], false)).toBeUndefined();
     const hashes = lineHashesPure("a\nb\nc\nd");
     const rows = buildRangeEcho(1, 4, hashes);

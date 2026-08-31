@@ -2,6 +2,7 @@
 
 ### Features
 
+- **hashline:** remove boundaryDups auto-fix (Closes #38)
 - **edit:** render diff card after tool calling
 
 ### Fixed

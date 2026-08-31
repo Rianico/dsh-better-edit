@@ -382,7 +382,7 @@ export function localIO(): FileIO {
       try {
         const info = await fileSnap(absolutePath).catch(() => undefined);
         invalidateIfStale(absolutePath, info?.snapshotId);
-      } catch {} // biome-ignore
+      } catch {}
       await writeAtomic(absolutePath, content);
     },
     async emitObserved() {

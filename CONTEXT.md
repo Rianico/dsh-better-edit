@@ -145,6 +145,10 @@ _Avoid_: E_HASH_ECHO (ambiguous between write/edit)
 Refusal of an `edit` whose `replacement_text` contains a served hash echo at the range-relative position — `[E_EDIT_HASH_ECHO] Refused edit to ${path}: replacement line ${k} begins with the exact ${hash}│ anchor served for this session, path, and range-relative line. Remove the copied anchors and retry. Nothing was written.` Deny, not strip — fail-loud, compensable (AA: A).
 _Avoid_: E_WRITE_HASH_ECHO (write-only), generic strip
 
+**boundary duplicate (historical, removed by ADR-0007):**
+Auto-spliced `replacement_text` edge when it equaled an adjacent file line — `trailingDups`/`leadingDups` (byte `===`, 1-line) and `firstNewAfterDups`/`lastNewBeforeDups` (`canon()` + `sectionIsUnique`). Removed — tool is now pure `range = [remove_from, remove_to]` by hash, `replacement = exact replacement_text`; a duplicate stays as a loud duplicate the model fixes next turn (see ADR-0007).
+_Avoid_: boundaryDups
+
 ### Guidance
 
 **Prompt section**:

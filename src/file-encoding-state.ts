@@ -232,12 +232,11 @@ export async function decodeForOpen(
       const isMid = isMidConfidenceHeuristic(best, second);
       const dec = decodeBytes(bytes, best.encoding);
       if (dec !== undefined) {
-        let footer: string | undefined;
         // Always produce footer for heuristic path (mid check decides but we always have candidates)
         // Keep existing behavior: always a footer for heuristic, but mid decides inclusion — for now always include
         // to match prior fs-bridge which always built footerHeu.
         void isMid;
-        footer = buildAutoGuessFooterFromCandidates(candidates as unknown as Array<{ encoding: string; score: number }>);
+        const footer = buildAutoGuessFooterFromCandidates(candidates as unknown as Array<{ encoding: string; score: number }>);
         return {
           text: dec,
           encoding: best.encoding,
