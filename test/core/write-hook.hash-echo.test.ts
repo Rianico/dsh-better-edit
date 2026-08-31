@@ -7,7 +7,7 @@ import type {
 } from "@deepseek-ai/dsh-tools";
 import { describe, expect, it, vi } from "vitest";
 import { readAndServe } from "../../src/read-and-serve.js";
-import { withWorkspace } from "../../src/session-view.js";
+import { withWorkspace } from "../../src/workspace-context.js";
 import {
 	findServedHashEcho,
 	registerWriteHook,

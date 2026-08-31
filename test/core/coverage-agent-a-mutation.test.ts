@@ -78,7 +78,7 @@ describe("mutation coverage agent-a", () => {
       const io = localIO();
       // read to seed hashes and served
       const { readAndServe } = await import("../../src/read-and-serve.js");
-      const { withWorkspace } = await import("../../src/session-view.js");
+      const { withWorkspace } = await import("../../src/workspace-context.js");
       const sessionKey = "sess-mut-" + Math.random();
       const preview = await withWorkspace(dir, () => readAndServe(io, file, dir, { sessionKey }));
       // Find hashes from preview to build a valid edit: replace line2
@@ -136,7 +136,7 @@ describe("mutation coverage agent-a", () => {
       await writeFile(file, "a\nb\nc\n", "utf-8");
       const io = localIO();
       const { readAndServe } = await import("../../src/read-and-serve.js");
-      const { withWorkspace } = await import("../../src/session-view.js");
+      const { withWorkspace } = await import("../../src/workspace-context.js");
       const sk = "sk-single-" + Math.random();
       const preview = await withWorkspace(dir, () => readAndServe(io, file, dir, { sessionKey: sk }));
       const h1 = preview.text.split("\n")[0]!.split("│")[0]!;

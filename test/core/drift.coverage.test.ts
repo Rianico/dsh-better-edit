@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import * as driftShim from "../../src/drift.js";
+import * as driftShim from "../../src/session-view.js";
 import * as fileReaderShim from "../../src/file-reader.js";
 import { computeDrift } from "../../src/session-view.js";
 import { loadFileKindAndText } from "../../src/file-view.js";

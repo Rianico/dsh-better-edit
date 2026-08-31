@@ -14,7 +14,7 @@ import {
 	clearDriftReported,
 	wipeServedState,
 	servedPositionsOf,
-} from "../../src/served-store.js";
+} from "../../src/session-view.js";
 import { HASH_STORE_VERSION, SERVED_TTL_MS } from "../../src/constants.js";
 import { initHasher, contentChecksum } from "../../src/hashline/hasher.js";
 import { getWritableTempRoot } from "../support/fixtures.js";

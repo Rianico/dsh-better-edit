@@ -28,7 +28,7 @@ describe("coverage-agent-g lifecycle", () => {
       autoGuessEncoding: false,
       supportedEncodings: [],
     } as any);
-    const spyWorkspace = vi.spyOn(await import("../../src/workspace.js"), "workspaceCwd").mockReturnValue(ws);
+    const spyWorkspace = vi.spyOn(await import("../../src/workspace-context.js"), "workspaceCwd").mockReturnValue(ws);
     // need to trigger handleGitPollution via onStoreOpen
     const lc = await import("../../src/store-lifecycle.js");
     lc._resetLifecycleForTests();

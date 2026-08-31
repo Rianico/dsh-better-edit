@@ -19,9 +19,9 @@ import { getUndo, clearUndo } from "./undo-edit.js";
 import { recordServedTruncated } from "./session-view.js";
 import { UNDO_DESCRIPTION } from "./prompts.js";
 import type { FileIO } from "./fs-bridge.js";
-import { execCwd, execSessionKey } from "./session-view.js";
+import { execCwd, execSessionKey } from "./workspace-context.js";
 import type { FsSandboxController, FsEscalationArgs } from "./sandbox.js";
-import { withWorkspace } from "./session-view.js";
+import { withWorkspace } from "./workspace-context.js";
 
 /**
  * Register the `undo_last_edit` tool on the calling agent's scope.
