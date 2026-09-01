@@ -25,6 +25,7 @@ import {
 	loadAnchorReservations,
 	loadServedCanons,
 	loadEpochSnapshotId,
+	loadRetiredAnchors,
 	retireAnchors,
 } from "../session-view.js";
 import {
@@ -442,6 +443,7 @@ export async function runFileEdits(
 	const absolutePath = first.absolutePath;
 	const reservations = await loadAnchorReservations(absolutePath);
 	const reservedHashes = new Set(reservations.reservedHashes);
+	const perSessionTombstone = await loadRetiredAnchors(opts.sessionKey, absolutePath);
 	const rawText = await io.readText(absolutePath, opts.signal);
 	const {
 		normalized: originalNormalized,
@@ -464,7 +466,7 @@ export async function runFileEdits(
 	const epochSnapshotId = await loadEpochSnapshotId(opts.sessionKey, absolutePath);
 	let curSnapshotId: string | undefined;
 	try { curSnapshotId = (await fileSnap(absolutePath)).snapshotId; } catch {}
-	const strictPos = false; // pos-free automatic
+	const strictPos = epochSnapshotId !== undefined && curSnapshotId !== undefined && epochSnapshotId !== curSnapshotId;
 	const warnings: string[] = [];
 
 	let currentContent = originalNormalized;
@@ -500,7 +502,7 @@ export async function runFileEdits(
 				persist: false,
 				reservedHashes,
 				servedCanons,
-				tombstone: new Set([...reservations.retiredHashes, ...Array.from(newlyRetired)]),
+				tombstone: new Set([...perSessionTombstone, ...Array.from(newlyRetired)]),
 				epochSnapshotId,
 				curSnapshotId,
 				strictPos,
@@ -618,7 +620,7 @@ export async function runFileEdits(
 			undefined,
 			true,
 			reservedHashes,
-			reservations.retiredHashes,
+			perSessionTombstone,
 		);
 		await retireAnchors(opts.sessionKey, absolutePath, newlyRetired);
 	}

@@ -51,6 +51,7 @@ import {
 	loadServed,
 	loadServedCanons,
 	loadEpochSnapshotId,
+	loadRetiredAnchors,
 	scanDrift,
 	recordServedTruncated,
 	loadAnchorReservations,
@@ -148,7 +149,8 @@ export async function execPipeline(
 	const epochSnapshotId = await loadEpochSnapshotId(sessionKey, absolutePath)
 	let curSnapshotId: string | undefined
 	try { curSnapshotId = (await fileSnap(absolutePath)).snapshotId } catch {}
-	const strictPos = false // pos-free automatic (epoch handles concurrency)
+	const strictPos = epochSnapshotId !== undefined && curSnapshotId !== undefined && epochSnapshotId !== curSnapshotId
+	const tombstonePerSession = await loadRetiredAnchors(sessionKey, absolutePath)
 	const policy: ServeRecordPolicy =
 		options?.noPersist === true ? 'preview' : 'live'
 
@@ -168,7 +170,7 @@ export async function execPipeline(
 			persist: options?.noPersist !== true,
 			reservedHashes: reservations.reservedHashes,
 			servedCanons,
-			tombstone: reservations.retiredHashes,
+			tombstone: tombstonePerSession,
 			epochSnapshotId,
 			curSnapshotId,
 			strictPos,

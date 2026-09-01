@@ -122,6 +122,10 @@ export async function loadEpochSnapshotId(sessionKey: string, path: string): Pro
 	const store = await loadServedStore();
 	return store.getEpochSnapshotId(sessionKey, path);
 }
+export async function loadRetiredAnchors(sessionKey: string, path: string): Promise<Set<string>> {
+	const store = await loadServedStore();
+	return store.getRetiredAnchors(sessionKey, path);
+}
 
 function addRetiredAnchors(
 	store: ServedPersistence,
