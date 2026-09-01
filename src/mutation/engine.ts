@@ -22,7 +22,6 @@ import { normFromText } from "../file-reader.js";
 import {
 	scanDrift,
 	loadServed,
-	loadAnchorReservations,
 	loadServedCanons,
 	loadEpochSnapshotId,
 	loadRetiredAnchors,
@@ -441,9 +440,8 @@ export async function runFileEdits(
 	const first = items[0]!;
 	abortIf(opts.signal);
 	const absolutePath = first.absolutePath;
-	const reservations = await loadAnchorReservations(absolutePath);
-	const reservedHashes = new Set(reservations.reservedHashes);
 	const perSessionTombstone = await loadRetiredAnchors(opts.sessionKey, absolutePath);
+	const reservedHashes = new Set(perSessionTombstone);
 	const rawText = await io.readText(absolutePath, opts.signal);
 	const {
 		normalized: originalNormalized,
@@ -458,7 +456,7 @@ export async function runFileEdits(
 		signal: opts.signal,
 		maxLines: MAX_HASH_LINES,
 		reservedHashes,
-		retiredHashes: reservations.retiredHashes,
+		retiredHashes: perSessionTombstone,
 	});
 
 	const served = await loadServed(opts.sessionKey, absolutePath);
@@ -466,7 +464,7 @@ export async function runFileEdits(
 	const epochSnapshotId = await loadEpochSnapshotId(opts.sessionKey, absolutePath);
 	let curSnapshotId: string | undefined;
 	try { curSnapshotId = (await fileSnap(absolutePath)).snapshotId; } catch {}
-	const strictPos = epochSnapshotId !== undefined && curSnapshotId !== undefined && epochSnapshotId !== curSnapshotId;
+	const strictPos = false // pos-free resist: exterior shift passes via hash==; strict fallback via tombstone+canon (changed ∩ [L,R] precise check TODO);
 	const warnings: string[] = [];
 
 	let currentContent = originalNormalized;

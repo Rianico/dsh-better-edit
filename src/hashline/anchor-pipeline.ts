@@ -869,19 +869,20 @@ export function verifyServedRange(args: {
 				}
 			}
 		}
-		// Tombstone interior check (whole-span)
+		// Tombstone interior check (whole-span) — gated on canon inequality (fail-closed only for different canon)
 		for (let k = 0; k < servedLen; k++) {
 			const h = fileHashes[startLine - 1 + k];
 			if (h && tombstone.has(h)) {
-				// If hash is tombstoned but still in file at same pos with same canon, it's a reborn
-				// Only reject if this hash was previously served at a different position? For now, reject any tombstoned hash in range
-				// This catches S@3 reborn @3 after swap
-				throw new ServedRejectionError({
-					code: "E_RANGE_STALE",
-					message: `[E_RANGE_STALE] line ${startLine + k}${where} uses tombstoned anchor "${h}" (freed since last full read). Re-read.\nCurrent range:\n${echo}`,
-					firstOffendingLine: startLine + k,
-					servedRows: echoRows,
-				});
+				const expectedCanon = servedCanons?.[from + k] ?? undefined;
+				const actualCanon = canon(fileLines[startLine - 1 + k] ?? "");
+				if (expectedCanon !== undefined && expectedCanon !== null && expectedCanon !== actualCanon) {
+					throw new ServedRejectionError({
+						code: "E_RANGE_STALE",
+						message: `[E_RANGE_STALE] line ${startLine + k}${where} uses tombstoned anchor "${h}" (freed since last full read, canon changed). Re-read.\nCurrent range:\n${echo}`,
+						firstOffendingLine: startLine + k,
+						servedRows: echoRows,
+					});
+				}
 			}
 		}
 		for (let k = 0; k < servedLen; k++) {

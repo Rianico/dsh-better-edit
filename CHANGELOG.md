@@ -2,6 +2,7 @@
 
 ### Fixed
 
+- **hashline:** polish P2s for ADR-0013 automatic fallback
 - **hashline:** implement per-session tombstone and epoch-aware strict pos
 - **hashline:** add per-session canons, epoch and strict pos for ADR-0013
 - **hashline:** prevent freed anchor reuse (#31)

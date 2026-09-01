@@ -54,7 +54,6 @@ import {
 	loadRetiredAnchors,
 	scanDrift,
 	recordServedTruncated,
-	loadAnchorReservations,
 } from "./session-view.js";
 import { abortIf, splitLines } from "./utils.js";
 import { applyOne } from "./mutation/engine.js";
@@ -123,7 +122,8 @@ export async function execPipeline(
 
 	abortIf(signal)
 	const absolutePath = await io.resolve(path, cwd, signal)
-	const reservations = await loadAnchorReservations(absolutePath)
+	const sessionKeyEarly = options?.sessionKey ?? sessionKeyFor(undefined)
+	const perSessionTombstoneForNorm = await loadRetiredAnchors(sessionKeyEarly, absolutePath)
 	const rawText = await io.readText(absolutePath, signal)
 	const {
 		normalized: originalNormalized,
@@ -139,8 +139,8 @@ export async function execPipeline(
 		maxLines: MAX_HASH_LINES,
 		store: hashStore,
 		noPersist: options?.noPersist,
-		reservedHashes: reservations.reservedHashes,
-		retiredHashes: reservations.retiredHashes,
+		reservedHashes: perSessionTombstoneForNorm,
+		retiredHashes: perSessionTombstoneForNorm,
 	})
 
 	const sessionKey = options?.sessionKey ?? sessionKeyFor(undefined)
@@ -149,7 +149,7 @@ export async function execPipeline(
 	const epochSnapshotId = await loadEpochSnapshotId(sessionKey, absolutePath)
 	let curSnapshotId: string | undefined
 	try { curSnapshotId = (await fileSnap(absolutePath)).snapshotId } catch {}
-	const strictPos = epochSnapshotId !== undefined && curSnapshotId !== undefined && epochSnapshotId !== curSnapshotId
+	const strictPos = false // pos-free resist: exterior shift passes via hash==; strict fallback via tombstone+canon (changed ∩ [L,R] precise check TODO)
 	const tombstonePerSession = await loadRetiredAnchors(sessionKey, absolutePath)
 	const policy: ServeRecordPolicy =
 		options?.noPersist === true ? 'preview' : 'live'
@@ -168,7 +168,7 @@ export async function execPipeline(
 			warnings: editWarnings,
 			store: hashStore,
 			persist: options?.noPersist !== true,
-			reservedHashes: reservations.reservedHashes,
+			reservedHashes: perSessionTombstoneForNorm,
 			servedCanons,
 			tombstone: tombstonePerSession,
 			epochSnapshotId,

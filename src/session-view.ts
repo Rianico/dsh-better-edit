@@ -201,18 +201,20 @@ export async function recordServed(
 				if (fullReadCanons) store.upsertServedCanons(sessionKey, path, JSON.stringify(fullReadCanons));
 				if (fullReadSnapshotId) store.upsertEpochSnapshotId(sessionKey, path, fullReadSnapshotId);
 			} else {
-				// For partial reads, update canons for the served rows (pos-free: exterior shift should not retire, just update)
-				if (fullReadCanons) {
-					// fullReadCanons here actually contains canons for the served rows when partial? We need to map rows to canons
-					// For partial, fullReadCanons is full file canons, but we should only update canons for rows that were served
-					// Instead, we will handle canons update via separate logic: merge canons similarly to hashes
+			// For partial reads, update canons for the served rows via hash-to-canon map (robust for partial views)
+				if (fullReadCanons && fullReadHashes) {
+					const canonByHash = new Map<string, string | null>();
+					for (let i = 0; i < fullReadHashes.length; i++) {
+						const h = fullReadHashes[i]!;
+						const c = fullReadCanons[i] ?? null;
+						if (h) canonByHash.set(h, c);
+					}
 					const currentCanons = store.getServedCanons(sessionKey, path);
 					const updatedCanons = currentCanons.slice();
 					while (updatedCanons.length < (lineCount ?? 0)) updatedCanons.push(null);
 					for (const row of rows) {
 						while (updatedCanons.length <= row.position) updatedCanons.push(null);
-						// Find canon for this position from fullReadCanons (which is full file canons)
-						const canonVal = fullReadCanons[row.position] ?? null;
+						const canonVal = row.hash ? (canonByHash.get(row.hash) ?? null) : null;
 						updatedCanons[row.position] = canonVal;
 					}
 					while (updatedCanons.length > 0 && updatedCanons[updatedCanons.length - 1] === null) updatedCanons.pop();
