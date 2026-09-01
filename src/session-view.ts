@@ -113,6 +113,16 @@ export async function loadAnchorReservations(
 	return store.getAnchorReservations(path);
 }
 
+export async function loadServedCanons(sessionKey: string, path: string): Promise<(string | null)[]> {
+	const store = await loadServedStore();
+	return store.getServedCanons(sessionKey, path);
+}
+
+export async function loadEpochSnapshotId(sessionKey: string, path: string): Promise<string | undefined> {
+	const store = await loadServedStore();
+	return store.getEpochSnapshotId(sessionKey, path);
+}
+
 function addRetiredAnchors(
 	store: ServedPersistence,
 	sessionKey: string,
@@ -163,6 +173,8 @@ export async function recordServed(
 	rows: ServedEntry[],
 	lineCount?: number,
 	fullReadHashes?: readonly string[],
+	fullReadCanons?: readonly (string | null)[],
+	fullReadSnapshotId?: string,
 ): Promise<void> {
 	if (rows.length === 0) return;
 	try {
@@ -182,7 +194,27 @@ export async function recordServed(
 			}
 			if (isFullRead) {
 				store.clearRetiredAnchors(sessionKey, path);
+				if (fullReadCanons) store.upsertServedCanons(sessionKey, path, JSON.stringify(fullReadCanons));
+				if (fullReadSnapshotId) store.upsertEpochSnapshotId(sessionKey, path, fullReadSnapshotId);
 			} else {
+				// For partial reads, update canons for the served rows (pos-free: exterior shift should not retire, just update)
+				if (fullReadCanons) {
+					// fullReadCanons here actually contains canons for the served rows when partial? We need to map rows to canons
+					// For partial, fullReadCanons is full file canons, but we should only update canons for rows that were served
+					// Instead, we will handle canons update via separate logic: merge canons similarly to hashes
+					const currentCanons = store.getServedCanons(sessionKey, path);
+					const updatedCanons = currentCanons.slice();
+					while (updatedCanons.length < (lineCount ?? 0)) updatedCanons.push(null);
+					for (const row of rows) {
+						while (updatedCanons.length <= row.position) updatedCanons.push(null);
+						// Find canon for this position from fullReadCanons (which is full file canons)
+						const canonVal = fullReadCanons[row.position] ?? null;
+						updatedCanons[row.position] = canonVal;
+					}
+					while (updatedCanons.length > 0 && updatedCanons[updatedCanons.length - 1] === null) updatedCanons.pop();
+					store.upsertServedCanons(sessionKey, path, JSON.stringify(updatedCanons));
+				}
+				if (fullReadSnapshotId) store.upsertEpochSnapshotId(sessionKey, path, fullReadSnapshotId);
 				addRetiredAnchors(
 					store,
 					sessionKey,

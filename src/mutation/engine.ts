@@ -15,11 +15,16 @@
 import type { FileIO } from "../fs-bridge.js";
 import type { HashStore } from "../hash-store.js";
 import type { LineEnding } from "../edit-diff.js";
+import { loadConfig } from "../store-config.js";
+import { canon } from "../hashline/hash-assign.js";
+import { fileSnap } from "../file-view.js";
 import { normFromText } from "../file-reader.js";
 import {
 	scanDrift,
 	loadServed,
 	loadAnchorReservations,
+	loadServedCanons,
+	loadEpochSnapshotId,
 	retireAnchors,
 } from "../session-view.js";
 import {
@@ -189,6 +194,11 @@ export interface ApplyOneInput {
 	store?: HashStore;
 	persist: boolean;
 	reservedHashes?: ReadonlySet<string>;
+	servedCanons?: (string | null)[];
+	tombstone?: ReadonlySet<string>;
+	epochSnapshotId?: string;
+	curSnapshotId?: string;
+	strictPos?: boolean;
 	/** Pre-resolved edit (single path keeps resEdit before IO for error order). */
 	edit?: HEdit;
 }
@@ -249,6 +259,11 @@ export async function applyOne(
 			input.hashes,
 			input.displayPath,
 			input.served,
+			input.servedCanons,
+			input.tombstone,
+			input.epochSnapshotId,
+			input.curSnapshotId,
+			input.strictPos,
 		);
 	} catch (error) {
 		if (
@@ -445,6 +460,11 @@ export async function runFileEdits(
 	});
 
 	const served = await loadServed(opts.sessionKey, absolutePath);
+	const servedCanons = await loadServedCanons(opts.sessionKey, absolutePath);
+	const epochSnapshotId = await loadEpochSnapshotId(opts.sessionKey, absolutePath);
+	let curSnapshotId: string | undefined;
+	try { curSnapshotId = (await fileSnap(absolutePath)).snapshotId; } catch {}
+	const strictPos = loadConfig().supportConcurrency;
 	const warnings: string[] = [];
 
 	let currentContent = originalNormalized;
@@ -479,6 +499,11 @@ export async function runFileEdits(
 				countHashes: originalHashes,
 				persist: false,
 				reservedHashes,
+				servedCanons,
+				tombstone: new Set([...reservations.retiredHashes, ...Array.from(newlyRetired)]),
+				epochSnapshotId,
+				curSnapshotId,
+				strictPos,
 			},
 			async (error, edit) => {
 				if (

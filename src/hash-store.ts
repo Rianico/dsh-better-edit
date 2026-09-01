@@ -58,6 +58,15 @@ export function isValidSnapshot(value: unknown): value is LegacySnapshot {
 }
 
 /** A served-row array: per-position hash, or null for never-served slots. */
+export function isValidCanonsList(value: unknown): value is (string | null)[] {
+	if (!Array.isArray(value)) return false;
+	for (const entry of value) {
+		if (entry === null) continue;
+		if (typeof entry !== "string") return false;
+	}
+	return true;
+}
+
 export function isValidServedList(value: unknown): value is (string | null)[] {
 	if (!Array.isArray(value)) return false;
 	for (const entry of value) {
@@ -101,6 +110,10 @@ interface Prepared {
 	servedReportedClear: (...params: SqlParams) => void;
 	servedRetiredUpsert: (...params: SqlParams) => void;
 	servedRetiredClear: (...params: SqlParams) => void;
+	servedCanonsUpsert: (...params: SqlParams) => void;
+	servedCanonsClear: (...params: SqlParams) => void;
+	servedSnapshotUpsert: (...params: SqlParams) => void;
+	servedSnapshotClear: (...params: SqlParams) => void;
 	servedDelete: (...params: SqlParams) => void;
 	servedDeletePath: (...params: SqlParams) => void;
 	servedWipe: (...params: SqlParams) => void;
@@ -157,11 +170,17 @@ export interface ServedPersistence {
   getServedReported(sessionKey: string, path: string): Set<string>;
   getAnchorReservations(path: string): AnchorReservations;
   getRetiredAnchors(sessionKey: string, path: string): Set<string>;
+  getServedCanons(sessionKey: string, path: string): (string | null)[];
+  getEpochSnapshotId(sessionKey: string, path: string): string | undefined;
   upsertServed(sessionKey: string, path: string, hashesJson: string): void;
   upsertServedReported(sessionKey: string, path: string, reportedJson: string): void;
   clearServedReported(sessionKey: string, path: string): void;
   upsertRetiredAnchors(sessionKey: string, path: string, hashesJson: string): void;
   clearRetiredAnchors(sessionKey: string, path: string): void;
+  upsertServedCanons(sessionKey: string, path: string, canonsJson: string): void;
+  clearServedCanons(sessionKey: string, path: string): void;
+  upsertEpochSnapshotId(sessionKey: string, path: string, snapshotId: string): void;
+  clearEpochSnapshotId(sessionKey: string, path: string): void;
   deleteServed(sessionKey: string, path: string): void;
   deleteServedByPath(path: string): void;
   wipeServed(sessionKey: string): void;
@@ -313,6 +332,8 @@ function buildStore(db: DatabaseSync): { db: DatabaseSync; stmts: Prepared } {
 			"hashes TEXT NOT NULL, " +
 			"reported TEXT, " +
 			"retired TEXT, " +
+			"canons TEXT, " +
+			"snapshotId TEXT, " +
 			"updated_at INTEGER NOT NULL, " +
 			"PRIMARY KEY (session_id, path)" +
 			")",
@@ -349,6 +370,18 @@ function buildStore(db: DatabaseSync): { db: DatabaseSync; stmts: Prepared } {
 			throw error;
 		}
 	}
+	const canonsColumns = db.prepare("PRAGMA table_info(served)").all() as {
+		name: string;
+	}[];
+	if (!canonsColumns.some((column) => column.name === "canons")) {
+		db.exec("ALTER TABLE served ADD COLUMN canons TEXT");
+	}
+	const snapshotColumns = db.prepare("PRAGMA table_info(served)").all() as {
+		name: string;
+	}[];
+	if (!snapshotColumns.some((column) => column.name === "snapshotId")) {
+		db.exec("ALTER TABLE served ADD COLUMN snapshotId TEXT");
+	}
 	db
 		.prepare(
 			"INSERT INTO meta (key, value) VALUES ('version', ?) " +
@@ -379,7 +412,7 @@ function buildStore(db: DatabaseSync): { db: DatabaseSync; stmts: Prepared } {
 		"DELETE FROM undo WHERE updated_at < ?",
 	);
 	const servedGetStmt = db.prepare(
-		"SELECT hashes, reported, retired FROM served WHERE session_id = ? AND path = ?",
+		"SELECT hashes, reported, retired, canons, snapshotId FROM served WHERE session_id = ? AND path = ?",
 	);
 	const servedAllForPathStmt = db.prepare(
 		"SELECT session_id, hashes, retired FROM served WHERE path = ?",
@@ -401,6 +434,20 @@ function buildStore(db: DatabaseSync): { db: DatabaseSync; stmts: Prepared } {
 	);
 	const servedRetiredClearStmt = db.prepare(
 		"UPDATE served SET retired = NULL, updated_at = ? WHERE session_id = ? AND path = ?",
+	);
+	const servedCanonsUpsertStmt = db.prepare(
+		"INSERT INTO served (session_id, path, hashes, canons, updated_at) VALUES (?, ?, '[]', ?, ?) " +
+			"ON CONFLICT(session_id, path) DO UPDATE SET canons = excluded.canons, updated_at = excluded.updated_at",
+	);
+	const servedCanonsClearStmt = db.prepare(
+		"UPDATE served SET canons = NULL, updated_at = ? WHERE session_id = ? AND path = ?",
+	);
+	const servedSnapshotUpsertStmt = db.prepare(
+		"INSERT INTO served (session_id, path, hashes, snapshotId, updated_at) VALUES (?, ?, '[]', ?, ?) " +
+			"ON CONFLICT(session_id, path) DO UPDATE SET snapshotId = excluded.snapshotId, updated_at = excluded.updated_at",
+	);
+	const servedSnapshotClearStmt = db.prepare(
+		"UPDATE served SET snapshotId = NULL, updated_at = ? WHERE session_id = ? AND path = ?",
 	);
 	const servedDeleteStmt = db.prepare(
 		"DELETE FROM served WHERE session_id = ? AND path = ?",
@@ -470,6 +517,26 @@ function buildStore(db: DatabaseSync): { db: DatabaseSync; stmts: Prepared } {
 		servedRetiredClear: (...params) => {
 			withBusyRetry(() => {
 				servedRetiredClearStmt.run(params[1], params[0], params[2]);
+			});
+		},
+		servedCanonsUpsert: (...params) => {
+			withBusyRetry(() => {
+				servedCanonsUpsertStmt.run(...params);
+			});
+		},
+		servedCanonsClear: (...params) => {
+			withBusyRetry(() => {
+				servedCanonsClearStmt.run(params[1], params[0], params[2]);
+			});
+		},
+		servedSnapshotUpsert: (...params) => {
+			withBusyRetry(() => {
+				servedSnapshotUpsertStmt.run(...params);
+			});
+		},
+		servedSnapshotClear: (...params) => {
+			withBusyRetry(() => {
+				servedSnapshotClearStmt.run(params[1], params[0], params[2]);
 			});
 		},
 		servedDelete: (...params) => {
@@ -676,6 +743,35 @@ function makeDomainStore(stmts: Prepared): InternalHashStore {
 		},
 		clearRetiredAnchors(sessionKey, path) {
 			stmts.servedRetiredClear(sessionKey, Date.now(), path);
+		},
+		getServedCanons(sessionKey, path) {
+			const row = stmts.servedGet(sessionKey, path);
+			if (!row || row.canons === null || row.canons === undefined) return [];
+			try {
+				const parsed = JSON.parse(row.canons as string) as unknown;
+				if (!isValidCanonsList(parsed)) throw new TypeError("invalid canons");
+				return parsed;
+			} catch {
+				stmts.servedDelete(sessionKey, path);
+				return [];
+			}
+		},
+		getEpochSnapshotId(sessionKey, path) {
+			const row = stmts.servedGet(sessionKey, path);
+			if (!row || row.snapshotId === null || row.snapshotId === undefined) return undefined;
+			return row.snapshotId as string;
+		},
+		upsertServedCanons(sessionKey, path, canonsJson) {
+			stmts.servedCanonsUpsert(sessionKey, path, canonsJson, Date.now());
+		},
+		clearServedCanons(sessionKey, path) {
+			stmts.servedCanonsClear(sessionKey, Date.now(), path);
+		},
+		upsertEpochSnapshotId(sessionKey, path, snapshotId) {
+			stmts.servedSnapshotUpsert(sessionKey, path, snapshotId, Date.now());
+		},
+		clearEpochSnapshotId(sessionKey, path) {
+			stmts.servedSnapshotClear(sessionKey, Date.now(), path);
 		},
 		deleteServed(sessionKey, path) {
 			stmts.servedDelete(sessionKey, path);

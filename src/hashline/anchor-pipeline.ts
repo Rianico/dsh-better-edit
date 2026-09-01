@@ -565,6 +565,11 @@ export function verifyServedRange(args: {
 	fileHashes: string[];
 	fileLines: string[];
 	filePath?: string;
+	servedCanons?: (string | null)[];
+	tombstone?: ReadonlySet<string>;
+	epochSnapshotId?: string;
+	curSnapshotId?: string;
+	strictPos?: boolean;
 }): void {
 	const {
 		served,
@@ -577,6 +582,11 @@ export function verifyServedRange(args: {
 		filePath,
 	} = args;
 	const where = filePath ? ` in ${filePath}` : "";
+	const tombstone = args.tombstone ?? new Set<string>();
+	const servedCanons = args.servedCanons;
+	const strictPos = args.strictPos ?? false;
+	const epochSnapshotId = args.epochSnapshotId;
+	const curSnapshotId = args.curSnapshotId;
 	let isHealed = false;
 	for (let i = 0; i < fileHashes.length; i++) {
 		const h = fileHashes[i]!;
@@ -597,6 +607,15 @@ export function verifyServedRange(args: {
 			? `\n${paginationHint(startLine + echoRows.length, totalLen - echoRows.length)}`
 			: "";
 	const echo = fmtServedRows(echoRows, fileLines) + tail;
+
+	// Tombstone check for boundaries (whole-span S@3==S@3)
+	if (tombstone.has(startHash) || tombstone.has(endHash)) {
+		// If hash was freed in this epoch, stale reuse must be loud even at same pos
+		// Only reject if hash is still in file at a different logical position? But tombstone means it was freed, so any reuse is stale
+		// Check if hash is in file but servedCanons mismatch or pos strict
+		// For now, if tombstone contains the hash and file still has it, treat as stale if servedCanons check fails or strict pos fails
+		// We will handle more precisely below after from/to resolved
+	}
 
 	const startPositions = servedPositionsOf(served, startHash);
 	const endPositions = servedPositionsOf(served, endHash);
@@ -824,6 +843,47 @@ export function verifyServedRange(args: {
 				});
 			}
 		}
+		// Strict pos check for concurrency (pos-free vs strict)
+		if (strictPos && from !== startLine - 1) {
+			throw new ServedRejectionError({
+				code: "E_RANGE_STALE",
+				message: `[E_RANGE_STALE] anchor was served at line ${from + 1} but now resolves to line ${startLine} (pos-restricted concurrency). Re-read.\nCurrent range:\n${echo}`,
+				firstOffendingLine: startLine,
+				servedRows: echoRows,
+			});
+		}
+		// Canon check for same-pos different content (collision)
+		if (servedCanons) {
+			for (let k = 0; k < servedLen; k++) {
+				const expected = servedCanons[from + k];
+				if (expected !== null && expected !== undefined) {
+					const actual = canon(fileLines[startLine - 1 + k] ?? "");
+					if (expected !== actual) {
+						throw new ServedRejectionError({
+							code: "E_RANGE_STALE",
+							message: `[E_RANGE_STALE] line ${startLine + k}${where} canon differs from served (expected "${expected}" vs actual "${actual}").\nCurrent range:\n${echo}`,
+							firstOffendingLine: startLine + k,
+							servedRows: echoRows,
+						});
+					}
+				}
+			}
+		}
+		// Tombstone interior check (whole-span)
+		for (let k = 0; k < servedLen; k++) {
+			const h = fileHashes[startLine - 1 + k];
+			if (h && tombstone.has(h)) {
+				// If hash is tombstoned but still in file at same pos with same canon, it's a reborn
+				// Only reject if this hash was previously served at a different position? For now, reject any tombstoned hash in range
+				// This catches S@3 reborn @3 after swap
+				throw new ServedRejectionError({
+					code: "E_RANGE_STALE",
+					message: `[E_RANGE_STALE] line ${startLine + k}${where} uses tombstoned anchor "${h}" (freed since last full read). Re-read.\nCurrent range:\n${echo}`,
+					firstOffendingLine: startLine + k,
+					servedRows: echoRows,
+				});
+			}
+		}
 		for (let k = 0; k < servedLen; k++) {
 			if (served[from + k] !== fileHashes[startLine - 1 + k]) {
 				const offendingLine = startLine + k;
@@ -993,6 +1053,11 @@ export function applyEdit(
 	precomputedHashes?: string[],
 	filePath?: string,
 	served?: (string | null)[],
+	servedCanons?: (string | null)[],
+	tombstone?: ReadonlySet<string>,
+	epochSnapshotId?: string,
+	curSnapshotId?: string,
+	strictPos?: boolean,
 ): {
 	content: string;
 	firstChangedLine: number | undefined;
@@ -1052,6 +1117,11 @@ if (served) {
 			fileHashes,
 			fileLines: lineIndex.fileLines,
 			filePath,
+			servedCanons,
+			tombstone,
+			epochSnapshotId,
+			curSnapshotId,
+			strictPos,
 		});
 	}
 

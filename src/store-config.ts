@@ -96,6 +96,7 @@ const StoreConfigSchema = z.object({
 	undo_ttl_s: z.number().int().min(-1).default(604800), // undo history TTL in seconds; -1 = keep forever (default 604800 = 7 days)
 	storeMaxAgeS: z.number().int().min(1).default(2592000), // central janitor: max idle age in seconds before evicting runtime/<name>-<hash8>/ (default 2592000 = 30 days)
 	storeMaxTotalBytes: z.number().int().min(0).default(524288000), // central janitor: max total bytes under runtime/ before LRU eviction (default 524288000 = 500 MB)
+	supportConcurrency: z.boolean().default(false), // when true, strict pos check (from==startLine-1) for concurrency resistance; default false = pos-free
 });
 
 export type StoreConfig = z.infer<typeof StoreConfigSchema>;
@@ -110,6 +111,7 @@ let cachedEnvAutoGitignore: string | undefined;
 let cachedEnvAutoGuessEncoding: string | undefined;
 let cachedEnvNormalizeToUtf8: string | undefined;
 let cachedEnvSupportedEncodings: string | undefined;
+let cachedEnvSupportConcurrency: string | undefined;
 
 function configYamlPath(): string {
 	return join(resolveDshHome(), "plugins", "dsh-better-edit", "config.yaml");
@@ -144,6 +146,7 @@ storeMaxAgeS: 2592000
 
 # central janitor: max total bytes under runtime/ before LRU eviction (default 524288000 = 500 MB)
 storeMaxTotalBytes: 524288000
+supportConcurrency: false
 `;
 
 /**
@@ -277,6 +280,11 @@ function fsAdapter(): Partial<StoreConfig> {
 			if (arr === undefined) console.warn(`dsh-better-edit: supportedEncodings "${parsed.supportedEncodings}" invalid`);
 			else out.supportedEncodings = arr;
 		}
+		if (parsed.supportConcurrency !== undefined) {
+			const b = parseAutoGitIgnoreRaw(parsed.supportConcurrency);
+			if (b === undefined) console.warn(`dsh-better-edit: supportConcurrency "${parsed.supportConcurrency}" invalid — expected true|false`);
+			else out.supportConcurrency = b;
+		}
 		if (parsed.storeMaxTotalBytes !== undefined) {
 			const n = Number(parsed.storeMaxTotalBytes);
 			const res = z.number().int().min(0).safeParse(n);
@@ -362,6 +370,7 @@ function complementMissingFieldsSync(yamlPath: string, yamlPartial: Partial<Stor
 	if (yamlPartial.undo_ttl_s === undefined) missingLines.push("undo_ttl_s: 604800");
 	if (yamlPartial.storeMaxAgeS === undefined) missingLines.push("storeMaxAgeS: 2592000");
 	if (yamlPartial.storeMaxTotalBytes === undefined) missingLines.push("storeMaxTotalBytes: 524288000");
+	if ((yamlPartial as any).supportConcurrency === undefined) missingLines.push("supportConcurrency: false");
 	if (missingLines.length === 0) return;
 	try {
 		// Ensure we don't duplicate if file was concurrently complemented — re-read raw keys.
@@ -392,6 +401,7 @@ export function loadConfig(): StoreConfig {
 	const envGuess = process.env.DSH_BETTER_EDIT_AUTO_GUESS_ENCODING;
 	const envNorm = process.env.DSH_BETTER_EDIT_NORMALIZE_TO_UTF8;
 	const envSup = process.env.DSH_BETTER_EDIT_SUPPORTED_ENCODINGS;
+	const envSupportConcurrency = process.env.DSH_BETTER_EDIT_SUPPORT_CONCURRENCY;
 	const envAuto = process.env.DSH_BETTER_EDIT_AUTO_GITIGNORE;
 
 	if (
@@ -402,7 +412,8 @@ export function loadConfig(): StoreConfig {
 		cachedEnvAutoGitignore === envAuto &&
 		cachedEnvAutoGuessEncoding === envGuess &&
 		cachedEnvNormalizeToUtf8 === envNorm &&
-		cachedEnvSupportedEncodings === envSup
+		cachedEnvSupportedEncodings === envSup &&
+	cachedEnvSupportConcurrency === envSupportConcurrency
 	) {
 		return cachedConfig;
 	}
@@ -438,6 +449,7 @@ export function loadConfig(): StoreConfig {
 	cachedEnvAutoGuessEncoding = envGuess;
 	cachedEnvNormalizeToUtf8 = envNorm;
 	cachedEnvSupportedEncodings = envSup;
+	cachedEnvSupportConcurrency = envSupportConcurrency;
 	return cfg;
 }
 
@@ -451,4 +463,5 @@ export function _resetConfigCache(): void {
 	cachedEnvAutoGuessEncoding = undefined;
 	cachedEnvNormalizeToUtf8 = undefined;
 	cachedEnvSupportedEncodings = undefined;
+	cachedEnvSupportConcurrency = undefined;
 }

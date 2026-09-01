@@ -32,6 +32,8 @@ import type { ToolExecution } from "@deepseek-ai/dsh-tools";
 import type { SandboxExecutionPolicy } from "@deepseek-ai/dsh-sandbox";
 import type { FsSandboxController } from "./sandbox.js";
 
+import { loadConfig } from "./store-config.js";
+import { canon } from "./hashline/hash-assign.js";
 import { normFromText, fileSnap } from "./file-reader.js";
 import type { LineEnding } from "./edit-diff.js";
 import { toCwd } from "./paths.js";
@@ -47,6 +49,8 @@ import {
 import { sessionKeyFor } from "./workspace-context.js"
 import {
 	loadServed,
+	loadServedCanons,
+	loadEpochSnapshotId,
 	scanDrift,
 	recordServedTruncated,
 	loadAnchorReservations,
@@ -140,6 +144,11 @@ export async function execPipeline(
 
 	const sessionKey = options?.sessionKey ?? sessionKeyFor(undefined)
 	const served = await loadServed(sessionKey, absolutePath)
+	const servedCanons = await loadServedCanons(sessionKey, absolutePath)
+	const epochSnapshotId = await loadEpochSnapshotId(sessionKey, absolutePath)
+	let curSnapshotId: string | undefined
+	try { curSnapshotId = (await fileSnap(absolutePath)).snapshotId } catch {}
+	const strictPos = loadConfig().supportConcurrency
 	const policy: ServeRecordPolicy =
 		options?.noPersist === true ? 'preview' : 'live'
 
@@ -158,6 +167,11 @@ export async function execPipeline(
 			store: hashStore,
 			persist: options?.noPersist !== true,
 			reservedHashes: reservations.reservedHashes,
+			servedCanons,
+			tombstone: reservations.retiredHashes,
+			epochSnapshotId,
+			curSnapshotId,
+			strictPos,
 			edit,
 		},
 		async (error) => {

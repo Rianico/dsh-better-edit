@@ -2,6 +2,7 @@
 
 ### Fixed
 
+- **hashline:** add per-session canons, epoch and strict pos for ADR-0013
 - **hashline:** prevent freed anchor reuse (#31)
 
 ### Documentation
