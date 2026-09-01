@@ -16,7 +16,8 @@ import { getAutoGuessFooter } from "./fs-bridge.js";
 import {
 	recordServed,
 	clearDriftReported,
-	loadAnchorReservations,
+	loadRetiredAnchors,
+	loadServed,
 } from "./session-view.js";
 import type { FileIO } from "./fs-bridge.js";
 import type { ServedRow } from "./hashline/anchor-pipeline.js";
@@ -65,7 +66,10 @@ export async function readAndServe(
 	const { sessionKey, signal } = options;
 	abortIf(signal);
 	const absolutePath = await io.resolve(rawPath, cwd, signal);
-	const reservations = await loadAnchorReservations(absolutePath);
+	const retiredHashes = await loadRetiredAnchors(sessionKey, absolutePath);
+	const servedForNorm = await loadServed(sessionKey, absolutePath);
+	const reservedHashes = new Set<string>([...retiredHashes, ...servedForNorm.filter((h): h is string => h !== null)]);
+	const reservations = { reservedHashes, retiredHashes };
 	const view = await readView(io, rawPath, cwd, {
 		encoding: options.encoding,
 		offset: options.offset,
