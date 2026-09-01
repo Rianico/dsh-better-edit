@@ -11,6 +11,7 @@
 
 ### Documentation
 
+- **adr:** clarify single vs multi-session pos-free trade-off
 - **adr:** refine ADR-0013 to automatic fallback (no config)
 - **adr:** add ADR-0013 pos-free roundtrip with concurrency fallback (#31)
 

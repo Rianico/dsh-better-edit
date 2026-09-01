@@ -61,7 +61,16 @@ Makes `shift==rebind` loud only when `changed` overlaps target, not when exterio
 ### 4. Non-overlapping forever is pos-free
 
 `A:10..12 +1 line` shifts `B:20..30->21..31`. `B`'s `served 20..30 == file 21..31` still `candidates==1` -> pass. Non-overlapping spans never abort in `resist`.
+## Single vs Multi-session
 
+|  | Single-session (serial `read->edit*` per `sessionKey`) | Multi-session (concurrent `A`+`B`) |
+|---|---|---|
+| Read-set | `epoch==curId` → no concurrent writer | `epoch!=curId` → concurrent `changed` detected |
+| Non-overlapping `A:10..12+1` shifts `B:20..30→21..31` | `pass` — candidates `hash==` still `1`, `tombstone∉` | `changed ∩ [L,R]==∅` → `resist` → `pass` (drift notice, not abort) |
+| Overlapping `S@3 reborn @3` whole-span | `tombstone` blocks allocation → `E_STALE_ANCHOR` | `changed ∩ [L,R]!=∅` → `strict from==pos` → `E_RANGE_STALE` |
+| Cost | `pos-free` — zero extra round trips | May incur one `edit` retry via `reject-and-serve` (`E.servedRows` already re-serves, no `read` needed) |
+
+We keep `pos-free` by default because line non-overlap ≈ semantic non-overlap for hash-anchored edits; strict would make every exterior `insert @0` abort `B`'s unrelated range, violating `CONTEXT.md:anchor philosophy` and `ADR-0004` healing. Concurrency fallback is automatic, no `supportConcurrency` flag — exterior drift stays `resist`, only overlapping concurrent goes `strict`.
 ## Considered Options
 
 - **Strict pos always** — would make every exterior insert abort `edit 10..12` after `insert @0`, forcing re-read tax, violating `position-independent` and ADR-0004.
