@@ -11,7 +11,11 @@
 import { abortIf } from "./utils.js";
 import { readView } from "./file-view.js";
 import { getAutoGuessFooter } from "./fs-bridge.js";
-import { recordServed, clearDriftReported } from "./session-view.js";
+import {
+	recordServed,
+	clearDriftReported,
+	loadAnchorReservations,
+} from "./session-view.js";
 import type { FileIO } from "./fs-bridge.js";
 import type { ServedRow } from "./hashline/anchor-pipeline.js";
 
@@ -58,11 +62,15 @@ export async function readAndServe(
 ): Promise<ReadAndServeResult> {
 	const { sessionKey, signal } = options;
 	abortIf(signal);
+	const absolutePath = await io.resolve(rawPath, cwd, signal);
+	const reservations = await loadAnchorReservations(absolutePath);
 	const view = await readView(io, rawPath, cwd, {
 		encoding: options.encoding,
 		offset: options.offset,
 		limit: options.limit,
 		signal,
+		reservedHashes: reservations.reservedHashes,
+		retiredHashes: reservations.retiredHashes,
 	});
 	if (view.served.length > 0) {
 		await recordServed(
@@ -70,6 +78,7 @@ export async function readAndServe(
 			view.absolutePath,
 			view.served,
 			view.hashes.length,
+			view.hashes,
 		);
 	}
 	await clearDriftReported(sessionKey, view.absolutePath);

@@ -23,7 +23,13 @@
  */
 
 import { HASH_RE } from "./hashline/hash-assign.js";
-import { loadHashStore, loadServedStore, withStore } from "./hash-store.js";
+import {
+	loadHashStore,
+	loadServedStore,
+	withStore,
+	type AnchorReservations,
+	type ServedPersistence,
+} from "./hash-store.js";
 import { SERVED_ECHO_CAP } from "./constants.js";
 import type { ServedRow, ResolvedRange } from "./hashline/anchor-pipeline.js";
 import { fmtServedRows } from "./hashline/anchor-pipeline.js";
@@ -99,15 +105,91 @@ export async function loadServed(sessionKey: string, path: string): Promise<(str
 	return store.getServed(sessionKey, path);
 }
 
-export async function recordServed(sessionKey: string, path: string, rows: ServedEntry[], lineCount?: number): Promise<void> {
+/** Anchors that must not be allocated while any session can still remember them. */
+export async function loadAnchorReservations(
+	path: string,
+): Promise<AnchorReservations> {
+	const store = await loadServedStore();
+	return store.getAnchorReservations(path);
+}
+
+function addRetiredAnchors(
+	store: ServedPersistence,
+	sessionKey: string,
+	path: string,
+	hashes: Iterable<string>,
+): void {
+	const additions = [...hashes];
+	if (additions.length === 0) return;
+	const retired = store.getRetiredAnchors(sessionKey, path);
+	for (const hash of additions) {
+		if (!HASH_RE.test(hash)) {
+			throw new TypeError(`Invalid retired hash: ${hash}`);
+		}
+		retired.add(hash);
+	}
+	store.upsertRetiredAnchors(sessionKey, path, JSON.stringify([...retired]));
+}
+
+function displacedHashes(
+	current: readonly (string | null)[],
+	updated: readonly (string | null)[],
+): Set<string> {
+	const remaining = new Set(updated.filter((hash): hash is string => hash !== null));
+	return new Set(
+		current.filter(
+			(hash): hash is string => hash !== null && !remaining.has(hash),
+		),
+	);
+}
+
+/** Keep freed anchors dead for this session until it has seen the whole file again. */
+export async function retireAnchors(
+	sessionKey: string,
+	path: string,
+	hashes: Iterable<string>,
+): Promise<void> {
+	const additions = [...hashes];
+	if (additions.length === 0) return;
+	const store = await loadServedStore();
+	withStore(() => {
+		addRetiredAnchors(store, sessionKey, path, additions);
+	});
+}
+
+export async function recordServed(
+	sessionKey: string,
+	path: string,
+	rows: ServedEntry[],
+	lineCount?: number,
+	fullReadHashes?: readonly string[],
+): Promise<void> {
 	if (rows.length === 0) return;
 	try {
 		const store = await loadServedStore();
+		const isFullRead =
+			fullReadHashes !== undefined &&
+			rows.length === fullReadHashes.length &&
+			rows.every(
+				(row, index) =>
+					row.position === index && row.hash === fullReadHashes[index],
+			);
 		withStore(() => {
 			const current = store.getServed(sessionKey, path);
 			const updated = _mergeServedRows(current, rows, lineCount === undefined ? undefined : { truncateTo: lineCount });
-			if (current.length === updated.length && current.every((v, i) => v === updated[i])) return;
-			store.upsertServed(sessionKey, path, JSON.stringify(updated));
+			if (current.length !== updated.length || current.some((v, i) => v !== updated[i])) {
+				store.upsertServed(sessionKey, path, JSON.stringify(updated));
+			}
+			if (isFullRead) {
+				store.clearRetiredAnchors(sessionKey, path);
+			} else {
+				addRetiredAnchors(
+					store,
+					sessionKey,
+					path,
+					displacedHashes(current, updated),
+				);
+			}
 		});
 	} catch (error) {
 		console.error("Failed to record served rows:", error);
@@ -121,9 +203,15 @@ export async function recordServedTruncated(sessionKey: string, path: string, ro
 		withStore(() => {
 			const current = store.getServed(sessionKey, path);
 			const updated = _mergeServedRows(current, rows, { truncateTo: lineCount, clearFrom });
-			// Avoid no-op writes (perf: O(1) check, no extra I/O beyond current read)
-			if (current.length === updated.length && current.every((v, i) => v === updated[i])) return;
-			store.upsertServed(sessionKey, path, JSON.stringify(updated));
+			if (current.length !== updated.length || current.some((v, i) => v !== updated[i])) {
+				store.upsertServed(sessionKey, path, JSON.stringify(updated));
+			}
+			addRetiredAnchors(
+				store,
+				sessionKey,
+				path,
+				displacedHashes(current, updated),
+			);
 		});
 	} catch (error) {
 		console.error("Failed to record truncated served rows:", error);

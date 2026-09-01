@@ -16,7 +16,12 @@ import type { FileIO } from "../fs-bridge.js";
 import type { HashStore } from "../hash-store.js";
 import type { LineEnding } from "../edit-diff.js";
 import { normFromText } from "../file-reader.js";
-import { scanDrift, loadServed } from "../session-view.js";
+import {
+	scanDrift,
+	loadServed,
+	loadAnchorReservations,
+	retireAnchors,
+} from "../session-view.js";
 import {
 	applyEdit,
 	resEdit,
@@ -183,6 +188,7 @@ export interface ApplyOneInput {
 	countHashes?: string[];
 	store?: HashStore;
 	persist: boolean;
+	reservedHashes?: ReadonlySet<string>;
 	/** Pre-resolved edit (single path keeps resEdit before IO for error order). */
 	edit?: HEdit;
 }
@@ -271,6 +277,7 @@ export async function applyOne(
 				},
 				input.store,
 				input.persist,
+				input.reservedHashes,
 			);
 	const { totalAddedLines, totalRemovedLines } = countLineChanges(
 		edit,
@@ -418,6 +425,8 @@ export async function runFileEdits(
 	const first = items[0]!;
 	abortIf(opts.signal);
 	const absolutePath = first.absolutePath;
+	const reservations = await loadAnchorReservations(absolutePath);
+	const reservedHashes = new Set(reservations.reservedHashes);
 	const rawText = await io.readText(absolutePath, opts.signal);
 	const {
 		normalized: originalNormalized,
@@ -431,6 +440,8 @@ export async function runFileEdits(
 		displayPath: first.path,
 		signal: opts.signal,
 		maxLines: MAX_HASH_LINES,
+		reservedHashes,
+		retiredHashes: reservations.retiredHashes,
 	});
 
 	const served = await loadServed(opts.sessionKey, absolutePath);
@@ -449,6 +460,7 @@ export async function runFileEdits(
 	let lastApplied:
 		| { content: string; hashes: string[]; removedHashes: Set<string> }
 		| undefined;
+	const newlyRetired = new Set<string>();
 
 	for (const item of items) {
 		abortIf(opts.signal);
@@ -466,6 +478,7 @@ export async function runFileEdits(
 				warnings,
 				countHashes: originalHashes,
 				persist: false,
+				reservedHashes,
 			},
 			async (error, edit) => {
 				if (
@@ -548,6 +561,10 @@ export async function runFileEdits(
 
 		appliedCount += 1;
 		const removedHashes = applied.removedHashes!;
+		for (const hash of removedHashes) {
+			reservedHashes.add(hash);
+			newlyRetired.add(hash);
+		}
 		totalAddedLines += applied.totalAddedLines;
 		totalRemovedLines += applied.totalRemovedLines;
 		lastApplied = {
@@ -575,7 +592,10 @@ export async function runFileEdits(
 			},
 			undefined,
 			true,
+			reservedHashes,
+			reservations.retiredHashes,
 		);
+		await retireAnchors(opts.sessionKey, absolutePath, newlyRetired);
 	}
 
 	if (hadUtf8DecodeErrors) {

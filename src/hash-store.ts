@@ -95,9 +95,12 @@ interface Prepared {
 	undoDelete: (...params: SqlParams) => void;
 	undoPruneOlderThan: (...params: SqlParams) => void;
 	servedGet: (...params: SqlParams) => Record<string, unknown> | undefined;
+	servedAllForPath: (...params: SqlParams) => Record<string, unknown>[];
 	servedUpsert: (...params: SqlParams) => void;
 	servedReportedUpsert: (...params: SqlParams) => void;
 	servedReportedClear: (...params: SqlParams) => void;
+	servedRetiredUpsert: (...params: SqlParams) => void;
+	servedRetiredClear: (...params: SqlParams) => void;
 	servedDelete: (...params: SqlParams) => void;
 	servedDeletePath: (...params: SqlParams) => void;
 	servedWipe: (...params: SqlParams) => void;
@@ -152,13 +155,22 @@ export interface HashStore {
 export interface ServedPersistence {
   getServed(sessionKey: string, path: string): (string | null)[];
   getServedReported(sessionKey: string, path: string): Set<string>;
+  getAnchorReservations(path: string): AnchorReservations;
+  getRetiredAnchors(sessionKey: string, path: string): Set<string>;
   upsertServed(sessionKey: string, path: string, hashesJson: string): void;
   upsertServedReported(sessionKey: string, path: string, reportedJson: string): void;
   clearServedReported(sessionKey: string, path: string): void;
+  upsertRetiredAnchors(sessionKey: string, path: string, hashesJson: string): void;
+  clearRetiredAnchors(sessionKey: string, path: string): void;
   deleteServed(sessionKey: string, path: string): void;
   deleteServedByPath(path: string): void;
   wipeServed(sessionKey: string): void;
   pruneServedOlderThan(ts: number): void;
+}
+
+export interface AnchorReservations {
+  reservedHashes: Set<string>;
+  retiredHashes: Set<string>;
 }
 
 export type InternalHashStore = HashStore & ServedPersistence;
@@ -300,10 +312,43 @@ function buildStore(db: DatabaseSync): { db: DatabaseSync; stmts: Prepared } {
 			"path TEXT NOT NULL, " +
 			"hashes TEXT NOT NULL, " +
 			"reported TEXT, " +
+			"retired TEXT, " +
 			"updated_at INTEGER NOT NULL, " +
 			"PRIMARY KEY (session_id, path)" +
 			")",
 	);
+	const currentServedColumns = db.prepare("PRAGMA table_info(served)").all() as {
+		name: string;
+	}[];
+	if (!currentServedColumns.some((column) => column.name === "retired")) {
+		let migrationOpen = false;
+		try {
+			db.exec("BEGIN IMMEDIATE");
+			migrationOpen = true;
+			const migrationColumns = db
+				.prepare("PRAGMA table_info(served)")
+				.all() as { name: string }[];
+			if (!migrationColumns.some((column) => column.name === "retired")) {
+				db.exec("ALTER TABLE served ADD COLUMN retired TEXT");
+				// Pre-fix snapshots and undo entries may already bind a remembered
+				// anchor to the wrong position. Preserve served rows, but rebuild
+				// every source that could restore the rebound anchor.
+				db.exec("DELETE FROM snapshots");
+				db.exec("DELETE FROM undo");
+			}
+			db.exec("COMMIT");
+			migrationOpen = false;
+		} catch (error) {
+			if (migrationOpen) {
+				try {
+					db.exec("ROLLBACK");
+				} catch (rollbackError) {
+					console.warn(rollbackError);
+				}
+			}
+			throw error;
+		}
+	}
 	db
 		.prepare(
 			"INSERT INTO meta (key, value) VALUES ('version', ?) " +
@@ -334,7 +379,10 @@ function buildStore(db: DatabaseSync): { db: DatabaseSync; stmts: Prepared } {
 		"DELETE FROM undo WHERE updated_at < ?",
 	);
 	const servedGetStmt = db.prepare(
-		"SELECT hashes, reported FROM served WHERE session_id = ? AND path = ?",
+		"SELECT hashes, reported, retired FROM served WHERE session_id = ? AND path = ?",
+	);
+	const servedAllForPathStmt = db.prepare(
+		"SELECT session_id, hashes, retired FROM served WHERE path = ?",
 	);
 	const servedUpsertStmt = db.prepare(
 		"INSERT INTO served (session_id, path, hashes, updated_at) VALUES (?, ?, ?, ?) " +
@@ -346,6 +394,13 @@ function buildStore(db: DatabaseSync): { db: DatabaseSync; stmts: Prepared } {
 	);
 	const servedReportedClearStmt = db.prepare(
 		"UPDATE served SET reported = NULL, updated_at = ? WHERE session_id = ? AND path = ?",
+	);
+	const servedRetiredUpsertStmt = db.prepare(
+		"INSERT INTO served (session_id, path, hashes, retired, updated_at) VALUES (?, ?, '[]', ?, ?) " +
+			"ON CONFLICT(session_id, path) DO UPDATE SET retired = excluded.retired, updated_at = excluded.updated_at",
+	);
+	const servedRetiredClearStmt = db.prepare(
+		"UPDATE served SET retired = NULL, updated_at = ? WHERE session_id = ? AND path = ?",
 	);
 	const servedDeleteStmt = db.prepare(
 		"DELETE FROM served WHERE session_id = ? AND path = ?",
@@ -390,6 +445,8 @@ function buildStore(db: DatabaseSync): { db: DatabaseSync; stmts: Prepared } {
 		},
 		servedGet: (...params) =>
 			servedGetStmt.get(...params) as Record<string, unknown> | undefined,
+		servedAllForPath: (...params) =>
+			servedAllForPathStmt.all(...params) as Record<string, unknown>[],
 		servedUpsert: (...params) => {
 			withBusyRetry(() => {
 				servedUpsertStmt.run(...params);
@@ -403,6 +460,16 @@ function buildStore(db: DatabaseSync): { db: DatabaseSync; stmts: Prepared } {
 		servedReportedClear: (...params) => {
 			withBusyRetry(() => {
 				servedReportedClearStmt.run(params[1], params[0], params[2]);
+			});
+		},
+		servedRetiredUpsert: (...params) => {
+			withBusyRetry(() => {
+				servedRetiredUpsertStmt.run(...params);
+			});
+		},
+		servedRetiredClear: (...params) => {
+			withBusyRetry(() => {
+				servedRetiredClearStmt.run(params[1], params[0], params[2]);
 			});
 		},
 		servedDelete: (...params) => {
@@ -548,6 +615,48 @@ function makeDomainStore(stmts: Prepared): InternalHashStore {
 				return new Set();
 			}
 		},
+		getAnchorReservations(path) {
+			const reservedHashes = new Set<string>();
+			const retiredHashes = new Set<string>();
+			for (const row of stmts.servedAllForPath(path)) {
+				try {
+					const served = JSON.parse(row.hashes as string) as unknown;
+					const retired =
+						row.retired === null || row.retired === undefined
+							? []
+							: (JSON.parse(row.retired as string) as unknown);
+					if (!isValidServedList(served) || !isValidHashList(retired)) {
+						throw new TypeError("invalid stored anchor reservations");
+					}
+					for (const hash of served) {
+						if (hash !== null) reservedHashes.add(hash);
+					}
+					for (const hash of retired) {
+						reservedHashes.add(hash);
+						retiredHashes.add(hash);
+					}
+				} catch (error) {
+					stmts.servedDelete(row.session_id as string, path);
+				}
+			}
+			return { reservedHashes, retiredHashes };
+		},
+		getRetiredAnchors(sessionKey, path) {
+			const row = stmts.servedGet(sessionKey, path);
+			if (!row || row.retired === null || row.retired === undefined) {
+				return new Set();
+			}
+			try {
+				const parsed = JSON.parse(row.retired as string) as unknown;
+				if (!isValidHashList(parsed)) {
+					throw new TypeError("invalid retired anchors");
+				}
+				return new Set(parsed);
+			} catch (error) {
+				stmts.servedDelete(sessionKey, path);
+				return new Set();
+			}
+		},
 		upsertServed(sessionKey, path, hashesJson) {
 			stmts.servedUpsert(sessionKey, path, hashesJson, Date.now());
 		},
@@ -556,6 +665,17 @@ function makeDomainStore(stmts: Prepared): InternalHashStore {
 		},
 		clearServedReported(sessionKey, path) {
 			stmts.servedReportedClear(sessionKey, Date.now(), path);
+		},
+		upsertRetiredAnchors(sessionKey, path, hashesJson) {
+			stmts.servedRetiredUpsert(
+				sessionKey,
+				path,
+				hashesJson,
+				Date.now(),
+			);
+		},
+		clearRetiredAnchors(sessionKey, path) {
+			stmts.servedRetiredClear(sessionKey, Date.now(), path);
 		},
 		deleteServed(sessionKey, path) {
 			stmts.servedDelete(sessionKey, path);

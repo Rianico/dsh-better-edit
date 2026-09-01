@@ -371,6 +371,8 @@ export interface ReadNormOptions {
   maxLines?: number;
   store?: HashStore;
   noPersist?: boolean;
+  reservedHashes?: ReadonlySet<string>;
+  retiredHashes?: ReadonlySet<string>;
 }
 
 export async function normFromText(input: {
@@ -381,6 +383,8 @@ export async function normFromText(input: {
   maxLines?: number;
   store?: HashStore;
   noPersist?: boolean;
+  reservedHashes?: ReadonlySet<string>;
+  retiredHashes?: ReadonlySet<string>;
   hadUtf8DecodeErrors?: boolean;
 }): Promise<NormFile> {
   const { absolutePath, displayPath, signal } = input;
@@ -402,6 +406,8 @@ export async function normFromText(input: {
     undefined,
     input.store,
     input.noPersist !== true,
+    input.reservedHashes,
+    input.retiredHashes,
   );
   return {
     absolutePath,
@@ -440,6 +446,8 @@ export async function readNormFile(
     maxLines: options?.maxLines,
     store: options?.store,
     noPersist: options?.noPersist,
+    reservedHashes: options?.reservedHashes,
+    retiredHashes: options?.retiredHashes,
     hadUtf8DecodeErrors: file.hadUtf8DecodeErrors,
   });
 }
@@ -634,6 +642,8 @@ export interface PreviewOpts {
 export interface ReadViewOpts extends PreviewOpts {
   encoding?: string;
   signal?: AbortSignal;
+  reservedHashes?: ReadonlySet<string>;
+  retiredHashes?: ReadonlySet<string>;
 }
 
 export async function preview(
@@ -666,6 +676,8 @@ export async function readView(
       displayPath: path,
       signal,
       maxLines: MAX_HASH_LINES,
+      reservedHashes: opts.reservedHashes,
+      retiredHashes: opts.retiredHashes,
     });
   const r = await fmtReadPreview(
     normalized,

@@ -133,10 +133,14 @@ function assignHash(used: Uint32Array, baseIdx: number, hint: { value: number })
   hint.value = nextIdx + HASH_PROBE_STRIDE;
   return hashAt(nextIdx);
 }
-export function lineHashesPure(content: string): string[] {
+export function lineHashesPure(
+  content: string,
+  reservedHashes: ReadonlySet<string> = new Set(),
+): string[] {
   const lines = splitLines(content);
   const hashes = new Array<string>(lines.length);
   const used = new Uint32Array(BITSET_WORDS);
+  for (const hash of reservedHashes) markHashUsed(used, hash);
   const hint = { value: 0 };
   const canonCache = new Map<string, string>();
   for (let i = 0; i < lines.length; i++) {
@@ -172,7 +176,13 @@ function nearestNew(candidates: number[], target: number): number {
   }
   return right < candidates.length ? right : -1;
 }
-export function mapStableHashes(oldContent: string, oldHashes: string[], newContent: string, removedHashes?: Set<string>): string[] {
+export function mapStableHashes(
+  oldContent: string,
+  oldHashes: string[],
+  newContent: string,
+  removedHashes?: Set<string>,
+  reservedHashes: ReadonlySet<string> = new Set(),
+): string[] {
   const oldLines = splitLines(oldContent);
   const newLines = splitLines(newContent);
   const newHashes = new Array<string>(newLines.length);
@@ -180,6 +190,8 @@ export function mapStableHashes(oldContent: string, oldHashes: string[], newCont
   const hint = { value: 0 };
   const canonCache = new Map<string, string>();
   const removed = removedHashes ?? new Set<string>();
+  const blocked = new Set(reservedHashes);
+  for (const hash of removed) blocked.add(hash);
   const oldHashIndex = new Map<string, number>();
   for (let i = 0; i < oldHashes.length; i++) {
     const hash = oldHashes[i]!;
@@ -192,6 +204,7 @@ export function mapStableHashes(oldContent: string, oldHashes: string[], newCont
     const idx = oldHashIndex.get(hash);
     if (idx !== undefined) removedIndexes.add(idx);
   }
+  for (const hash of blocked) markHashUsed(used, hash);
   let spanStart = oldLines.length;
   let spanEnd = -1;
   for (const idx of removedIndexes) {
@@ -202,11 +215,9 @@ export function mapStableHashes(oldContent: string, oldHashes: string[], newCont
   const replacementLen = newLines.length - oldLines.length + spanLen;
   const shiftAfterSpan = spanEnd >= spanStart ? replacementLen - spanLen : 0;
   const survivors: { index: number; hash: string }[] = [];
-  const removedEntries: { index: number; hash: string }[] = [];
   for (let i = 0; i < oldLines.length; i++) {
     const entry = { index: i, hash: oldHashes[i]! };
-    if (removedIndexes.has(i)) removedEntries.push(entry);
-    else survivors.push(entry);
+    if (!removedIndexes.has(i)) survivors.push(entry);
   }
   const newByContent = new Map<string, number[]>();
   for (let i = 0; i < newLines.length; i++) {
@@ -233,25 +244,6 @@ export function mapStableHashes(oldContent: string, oldHashes: string[], newCont
     markUsed(entry.hash);
     rememberHashCanon(entry.hash, getCanon(canonCache, oldLines[entry.index]!));
   }
-  const removedByContent = new Map<string, { hashes: string[]; pos: number }>();
-  for (const entry of removedEntries) {
-    const key = getCanon(canonCache, oldLines[entry.index]!);
-    let queue = removedByContent.get(key);
-    if (!queue) {
-      queue = { hashes: [], pos: 0 };
-      removedByContent.set(key, queue);
-    }
-    queue.hashes.push(entry.hash);
-  }
-  for (let i = 0; i < newLines.length; i++) {
-    if (newHashes[i]) continue;
-    const queue = removedByContent.get(getCanon(canonCache, newLines[i]!));
-    if (!queue || queue.pos >= queue.hashes.length) continue;
-    const h = queue.hashes[queue.pos]!;
-    newHashes[i] = h;
-    queue.pos += 1;
-    rememberHashCanon(h, getCanon(canonCache, newLines[i]!));
-  }
   for (let i = 0; i < newLines.length; i++) {
     if (newHashes[i]) continue;
     const c = getCanon(canonCache, newLines[i]!);
@@ -261,6 +253,11 @@ export function mapStableHashes(oldContent: string, oldHashes: string[], newCont
     rememberHashCanon(h, c);
   }
   return newHashes;
+}
+
+function markHashUsed(used: Uint32Array, hash: string): void {
+  const idx = hashToIndex(hash);
+  if (idx >= 0) setBit(used, idx);
 }
 
 // --- persistence wrapper (from hash.ts) ---
