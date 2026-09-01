@@ -1,19 +1,8 @@
-## [Unreleased]
+## [0.6.1](https://github.com/Rianico/dsh-better-edit/compare/v0.6.0...v0.6.1) (2026-09-01)
 
-### Fixed
+### Bug Fixes
 
-- **hashline:** eliminate remaining P2s for zero-issue review
-- **hashline:** make read path per-session reserved for ADR-0013
-- **hashline:** polish P2s for ADR-0013 automatic fallback
-- **hashline:** implement per-session tombstone and epoch-aware strict pos
-- **hashline:** add per-session canons, epoch and strict pos for ADR-0013
-- **hashline:** prevent freed anchor reuse (#31)
-
-### Documentation
-
-- **adr:** clarify single vs multi-session pos-free trade-off
-- **adr:** refine ADR-0013 to automatic fallback (no config)
-- **adr:** add ADR-0013 pos-free roundtrip with concurrency fallback (#31)
+* **hashline:** prevent freed anchor reuse ([#31](https://github.com/Rianico/dsh-better-edit/issues/31)) ([#42](https://github.com/Rianico/dsh-better-edit/issues/42)) ([19724a4](https://github.com/Rianico/dsh-better-edit/commit/19724a4083afcfc104172d5ce71bb6ab198026b7)), closes [GH#41](https://github.com/Rianico/GH/issues/41)
 
 ## [0.6.0](https://github.com/Rianico/dsh-better-edit/compare/v0.5.1...v0.6.0) (2026-08-31)
 
