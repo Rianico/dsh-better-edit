@@ -39,11 +39,24 @@ At `edit` (`mutation/engine.ts:applyOne` -> `hashline/anchor-pipeline.ts:verifyS
 
 Prevents `S@3` reborn `@3` whole-span case where `pos`+`canon` both pass.
 
-### 3. Concurrency fallback (opt-in)
+### 3. Concurrency fallback (automatic, no config)
 
-`config support_concurrency:true` (default `false`=`resist`):
+No `supportConcurrency` flag — fallback is automatic via `epoch`:
 
-- `strict: from==startLine-1 && to==endLine-1` added to `verifyServedRange` after candidates. Makes `shift==rebind` loud for `AgentTeams` shared `sessionKey` (isolated `tombstone` would otherwise allow `S@2->7` shift as valid). Cost is one extra `edit` retry via `reject-and-serve` (`E.servedRows` already serves fresh anchors, no `read` needed), rare (`~1/238k` collision or reuse).
+```
+curId = fileSnap(path) // ino|mtime|size|checksum at edit
+if curId == epoch.snapshotId
+  -> single-thread, no concurrent write: resist (pos-free)
+     candidates hash== && tombstone∉ && canon==
+else
+  changed = diff(epochHashes, curHashes) // indices where hash!= 
+  if changed ∩ [L,R] == ∅ && changed ∩ servedRanges == ∅
+    -> resist (exterior drift, e.g. insert @0 before served 1..5) -> pass
+  else
+    -> strict: from==startLine-1 && to==endLine-1 && tombstone∉ && canon== else E_RANGE_STALE
+```
+
+Makes `shift==rebind` loud only when `changed` overlaps target, not when exterior. Cost is one `edit` retry via `reject-and-serve` (no `read`), rare (`~1/238k`).
 
 ### 4. Non-overlapping forever is pos-free
 
@@ -59,6 +72,7 @@ Prevents `S@3` reborn `@3` whole-span case where `pos`+`canon` both pass.
 
 - `hash-store.ts:served` adds `canons TEXT` parallel to `hashes` and `tombstones TEXT`; `session-view.ts` adds `loadTombstones/putTombstones` (`withStore` atomic with `hashes+canons`).
 - `hash-assign.ts` removes `removedByContent`, adds `tombstone` param to `mapStableHashes`/`lineHashes`.
-- `anchor-pipeline.ts:verifyServedRange` keeps candidate enumeration, adds `tombstone` filter and `servedCanons` check, `strict` pos behind config.
+- `anchor-pipeline.ts:verifyServedRange` keeps candidate enumeration, adds `tombstone` filter and `servedCanons` check, `strict` pos via automatic `changed ∩ [L,R]` (no config).
 - Tests: `hashline-stable-mapping.test.ts` "reuses first removed hash" flips to `fresh hash`; new property `identical canon after removal gets ≠ removed hash`.
+
 - Round trips: single-thread exterior drift no longer aborts; concurrency strict aborts only on `read-set stale`, retry uses `E.servedRows` without `read`.

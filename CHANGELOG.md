@@ -7,6 +7,7 @@
 
 ### Documentation
 
+- **adr:** refine ADR-0013 to automatic fallback (no config)
 - **adr:** add ADR-0013 pos-free roundtrip with concurrency fallback (#31)
 
 ## [0.6.0](https://github.com/Rianico/dsh-better-edit/compare/v0.5.1...v0.6.0) (2026-08-31)
