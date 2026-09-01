@@ -1,3 +1,10 @@
+## [Unreleased]
+
+### Documentation
+
+- **readme:** compact rewrite — pos-free hero, round-trips, tokens
+- **readme:** drop Releasing section
+
 ## [0.6.1](https://github.com/Rianico/dsh-better-edit/compare/v0.6.0...v0.6.1) (2026-09-01)
 
 ### Bug Fixes
