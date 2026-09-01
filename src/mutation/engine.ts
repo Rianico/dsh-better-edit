@@ -15,8 +15,18 @@
 import type { FileIO } from "../fs-bridge.js";
 import type { HashStore } from "../hash-store.js";
 import type { LineEnding } from "../edit-diff.js";
+import { loadConfig } from "../store-config.js";
+import { canon } from "../hashline/hash-assign.js";
+import { fileSnap } from "../file-view.js";
 import { normFromText } from "../file-reader.js";
-import { scanDrift, loadServed } from "../session-view.js";
+import {
+	scanDrift,
+	loadServed,
+	loadServedCanons,
+	loadEpochSnapshotId,
+	loadRetiredAnchors,
+	retireAnchors,
+} from "../session-view.js";
 import {
 	applyEdit,
 	resEdit,
@@ -183,6 +193,12 @@ export interface ApplyOneInput {
 	countHashes?: string[];
 	store?: HashStore;
 	persist: boolean;
+	reservedHashes?: ReadonlySet<string>;
+	servedCanons?: (string | null)[];
+	tombstone?: ReadonlySet<string>;
+	epochSnapshotId?: string;
+	curSnapshotId?: string;
+	strictPos?: boolean;
 	/** Pre-resolved edit (single path keeps resEdit before IO for error order). */
 	edit?: HEdit;
 }
@@ -243,6 +259,11 @@ export async function applyOne(
 			input.hashes,
 			input.displayPath,
 			input.served,
+			input.servedCanons,
+			input.tombstone,
+			input.epochSnapshotId,
+			input.curSnapshotId,
+			input.strictPos,
 		);
 	} catch (error) {
 		if (
@@ -271,6 +292,7 @@ export async function applyOne(
 				},
 				input.store,
 				input.persist,
+				input.reservedHashes,
 			);
 	const { totalAddedLines, totalRemovedLines } = countLineChanges(
 		edit,
@@ -418,6 +440,8 @@ export async function runFileEdits(
 	const first = items[0]!;
 	abortIf(opts.signal);
 	const absolutePath = first.absolutePath;
+	const perSessionTombstone = await loadRetiredAnchors(opts.sessionKey, absolutePath);
+	const reservedHashes = new Set(perSessionTombstone);
 	const rawText = await io.readText(absolutePath, opts.signal);
 	const {
 		normalized: originalNormalized,
@@ -431,9 +455,16 @@ export async function runFileEdits(
 		displayPath: first.path,
 		signal: opts.signal,
 		maxLines: MAX_HASH_LINES,
+		reservedHashes,
+		retiredHashes: perSessionTombstone,
 	});
 
 	const served = await loadServed(opts.sessionKey, absolutePath);
+	const servedCanons = await loadServedCanons(opts.sessionKey, absolutePath);
+	const epochSnapshotId = await loadEpochSnapshotId(opts.sessionKey, absolutePath);
+	let curSnapshotId: string | undefined;
+	try { curSnapshotId = (await fileSnap(absolutePath)).snapshotId; } catch {}
+	const strictPos = false; // automatic resist: pos-free for exterior shift, strict via tombstone+canon for whole-span rebind
 	const warnings: string[] = [];
 
 	let currentContent = originalNormalized;
@@ -449,6 +480,7 @@ export async function runFileEdits(
 	let lastApplied:
 		| { content: string; hashes: string[]; removedHashes: Set<string> }
 		| undefined;
+	const newlyRetired = new Set<string>();
 
 	for (const item of items) {
 		abortIf(opts.signal);
@@ -466,6 +498,12 @@ export async function runFileEdits(
 				warnings,
 				countHashes: originalHashes,
 				persist: false,
+				reservedHashes,
+				servedCanons,
+				tombstone: new Set([...perSessionTombstone, ...Array.from(newlyRetired)]),
+				epochSnapshotId,
+				curSnapshotId,
+				strictPos,
 			},
 			async (error, edit) => {
 				if (
@@ -548,6 +586,10 @@ export async function runFileEdits(
 
 		appliedCount += 1;
 		const removedHashes = applied.removedHashes!;
+		for (const hash of removedHashes) {
+			reservedHashes.add(hash);
+			newlyRetired.add(hash);
+		}
 		totalAddedLines += applied.totalAddedLines;
 		totalRemovedLines += applied.totalRemovedLines;
 		lastApplied = {
@@ -575,7 +617,10 @@ export async function runFileEdits(
 			},
 			undefined,
 			true,
+			reservedHashes,
+			perSessionTombstone,
 		);
+		await retireAnchors(opts.sessionKey, absolutePath, newlyRetired);
 	}
 
 	if (hadUtf8DecodeErrors) {

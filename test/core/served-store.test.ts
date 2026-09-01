@@ -3,7 +3,11 @@ import { mkdtemp, mkdir, rm, writeFile } from "fs/promises";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
-import { loadHashStore, shutdownHashStore } from "../../src/hash-store.js";
+import {
+	loadHashStore,
+	loadServedStore,
+	shutdownHashStore,
+} from "../../src/hash-store.js";
 import {
 	_mergeServedRows,
 	loadServed,
@@ -79,6 +83,9 @@ describe("served state — record semantics", () => {
 			await recordServed("sessionA", "/p.ts", [{ position: 0, hash: "abc" }]);
 			await recordServed("sessionA", "/p.ts", [{ position: 0, hash: "def" }]);
 			expect(await loadServed("sessionA", "/p.ts")).toEqual(["def"]);
+			expect(
+				(await loadServedStore()).getRetiredAnchors("sessionA", "/p.ts"),
+			).toEqual(new Set(["abc"]));
 		});
 	});
 
@@ -91,6 +98,9 @@ describe("served state — record semantics", () => {
 			]);
 			await recordServed("sessionA", "/p.ts", [{ position: 1, hash: null }]);
 			expect(await loadServed("sessionA", "/p.ts")).toEqual(["abc", null, "ghi"]);
+			expect(
+				(await loadServedStore()).getRetiredAnchors("sessionA", "/p.ts"),
+			).toEqual(new Set(["def"]));
 		});
 	});
 
@@ -139,6 +149,9 @@ describe("served state — merge helper (stale-tail invariant)", () => {
 			// (E_RANGE_UNVERIFIED, "served at N positions").
 			await recordServed("sessionA", "/p.ts", [{ position: 0, hash: "abc" }], 1);
 			expect(await loadServed("sessionA", "/p.ts")).toEqual(["abc"]);
+			expect(
+				(await loadServedStore()).getRetiredAnchors("sessionA", "/p.ts"),
+			).toEqual(new Set(["def", "ghi"]));
 		});
 	});
 
@@ -153,6 +166,9 @@ describe("served state — merge helper (stale-tail invariant)", () => {
 			const served = await loadServed("sessionA", "/p.ts");
 			expect(served).toEqual(["abc"]);
 			expect(servedPositionsOf(served, "abc")).toEqual([0]);
+			expect(
+				(await loadServedStore()).getRetiredAnchors("sessionA", "/p.ts"),
+			).toEqual(new Set(["def"]));
 		});
 	});
 
@@ -168,6 +184,9 @@ describe("served state — merge helper (stale-tail invariant)", () => {
 			// view of everything at/after it no longer holds.
 			await recordServedTruncated("sessionA", "/p.ts", [{ position: 2, hash: "xxx" }], 4, 1);
 			expect(await loadServed("sessionA", "/p.ts")).toEqual(["aaa", null, "xxx"]);
+			expect(
+				(await loadServedStore()).getRetiredAnchors("sessionA", "/p.ts"),
+			).toEqual(new Set(["bbb", "ccc", "ddd"]));
 		});
 	});
 
@@ -381,6 +400,51 @@ describe("served state — schema versioning", () => {
 			expect(await driftReported("sessionA", "/p.ts")).toEqual(new Set(["abc"]));
 		});
 	});
+
+	it("preserves served rows but invalidates rebound sources when adding retired anchors", async () => {
+		await withTempHome(async (home) => {
+			const path = join(home, "rebound.txt");
+			const content = "new\nold\n";
+			await writeFile(path, content, "utf-8");
+			const initialStore = await loadHashStore();
+			await recordServed("sessionA", path, [
+				{ position: 0, hash: "AAA" },
+			]);
+			initialStore.upsertSnapshot(path, contentChecksum(content), 2, [
+				"BBB",
+				"AAA",
+			]);
+			initialStore.upsertUndo(path, {
+				content: "old\nnew\n",
+				bom: "",
+				ending: "\n",
+				hashes: ["BBB", "AAA"],
+				resultContent: content,
+			});
+			shutdownHashStore();
+
+			const db = new DatabaseSync(sqlitePath(home), {
+				defensive: false,
+			} as any);
+			db.exec("ALTER TABLE served DROP COLUMN retired");
+			db.close();
+
+			const store = await loadServedStore();
+			expect(store.getAnchorReservations(path).reservedHashes).toEqual(
+				new Set(["AAA"]),
+			);
+			expect((await loadHashStore()).getSnapshot(path, content)).toBeUndefined();
+			expect((await loadHashStore()).getUndo(path)).toBeUndefined();
+			store.upsertRetiredAnchors(
+				"sessionA",
+				path,
+				JSON.stringify(["BBB"]),
+			);
+			expect(store.getRetiredAnchors("sessionA", path)).toEqual(
+				new Set(["BBB"]),
+			);
+		});
+	});
 });
 
 describe("served state — pruneMissing", () => {
@@ -581,6 +645,7 @@ async function withTempHome(
 		join(await getWritableTempRoot(), "pi-hashline-served-test-"),
 	);
 	vi.stubEnv("HOME", tmpHome);
+	vi.stubEnv("DSH_HOME", join(tmpHome, ".dsh"));
 	vi.stubEnv("XDG_CONFIG_HOME", "");
 	try {
 		await run(tmpHome);

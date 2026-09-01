@@ -9,9 +9,16 @@
  */
 
 import { abortIf } from "./utils.js";
-import { readView } from "./file-view.js";
+import { readView, fileSnap } from "./file-view.js";
+import { canon } from "./hashline/hash-assign.js";
+import { splitLines } from "./utils.js";
 import { getAutoGuessFooter } from "./fs-bridge.js";
-import { recordServed, clearDriftReported } from "./session-view.js";
+import {
+	recordServed,
+	clearDriftReported,
+	loadRetiredAnchors,
+	loadServed,
+} from "./session-view.js";
 import type { FileIO } from "./fs-bridge.js";
 import type { ServedRow } from "./hashline/anchor-pipeline.js";
 
@@ -58,18 +65,40 @@ export async function readAndServe(
 ): Promise<ReadAndServeResult> {
 	const { sessionKey, signal } = options;
 	abortIf(signal);
+	const absolutePath = await io.resolve(rawPath, cwd, signal);
+	const retiredHashes = await loadRetiredAnchors(sessionKey, absolutePath);
+	const servedForNorm = await loadServed(sessionKey, absolutePath);
+	const reservedHashes = new Set<string>([...retiredHashes, ...servedForNorm.filter((h): h is string => h !== null)]);
+	const reservations = { reservedHashes, retiredHashes };
 	const view = await readView(io, rawPath, cwd, {
 		encoding: options.encoding,
 		offset: options.offset,
 		limit: options.limit,
 		signal,
+		reservedHashes: reservations.reservedHashes,
+		retiredHashes: reservations.retiredHashes,
 	});
 	if (view.served.length > 0) {
+		const canons = splitLines(view.normalized).map((l) => canon(l));
+		const canonServed = canons.map((canonText) => (canonText as string | null));
+		// For full read, compute snapshotId
+		let snapshotId: string | undefined;
+		try {
+			snapshotId = (await fileSnap(view.absolutePath)).snapshotId;
+		} catch {}
+		// Pad or trim canons to served length? For now use canons for full file
+		const fullCanons: (string | null)[] = [];
+		for (let i = 0; i < view.hashes.length; i++) {
+			fullCanons.push(canons[i] ?? null);
+		}
 		await recordServed(
 			sessionKey,
 			view.absolutePath,
 			view.served,
 			view.hashes.length,
+			view.hashes,
+			fullCanons,
+			snapshotId,
 		);
 	}
 	await clearDriftReported(sessionKey, view.absolutePath);

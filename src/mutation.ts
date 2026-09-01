@@ -32,6 +32,8 @@ import type { ToolExecution } from "@deepseek-ai/dsh-tools";
 import type { SandboxExecutionPolicy } from "@deepseek-ai/dsh-sandbox";
 import type { FsSandboxController } from "./sandbox.js";
 
+import { loadConfig } from "./store-config.js";
+import { canon } from "./hashline/hash-assign.js";
 import { normFromText, fileSnap } from "./file-reader.js";
 import type { LineEnding } from "./edit-diff.js";
 import { toCwd } from "./paths.js";
@@ -45,7 +47,14 @@ import {
   type ServeRecordPolicy,
 } from "./hashline/anchor-pipeline.js";
 import { sessionKeyFor } from "./workspace-context.js"
-import { loadServed, scanDrift, recordServedTruncated } from "./session-view.js";
+import {
+	loadServed,
+	loadServedCanons,
+	loadEpochSnapshotId,
+	loadRetiredAnchors,
+	scanDrift,
+	recordServedTruncated,
+} from "./session-view.js";
 import { abortIf, splitLines } from "./utils.js";
 import { applyOne } from "./mutation/engine.js";
 import {
@@ -113,6 +122,8 @@ export async function execPipeline(
 
 	abortIf(signal)
 	const absolutePath = await io.resolve(path, cwd, signal)
+	const sessionKeyEarly = options?.sessionKey ?? sessionKeyFor(undefined)
+	const perSessionTombstoneForNorm = await loadRetiredAnchors(sessionKeyEarly, absolutePath)
 	const rawText = await io.readText(absolutePath, signal)
 	const {
 		normalized: originalNormalized,
@@ -128,10 +139,18 @@ export async function execPipeline(
 		maxLines: MAX_HASH_LINES,
 		store: hashStore,
 		noPersist: options?.noPersist,
+		reservedHashes: perSessionTombstoneForNorm,
+		retiredHashes: perSessionTombstoneForNorm,
 	})
 
 	const sessionKey = options?.sessionKey ?? sessionKeyFor(undefined)
 	const served = await loadServed(sessionKey, absolutePath)
+	const servedCanons = await loadServedCanons(sessionKey, absolutePath)
+	const epochSnapshotId = await loadEpochSnapshotId(sessionKey, absolutePath)
+	let curSnapshotId: string | undefined
+	try { curSnapshotId = (await fileSnap(absolutePath)).snapshotId } catch {}
+	const strictPos = false; // automatic resist: pos-free for exterior shift, strict via tombstone+canon (changed ∩ [L,R] handled by tombstone interior gated on canon)
+	const tombstonePerSession = await loadRetiredAnchors(sessionKey, absolutePath)
 	const policy: ServeRecordPolicy =
 		options?.noPersist === true ? 'preview' : 'live'
 
@@ -149,6 +168,12 @@ export async function execPipeline(
 			warnings: editWarnings,
 			store: hashStore,
 			persist: options?.noPersist !== true,
+			reservedHashes: perSessionTombstoneForNorm,
+			servedCanons,
+			tombstone: tombstonePerSession,
+			epochSnapshotId,
+			curSnapshotId,
+			strictPos,
 			edit,
 		},
 		async (error) => {

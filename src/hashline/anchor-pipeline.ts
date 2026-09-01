@@ -565,6 +565,11 @@ export function verifyServedRange(args: {
 	fileHashes: string[];
 	fileLines: string[];
 	filePath?: string;
+	servedCanons?: (string | null)[];
+	tombstone?: ReadonlySet<string>;
+	epochSnapshotId?: string;
+	curSnapshotId?: string;
+	strictPos?: boolean;
 }): void {
 	const {
 		served,
@@ -577,6 +582,11 @@ export function verifyServedRange(args: {
 		filePath,
 	} = args;
 	const where = filePath ? ` in ${filePath}` : "";
+	const tombstone = args.tombstone ?? new Set<string>();
+	const servedCanons = args.servedCanons;
+	const strictPos = args.strictPos ?? false;
+	const epochSnapshotId = args.epochSnapshotId;
+	const curSnapshotId = args.curSnapshotId;
 	let isHealed = false;
 	for (let i = 0; i < fileHashes.length; i++) {
 		const h = fileHashes[i]!;
@@ -597,6 +607,29 @@ export function verifyServedRange(args: {
 			? `\n${paginationHint(startLine + echoRows.length, totalLen - echoRows.length)}`
 			: "";
 	const echo = fmtServedRows(echoRows, fileLines) + tail;
+
+	// Tombstone check for boundaries (whole-span S@3==S@3)
+	// If hash was freed in this epoch, any reuse is stale even at same pos+same canon.
+	// Early reject checks canon change to avoid false positive on same line re-read.
+	if (tombstone.has(startHash) || tombstone.has(endHash)) {
+		const tombstonedHash = tombstone.has(startHash) ? startHash : endHash;
+		if (servedCanons) {
+			const pos = fileHashes.indexOf(tombstonedHash);
+			if (pos >= 0) {
+				const servedIdx = served.indexOf(tombstonedHash);
+				const expected = servedIdx >= 0 ? servedCanons[servedIdx] : undefined;
+				const actual = canon(fileLines[pos] ?? "");
+				if (expected !== undefined && expected !== null && expected !== actual) {
+					throw new ServedRejectionError({
+						code: "E_RANGE_STALE",
+						message: `[E_RANGE_STALE] anchor "${tombstonedHash}" was freed since last full read (tombstoned, canon changed from "${expected}" to "${actual}"). Re-read.\nCurrent range:\n${echo}`,
+						firstOffendingLine: pos + 1,
+						servedRows: echoRows,
+					});
+				}
+			}
+		}
+	}
 
 	const startPositions = servedPositionsOf(served, startHash);
 	const endPositions = servedPositionsOf(served, endHash);
@@ -824,6 +857,48 @@ export function verifyServedRange(args: {
 				});
 			}
 		}
+		// Strict pos check for concurrency (pos-free vs strict)
+		if (strictPos && from !== startLine - 1) {
+			throw new ServedRejectionError({
+				code: "E_RANGE_STALE",
+				message: `[E_RANGE_STALE] anchor was served at line ${from + 1} but now resolves to line ${startLine} (pos-restricted concurrency). Re-read.\nCurrent range:\n${echo}`,
+				firstOffendingLine: startLine,
+				servedRows: echoRows,
+			});
+		}
+		// Canon check for same-pos different content (collision)
+		if (servedCanons) {
+			for (let k = 0; k < servedLen; k++) {
+				const expected = servedCanons[from + k];
+				if (expected !== null && expected !== undefined) {
+					const actual = canon(fileLines[startLine - 1 + k] ?? "");
+					if (expected !== actual) {
+						throw new ServedRejectionError({
+							code: "E_RANGE_STALE",
+							message: `[E_RANGE_STALE] line ${startLine + k}${where} canon differs from served (expected "${expected}" vs actual "${actual}").\nCurrent range:\n${echo}`,
+							firstOffendingLine: startLine + k,
+							servedRows: echoRows,
+						});
+					}
+				}
+			}
+		}
+		// Tombstone interior check (whole-span) — gated on canon inequality (fail-closed only for different canon)
+		for (let k = 0; k < servedLen; k++) {
+			const h = fileHashes[startLine - 1 + k];
+			if (h && tombstone.has(h)) {
+				const expectedCanon = servedCanons?.[from + k] ?? undefined;
+				const actualCanon = canon(fileLines[startLine - 1 + k] ?? "");
+				if (expectedCanon !== undefined && expectedCanon !== null && expectedCanon !== actualCanon) {
+					throw new ServedRejectionError({
+						code: "E_RANGE_STALE",
+						message: `[E_RANGE_STALE] line ${startLine + k}${where} uses tombstoned anchor "${h}" (freed since last full read, canon changed). Re-read.\nCurrent range:\n${echo}`,
+						firstOffendingLine: startLine + k,
+						servedRows: echoRows,
+					});
+				}
+			}
+		}
 		for (let k = 0; k < servedLen; k++) {
 			if (served[from + k] !== fileHashes[startLine - 1 + k]) {
 				const offendingLine = startLine + k;
@@ -993,6 +1068,11 @@ export function applyEdit(
 	precomputedHashes?: string[],
 	filePath?: string,
 	served?: (string | null)[],
+	servedCanons?: (string | null)[],
+	tombstone?: ReadonlySet<string>,
+	epochSnapshotId?: string,
+	curSnapshotId?: string,
+	strictPos?: boolean,
 ): {
 	content: string;
 	firstChangedLine: number | undefined;
@@ -1052,6 +1132,11 @@ if (served) {
 			fileHashes,
 			fileLines: lineIndex.fileLines,
 			filePath,
+			servedCanons,
+			tombstone,
+			epochSnapshotId,
+			curSnapshotId,
+			strictPos,
 		});
 	}
 

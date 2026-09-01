@@ -16,7 +16,11 @@ import { contentChecksum } from "./hashline/hash-assign.js";
 import { lineHashes } from "./hashline/hash.js";
 import { changedRange } from "./hashline/anchor-pipeline.js";
 import { getUndo, clearUndo } from "./undo-edit.js";
-import { recordServedTruncated } from "./session-view.js";
+import {
+	loadAnchorReservations,
+	recordServedTruncated,
+	retireAnchors,
+} from "./session-view.js";
 import { UNDO_DESCRIPTION } from "./prompts.js";
 import type { FileIO } from "./fs-bridge.js";
 import { execCwd, execSessionKey } from "./workspace-context.js";
@@ -89,7 +93,35 @@ export function buildUndoTool(io: FileIO, sandbox: FsSandboxController) {
 
 				const { text: currentStripped } = stripBOM(currentRaw);
 				const currentNormalized = toLF(currentStripped);
-				const currentHashes = await lineHashes(currentNormalized, absolutePath);
+				// undo is file-global: must block hashes retired by any session, not just current session, to prevent recycling current-file-only hash - test expects global
+				const reservations = await loadAnchorReservations(absolutePath);
+				const currentHashes = await lineHashes(
+					currentNormalized,
+					absolutePath,
+					undefined,
+					undefined,
+					false,
+					reservations.reservedHashes,
+					reservations.retiredHashes,
+				);
+				const retiredOriginalHashes = new Set(
+					undo.hashes.filter((hash) => reservations.retiredHashes.has(hash)),
+				);
+				const blockedRestoreHashes = new Set(reservations.reservedHashes);
+				for (const hash of currentHashes) blockedRestoreHashes.add(hash);
+				const restoredHashes = await lineHashes(
+					undo.content,
+					absolutePath,
+					{
+						content: undo.content,
+						hashes: undo.hashes,
+						removedHashes: retiredOriginalHashes,
+					},
+					undefined,
+					false,
+					blockedRestoreHashes,
+					reservations.retiredHashes,
+				);
 				const diffResult = genDiff(
 					undo.content,
 					currentNormalized,
@@ -103,15 +135,21 @@ export function buildUndoTool(io: FileIO, sandbox: FsSandboxController) {
 					currentNormalized,
 					undo.content,
 					1,
-					undo.hashes,
+					restoredHashes,
 					currentHashes,
 				);
 				const undoDiff = undoDiffResult.diff;
 				const undoDenseRows: typeof undoDiffResult.servedRows = [];
-				for (let i = 0; i < undo.hashes.length; i++) {
-					undoDenseRows.push({ position: i, hash: undo.hashes[i]! });
+				for (let i = 0; i < restoredHashes.length; i++) {
+					undoDenseRows.push({ position: i, hash: restoredHashes[i]! });
 				}
 				const restoredRange = changedRange(currentNormalized, undo.content);
+				const restoredSet = new Set(restoredHashes);
+				await retireAnchors(
+					sessionKey,
+					absolutePath,
+					currentHashes.filter((hash) => !restoredSet.has(hash)),
+				);
 
 				try {
 					await io.writeText(
@@ -130,7 +168,7 @@ export function buildUndoTool(io: FileIO, sandbox: FsSandboxController) {
 						absolutePath,
 						contentChecksum(undo.content),
 						splitLines(undo.content).length,
-						undo.hashes,
+						restoredHashes,
 					);
 				} catch (error) {
 					console.error("Failed to restore hash store snapshot after undo:", error);
