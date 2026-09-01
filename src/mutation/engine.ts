@@ -464,7 +464,7 @@ export async function runFileEdits(
 	const epochSnapshotId = await loadEpochSnapshotId(opts.sessionKey, absolutePath);
 	let curSnapshotId: string | undefined;
 	try { curSnapshotId = (await fileSnap(absolutePath)).snapshotId; } catch {}
-	const strictPos = loadConfig().supportConcurrency;
+	const strictPos = false; // pos-free automatic
 	const warnings: string[] = [];
 
 	let currentContent = originalNormalized;

@@ -148,7 +148,7 @@ export async function execPipeline(
 	const epochSnapshotId = await loadEpochSnapshotId(sessionKey, absolutePath)
 	let curSnapshotId: string | undefined
 	try { curSnapshotId = (await fileSnap(absolutePath)).snapshotId } catch {}
-	const strictPos = loadConfig().supportConcurrency
+	const strictPos = false // pos-free automatic (epoch handles concurrency)
 	const policy: ServeRecordPolicy =
 		options?.noPersist === true ? 'preview' : 'live'
 
