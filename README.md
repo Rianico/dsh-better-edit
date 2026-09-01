@@ -250,17 +250,6 @@ pnpm test        # vitest run
 pnpm benchmark   # hash probe + session envelope (reads/retries/tokens)
 ```
 
-### Releasing
-
-Tag-first, `semantic-release` via dispatch:
-
-```sh
-gh api repos/Rianico/dsh-better-edit/dispatches -f event_type=semantic-release
-# CI Verify → npx semantic-release → package.json/CHANGELOG.md, tag vX.Y.Z, GitHub Release
-```
-
-`feat`→MINOR, `fix`→PATCH, `!`→MAJOR. Manual `npm run release -- X.Y.Z` only for bootstrap.
-
 ## Benchmark
 
 103-line file, 12 replacements (8×1 + 4×3/6/10/15), `cl100k_base`. `hashline` vs `str_replace` vs `oh-my-pi` `seq/batch`. Upstream is source of truth — same algorithm byte-for-byte.
