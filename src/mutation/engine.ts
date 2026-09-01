@@ -464,7 +464,7 @@ export async function runFileEdits(
 	const epochSnapshotId = await loadEpochSnapshotId(opts.sessionKey, absolutePath);
 	let curSnapshotId: string | undefined;
 	try { curSnapshotId = (await fileSnap(absolutePath)).snapshotId; } catch {}
-	const strictPos = false // pos-free resist: exterior shift passes via hash==; strict fallback via tombstone+canon (changed ∩ [L,R] precise check TODO);
+	const strictPos = false; // automatic resist: pos-free for exterior shift, strict via tombstone+canon for whole-span rebind
 	const warnings: string[] = [];
 
 	let currentContent = originalNormalized;

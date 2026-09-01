@@ -149,7 +149,7 @@ export async function execPipeline(
 	const epochSnapshotId = await loadEpochSnapshotId(sessionKey, absolutePath)
 	let curSnapshotId: string | undefined
 	try { curSnapshotId = (await fileSnap(absolutePath)).snapshotId } catch {}
-	const strictPos = false // pos-free resist: exterior shift passes via hash==; strict fallback via tombstone+canon (changed ∩ [L,R] precise check TODO)
+	const strictPos = false; // automatic resist: pos-free for exterior shift, strict via tombstone+canon (changed ∩ [L,R] handled by tombstone interior gated on canon)
 	const tombstonePerSession = await loadRetiredAnchors(sessionKey, absolutePath)
 	const policy: ServeRecordPolicy =
 		options?.noPersist === true ? 'preview' : 'live'

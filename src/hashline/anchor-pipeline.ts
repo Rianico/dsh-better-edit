@@ -609,12 +609,26 @@ export function verifyServedRange(args: {
 	const echo = fmtServedRows(echoRows, fileLines) + tail;
 
 	// Tombstone check for boundaries (whole-span S@3==S@3)
+	// If hash was freed in this epoch, any reuse is stale even at same pos+same canon.
+	// Early reject checks canon change to avoid false positive on same line re-read.
 	if (tombstone.has(startHash) || tombstone.has(endHash)) {
-		// If hash was freed in this epoch, stale reuse must be loud even at same pos
-		// Only reject if hash is still in file at a different logical position? But tombstone means it was freed, so any reuse is stale
-		// Check if hash is in file but servedCanons mismatch or pos strict
-		// For now, if tombstone contains the hash and file still has it, treat as stale if servedCanons check fails or strict pos fails
-		// We will handle more precisely below after from/to resolved
+		const tombstonedHash = tombstone.has(startHash) ? startHash : endHash;
+		if (servedCanons) {
+			const pos = fileHashes.indexOf(tombstonedHash);
+			if (pos >= 0) {
+				const servedIdx = served.indexOf(tombstonedHash);
+				const expected = servedIdx >= 0 ? servedCanons[servedIdx] : undefined;
+				const actual = canon(fileLines[pos] ?? "");
+				if (expected !== undefined && expected !== null && expected !== actual) {
+					throw new ServedRejectionError({
+						code: "E_RANGE_STALE",
+						message: `[E_RANGE_STALE] anchor "${tombstonedHash}" was freed since last full read (tombstoned, canon changed from "${expected}" to "${actual}"). Re-read.\nCurrent range:\n${echo}`,
+						firstOffendingLine: pos + 1,
+						servedRows: echoRows,
+					});
+				}
+			}
+		}
 	}
 
 	const startPositions = servedPositionsOf(served, startHash);

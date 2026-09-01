@@ -2,6 +2,7 @@
 
 ### Fixed
 
+- **hashline:** eliminate remaining P2s for zero-issue review
 - **hashline:** make read path per-session reserved for ADR-0013
 - **hashline:** polish P2s for ADR-0013 automatic fallback
 - **hashline:** implement per-session tombstone and epoch-aware strict pos
