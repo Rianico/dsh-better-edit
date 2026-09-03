@@ -1,9 +1,12 @@
 ## [Unreleased]
 
+### Fixed
+
+- **deps:** upgrade dsh dependencies to 0.1.1-rc.2
+
 ### Documentation
 
 - **readme:** compact rewrite — pos-free hero, round-trips, tokens
-- **readme:** drop Releasing section
 
 ## [0.6.1](https://github.com/Rianico/dsh-better-edit/compare/v0.6.0...v0.6.1) (2026-09-01)
 
