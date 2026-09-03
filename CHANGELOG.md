@@ -1,12 +1,12 @@
-## [Unreleased]
+## [0.6.2](https://github.com/Rianico/dsh-better-edit/compare/v0.6.1...v0.6.2) (2026-09-03)
 
-### Fixed
+### Bug Fixes
 
-- **deps:** upgrade dsh dependencies to 0.1.1-rc.2
+* **deps:** upgrade dsh dependencies to 0.1.1-rc.2 ([30e6029](https://github.com/Rianico/dsh-better-edit/commit/30e6029888fa517f20c640b7a38523a8a6148ccd))
 
 ### Documentation
 
-- **readme:** compact rewrite — pos-free hero, round-trips, tokens
+* **readme:** compact rewrite — pos-free hero, round-trips, tokens ([dc468c5](https://github.com/Rianico/dsh-better-edit/commit/dc468c5ce9799ddf9578d92e715905701b2a95a1))
 
 ## [0.6.1](https://github.com/Rianico/dsh-better-edit/compare/v0.6.0...v0.6.1) (2026-09-01)
 
