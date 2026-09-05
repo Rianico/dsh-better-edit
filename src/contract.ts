@@ -2,7 +2,7 @@
  * One module owns the request shapes for the hashline tools — edit,
  * read, undo_last_edit — plus their validation. Field sets are
  * declared once here; every tool validates through these asserts, and the
- * [E_BAD_SHAPE] vocabulary is shared instead of re-implemented per tool.
+ * [E_BAD_PAYLOAD] vocabulary is shared instead of re-implemented per tool.
  *
  * Contract now mirrors upstream ADR-0007: {path: string|null, edits: [[remove_from,remove_to,replacement_text],...]} tuple payload,
  * single-file, atomic. batch_edit is removed.
@@ -149,52 +149,52 @@ export function prepareEditArguments(args: unknown): Record<string, unknown> {
   if (valid) {
     return { path: valid.path, edits: (args as Record<string, unknown>).edits };
   }
-  throw new Error(`[E_BAD_SHAPE] ${EDIT_TUPLE_HINT} ${describeReceived(args)}`);
+  throw new Error(`[MODEL] [E_BAD_PAYLOAD] ${EDIT_TUPLE_HINT} ${describeReceived(args)}`);
 }
 
 // ---- assertions ---------------------------------------------------------------
 
 export function assertEditRequest(request: unknown): asserts request is NormalizedEditRequest {
   if (!isNormalizedEdit(request)) {
-    throw new Error("[E_BAD_SHAPE] Edit request must be exactly { path, edits: [[remove_from, remove_to, replacement_text], ...] }.");
+    throw new Error("[MODEL] [E_BAD_PAYLOAD] Edit request must be exactly { path, edits: [[remove_from, remove_to, replacement_text], ...] }.");
   }
   rejectUnknownFields(request as Record<string, unknown>, EDIT_KS, "Edit request");
   const req = request as NormalizedEditRequest;
   if (req.path !== null && (typeof req.path !== "string" || req.path.length === 0)) {
-    throw new Error('[E_BAD_SHAPE] Edit request path must be a non-empty string or null.');
+    throw new Error('[MODEL] [E_BAD_PAYLOAD] Edit request path must be a non-empty string or null.');
   }
   if (!Array.isArray(req.edits) || req.edits.length === 0) {
-    throw new Error('[E_BAD_SHAPE] Edit request requires a non-empty "edits" array.');
+    throw new Error('[MODEL] [E_BAD_PAYLOAD] Edit request requires a non-empty "edits" array.');
   }
   if (req.edits.length > EDITS_MAX_ITEMS) {
-    throw new Error(`[E_BAD_SHAPE] edit accepts at most ${EDITS_MAX_ITEMS} edits; got ${req.edits.length}. Split the batch.`);
+    throw new Error(`[MODEL] [E_BAD_PAYLOAD] edit accepts at most ${EDITS_MAX_ITEMS} edits; got ${req.edits.length}. Split the batch.`);
   }
   for (let index = 0; index < req.edits.length; index++) {
     const item = req.edits[index]!;
     if (typeof item.remove_from !== "string" || typeof item.remove_to !== "string" || typeof item.replacement_text !== "string") {
-      throw new Error(`[E_BAD_SHAPE] Edit request edits[${index}] must be a three-position array [remove_from, remove_to, replacement_text].`);
+      throw new Error(`[MODEL] [E_BAD_PAYLOAD] Edit request edits[${index}] must be a three-position array [remove_from, remove_to, replacement_text].`);
     }
   }
 }
 
 // legacy — now always fails with new shape message (batch_edit removed)
 export function assertBatchEditRequest(_request: unknown): asserts _request is BatchEditParams {
-  throw new Error("[E_BAD_SHAPE] batch_edit has been removed. Use edit with { path, edits: [[remove_from, remove_to, replacement_text], ...] }.");
+  throw new Error("[MODEL] [E_BAD_PAYLOAD] batch_edit has been removed. Use edit with { path, edits: [[remove_from, remove_to, replacement_text], ...] }.");
 }
 
 export function assertReadRequest(request: unknown): asserts request is ReadParams {
-  if (!isRec(request)) throw new Error("[E_BAD_SHAPE] Read request must be an object.");
+  if (!isRec(request)) throw new Error("[MODEL] [E_BAD_PAYLOAD] Read request must be an object.");
   rejectUnknownFields(request, READ_KS, "Read request");
   if (typeof request.path !== "string" || request.path.length === 0) {
-    throw new Error('[E_BAD_SHAPE] Read request requires a non-empty "path" string.');
+    throw new Error('[MODEL] [E_BAD_PAYLOAD] Read request requires a non-empty "path" string.');
   }
 }
 
 export function assertUndoRequest(request: unknown): asserts request is UndoParams {
-  if (!isRec(request)) throw new Error("[E_BAD_SHAPE] undo_last_edit request must be an object.");
+  if (!isRec(request)) throw new Error("[MODEL] [E_BAD_PAYLOAD] undo_last_edit request must be an object.");
   normalizeFilePath(request);
   if (typeof request.path !== "string" || request.path.length === 0) {
-    throw new Error('[E_BAD_SHAPE] undo_last_edit request requires a non-empty "path" string.');
+    throw new Error('[MODEL] [E_BAD_PAYLOAD] undo_last_edit request requires a non-empty "path" string.');
   }
 }
 

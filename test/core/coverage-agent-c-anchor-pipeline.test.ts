@@ -14,7 +14,7 @@ import { initHasher } from "../../src/hashline/hash-assign.js";
 
 describe("coverage: anchor-pipeline parseHashRef / diagRef branches", () => {
   it("rejects empty and numeric anchors", () => {
-    expect(() => parseHashRef("")).toThrow(/E_BAD_REF.*Invalid anchor/);
+    expect(() => parseHashRef("")).toThrow(/E_BAD_ANCHOR.*Invalid anchor/);
     expect(() => parseHashRef("123abc")).toThrow(/no line numbers/);
     expect(() => parseHashRef("ab")).toThrow(/Expected a 3-char/);
     expect(() => parseHashRef("toolong!")).toThrow(/Expected a 3-char/);
@@ -36,30 +36,27 @@ describe("coverage: anchor-pipeline parseHashRef / diagRef branches", () => {
 });
 
 describe("coverage: anchor-pipeline resEdit warnings", () => {
-  it("strips HASH│ prefix from remove_from/to and warns", () => {
-    const warnings: string[] = [];
-    const edit: any = { remove_from: "abc│content", remove_to: "def│content", replacement_text: "new" };
-    const res = resEdit(edit, warnings);
-    expect(res.hash_bounds[0].hash).toBe("abc");
-    expect(res.hash_bounds[1].hash).toBe("def");
-    expect(warnings.some((w) => w.includes("stripped"))).toBe(true);
-  });
-  it("strips diff markers +/- and warns", () => {
-    const w1: string[] = [];
-    resEdit({ remove_from: "+abc│x", remove_to: "abc", replacement_text: "y" } as any, w1);
-    expect(w1.some((w) => w.includes("diff-preview"))).toBe(true);
-    const w2: string[] = [];
-    resEdit({ remove_from: "-abc│x", remove_to: "abc", replacement_text: "y" } as any, w2);
-    expect(w2.some((w) => w.includes("leading \"-\""))).toBe(true);
-  });
-  it("extracts first hash from multiline block", () => {
-    const warnings: string[] = [];
-    const block = "abc│first\nother line\ndef│second";
-    const edit: any = { remove_from: block, remove_to: "def", replacement_text: "new" };
-    const res = resEdit(edit, warnings);
-    expect(res.hash_bounds[0].hash).toBe("abc");
-    expect(warnings.some((w) => w.includes("extracted first hash"))).toBe(true);
-  });
+	it("rejects HASH│ prefix in remove_from/to with E_BAD_ANCHOR", () => {
+		const warnings: string[] = [];
+		const edit: any = { remove_from: "abc│content", remove_to: "def│content", replacement_text: "new" };
+		expect(() => resEdit(edit, warnings)).toThrow(/\[E_BAD_ANCHOR\]/);
+		expect(warnings).toEqual([]);
+	});
+	it("rejects diff markers +/- in anchors with E_BAD_ANCHOR", () => {
+		const w1: string[] = [];
+		expect(() => resEdit({ remove_from: "+abc│x", remove_to: "abc", replacement_text: "y" } as any, w1)).toThrow(/\[E_BAD_ANCHOR\]/);
+		expect(() => resEdit({ remove_from: "+abc│x", remove_to: "abc", replacement_text: "y" } as any, w1)).toThrow(/diff-preview/);
+		const w2: string[] = [];
+		expect(() => resEdit({ remove_from: "-abc│x", remove_to: "abc", replacement_text: "y" } as any, w2)).toThrow(/\[E_BAD_ANCHOR\]/);
+		expect(() => resEdit({ remove_from: "-abc│x", remove_to: "abc", replacement_text: "y" } as any, w2)).toThrow(/leading "-"/);
+	});
+	it("rejects multiline anchor block with E_BAD_ANCHOR", () => {
+		const warnings: string[] = [];
+		const block = "abc│first\nother line\ndef│second";
+		const edit: any = { remove_from: block, remove_to: "def", replacement_text: "new" };
+		expect(() => resEdit(edit, warnings)).toThrow(/\[E_BAD_ANCHOR\]/);
+		expect(() => resEdit(edit, warnings)).toThrow(/extracted first hash/);
+	});
   it("rejects missing fields", () => {
     // remove_from must be string
     expect(() => resEdit({ remove_from: 123 as any, remove_to: "abc", replacement_text: "x" } as any)).toThrow();
@@ -79,15 +76,13 @@ describe("coverage: anchor-pipeline resEdit warnings", () => {
 });
 
 describe("coverage: anchor-pipeline applyEdit", () => {
-  it("strips bare HASH│ prefixes from content lines and warns", () => {
-    const content = "a\nb\nc";
-    const hashes = lineHashesPure(content);
-    const edit: any = { hash_bounds: [{ hash: hashes[0]! }, { hash: hashes[0]! }], content_lines: [`${hashes[1]!}│b`, "new line"] };
-    const result = applyEdit(content, edit, undefined, hashes);
-    // should have stripped prefix from first replacement line
-    expect(result.warnings?.some((w) => w.includes("HASH│"))).toBe(true);
-    expect(result.content).toContain("new line");
-  });
+	it("rejects bare HASH│ prefixes in content lines with E_BAD_ANCHOR", () => {
+		const content = "a\nb\nc";
+		const hashes = lineHashesPure(content);
+		const edit: any = { hash_bounds: [{ hash: hashes[0]! }, { hash: hashes[0]! }], content_lines: [`${hashes[1]!}│b`, "new line"] };
+		expect(() => applyEdit(content, edit, undefined, hashes)).toThrow(/\[E_BAD_ANCHOR\]/);
+		expect(() => applyEdit(content, edit, undefined, hashes)).toThrow(/HASH│/);
+	});
 
   it("strips diff +/- prefixes from content lines", () => {
     const content = "a\nb\nc";
@@ -135,7 +130,7 @@ describe("coverage: anchor-pipeline applyEdit", () => {
     const dupHashes = [...hashes];
     dupHashes[2] = hashes[0]!;
     const edit: any = { hash_bounds: [{ hash: hashes[0]! }, { hash: hashes[0]! }], content_lines: ["X"] };
-    expect(() => applyEdit(content, edit, undefined, dupHashes)).toThrow(/E_AMBIGUOUS_ANCHOR/);
+    expect(() => applyEdit(content, edit, undefined, dupHashes)).toThrow(/E_STALE_ANCHOR/);
   });
 
   it("detects edit hash echo and throws", () => {
@@ -144,7 +139,7 @@ describe("coverage: anchor-pipeline applyEdit", () => {
     const served = [...hashes];
     // make replacement start with served hash + │
     const edit: any = { hash_bounds: [{ hash: hashes[0]! }, { hash: hashes[0]! }], content_lines: [`${hashes[0]!}│a`, "new"] };
-    expect(() => applyEdit(content, edit, undefined, hashes, "file.txt", served as any)).toThrow(/E_EDIT_HASH_ECHO/);
+    expect(() => applyEdit(content, edit, undefined, hashes, "file.txt", served as any)).toThrow(/E_SERVED_ECHO/);
   });
 
   it("noop returns noopEdit", () => {
@@ -161,7 +156,7 @@ describe("coverage: anchor-pipeline applyEdit", () => {
     const content = "a";
     const hashes = lineHashesPure(content);
     const edit: any = { hash_bounds: [{ hash: hashes[0]! }, { hash: hashes[0]! }], content_lines: [] };
-    expect(() => applyEdit(content, edit, undefined, hashes)).toThrow(/E_WOULD_EMPTY/);
+    expect(() => applyEdit(content, edit, undefined, hashes)).toThrow(/E_EMPTY_RANGE/);
   });
   it("findNewEdge stub returns undefined (boundaryDups removed)", () => {
     expect(findNewEdge(["new", "b", "c"], ["b", "c"], false)).toBeUndefined();
@@ -198,7 +193,7 @@ describe("coverage: anchor-pipeline verifyServedRange / buildRangeEcho", () => {
     expect(txt).toContain("│a");
   });
 
-  it("verifyServedRange throws E_RANGE_UNVERIFIED when no served positions", () => {
+  it("verifyServedRange throws E_UNSERVED_RANGE when no served positions", () => {
     const content = "a\nb\nc";
     const hashes = lineHashesPure(content);
     const served: (string | null)[] = [null, null, null];
@@ -212,10 +207,10 @@ describe("coverage: anchor-pipeline verifyServedRange / buildRangeEcho", () => {
         fileHashes: hashes,
         fileLines: ["a", "b", "c"],
       }),
-    ).toThrow(/E_RANGE_UNVERIFIED/);
+    ).toThrow(/E_UNSERVED_RANGE/);
   });
 
-  it("verifyServedRange throws E_RANGE_UNSERVED when served null in range", () => {
+  it("verifyServedRange throws E_UNSERVED_RANGE when served null in range", () => {
     const content = "a\nb\nc";
     const hashes = lineHashesPure(content);
     // served has one null inside verified span
@@ -230,7 +225,7 @@ describe("coverage: anchor-pipeline verifyServedRange / buildRangeEcho", () => {
         fileHashes: hashes,
         fileLines: ["a", "b", "c"],
       }),
-    ).toThrow(/E_RANGE_UNSERVED/);
+    ).toThrow(/E_UNSERVED_RANGE/);
   });
 
   it("verifyServedRange succeeds when served matches", () => {
@@ -250,7 +245,7 @@ describe("coverage: anchor-pipeline verifyServedRange / buildRangeEcho", () => {
     ).not.toThrow();
   });
 
-  it("verifyServedRange detects E_RANGE_STALE when hashes differ", () => {
+  it("verifyServedRange detects E_STALE_RANGE when hashes differ", () => {
     const content = "a\nb\nc";
     const hashes = lineHashesPure(content);
     // modify hashes to simulate stale
@@ -267,6 +262,6 @@ describe("coverage: anchor-pipeline verifyServedRange / buildRangeEcho", () => {
         fileHashes: staleHashes,
         fileLines: ["a", "b", "c"],
       }),
-    ).toThrow(/E_RANGE_STALE/);
+    ).toThrow(/E_STALE_RANGE/);
   });
 });

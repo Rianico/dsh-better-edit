@@ -24,17 +24,17 @@ describe("errCode", () => {
 describe("valKind", () => {
 	it("throws for directory", () => {
 		expect(() => valKind({ kind: "directory" }, "test.txt"))
-			.toThrow("[E_NOT_TEXT] Path is a directory: test.txt. Use ls to inspect directories.");
+			.toThrow("[E_UNSUPPORTED_FILE] Path is a directory: test.txt.");
 	});
 
 	it("throws for binary file", () => {
 		expect(() => valKind({ kind: "binary", description: "application/octet-stream" }, "test.bin"))
-			.toThrow("[E_NOT_TEXT] Path is a binary file: test.bin (application/octet-stream). Hashline edit only supports text files.");
+			.toThrow("[E_UNSUPPORTED_FILE] Path is a binary file: test.bin (application/octet-stream). Hashline edit only supports text files.");
 	});
 
 	it("throws for image file", () => {
 		expect(() => valKind({ kind: "image", mimeType: "image/png" }, "test.png"))
-			.toThrow("[E_NOT_TEXT] Path is an image file: test.png. Hashline edit only supports text files.");
+			.toThrow("[E_UNSUPPORTED_FILE] Path is an image file: test.png. Hashline edit only supports text files.");
 	});
 
 	it("does not throw for text file", () => {

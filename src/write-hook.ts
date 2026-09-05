@@ -64,7 +64,7 @@ export async function servedHashEchoDenial(
 	const match = findServedHashEcho(content, served)
 	if (!match) return undefined
 	return (
-		`[E_WRITE_HASH_ECHO] Refused write to ${rawPath}: line ${match.line} begins with ` +
+		`[MODEL] [E_SERVED_ECHO] Refused write to ${rawPath}: line ${match.line} begins with ` +
 		`the exact ${match.hash}${HASH_SEP} anchor served for this session, path, and line. ` +
 		`HASH${HASH_SEP} anchors are tool output, not file content. ` +
 		'Retry with file content only (remove the entire copied anchor chain). Nothing was written.'

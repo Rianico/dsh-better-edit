@@ -71,7 +71,7 @@ export function invalidateIfStale(targetKey: string, currentVersion: string | un
 
 export function buildTop3ErrorMessage(displayPath: string, candidates: CandidatePreview[]): string {
   const candStr = candidates.map((c) => `${c.encoding}("${c.sample.slice(0, 20).replace(/"/g, "'")}")`).join(", ");
-  return `[E_NOT_TEXT] Path is not a readable UTF-8 text file: ${displayPath}. Hashline editing only supports text files. Top-3 guesses: ${candStr}. Try read({encoding: "<encoding>"}) or set DSH_BETTER_EDIT_AUTO_GUESS_ENCODING=true to auto-decode.`;
+  return `[MODEL] [E_UNSUPPORTED_FILE] Path is not a readable UTF-8 text file: ${displayPath}. Hashline editing only supports text files. Top-3 guesses: ${candStr}. Try read({encoding: "<encoding>"}) or set DSH_BETTER_EDIT_AUTO_GUESS_ENCODING=true to auto-decode.`;
 }
 
 function buildAutoGuessFooterFromCandidates(candidates: Array<{ encoding: string; confidence?: number; score?: number; sample?: string }>): string {
@@ -122,7 +122,7 @@ export interface DecodeForOpenOptions {
 /**
  * Deterministic admission for a raw byte buffer. No IO, no side effects
  * except Top-3 scoring. Caller owns recording the returned state via
- * `recordOpenState` and handling the footer vs E_NOT_TEXT split.
+ * `recordOpenState` and handling the footer vs E_UNSUPPORTED_FILE split.
  *
  * Order is fixed: BOM sniff always precedes strict UTF-8, which always
  * precedes guessing. Probabilistic encodings are last resort, gated by
@@ -247,10 +247,10 @@ export async function decodeForOpen(
         };
       }
     }
-    // No candidate succeeded — fall through to E_NOT_TEXT with Top-3
+    // No candidate succeeded — fall through to E_UNSUPPORTED_FILE with Top-3
   }
 
-  // 5) E_NOT_TEXT + Top-3 always pushed (even when autoGuess off)
+  // 5) E_UNSUPPORTED_FILE + Top-3 always pushed (even when autoGuess off)
   // Use chardet Top-3 when available, else heuristic Top-3 — same as fs-bridge fallback
   let candidates: CandidatePreview[] = [];
   try {

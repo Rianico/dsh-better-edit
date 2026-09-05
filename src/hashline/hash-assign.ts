@@ -120,7 +120,7 @@ function nextZeroBit(bits: Uint32Array, start: number): number {
     idx += HASH_PROBE_STRIDE;
     if (idx >= totalBits) idx -= totalBits;
   }
-  throw new Error(`[E_FILE_TOO_LARGE] Cannot allocate a unique hash anchor: the file exceeds the ${HASH_SPACE}-line limit for ${HASH_LEN}-char hashline anchors.`);
+  throw new Error(`[MODEL] [E_LARGE_FILE] Cannot allocate a unique hash anchor: the file exceeds the ${HASH_SPACE}-line limit for ${HASH_LEN}-char hashline anchors.`);
 }
 function assignHash(used: Uint32Array, baseIdx: number, hint: { value: number }): string {
   if (!getBit(used, baseIdx)) {

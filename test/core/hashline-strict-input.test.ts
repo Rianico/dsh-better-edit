@@ -10,15 +10,13 @@ import { useTestHome } from "../support/fixtures.js";
 const home = useTestHome();
 
 describe("edit input validation", () => {
-	it("strips bare HASH| prefix in content with warning", async () => {
+	it("rejects bare HASH| prefix in content with E_BAD_ANCHOR", async () => {
 		const file = "foo\nbar";
 		const hashes = await lineHashes(file, home.testPath);
 		const toolEdit: HTEdit = { remove_from: hashes[0]!, remove_to: hashes[0]!, replacement_text: `${hashes[0]!}│FOO` };
-    const result = applyEdit(file, resEdit(toolEdit));
-		expect(result.content).toBe("FOO\nbar");
-		expect(result.warnings?.[0]).toMatch(/stripped "HASH│" prefix/);
-		expect(result.warnings?.[0]).toMatch(/replacement_text line 1/);
-		expect(result.warnings?.[0]).toMatch(/1\/1 matched/);
+		expect(() => applyEdit(file, resEdit(toolEdit))).toThrow(/\[E_BAD_ANCHOR\]/);
+		expect(() => applyEdit(file, resEdit(toolEdit))).toThrow(/replacement_text line 1/);
+		expect(() => applyEdit(file, resEdit(toolEdit))).toThrow(/1\/1 matched/);
 	});
 
 	it("rejects array replacement_text before patch-prefix validation", () => {
@@ -60,62 +58,52 @@ describe("partial hash prefixes copied into content (issue #24)", () => {
 		return applyEdit(file, resEdit(toolEdit), undefined, precomputedHashes);
 	}
 
-	it("strips a bare prefix that matches an existing file line hash", async () => {
+	it("rejects a bare prefix that matches an existing file line hash", async () => {
 		const hashes = await lineHashes(file, home.testPath);
 		const anchor = hashes[0]!;
 		const betaHash = hashes[1]!;
-		const result = applyTool(
-      { remove_from: anchor,
-      remove_to: anchor, replacement_text: `${betaHash}│### heading\nreal content` },
-    hashes);
-    expect(result.content).toBe("### heading\nreal content\nbeta\ngamma\ndelta");
-    expect(result.warnings?.[0]).toMatch(/1\/1 matched/);
-    expect(result.warnings?.[0]).not.toMatch(/literal content/);
+		const toolEdit: HTEdit = { remove_from: anchor,
+			remove_to: anchor, replacement_text: `${betaHash}│### heading\nreal content` };
+		expect(() => applyTool(toolEdit, hashes)).toThrow(/\[E_BAD_ANCHOR\]/);
+		expect(() => applyTool(toolEdit, hashes)).toThrow(/1\/1 matched/);
+		expect(() => applyTool(toolEdit, hashes)).not.toThrow(/literal content/);
 	});
 
-	it("strips a bare prefix whose hash exists in the file hash set", async () => {
+	it("rejects a bare prefix whose hash exists in the file hash set", async () => {
 		const hashes = await lineHashes(file, home.testPath);
 		const anchor = hashes[0]!;
 		const gammaHash = hashes[2]!;
-		const result = applyTool(
-      { remove_from: anchor,
-      remove_to: anchor, replacement_text: `${gammaHash}│text` },
-    hashes);
-    expect(result.content).toBe("text\nbeta\ngamma\ndelta");
-    expect(result.warnings?.[0]).toMatch(/1\/1 matched/);
+		const toolEdit: HTEdit = { remove_from: anchor,
+			remove_to: anchor, replacement_text: `${gammaHash}│text` };
+		expect(() => applyTool(toolEdit, hashes)).toThrow(/\[E_BAD_ANCHOR\]/);
+		expect(() => applyTool(toolEdit, hashes)).toThrow(/1\/1 matched/);
 	});
 
-	it("strips bare prefixes even when the hash is not in the file hash set", async () => {
+	it("rejects bare prefixes even when the hash is not in the file hash set", async () => {
 		const hashes = await lineHashes(file, home.testPath);
 		const anchor = hashes[0]!;
-		const result = applyTool(
-      { remove_from: anchor,
-      remove_to: anchor, replacement_text: "ZZZ│one\nZZP│two" },
-    hashes);
-    expect(result.content).toBe("one\ntwo\nbeta\ngamma\ndelta");
-    expect(result.warnings?.[0]).toMatch(/0 matched/);
-    expect(result.warnings?.[0]).toMatch(/literal 'HASH│' content/);
+		const toolEdit: HTEdit = { remove_from: anchor,
+			remove_to: anchor, replacement_text: "ZZZ│one\nZZP│two" };
+		expect(() => applyTool(toolEdit, hashes)).toThrow(/\[E_BAD_ANCHOR\]/);
+		expect(() => applyTool(toolEdit, hashes)).toThrow(/0 matched/);
+		expect(() => applyTool(toolEdit, hashes)).toThrow(/literal 'HASH│' content/);
 	});
 
-	it("reports the replacement_text line for each stripped line", async () => {
+	it("reports the replacement_text line for each rejected line", async () => {
 		const hashes = await lineHashes(file, home.testPath);
 		const anchor = hashes[0]!;
-		const result = applyTool(
-      { remove_from: anchor,
-      remove_to: anchor, replacement_text: "ZZZ│one\nreal\nZZP│two" },
-    hashes);
-    expect(result.content).toBe("one\nreal\ntwo\nbeta\ngamma\ndelta");
-    expect(result.warnings?.[0]).toMatch(/replacement_text line 1, replacement_text line 3/);
+		const toolEdit: HTEdit = { remove_from: anchor,
+			remove_to: anchor, replacement_text: "ZZZ│one\nreal\nZZP│two" };
+		expect(() => applyTool(toolEdit, hashes)).toThrow(/\[E_BAD_ANCHOR\]/);
+		expect(() => applyTool(toolEdit, hashes)).toThrow(/replacement_text line 1, replacement_text line 3/);
 	});
 
-	it("keeps indentation after the separator while dropping leading prefix whitespace", async () => {
+	it("rejects indented prefix with E_BAD_ANCHOR", async () => {
 		const hashes = await lineHashes(file, home.testPath);
 		const anchor = hashes[0]!;
-		const result = applyTool(
-      { remove_from: anchor,
-      remove_to: anchor, replacement_text: `  ${hashes[1]!}│  indented` },
-    hashes);
-    expect(result.content).toBe("  indented\nbeta\ngamma\ndelta");
+		const toolEdit: HTEdit = { remove_from: anchor,
+			remove_to: anchor, replacement_text: `  ${hashes[1]!}│  indented` };
+		expect(() => applyTool(toolEdit, hashes)).toThrow(/\[E_BAD_ANCHOR\]/);
 	});
 
 	it("accepts a single legit 'TS: TypeScript' line without warning", async () => {
@@ -139,17 +127,14 @@ describe("partial hash prefixes copied into content (issue #24)", () => {
     expect(result.warnings ?? []).toEqual([]);
 	});
 
-	it("strips prefixes from long lines without truncation", async () => {
+	it("rejects prefixes on long lines with E_BAD_ANCHOR", async () => {
 		const hashes = await lineHashes(file, home.testPath);
 		const anchor = hashes[0]!;
 		const betaHash = hashes[1]!;
 		const longLine = `${betaHash}│${"y".repeat(500)}`;
-		const result = applyTool(
-      { remove_from: anchor,
-      remove_to: anchor, replacement_text: longLine },
-    hashes);
-    expect(result.content).toContain("y".repeat(500));
-    expect(result.content).not.toContain("│");
+		const toolEdit: HTEdit = { remove_from: anchor,
+			remove_to: anchor, replacement_text: longLine };
+		expect(() => applyTool(toolEdit, hashes)).toThrow(/\[E_BAD_ANCHOR\]/);
 	});
 });
 
@@ -160,27 +145,23 @@ describe("diff preview rows copied into content", () => {
 		return applyEdit(file, resEdit(toolEdit), undefined, precomputedHashes);
 	}
 
-	it("strips +HASH│ addition rows with warning", async () => {
+	it("rejects +HASH│ addition rows with E_BAD_ANCHOR", async () => {
 		const hashes = await lineHashes(file, home.testPath);
 		const anchor = hashes[0]!;
-		const result = applyTool(
-      { remove_from: anchor,
-      remove_to: anchor, replacement_text: `+${hashes[1]!}│### heading\nreal content` },
-    hashes);
-		expect(result.content).toBe("### heading\nreal content\nbeta\ngamma\ndelta");
-		expect(result.warnings?.[0]).toMatch(/stripped diff-preview marker/);
-		expect(result.warnings?.[0]).toMatch(/replacement_text line 1/);
+		const toolEdit: HTEdit = { remove_from: anchor,
+			remove_to: anchor, replacement_text: `+${hashes[1]!}│### heading\nreal content` };
+		expect(() => applyTool(toolEdit, hashes)).toThrow(/\[E_BAD_ANCHOR\]/);
+		expect(() => applyTool(toolEdit, hashes)).toThrow(/stripped diff-preview marker/);
+		expect(() => applyTool(toolEdit, hashes)).toThrow(/replacement_text line 1/);
 	});
 
-	it("strips -HASH│ and -   │ deletion rows with warning", async () => {
+	it("rejects -HASH│ and -   │ deletion rows with E_BAD_ANCHOR", async () => {
 		const hashes = await lineHashes(file, home.testPath);
 		const anchor = hashes[0]!;
-		const result = applyTool(
-      { remove_from: anchor,
-      remove_to: anchor, replacement_text: `-${hashes[1]!}│one\n-   │two` },
-    hashes);
-		expect(result.content).toBe("one\ntwo\nbeta\ngamma\ndelta");
-		expect(result.warnings?.[0]).toMatch(/replacement_text line 1, replacement_text line 2/);
+		const toolEdit: HTEdit = { remove_from: anchor,
+			remove_to: anchor, replacement_text: `-${hashes[1]!}│one\n-   │two` };
+		expect(() => applyTool(toolEdit, hashes)).toThrow(/\[E_BAD_ANCHOR\]/);
+		expect(() => applyTool(toolEdit, hashes)).toThrow(/replacement_text line 1, replacement_text line 2/);
 	});
 
 	it("leaves numbered deletion rows as literal content without warning", async () => {
@@ -246,25 +227,21 @@ describe("diff-prefix false-positive guards (tightened shapes)", () => {
 		expect(result.warnings ?? []).toEqual([]);
 	});
 
-	it("still strips exact +HASH│ rows without a space", async () => {
+	it("rejects exact +HASH│ rows without a space", async () => {
 		const hashes = await lineHashes(file, home.testPath);
 		const anchor = hashes[0]!;
-		const result = applyTool(
-      { remove_from: anchor,
-      remove_to: anchor, replacement_text: `+${hashes[1]!}│one` },
-    hashes);
-		expect(result.content).toBe("one\nbeta\ngamma\ndelta");
-		expect(result.warnings?.[0]).toMatch(/stripped diff-preview marker/);
+		const toolEdit: HTEdit = { remove_from: anchor,
+			remove_to: anchor, replacement_text: `+${hashes[1]!}│one` };
+		expect(() => applyTool(toolEdit, hashes)).toThrow(/\[E_BAD_ANCHOR\]/);
+		expect(() => applyTool(toolEdit, hashes)).toThrow(/stripped diff-preview marker/);
 	});
 
-	it("still strips exact -HASH│ and -   │ rows", async () => {
+	it("rejects exact -HASH│ and -   │ rows", async () => {
 		const hashes = await lineHashes(file, home.testPath);
 		const anchor = hashes[0]!;
-		const result = applyTool(
-      { remove_from: anchor,
-      remove_to: anchor, replacement_text: `-${hashes[1]!}│one\n-   │two` },
-    hashes);
-		expect(result.content).toBe("one\ntwo\nbeta\ngamma\ndelta");
-		expect(result.warnings?.[0]).toMatch(/stripped diff-preview marker/);
+		const toolEdit: HTEdit = { remove_from: anchor,
+			remove_to: anchor, replacement_text: `-${hashes[1]!}│one\n-   │two` };
+		expect(() => applyTool(toolEdit, hashes)).toThrow(/\[E_BAD_ANCHOR\]/);
+		expect(() => applyTool(toolEdit, hashes)).toThrow(/stripped diff-preview marker/);
 	});
 });

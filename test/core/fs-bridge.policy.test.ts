@@ -249,7 +249,7 @@ describe("ctxFsIO writeText", () => {
 		);
 	});
 
-	it("maps FS_STALE_VERSION onto the hashline E_RANGE_STALE vocabulary", async () => {
+	it("maps FS_STALE_VERSION onto the hashline E_STALE_RANGE vocabulary", async () => {
 		const stale = Object.assign(new Error("stale"), {
 			code: "FS_STALE_VERSION",
 		});
@@ -262,7 +262,7 @@ describe("ctxFsIO writeText", () => {
 		const io: FileIO = ctxFsIO(fs as never, ctx);
 
 		await expect(io.writeText("/abs/file.txt", "x")).rejects.toThrow(
-			"[E_RANGE_STALE]",
+			"[E_STALE_RANGE]",
 		);
 	});
 });

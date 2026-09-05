@@ -45,11 +45,11 @@ describe("mapFsError", () => {
   });
   it("maps FS_NOT_TEXT", () => {
     const err = Object.assign(new Error("x"), { code: "FS_NOT_TEXT" });
-    expect(() => mapFsError(err, "a.txt")).toThrow(/E_NOT_TEXT/);
+    expect(() => mapFsError(err, "a.txt")).toThrow(/E_UNSUPPORTED_FILE/);
   });
   it("maps FS_NOT_REGULAR_FILE", () => {
     const err = Object.assign(new Error("x"), { code: "FS_NOT_REGULAR_FILE" });
-    expect(() => mapFsError(err, "a.txt")).toThrow(/E_NOT_TEXT/);
+    expect(() => mapFsError(err, "a.txt")).toThrow(/E_UNSUPPORTED_FILE/);
   });
   it("maps FS_BAD_ENCODING", () => {
     const err = Object.assign(new Error("x"), { code: "FS_BAD_ENCODING" });
@@ -61,7 +61,7 @@ describe("mapFsError", () => {
   });
   it("maps FS_STALE_VERSION", () => {
     const err = Object.assign(new Error("x"), { code: "FS_STALE_VERSION" });
-    expect(() => mapFsError(err, "a.txt")).toThrow(/E_RANGE_STALE/);
+    expect(() => mapFsError(err, "a.txt")).toThrow(/E_STALE_RANGE/);
   });
   it("maps FS_NOT_OBSERVED", () => {
     const err = Object.assign(new Error("x"), { code: "FS_NOT_OBSERVED" });
@@ -208,7 +208,7 @@ describe("ctxFsIO", () => {
     });
     const ctx: any = makeCtx();
     const io = ctxFsIO(fs, ctx);
-    await expect(io.writeText("/abs/file.txt", "c")).rejects.toThrow(/E_RANGE_STALE/);
+    await expect(io.writeText("/abs/file.txt", "c")).rejects.toThrow(/E_STALE_RANGE/);
   });
 
   it("emitObserved emits when stat succeeds", async () => {

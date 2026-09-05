@@ -12,5 +12,5 @@ export const SERVED_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 export const SERVED_ECHO_CAP = 150;
 export const NOOP_LOOP_THRESHOLD = 3;
 export const NEW_CONTENT_NOT_STRING_MSG =
-	`[E_BAD_SHAPE] "replacement_text" must be a string with \\n line separators, not an array.` +
+	`[MODEL] [E_BAD_PAYLOAD] "replacement_text" must be a string with \\n line separators, not an array.` +
 	` Do not pass an array of lines — pass the replacement text as one string: "line1\\nline2". Use "" to delete a range.`;

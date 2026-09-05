@@ -89,7 +89,7 @@ describe("read tool — encoding integration (replaces manual dsh paste)", () =>
 		// localIO with autoGuess off falls back to readFile utf-8 → contains U+FFFD, no warning
 		expect(r.text).toContain("\uFFFD");
 		expect(r.warning).toBeUndefined();
-		// Top-3 via E_NOT_TEXT is the ctxFsIO (DSH web) path; localIO never throws E_NOT_TEXT for this case
+		// Top-3 via E_UNSUPPORTED_FILE is the ctxFsIO (DSH web) path; localIO never throws E_UNSUPPORTED_FILE for this case
 	});
 
 	it("autoGuess=true: gbk without encoding decodes and warning second block", async () => {

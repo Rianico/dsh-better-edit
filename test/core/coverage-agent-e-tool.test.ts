@@ -5,7 +5,7 @@ describe("coverage-agent-e tool", () => {
   it("tool-edit validation", async () => {
     await withTempFile("a.txt", "hello", async ({ cwd }) => {
       const harness = setupIntegrationTest(cwd);
-      await expect(harness.editTool.execute("edit", { path: "a.txt", edits: [] } as any)).rejects.toThrow(/E_BAD_SHAPE/);
+      await expect(harness.editTool.execute("edit", { path: "a.txt", edits: [] } as any)).rejects.toThrow(/E_BAD_PAYLOAD/);
       await expect(harness.editTool.execute("edit", { path: "a.txt", edits: [["bad", "bad2", "x"]] } as any)).rejects.toThrow();
     });
   });
