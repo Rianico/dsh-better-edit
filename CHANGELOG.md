@@ -7,7 +7,8 @@
 
 ### Fixed
 
-- **edit:** Gemma-4 tool-call bleed hardening + prompt channel wording (Closes #47)
+- **served:** epoch lifecycle belongs to full reads (Closes #48)
+- **edit:** Gemma-4 tool-call bleed hardening + prompt channel wording (Closes #47) (#52)
 
 ### Documentation
 

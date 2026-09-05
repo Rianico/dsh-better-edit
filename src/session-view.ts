@@ -220,7 +220,8 @@ export async function recordServed(
 					while (updatedCanons.length > 0 && updatedCanons[updatedCanons.length - 1] === null) updatedCanons.pop();
 					store.upsertServedCanons(sessionKey, path, JSON.stringify(updatedCanons));
 				}
-				if (fullReadSnapshotId) store.upsertEpochSnapshotId(sessionKey, path, fullReadSnapshotId);
+				// #69: partial reads merge window rows + canons only — the epoch
+				// snapshotId advances on full reads alone (see isFullRead above).
 				addRetiredAnchors(
 					store,
 					sessionKey,
