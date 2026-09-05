@@ -22,7 +22,7 @@
  * @module dsh-better-edit/session-view
  */
 
-import { HASH_RE } from "./hashline/hash-assign.js";
+import { HASH_RE, canon } from "./hashline/hash-assign.js";
 import {
 	loadHashStore,
 	loadServedStore,
@@ -346,6 +346,9 @@ export interface ComputeDriftInput {
 	range: ResolvedRange;
 	reported: Set<string>;
 	cap?: number;
+	/** WHY (#68): parallel to `served`, whitespace-stripped form at serve time.
+	 * Absent/empty preserves legacy hash-equality (old DBs, unit callers). */
+	servedCanons?: (string | null)[];
 }
 
 export interface DriftNoticeResult {
@@ -353,6 +356,61 @@ export interface DriftNoticeResult {
 	rows: DriftRow[];
 	total: number;
 	allAlreadyReported: boolean;
+}
+
+type RotatedSurvivorCheck = (servedPos: number) => boolean;
+
+/**
+ * WHY (#68 hash-rotation vs content loss): probing + tombstone growth reassign
+ * distinct hashes to identical duplicate lines across sequential edits, so a
+ * served hash missing from the result set may still survive under a fresh hash.
+ * Suppress those by consuming one matching canon outside the edited span;
+ * report only true canon deficit. Whitespace-only reformats stay silent
+ * (canon strips ASCII whitespace, ADR-0002). Absent/empty servedCanons keeps
+ * legacy hash-equality.
+ */
+function buildRotatedSurvivorCheck(
+	input: ComputeDriftInput,
+	rangeFrom: number,
+	rangeTo: number,
+	delta: number,
+): RotatedSurvivorCheck {
+	const canons = input.servedCanons;
+	if (!canons || !canons.some((c) => c !== null)) return () => false;
+	// Edited served interval mapped to result coordinates (single range).
+	const spanFrom = Math.max(0, rangeFrom);
+	const spanTo = Math.max(spanFrom - 1, rangeTo + delta);
+	const remaining = new Map<string, number>();
+	for (let i = 0; i < input.resultLines.length; i++) {
+		if (i >= spanFrom && i <= spanTo) continue;
+		const c = canon(input.resultLines[i] ?? "");
+		remaining.set(c, (remaining.get(c) ?? 0) + 1);
+	}
+	const take = (c: string): boolean => {
+		const left = remaining.get(c) ?? 0;
+		if (left <= 0) return false;
+		remaining.set(c, left - 1);
+		return true;
+	};
+	// Pre-consume: served lines that survived under their own hash already
+	// account for their result content, so a deleted duplicate is not masked
+	// by a surviving twin (multiset difference, not per-hash presence).
+	const currentPosOfHash = new Map<string, number>();
+	for (let i = 0; i < input.resultHashes.length; i++) {
+		currentPosOfHash.set(input.resultHashes[i]!, i);
+	}
+	for (let p = 0; p < input.served.length; p++) {
+		const h = input.served[p];
+		if (h === null || (p >= rangeFrom && p <= rangeTo)) continue;
+		const currentPos = currentPosOfHash.get(h);
+		if (currentPos === undefined) continue;
+		take(canon(input.resultLines[currentPos] ?? ""));
+	}
+	return (servedPos) => {
+		const c = canons[servedPos] ?? null;
+		if (c === null) return false;
+		return take(c);
+	};
 }
 
 export function computeDrift(input: ComputeDriftInput): DriftNoticeResult | undefined {
@@ -375,6 +433,7 @@ export function computeDrift(input: ComputeDriftInput): DriftNoticeResult | unde
 	}
 	const rangeFrom = Math.min(servedStartIdx, servedEndIdx);
 	const rangeTo = Math.max(servedStartIdx, servedEndIdx);
+	const isRotatedSurvivor = buildRotatedSurvivorCheck(input, rangeFrom, rangeTo, range.delta);
 	let total = 0;
 	let unshown = 0;
 	let anyNotReported = false;
@@ -384,6 +443,7 @@ export function computeDrift(input: ComputeDriftInput): DriftNoticeResult | unde
 		if (servedHash === null) continue;
 		if (p >= rangeFrom && p <= rangeTo) continue;
 		if (resultHashSet.has(servedHash)) continue;
+		if (isRotatedSurvivor(p)) continue;
 		total++;
 		if (!reported.has(servedHash)) anyNotReported = true;
 		const currentPos = currentPositionOfDrifted(served, currentPosOfHash, resultHashSet, p, range.delta);
@@ -431,7 +491,8 @@ export function computeDrift(input: ComputeDriftInput): DriftNoticeResult | unde
 
 export async function scanDrift(input: { sessionKey: string; served: (string | null)[]; resultHashes: string[]; resultLines: string[]; range: ResolvedRange; path: string }): Promise<string | undefined> {
 	const reported = await driftReported(input.sessionKey, input.path);
-	const result = computeDrift({ ...input, reported });
+	const servedCanons = await loadServedCanons(input.sessionKey, input.path);
+	const result = computeDrift({ ...input, reported, servedCanons });
 	if (!result || result.allAlreadyReported) return result?.text;
 	await recordServed(input.sessionKey, input.path, result.rows.map((row) => ({ position: row.position, hash: row.hash })), input.resultLines.length);
 	await markDriftReported(input.sessionKey, input.path, result.rows.filter((row) => row.drifted).map((row) => row.hash));
