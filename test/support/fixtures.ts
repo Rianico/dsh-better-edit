@@ -251,12 +251,12 @@ export function setupIntegrationTest(cwd: string, io: FileIO = localIO()) {
 			async execute(_callId: string, params: unknown) {
 				const rec = params as { edits?: Array<{ path?: string; file_path?: string; remove_from: string; remove_to: string; replacement_text: string }> };
 				const edits = rec.edits ?? [];
-				if (edits.length === 0) throw new Error("[E_BAD_SHAPE] batch_edit shim: edits empty");
+				if (edits.length === 0) throw new Error("[E_BAD_PAYLOAD] batch_edit shim: edits empty");
 				const path = (edits[0] as any).path ?? (edits[0] as any).file_path ?? null;
 				// verify all same file (new edit is single-file)
 				for (const e of edits) {
 					const ep = (e as any).path ?? (e as any).file_path ?? path;
-					if (ep !== path) throw new Error("[E_BAD_SHAPE] batch_edit shim: cross-file batches removed — use one edit call per file");
+					if (ep !== path) throw new Error("[E_BAD_PAYLOAD] batch_edit shim: cross-file batches removed — use one edit call per file");
 				}
 				const tuples = edits.map(e => [e.remove_from, e.remove_to, e.replacement_text] as [string,string,string]);
 				const text = await editTool.execute({ path, edits: tuples } as unknown as never, { signal: new AbortController().signal, agent: { id: sessionKey, session: { id: sessionKey, header: { cwd } } } } as unknown as never);

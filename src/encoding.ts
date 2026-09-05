@@ -232,7 +232,7 @@ export async function detectWithChardet(bytes: Uint8Array, allowlist: string[]):
 	}
 }
 /**
- * Chardet-based Top-3 for E_NOT_TEXT (primary) and autoGuess.
+ * Chardet-based Top-3 for E_UNSUPPORTED_FILE (primary) and autoGuess.
  * Returns chardet candidates filtered by allowlist and decodable, else empty.
  */
 export async function chardetTop3Candidates(bytes: Uint8Array, allowlist: string[]): Promise<Array<{ encoding: string; confidence: number; sample: string }>> {

@@ -160,7 +160,7 @@ describe("coverage-agent-g file-view", () => {
       const snap = await fileSnap(empty);
       expect(snap.snapshotId).toContain("v2|");
       const { normFromText } = await import("../../src/file-view.js");
-      await expect(normFromText({ absolutePath: empty, rawText: "a\n".repeat(100), displayPath: "x", maxLines: 10 })).rejects.toThrow(/E_FILE_TOO_LARGE/);
+      await expect(normFromText({ absolutePath: empty, rawText: "a\n".repeat(100), displayPath: "x", maxLines: 10 })).rejects.toThrow(/E_LARGE_FILE/);
       const { valAccess } = await import("../../src/file-view.js");
       await expect(valAccess("/nope/path", "/nope/path")).rejects.toThrow(/E_NOT_FOUND/);
       const { valKind } = await import("../../src/file-view.js");

@@ -94,7 +94,7 @@ describe("readNormFile", () => {
 			await withTempFile("big.txt", "a\nb\nc\nd\ne", async ({ cwd }) => {
 				await expect(
 					readNormFile("big.txt", cwd, { maxLines: 3 }),
-				).rejects.toThrow(/\[E_FILE_TOO_LARGE\]/);
+				).rejects.toThrow(/\[E_LARGE_FILE\]/);
 			});
 		});
 

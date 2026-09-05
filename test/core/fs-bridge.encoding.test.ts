@@ -94,7 +94,7 @@ describe("contract and normalizeEncoding", () => {
   });
 
   it("assertReadRequest rejects unknown fields", () => {
-    expect(() => assertReadRequest({ path: "a.txt", unknown: "x" } as any)).toThrow(/E_BAD_SHAPE/);
+    expect(() => assertReadRequest({ path: "a.txt", unknown: "x" } as any)).toThrow(/E_BAD_PAYLOAD/);
   });
 
   it("normalizeEncoding canonicalizes aliases", () => {

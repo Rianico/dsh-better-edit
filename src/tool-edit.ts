@@ -33,14 +33,14 @@ async function resolveNullPath(edits: Array<{ remove_from: string; remove_to: st
     if (matches.length === 1) {
       return {
         path: matches[0]!,
-        warning: `[E_BAD_SHAPE] Autocorrected: missing "path" resolved to ${matches[0]} — the only file whose stored hashes contain both anchors.`,
+        warning: `[MODEL] [E_BAD_PAYLOAD] Autocorrected: missing "path" resolved to ${matches[0]} — the only file whose stored hashes contain both anchors.`,
       };
     }
     if (matches.length > 1) {
-      throw new Error(`[E_BAD_SHAPE] Edit request requires a non-empty "path" string; the anchors match multiple known files: ${matches.join(", ")}. Include the intended path.`);
+      throw new Error(`[MODEL] [E_BAD_PAYLOAD] Edit request requires a non-empty "path" string; the anchors match multiple known files: ${matches.join(", ")}. Include the intended path.`);
     }
   } catch (e) {
-    if (e instanceof Error && e.message.startsWith("[E_BAD_SHAPE]")) throw e;
+    if (e instanceof Error && e.message.includes("[E_BAD_PAYLOAD]")) throw e;
     return undefined;
   }
   return undefined;
@@ -85,7 +85,7 @@ export function buildEditTool(io: FileIO, sandbox: FsSandboxController) {
             resolvedPath = resolved.path;
             pathWarning = resolved.warning;
           } else {
-            throw new Error("[E_BAD_SHAPE] Edit request path is null and could not be inferred from anchors — anchors match no known file. Include the intended path.");
+            throw new Error("[MODEL] [E_BAD_PAYLOAD] Edit request path is null and could not be inferred from anchors — anchors match no known file. Include the intended path.");
           }
         }
         const sandboxPolicy = await sandbox.resolvePolicy(

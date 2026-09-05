@@ -56,7 +56,7 @@
 | --- | --- |
 | Re-types old code (~5-6× billed) | Two `3-char` hashes, old text never echoed |
 | One insert shifts every number → silent wrong line | Content addresses — edits above don't move anchors below |
-| No check against what was shown | Every line verified; `[E_RANGE_STALE]`/`[E_RANGE_UNSERVED]` reject before write, then **reject-and-serve** returns fresh `HASH│content` |
+| No check against what was shown | Every line verified; `[E_STALE_RANGE]`/`[E_UNSERVED_RANGE]` reject before write, then **reject-and-serve** returns fresh `HASH│content` |
 
 > [!TIP]
 > **Shining points — honest:**
@@ -114,7 +114,7 @@ Returns a diff with fresh anchors — next edit needs no `read`:
   kQm │ }
 ```
 
-**Position-free in one line:** `read 1..5` → `insert @0` → `edit 10..12` still verifies `10..12` (`resist` mode). **Multi-session honesty:** `A:10..12+1` shifts `B:20..30→21..31` → `B` passes (drift notice); `B:12..13` overlapping `A` → `E_RANGE_STALE` + fresh rows, one retry.
+**Position-free in one line:** `read 1..5` → `insert @0` → `edit 10..12` still verifies `10..12` (`resist` mode). **Multi-session honesty:** `A:10..12+1` shifts `B:20..30→21..31` → `B` passes (drift notice); `B:12..13` overlapping `A` → `E_STALE_RANGE` + fresh rows, one retry.
 
 Batch atomically — one `edit`, up to 32 same-file ranges:
 
@@ -148,9 +148,9 @@ Env overrides yaml (`DSH_BETTER_EDIT_STORE_DIR`, `DSH_BETTER_EDIT_AUTO_GITIGNORE
 
 ## Why Hashline
 
-**Verified against what was served.** Every resolved line checked against `read`/diff/rejection rows. Stale or unseen → `[E_RANGE_STALE]`/`[E_RANGE_UNSERVED]`/`[E_RANGE_UNVERIFIED]` + fresh `HASH│content`, retry needs no `read`. Session-scoped — sub-agent serves never validate main edits.
+**Verified against what was served.** Every resolved line checked against `read`/diff/rejection rows. Stale or unseen → `[E_STALE_RANGE]`/`[E_UNSERVED_RANGE]` + fresh `HASH│content`, retry needs no `read`. Session-scoped — sub-agent serves never validate main edits.
 
-**Content-addressed.** `canon(line)` strips ASCII whitespace, `xxh32 → 62³=238,328` anchors. Re-inserting identical text keeps its hash; `prettier`/`eslint --fix` between edits doesn't invalidate. Unique by bitset probing — `}`/`import` repeats never collide; cap `238,328` lines (`[E_FILE_TOO_LARGE]`).
+**Content-addressed.** `canon(line)` strips ASCII whitespace, `xxh32 → 62³=238,328` anchors. Re-inserting identical text keeps its hash; `prettier`/`eslint --fix` between edits doesn't invalidate. Unique by bitset probing — `}`/`import` repeats never collide; cap `238,328` lines (`[E_LARGE_FILE]`).
 
 **No loop, no ritual.** No-op → `No changes made`; same no-op ×3 → `[E_NOOP_LOOP]`. Diff/echo/rejection rows count as serves — `read` is recovery, not ritual.
 
@@ -189,13 +189,14 @@ Single stochastic run, `opencode-go/gpt-5.6-luna` high. [Artifact](https://githu
 
 | Code | Meaning |
 | --- | --- |
-| `[E_BAD_SHAPE]`/`[E_BAD_REF]` | Bad tuple shape or not bare `3-char` |
-| `[E_STALE_ANCHOR]`/`[E_AMBIGUOUS_ANCHOR]` | No line / multi-line → `read` |
-| `[E_EDIT_HASH_ECHO]`/`[E_WRITE_HASH_ECHO]` | Copied `HASH│` from same session/path/line — strip and retry |
-| `[E_WOULD_EMPTY]`/`[E_NOT_FOUND]`/`[E_ACCESS]`/`[E_NOT_TEXT]`/`[E_FILE_TOO_LARGE]` | Empty guard / missing / access / binary / >238,328 lines |
-| `[E_BAD_OP]`/`[E_INVALID_PATCH]`/`[E_BARE_HASH_PREFIX]` | Swapped range / `+HASH│` patch marker (auto-corrected) |
+| `[E_BAD_PAYLOAD]` | Bad tuple shape (payload must be `{path, edits}` with 3-position tuples) |
+| `[E_STALE_ANCHOR]` | No line (hash/tombstone/canon miss) / multi-line → `read` |
+| `[E_BAD_ANCHOR]` | Not bare `3-char`, or `replacement_text` carries `HASH│`/diff-preview prefixes — refused, remove and retry |
+| `[E_SERVED_ECHO]` | Copied `HASH│` from same session/path/line — refused, remove and retry |
+| `[E_EMPTY_RANGE]`/`[E_NOT_FOUND]`/`[E_ACCESS]`/`[E_UNSUPPORTED_FILE]`/`[E_LARGE_FILE]` | Empty guard / missing / access / binary / >238,328 lines |
+| `[E_REVERSED_ANCHORS]` | Swapped range — healed with dimmed `[USER]` notice on success, otherwise refused |
 | `[E_BAD_ENCODING]`/`[E_DECODE_FAILED]` | Encoding / decode failed |
-| `[E_NOT_OBSERVED]`/`[E_RANGE_STALE]`/`[E_RANGE_UNSERVED]`/`[E_RANGE_UNVERIFIED]` | Served-state miss — echoed fresh `HASH│content` |
+| `[E_NOT_OBSERVED]`/`[E_STALE_RANGE]`/`[E_UNSERVED_RANGE]` | Served-state miss — echoed fresh `HASH│content` |
 | `[E_UNDO_STALE]`/`[E_UNDO_UNAVAILABLE]` | Undo stale / unavailable |
 | `[E_NOOP_LOOP]`/`[E_BATCH_ABORT]` | 3× same no-op / atomic batch fail → nothing written |
 

@@ -332,7 +332,7 @@ export function currentPositionOfDrifted(served: (string | null)[], currentPosit
 	return servedIndex + delta;
 }
 
-export const DRIFT_NOTICE_HEADING = "drift:";
+export const DRIFT_NOTICE_HEADING = "[USER] drift:";
 
 export interface DriftRow extends ServedRow {
 	content: string;

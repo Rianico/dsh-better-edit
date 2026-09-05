@@ -29,11 +29,11 @@ describe("hashline limits", () => {
     expect(new Set(hashes).size).toBe(MAX_HASH_LINES);
   }, 300_000);
 
-  it("throws a clear E_FILE_TOO_LARGE error above the limit", () => {
+  it("throws a clear E_LARGE_FILE error above the limit", () => {
     const content = Array.from({ length: MAX_HASH_LINES + 1 }, () => "x").join(
       "\n",
     );
-    expect(() => lineHashesPure(content)).toThrow("E_FILE_TOO_LARGE");
+    expect(() => lineHashesPure(content)).toThrow("E_LARGE_FILE");
   }, 300_000);
 
   it("preserves unique hashes at the boundary through the store path", async () => {
@@ -47,7 +47,7 @@ describe("hashline limits", () => {
 });
 
 describe("read tool line cap", () => {
-  it("rejects oversized files with E_FILE_TOO_LARGE before hashing", async () => {
+  it("rejects oversized files with E_LARGE_FILE before hashing", async () => {
     const content = Array.from({ length: MAX_HASH_LINES + 1 }, () => "x").join(
       "\n",
     );
@@ -55,7 +55,7 @@ describe("read tool line cap", () => {
       const { readTool, ctx } = setupReadTest(cwd);
       await expect(
         readTool.execute("r1", { path: "huge.ts" }, undefined, undefined, ctx),
-      ).rejects.toThrow("E_FILE_TOO_LARGE");
+      ).rejects.toThrow("E_LARGE_FILE");
     });
   });
 

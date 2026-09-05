@@ -53,3 +53,33 @@
 - Downstream deep seams: `src/hashline/`, `src/file-view.ts`, `src/session-view.ts`, `src/mutation.ts`, `src/hash-store.ts` (hashAssign), `src/hashline/anchor-pipeline.ts`
 - ADRs to port: `docs/adr/0005-whitespace-insensitive-anchors.md`, `0006→0007 merged payload`, `0008 orphaned heal` (copy+adapt, not verbatim)
 - Verification gates: `npm run typecheck`, `npm test` (vitest), `npm run build` (T7 only). Use `.lsz/tmp` for scratch, never repo root.
+
+## Sync 2026-09-05 — pi-better-edit v1.2.1 → v1.6.0 (audit triage)
+
+**Basis:** `pi-better-edit@7b9195851..87a17eb` (64 commits, v1.2.1 → v1.6.0). Downstream is `dsh-better-edit@0.6.3`. Prior checkpoint `7b91958` absorbed via 0.3.x–0.6.x cherry-picks (#38 boundary-dup removal, #42 tombstone). Decisions: preserve deep seams (AnchorPipeline, SessionView, FileView, Mutation, contract.ts, guidance/) — port behavior, never structure; keep payload contract `{path, edits:[[h,h,t]]}` and `CANON_VERSION=2`.
+
+### Already absorbed (no action)
+
+- #54 boundary-dup removal → 0.6.0 (#38) + ADR-0007.
+- #56 tombstone+epoch core → 0.6.1 (#42) + ADR-0013.
+- ADR-0009 echo guard → ADR-0005 + `write-hook.ts` (upstream cites our #29).
+- ADR-0010 batch-note filtering → `edit-response.ts` strips `Batch drift note:` from model content (partial — full details-only routing moves to T1).
+- #70 dense re-serve after write → covered by design (write hook auto-reads full file via `readAndServe`); verify with test in T4 lane.
+
+### Ignored by design
+
+- v1.4.0/v1.5.0 arch deepening (MutationEngine, ServedSession, FileContent, LifecycleHooks, payload-contract module, tui-presenter) — structural divergence, intentional.
+- Scaffold/CI (semantic-release, husky tolerance, pre-push, coverage thresholds, node 22) — ours is tag-first + own release script.
+- v1.2.x lens P1–P7 + docs (Obsidian prompt merge, format normalization) — upstream-internal.
+- ADR-0002 store-seam amendment — structural, no semantic change.
+
+### Tickets (branch per ticket, worktree per branch, base `main`)
+
+| Ticket | Branch | Issue | Upstream source | Seam | Acceptance |
+| -------- | -------- | ------- | ----------------- | ------ | ------------ |
+| **T1 — audience split + code renames** | `absorb/t1-audience` | #45 | `dd1a779` (ADR-0014), `b0bcf0b` | error codes repo-wide, `edit-response.ts`, `CONTEXT.md`, new ADR, `guidance/` | old-code grep zero hits in `src/`; tests on new codes + `[MODEL]`/`[USER]`; `typecheck+vitest` green |
+| **T2 — canon-deficit drift** | `absorb/t2-drift-canon` | #46 | `95c4703`, `3d0ba99` | `session-view.ts` (`computeDrift`/`scanDrift` + `servedCanons` threading) | duplicate-line sequential edits silent; true loss reported; `typecheck+vitest` green |
+| **T3 — Gemma bleed hardening** | `absorb/t3-gemma` | #47 | `e67f493` | `prompts.ts`, `contract.ts` (`sanitizePath`) | `EDIT_DESCRIPTION.length < 800`; wrapped-path tests; `typecheck+vitest` green |
+| **T4 — epoch full-read gating** | `absorb/t4-epoch` | #48 | `3918292` | `read-and-serve.ts` (`clearDriftReported` gate), `mutation.ts` zero-serve check | partial preserves drift-reported; full clears; `typecheck+vitest` green |
+
+Integration: merge T1→T2→T3→T4 onto `main` sequentially (T1 first — it renames codes the others touch), `npm run build` on final lane, single PR per ticket with `Closes #NN`.

@@ -44,7 +44,7 @@ describe("coverage-f: anchor-pipeline fmtMismatch", () => {
     const edit: any = { hash_bounds: [{ hash: "zzz" }, { hash: hashes[2]! }], content_lines: ["X"] };
     expect(() => applyEdit(content, edit, undefined, hashes, "file.txt", served)).toThrow(/E_STALE_ANCHOR/);
   });
-  it("triggers E_AMBIGUOUS_ANCHOR", () => {
+  it("triggers E_STALE_ANCHOR", () => {
     const content = "a\nb\na\nb\na";
     const hashes = lineHashesPure(content);
     // create duplicate hashes scenario: use lineHashesPure on content with duplicate lines will produce different hashes per line content, but we can forge served with duplicate
@@ -58,7 +58,7 @@ describe("coverage-f: anchor-pipeline fmtMismatch", () => {
       const res = applyEdit(dupContent, edit, undefined, dupHashes);
       expect(res.content).toBeDefined();
     } catch (e: any) {
-      expect(String(e.message)).toMatch(/E_AMBIGUOUS_ANCHOR|E_STALE_ANCHOR/);
+      expect(String(e.message)).toMatch(/E_STALE_ANCHOR|E_STALE_ANCHOR/);
     }
   });
   it("verifyServedRange stale and unsaved branches", () => {
@@ -75,7 +75,7 @@ describe("coverage-f: anchor-pipeline fmtMismatch", () => {
         fileHashes: hashes,
         fileLines: ["a", "b", "c"],
       }),
-    ).toThrow(/E_RANGE_/);
+    ).toThrow(/E_(STALE|UNSERVED)_RANGE/);
     const servedUnserved: any = [hashes[0]!, null, hashes[2]!];
     expect(() =>
       verifyServedRange({
@@ -87,7 +87,7 @@ describe("coverage-f: anchor-pipeline fmtMismatch", () => {
         fileHashes: hashes,
         fileLines: ["a", "b", "c"],
       }),
-    ).toThrow(/E_RANGE_UNSERVED/);
+    ).toThrow(/E_UNSERVED_RANGE/);
     const servedUnverified: any = [null, null, null];
     expect(() =>
       verifyServedRange({
@@ -99,7 +99,7 @@ describe("coverage-f: anchor-pipeline fmtMismatch", () => {
         fileHashes: hashes,
         fileLines: ["a", "b", "c"],
       }),
-    ).toThrow(/E_RANGE_UNVERIFIED/);
+    ).toThrow(/E_UNSERVED_RANGE/);
   });
 });
 

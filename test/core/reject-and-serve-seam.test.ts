@@ -43,7 +43,7 @@ describe("recordEchoServes — serve-record policy", () => {
 });
 
 describe("applyEdit — stale range beats would-empty", () => {
-	it("rejects E_RANGE_STALE before E_WOULD_EMPTY when both apply", () => {
+	it("rejects E_STALE_RANGE before E_EMPTY_RANGE when both apply", () => {
 		const content = "aaa\nbbb\nccc";
 		const hashes = lineHashesPure(content);
 		const served = [hashes[0]!, "S1", hashes[2]!];
@@ -64,7 +64,7 @@ describe("applyEdit — stale range beats would-empty", () => {
 			error = caught;
 		}
 		expect(error).toBeInstanceOf(ServedRejectionError);
-		expect((error as ServedRejectionError).code).toBe("E_RANGE_STALE");
+		expect((error as ServedRejectionError).code).toBe("E_STALE_RANGE");
 	});
 });
 describe("finalizeToolResult", () => {

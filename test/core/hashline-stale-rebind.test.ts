@@ -54,7 +54,7 @@ describe("retired hash anchors", () => {
 					remove_to: staleAnchor,
 					replacement_text: "  show: false,",
 				}),
-			).rejects.toThrow(/E_STALE_ANCHOR|E_RANGE_STALE/);
+			).rejects.toThrow(/E_STALE_ANCHOR|E_STALE_RANGE/);
 			expect(await readFile(path, "utf-8")).toBe(expected);
 		});
 	});
@@ -148,7 +148,7 @@ describe("retired hash anchors", () => {
 					remove_to: staleAnchor,
 					replacement_text: "wrong",
 				}),
-			).rejects.toThrow(/E_STALE_ANCHOR|E_RANGE_STALE/);
+			).rejects.toThrow(/E_STALE_ANCHOR|E_STALE_RANGE/);
 		});
 	});
 
@@ -190,7 +190,7 @@ describe("retired hash anchors", () => {
 					remove_to: staleAnchor,
 					replacement_text: "  show: false,",
 				}),
-			).rejects.toThrow(/E_STALE_ANCHOR|E_RANGE_STALE/);
+			).rejects.toThrow(/E_STALE_ANCHOR|E_STALE_RANGE/);
 			await harness.editTool.execute("fresh-after-undo", {
 				path: "undo.ts",
 				remove_from: restoredAnchor,

@@ -42,9 +42,9 @@ describe("file-encoding-state — deterministic admission (pure, no filesystem)"
     await expect(decodeForOpen(bytes, cfgOff, { encodingHint: "not-an-enc" })).rejects.toThrow(/E_BAD_ENCODING/);
   });
 
-  it("E_NOT_TEXT + Top-3 always pushed when autoGuess off and not UTF-8", async () => {
+  it("E_UNSUPPORTED_FILE + Top-3 always pushed when autoGuess off and not UTF-8", async () => {
     const gbkBytes = iconv.encode("你好世界你好", "gbk");
-    await expect(decodeForOpen(gbkBytes, cfgOff, { displayPath: "/abs/gbk.txt" })).rejects.toThrow(/E_NOT_TEXT.*Top-3 guesses/);
+    await expect(decodeForOpen(gbkBytes, cfgOff, { displayPath: "/abs/gbk.txt" })).rejects.toThrow(/E_UNSUPPORTED_FILE.*Top-3 guesses/);
     await expect(decodeForOpen(gbkBytes, cfgOff)).rejects.toThrow(/Top-3 guesses/);
   });
 

@@ -112,7 +112,7 @@ describe("loadFileKindAndText — maxLines early bailout", () => {
       const path = join(cwd, "many-lines.txt");
       await expect(
         loadFileKindAndText(path, { maxLines: 5 }),
-      ).rejects.toThrow(/\[E_FILE_TOO_LARGE\].*more than 5 lines/);
+      ).rejects.toThrow(/\[E_LARGE_FILE\].*more than 5 lines/);
     });
   });
 
@@ -121,7 +121,7 @@ describe("loadFileKindAndText — maxLines early bailout", () => {
       const path = join(cwd, "many-lines.txt");
       await expect(
         loadFileKindAndText(path, { maxLines: 5, displayPath: "many-lines.txt" }),
-      ).rejects.toThrow(/\[E_FILE_TOO_LARGE\] many-lines\.txt/);
+      ).rejects.toThrow(/\[E_LARGE_FILE\] many-lines\.txt/);
     });
   });
 
@@ -139,7 +139,7 @@ describe("loadFileKindAndText — maxLines early bailout", () => {
       await writeFile(path, Array.from({ length: 8 }, (_, i) => `line${i}`).join("\r\n"), "utf-8");
       await expect(
         loadFileKindAndText(path, { maxLines: 5 }),
-      ).rejects.toThrow(/\[E_FILE_TOO_LARGE\]/);
+      ).rejects.toThrow(/\[E_LARGE_FILE\]/);
     });
   });
 

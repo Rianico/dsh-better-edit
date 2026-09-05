@@ -19,30 +19,30 @@ describe("parseHashRef", () => {
 		);
 	});
 	it("rejects leading >>> markers (strict mode: no marker stripping)", () => {
-		expect(() => parseHashRef(">>> aB3")).toThrow(/E_BAD_REF/);
+		expect(() => parseHashRef(">>> aB3")).toThrow(/E_BAD_ANCHOR/);
 	});
 
 	it("rejects + and - diff markers (strict mode: anchor only)", () => {
-		expect(() => parseHashRef("+aB3")).toThrow(/E_BAD_REF/);
-		expect(() => parseHashRef("-aB3")).toThrow(/E_BAD_REF/);
-		expect(() => parseHashRef("-#aB3")).toThrow(/E_BAD_REF/);
+		expect(() => parseHashRef("+aB3")).toThrow(/E_BAD_ANCHOR/);
+		expect(() => parseHashRef("-aB3")).toThrow(/E_BAD_ANCHOR/);
+		expect(() => parseHashRef("-#aB3")).toThrow(/E_BAD_ANCHOR/);
 	});
 
 	it("rejects - and _ anywhere in the anchor (not in the alphabet)", () => {
-		expect(() => parseHashRef("-qk")).toThrow(/E_BAD_REF/);
-		expect(() => parseHashRef("-_-")).toThrow(/E_BAD_REF/);
-		expect(() => parseHashRef("---")).toThrow(/E_BAD_REF/);
-		expect(() => parseHashRef("aB_")).toThrow(/E_BAD_REF/);
-		expect(() => parseHashRef("aB-")).toThrow(/E_BAD_REF/);
+		expect(() => parseHashRef("-qk")).toThrow(/E_BAD_ANCHOR/);
+		expect(() => parseHashRef("-_-")).toThrow(/E_BAD_ANCHOR/);
+		expect(() => parseHashRef("---")).toThrow(/E_BAD_ANCHOR/);
+		expect(() => parseHashRef("aB_")).toThrow(/E_BAD_ANCHOR/);
+		expect(() => parseHashRef("aB-")).toThrow(/E_BAD_ANCHOR/);
 	});
 
 	it("rejects + as a hash body character (not in alphabet)", () => {
-		expect(() => parseHashRef("+qk")).toThrow(/E_BAD_REF/);
-		expect(() => parseHashRef("#+qk")).toThrow(/E_BAD_REF/);
+		expect(() => parseHashRef("+qk")).toThrow(/E_BAD_ANCHOR/);
+		expect(() => parseHashRef("#+qk")).toThrow(/E_BAD_ANCHOR/);
 	});
 
-	it("rejects malformed anchors with E_BAD_REF", () => {
-		expect(() => parseHashRef("invalid")).toThrow(/^\[E_BAD_REF\]/);
+	it("rejects malformed anchors with E_BAD_ANCHOR", () => {
+		expect(() => parseHashRef("invalid")).toThrow(/\[E_BAD_ANCHOR\]/);
 	});
 
 	it("rejects legacy LINE#HASH format", () => {
@@ -52,19 +52,19 @@ describe("parseHashRef", () => {
 	});
 
 	it("rejects wrong-length anchors", () => {
-		expect(() => parseHashRef("aB")).toThrow(/E_BAD_REF/);
-		expect(() => parseHashRef("aB3x")).toThrow(/E_BAD_REF/);
-		expect(() => parseHashRef("#aB3x")).toThrow(/E_BAD_REF/);
+		expect(() => parseHashRef("aB")).toThrow(/E_BAD_ANCHOR/);
+		expect(() => parseHashRef("aB3x")).toThrow(/E_BAD_ANCHOR/);
+		expect(() => parseHashRef("#aB3x")).toThrow(/E_BAD_ANCHOR/);
 	});
 
 	it("rejects anchors with invalid alphabet", () => {
-		expect(() => parseHashRef("!@#")).toThrow(/^\[E_BAD_REF\]/);
+		expect(() => parseHashRef("!@#")).toThrow(/\[E_BAD_ANCHOR\]/);
 	});
 });
 
 describe("parseText", () => {
 	it("rejects null with a clear error", () => {
-		expect(() => parseText(null as unknown as string)).toThrow(/^\[E_BAD_SHAPE\].*must be a string with \\n line separators/);
+		expect(() => parseText(null as unknown as string)).toThrow(/\[E_BAD_PAYLOAD\].*must be a string with \\n line separators/);
 	});
 
 	it("rejects array input with clear error (must use string)", () => {

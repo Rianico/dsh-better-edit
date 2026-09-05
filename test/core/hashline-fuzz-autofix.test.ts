@@ -130,7 +130,7 @@ async function runStep(
   try {
     result = applyEdit(content, edit, undefined, hashes, path);
   } catch (error) {
-    if (error instanceof Error && /^\[E_WOULD_EMPTY\]/.test(error.message)) return null;
+    if (error instanceof Error && /\[E_EMPTY_RANGE\]/.test(error.message)) return null;
     throw error;
   }
   expect(result.content).toBe(expected);
