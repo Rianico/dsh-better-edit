@@ -1,9 +1,8 @@
-## [Unreleased]
+## [0.6.3](https://github.com/Rianico/dsh-better-edit/compare/v0.6.2...v0.6.3) (2026-09-05)
 
-### Fixed
+### Bug Fixes
 
-- **self-heal:** guard against undefined layer on early tools/change
-- **self-heal:** restore hash-anchored read/edit after external takeover (#43)
+* **self-heal:** restore hash-anchored read/edit after external takeover ([#43](https://github.com/Rianico/dsh-better-edit/issues/43)) ([#44](https://github.com/Rianico/dsh-better-edit/issues/44)) ([b53fc75](https://github.com/Rianico/dsh-better-edit/commit/b53fc753bcd71f1950bde61ad81e1b7b94758273))
 
 ## [0.6.2](https://github.com/Rianico/dsh-better-edit/compare/v0.6.1...v0.6.2) (2026-09-03)
 
