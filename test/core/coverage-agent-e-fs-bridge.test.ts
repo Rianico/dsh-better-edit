@@ -51,7 +51,7 @@ describe("coverage-agent-e fs-bridge", () => {
     });
   });
 
-  it("autoGuess disabled surfaces top-3 E_NOT_TEXT", async () => {
+  it("autoGuess disabled surfaces top-3 E_UNSUPPORTED_FILE", async () => {
     setAutoGuessEnv(false);
     await withTempFile("a.txt", "hi", async ({ cwd }) => {
       const gbkBytes = iconv.encode("你好世界 hello world 你好世界", "gbk");
@@ -72,8 +72,8 @@ describe("coverage-agent-e fs-bridge", () => {
       const harness = setupIntegrationTest(cwd);
       const res = await harness.readTool.execute("read", { path: "gbk2.txt" } as any);
       const txt = getText(res);
-      // should auto-decode without E_NOT_TEXT, and set memo
-      expect(txt).not.toMatch(/\[E_NOT_TEXT\]/);
+      // should auto-decode without E_UNSUPPORTED_FILE, and set memo
+      expect(txt).not.toMatch(/\[E_UNSUPPORTED_FILE\]/);
       expect(txt.length).toBeGreaterThan(5);
       // footer may be present for mid-confidence
       const footer = getAutoGuessFooter(`tk:${join(cwd, "gbk2.txt")}`) ?? getAutoGuessFooter(join(cwd, "gbk2.txt"));
@@ -160,7 +160,7 @@ describe("coverage-agent-e fs-bridge", () => {
     });
   });
 
-  it("ctxFsIO autoGuess disabled surfaces E_NOT_TEXT via mocked fs", async () => {
+  it("ctxFsIO autoGuess disabled surfaces E_UNSUPPORTED_FILE via mocked fs", async () => {
     const { ctxFsIO, clearEncodingState, clearAutoGuessFooter } = await import("../../src/fs-bridge.js");
     const { _resetConfigCache } = await import("../../src/store-config.js");
     delete process.env.DSH_BETTER_EDIT_AUTO_GUESS_ENCODING;
@@ -176,7 +176,7 @@ describe("coverage-agent-e fs-bridge", () => {
     };
     const fakeCtx: any = { waterfall: async () => undefined, emit: () => {} };
     const io = ctxFsIO(fakeFs, fakeCtx);
-    await expect(io.readText("/abs/gbk.txt")).rejects.toThrow(/E_NOT_TEXT|Top-3/);
+    await expect(io.readText("/abs/gbk.txt")).rejects.toThrow(/E_UNSUPPORTED_FILE|Top-3/);
   });
 
   it("ctxFsIO autoGuess true decodes gbk via mocked fs", async () => {

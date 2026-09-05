@@ -256,7 +256,7 @@ export async function loadFileKindAndText(
         }
         if (newlineCount > options.maxLines) {
           throw new Error(
-            `[E_FILE_TOO_LARGE] ${options.displayPath ?? filePath} has more than ${options.maxLines} lines, exceeding the ${options.maxLines}-line edit limit. Hashline editing targets source-sized files; for very large files use write or a non-line-based approach.`,
+            `[MODEL] [E_LARGE_FILE] ${options.displayPath ?? filePath} has more than ${options.maxLines} lines, exceeding the ${options.maxLines}-line edit limit. Hashline editing targets source-sized files; for very large files use write or a non-line-based approach.`,
           );
         }
       }
@@ -301,28 +301,28 @@ export async function valAccess(
   } catch (error: unknown) {
     const code = errCode(error);
     if (code === "ENOENT") {
-      throw new Error(`[E_NOT_FOUND] File not found: ${path}`);
+      throw new Error(`[MODEL] [E_NOT_FOUND] File not found: ${path}`);
     }
     if (code === "EACCES" || code === "EPERM") {
       const accessLabel = accessMode & constants.W_OK ? "not writable" : "not readable";
-      throw new Error(`[E_ACCESS] File is ${accessLabel}: ${path}`);
+      throw new Error(`[MODEL] [E_ACCESS] File is ${accessLabel}: ${path}`);
     }
     if (code === "ELOOP") {
-      throw new Error(`[E_ACCESS] Too many symbolic links while resolving: ${path}`);
+      throw new Error(`[MODEL] [E_ACCESS] Too many symbolic links while resolving: ${path}`);
     }
-    throw new Error(`[E_ACCESS] Cannot access file: ${path}`);
+    throw new Error(`[MODEL] [E_ACCESS] Cannot access file: ${path}`);
   }
 }
 
 export function valKind(file: LFile, path: string): asserts file is { kind: "text"; text: string; hadUtf8DecodeErrors?: true } {
   if (file.kind === "directory") {
-    throw new Error(`[E_NOT_TEXT] Path is a directory: ${path}. Use ls to inspect directories.`);
+    throw new Error(`[MODEL] [E_UNSUPPORTED_FILE] Path is a directory: ${path}.`);
   }
   if (file.kind === "binary") {
-    throw new Error(`[E_NOT_TEXT] Path is a binary file: ${path} (${file.description}). Hashline edit only supports text files.`);
+    throw new Error(`[MODEL] [E_UNSUPPORTED_FILE] Path is a binary file: ${path} (${file.description}). Hashline edit only supports text files.`);
   }
   if (file.kind === "image") {
-    throw new Error(`[E_NOT_TEXT] Path is an image file: ${path}. Hashline edit only supports text files.`);
+    throw new Error(`[MODEL] [E_UNSUPPORTED_FILE] Path is an image file: ${path}. Hashline edit only supports text files.`);
   }
 }
 
@@ -396,7 +396,7 @@ export async function normFromText(input: {
     const lineCount = visLines(normalized).length;
     if (lineCount > input.maxLines) {
       throw new Error(
-        `[E_FILE_TOO_LARGE] ${displayPath} has ${lineCount} lines, exceeding the ${input.maxLines}-line edit limit. Hashline editing targets source-sized files; for very large files use write or a non-line-based approach.`,
+        `[MODEL] [E_LARGE_FILE] ${displayPath} has ${lineCount} lines, exceeding the ${input.maxLines}-line edit limit. Hashline editing targets source-sized files; for very large files use write or a non-line-based approach.`,
       );
     }
   }
@@ -461,7 +461,7 @@ function normPosInt(
   if (value === undefined) return undefined;
   if (!Number.isInteger(value) || value < 1) {
     throw new Error(
-      `[E_BAD_SHAPE] Read request field "${name}" must be a positive integer.`,
+      `[MODEL] [E_BAD_PAYLOAD] Read request field "${name}" must be a positive integer.`,
     );
   }
   return value;

@@ -57,18 +57,18 @@ describe("tool-edit coverage", () => {
         expect(await readFile(path, "utf-8")).toContain("replaced");
       } catch (e) {
         // if multiple matches or no match, error is expected
-        expect((e as Error).message).toMatch(/E_BAD_SHAPE/);
+        expect((e as Error).message).toMatch(/E_BAD_PAYLOAD/);
       }
     });
   });
 
-  it("resolveNullPath with unknown hashes throws E_BAD_SHAPE", async () => {
+  it("resolveNullPath with unknown hashes throws E_BAD_PAYLOAD", async () => {
     await withTempFile("t.txt", "a\nb\n", async ({ cwd }) => {
       const io = localIO();
       const sandbox = new FsSandboxController({ fs: { sandboxMode: undefined }, get: ()=>undefined } as never);
       const tool = buildEditTool(io, sandbox);
       const exec = makeExec(cwd);
-      await expect(tool.execute({ path: null, edits: [["zzz", "zzz", "x"]] } as any, exec)).rejects.toThrow(/E_BAD_SHAPE/);
+      await expect(tool.execute({ path: null, edits: [["zzz", "zzz", "x"]] } as any, exec)).rejects.toThrow(/E_BAD_PAYLOAD/);
     });
   });
 

@@ -32,7 +32,7 @@ export function rejectUnknownFields(
   if (unknown.length > 0) {
     const suffix = hint ? ` ${hint}` : "";
     throw new Error(
-      `[E_BAD_SHAPE] ${label} contains unknown or unsupported fields: ${unknown.join(", ")}.${suffix}`,
+      `[MODEL] [E_BAD_PAYLOAD] ${label} contains unknown or unsupported fields: ${unknown.join(", ")}.${suffix}`,
     );
   }
 }

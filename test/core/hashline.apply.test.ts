@@ -146,7 +146,7 @@ describe("applyEdit — noop detection", () => {
 			],
 			content_lines: [],
 		};
-		expect(() => applyEdit(content, edit)).toThrow(/^\[E_WOULD_EMPTY\]/);
+		expect(() => applyEdit(content, edit)).toThrow(/\[E_EMPTY_RANGE\]/);
 	});
 
 	it("allows whole-file rewrite when the final content is non-empty", async () => {
@@ -313,7 +313,7 @@ describe("applyEdit — edge cases (empty, single-line, no trailing newline)", (
 			],
 			content_lines: [],
 		};
-		expect(() => applyEdit(content, edit)).toThrow(/^\[E_WOULD_EMPTY\]/);
+		expect(() => applyEdit(content, edit)).toThrow(/\[E_EMPTY_RANGE\]/);
 	});
 
 	it("edits a line in a file with no trailing newline", async () => {

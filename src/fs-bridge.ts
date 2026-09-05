@@ -110,14 +110,14 @@ export function mapFsError(error: unknown, displayPath: string): never {
   ) {
     const code = (error as unknown as { code: string }).code;
     if (code === "FS_NOT_FOUND") {
-      throw new Error(`[E_NOT_FOUND] File not found: ${displayPath}`);
+      throw new Error(`[MODEL] [E_NOT_FOUND] File not found: ${displayPath}`);
     }
     if (code === "FS_PERMISSION_DENIED") {
-      throw new Error(`[E_ACCESS] Cannot access file: ${displayPath}`);
+      throw new Error(`[MODEL] [E_ACCESS] Cannot access file: ${displayPath}`);
     }
     if (code === "FS_NOT_TEXT" || code === "FS_NOT_REGULAR_FILE") {
       throw new Error(
-        `[E_NOT_TEXT] Path is not a readable UTF-8 text file: ${displayPath}. Hashline editing only supports text files. Try read({encoding: "gbk"}) or enable autoGuessEncoding.`,
+        `[MODEL] [E_UNSUPPORTED_FILE] Path is not a readable UTF-8 text file: ${displayPath}. Hashline editing only supports text files. Try read({encoding: "gbk"}) or enable autoGuessEncoding.`,
       );
     }
     if (code === "FS_BAD_ENCODING") {
@@ -128,7 +128,7 @@ export function mapFsError(error: unknown, displayPath: string): never {
     }
     if (code === "FS_STALE_VERSION") {
       throw new Error(
-        `[E_RANGE_STALE] The file changed on disk since it was read (version guard rejected the write). Call read() to get fresh anchors, then retry.`,
+        `[MODEL] [E_STALE_RANGE] The file changed on disk since it was read (version guard rejected the write). Call read() to get fresh anchors, then retry.`,
       );
     }
     if (code === "FS_NOT_OBSERVED") {
@@ -359,7 +359,7 @@ export function localIO(): FileIO {
         if (decoded.footer) recordFooter(absolutePath, decoded.footer);
         return decoded.text;
       }
-      // Deterministic path via seam, with local fallback for E_NOT_TEXT when autoGuess off
+      // Deterministic path via seam, with local fallback for E_UNSUPPORTED_FILE when autoGuess off
       try {
         const bytes = await readFile(absolutePath);
         const cfgL = loadConfig();
@@ -369,8 +369,8 @@ export function localIO(): FileIO {
         if (decoded.footer) recordFooter(absolutePath, decoded.footer);
         return decoded.text;
       } catch (error) {
-        // Local fallback: when autoGuess off, E_NOT_TEXT should fall back to raw UTF-8 with � (no throw)
-        if (error instanceof Error && error.message.includes("[E_NOT_TEXT]")) {
+        // Local fallback: when autoGuess off, E_UNSUPPORTED_FILE should fall back to raw UTF-8 with � (no throw)
+        if (error instanceof Error && error.message.includes("[E_UNSUPPORTED_FILE]")) {
           return readFile(absolutePath, "utf-8");
         }
         throw error;

@@ -146,7 +146,7 @@ describe("served state — merge helper (stale-tail invariant)", () => {
 			// The file shrank to 1 line; the new serve must not keep the old
 			// tail — a hash held at a position beyond the line count is a
 			// stale claim that later makes boundary anchors look ambiguous
-			// (E_RANGE_UNVERIFIED, "served at N positions").
+			// (E_UNSERVED_RANGE, "served at N positions").
 			await recordServed("sessionA", "/p.ts", [{ position: 0, hash: "abc" }], 1);
 			expect(await loadServed("sessionA", "/p.ts")).toEqual(["abc"]);
 			expect(

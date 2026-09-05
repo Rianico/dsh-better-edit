@@ -154,7 +154,7 @@ describe("stale served tail (regression)", () => {
 			// write auto-read). Before the fix the second serve left the stale
 			// positions 2..7 in the array, so the surviving "c" line's hash
 			// appeared at BOTH its old position 2 and its new position 1 —
-			// and any edit targeting it failed E_RANGE_UNVERIFIED.
+			// and any edit targeting it failed E_UNSERVED_RANGE.
 			await withWorkspace(ws, async () => {
 				const big = "a\nb\nc\nd\ne\nf\ng\nh\n";
 				writeFileSync(path, big);

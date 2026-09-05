@@ -95,11 +95,11 @@ describe("rejectUnknownFields", () => {
     expect(() => rejectUnknownFields(obj, allowed, "Request")).not.toThrow();
   });
 
-  it("throws [E_BAD_SHAPE] for a single unknown field", () => {
+  it("throws [E_BAD_PAYLOAD] for a single unknown field", () => {
     const obj = { path: "test.txt", unknown_field: "value" };
     const allowed = new Set(["path"]);
     expect(() => rejectUnknownFields(obj, allowed, "Request")).toThrow(
-      /^\[E_BAD_SHAPE\]/,
+      /\[E_BAD_PAYLOAD\]/,
     );
   });
 

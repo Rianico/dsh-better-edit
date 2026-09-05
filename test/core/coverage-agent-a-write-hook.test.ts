@@ -99,7 +99,7 @@ describe("write-hook coverage agent-a", () => {
         const sessionKey = "sess-e-" + Math.random();
         const preview = await withWorkspace(cwd, () => readAndServe(io, file, cwd, { sessionKey }));
         const denial = await withWorkspace(cwd, () => servedHashEchoDenial(io, file, preview.text, cwd, sessionKey));
-        expect(denial).toContain("E_WRITE_HASH_ECHO");
+        expect(denial).toContain("E_SERVED_ECHO");
         expect(denial).toContain(file);
       } finally {
         shutdownHashStore();
@@ -197,7 +197,7 @@ describe("write-hook coverage agent-a", () => {
         const nextPre3 = vi.fn(async () => ({ kind: "allow" } as PreToolDecision));
         const dec3 = await pre({ name: "write", arguments: { file_path: file, content: preview.text }, signal: new AbortController().signal, agent: { id: sessionKey, session: { id: sessionKey, header: { cwd: dir } } } } as any, nextPre3);
         expect(dec3.kind).toBe("deny");
-        expect((dec3 as any).reason).toContain("E_WRITE_HASH_ECHO");
+        expect((dec3 as any).reason).toContain("E_SERVED_ECHO");
         expect(nextPre3).not.toHaveBeenCalled();
 
         // missing path/content -> next

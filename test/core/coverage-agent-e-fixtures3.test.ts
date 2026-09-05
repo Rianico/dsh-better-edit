@@ -39,7 +39,7 @@ describe("coverage-agent-e fixtures3", () => {
   it("wrapEdit handles no edits and no remove_from", async () => {
     await withTempFile("a.txt", "hi", async ({ cwd }) => {
       const harness: any = setupIntegrationTest(cwd);
-      // No edits and no remove_from should go to base.execute with same params and then throw E_BAD_SHAPE
+      // No edits and no remove_from should go to base.execute with same params and then throw E_BAD_PAYLOAD
       await expect(harness.editTool.execute("edit", { path: "a.txt" } as any)).rejects.toThrow();
       await expect(harness.editTool.execute("edit", { path: "a.txt", edits: [] } as any)).rejects.toThrow();
     });

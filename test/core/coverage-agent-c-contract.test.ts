@@ -72,13 +72,13 @@ describe("coverage: contract.ts", () => {
 
   it("prepareEditArguments throws with hint on bad shape", () => {
     expect(() => prepareEditArguments({ path: "a", edits: [["a", "b", "c"]] })).not.toThrow();
-    expect(() => prepareEditArguments(null)).toThrow(/E_BAD_SHAPE/);
-    expect(() => prepareEditArguments({ path: "", edits: [] } as any)).toThrow(/E_BAD_SHAPE/);
+    expect(() => prepareEditArguments(null)).toThrow(/E_BAD_PAYLOAD/);
+    expect(() => prepareEditArguments({ path: "", edits: [] } as any)).toThrow(/E_BAD_PAYLOAD/);
     expect(() => prepareEditArguments("bare string" as any)).toThrow(/Received a bare string/);
     expect(() => prepareEditArguments(undefined as any)).toThrow(/Received no arguments/);
     expect(() => prepareEditArguments(null as any)).toThrow(/Received null/);
     const longInput = { path: "a", edits: "bad" as any, extra: "x".repeat(200) };
-    expect(() => prepareEditArguments(longInput)).toThrow(/E_BAD_SHAPE/);
+    expect(() => prepareEditArguments(longInput)).toThrow(/E_BAD_PAYLOAD/);
   });
 
   it("assertEditRequest validates all fields", () => {
@@ -86,7 +86,7 @@ describe("coverage: contract.ts", () => {
     expect(() => assertEditRequest(good)).not.toThrow();
 
     // not normalized
-    expect(() => assertEditRequest({ path: "a", edits: [{ remove_from: "a", remove_to: "b", replacement_text: "c" }] } as any)).toThrow(/E_BAD_SHAPE/);
+    expect(() => assertEditRequest({ path: "a", edits: [{ remove_from: "a", remove_to: "b", replacement_text: "c" }] } as any)).toThrow(/E_BAD_PAYLOAD/);
 
     // unknown fields
     const withExtra = { ...good as any, extraField: "bad" };
