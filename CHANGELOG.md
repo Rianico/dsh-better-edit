@@ -1,3 +1,9 @@
+## [Unreleased]
+
+### Documentation
+
+- migrate CLAUDE.md to AGENTS.md with symlink
+
 ## [0.6.3](https://github.com/Rianico/dsh-better-edit/compare/v0.6.2...v0.6.3) (2026-09-05)
 
 ### Bug Fixes
