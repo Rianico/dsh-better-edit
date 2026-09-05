@@ -3,15 +3,16 @@
 ### Features
 
 - **session-view:** canon-deficit drift instead of hash rotation (Closes #46) (#50)
-- user/model audience split + glossary error codes (#49) (BREAKING CHANGE)
+- user/model audience split + glossary error codes (#49)
 
 ### Fixed
 
-- **served:** epoch lifecycle belongs to full reads (Closes #48)
+- **served:** epoch lifecycle belongs to full reads (Closes #48) (#54)
 - **edit:** Gemma-4 tool-call bleed hardening + prompt channel wording (Closes #47) (#52)
 
 ### Documentation
 
+- **absorb:** record v1.6.0 checkpoint 87a17eb after T1-T4
 - migrate CLAUDE.md to AGENTS.md with symlink
 
 ## [0.6.3](https://github.com/Rianico/dsh-better-edit/compare/v0.6.2...v0.6.3) (2026-09-05)

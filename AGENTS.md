@@ -21,7 +21,7 @@ Prefer issues + pull requests. See [`.agents/skills/git-std.md`](.agents/skills/
 
 Upstream: <https://github.com/Rianico/pi-better-edit> — local checkout `../pi-better-edit` if present; add remote when needed: `git remote add upstream https://github.com/Rianico/pi-better-edit.git`.
 
-Last absorbed checkpoint: `7b9195851037623484fe2840d081dab09f9f29d1` (2026-08-21 — fix: dense post-edit servedRows, post-v1.1.4). Previous checkpoint `c1f080048cc28c6b9cc5bb7ede2f3f572dc8b450` (v1.1.4) was absorbed from base `6a9cefca6c6e7011f5a20f058f9e17e3375419da` (1.1.3) as `v0.3.0` via `absorb/t1`–`t7` worktrees (54 commits, ADRs 0002–0004 + payload break). Next absorb starts from `7b9195851..HEAD` (or `7b9195851..upstream/main`).
+Last absorbed checkpoint: `87a17ebf14a1d980015b721a4fc7082d4c3b9635` (2026-09-05 — v1.6.0; absorbed as #45–#48 via absorb/t1-audience, t2-drift-canon, t3-gemma, t4-epoch). Previous: `7b9195851037623484fe2840d081dab09f9f29d1` (2026-08-21 — fix: dense post-edit servedRows, post-v1.1.4). Previous checkpoint `c1f080048cc28c6b9cc5bb7ede2f3f572dc8b450` (v1.1.4) was absorbed from base `6a9cefca6c6e7011f5a20f058f9e17e3375419da` (1.1.3) as `v0.3.0` via `absorb/t1`–`t7` worktrees (54 commits, ADRs 0002–0004 + payload break). Next absorb starts from `7b9195851..HEAD` (or `7b9195851..upstream/main`).
 
 Procedure — repeat every sync and record the new hash here:
 
@@ -38,7 +38,10 @@ Checkpoint history (newest first):
 - 2026-08-21 — `7b9195851037623484fe2840d081dab09f9f29d1` — fix: dense post-edit servedRows to keep chained edits verifiable (1 commit post-v1.1.4) — absorbed as 0.3.x fix.
 - 2026-08-20 — `6a9cefca6c6e7011f5a20f058f9e17e3375419da` → `c1f080048cc28c6b9cc5bb7ede2f3f572dc8b450` (v1.1.4, 54 commits) — absorbed as `v0.3.0` via `absorb/t1-canon` … `absorb/t7-integration` (see `docs/absorption-plan.md`, ADRs 0002–0004, 0007–0008).
 
+- 2026-09-05 — `7b9195851..87a17eb` (v1.2.1 → v1.6.0, 64 commits) — absorbed as #45 (audience split + code renames, dd1a779), #46 (canon-deficit drift, 95c4703), #47 (Gemma bleed hardening, e67f493), #48 (epoch full-read gating, 3918292); v1.4.0/v1.5.0 arch deepening + scaffold/CI ignored by design (see docs/absorption-plan.md).
+
 If upstream has no new commits since the last checkpoint, leave the hash unchanged and note "no new commits as of YYYY-MM-DD".
 
 ### Contribution
+
 Conventional commits & changelog: see CONTRIBUTING.md
