@@ -101,7 +101,14 @@ export async function readAndServe(
 			snapshotId,
 		);
 	}
-	await clearDriftReported(sessionKey, view.absolutePath);
+	// #69: epoch lifecycle belongs to full reads — a partial (paged or
+	// truncated) read merges window rows only and must not clear the
+	// drift-reported marks; only a full read resets them.
+	const isFullRead =
+		options.offset === undefined &&
+		options.limit === undefined &&
+		!view.truncation?.truncated;
+	if (isFullRead) await clearDriftReported(sessionKey, view.absolutePath);
 	const autoFooter = getAutoGuessFooter(view.absolutePath) ?? getAutoGuessFooter(rawPath) ?? getAutoGuessFooter(view.absolutePath.replace(/\\/g, "/")) ?? "";
 	const warning = autoFooter || undefined;
 	const text = view.hadUtf8DecodeErrors
