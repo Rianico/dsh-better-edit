@@ -2,11 +2,11 @@
 
 ### Features
 
-- user/model audience split + glossary error codes (Closes #45) (BREAKING CHANGE)
+- **session-view:** canon-deficit drift instead of hash rotation (Closes #46)
+- user/model audience split + glossary error codes (#49) (BREAKING CHANGE)
 
 ### Documentation
 
-- **absorb:** record v1.2.1→v1.6.0 audit triage (T1–T4, issues #45–#48)
 - migrate CLAUDE.md to AGENTS.md with symlink
 
 ## [0.6.3](https://github.com/Rianico/dsh-better-edit/compare/v0.6.2...v0.6.3) (2026-09-05)

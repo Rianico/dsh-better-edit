@@ -350,3 +350,77 @@ describe("computeDrift", () => {
 		]);
 	});
 });
+
+describe("computeDrift rotated survivors (#68 canon deficit)", () => {
+	const range121 = {
+		startLine: 1,
+		endLine: 1,
+		startHash: "h00",
+		endHash: "h00",
+		delta: 0,
+	};
+
+	it("reports hash rotation as drift without servedCanons (legacy)", () => {
+		const result = computeDrift({
+			served: ["h00", "h01", "h02", "h03"],
+			resultHashes: ["n00", "n01", "h02", "h03"],
+			resultLines: ["dup", "dup", "dup", "unique"],
+			range: range121,
+			reported: new Set(),
+		});
+		expect(result).toBeDefined();
+		// h00 is inside the edited range (skipped); only h01 counts.
+		expect(result!.total).toBe(1);
+	});
+
+	it("stays silent when rotated duplicates survive under fresh hashes", () => {
+		const result = computeDrift({
+			served: ["h00", "h01", "h02", "h03"],
+			servedCanons: ["dup", "dup", "dup", "unique"],
+			resultHashes: ["n00", "n01", "h02", "h03"],
+			resultLines: ["dup", "dup", "dup", "unique"],
+			range: range121,
+			reported: new Set(),
+		});
+		expect(result).toBeUndefined();
+	});
+
+	it("reports true canon deficit when a duplicate is really gone", () => {
+		const result = computeDrift({
+			served: ["h00", "h01", "h02", "h03"],
+			servedCanons: ["dup", "dup", "dup", "unique"],
+			resultHashes: ["h00", "h02", "h03"],
+			resultLines: ["dup", "dup", "unique"],
+			range: range121,
+			reported: new Set(),
+		});
+		expect(result).toBeDefined();
+		expect(result!.total).toBe(1);
+	});
+
+	it("stays silent on whitespace-only reformat with rotated hash", () => {
+		const result = computeDrift({
+			served: ["h00", "h01"],
+			servedCanons: ["code", "tail"],
+			resultHashes: ["n00", "h01"],
+			resultLines: ["  code  ", "tail"],
+			range: range121,
+			reported: new Set(),
+		});
+		expect(result).toBeUndefined();
+	});
+
+	it("still reports content loss outside the range with canons present", () => {
+		const result = computeDrift({
+			served: ["h00", "h01", "h02"],
+			servedCanons: ["a", "b", "c"],
+			resultHashes: ["h00", "X"],
+			resultLines: ["a", "x"],
+			range: range121,
+			reported: new Set(),
+		});
+		expect(result).toBeDefined();
+		// h00 is inside the edited range (skipped); h01+h02 truly lost.
+		expect(result!.total).toBe(2);
+	});
+});
