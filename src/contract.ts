@@ -83,7 +83,15 @@ export function editRequestFrom(input: unknown): NormalizedEditRequest | undefin
     // but handle here for direct calls
   }
   const { path, edits } = rec as { path?: unknown; edits?: unknown };
-  if (path !== null && (typeof path !== "string" || (path as string).length === 0)) return undefined;
+  // Gemma-4 tool-call bleed (#55): the model may wrap the path in <|>, │, |,
+  // quotes, or backticks after seeing │ separators. Strip wrappers iteratively.
+  let effectivePath = path;
+  if (typeof effectivePath === "string") {
+    const sanitized = sanitizePath(effectivePath);
+    if (sanitized === null) return undefined;
+    effectivePath = sanitized;
+  }
+  if (effectivePath !== null && (typeof effectivePath !== "string" || (effectivePath as string).length === 0)) return undefined;
   if (!Array.isArray(edits) || edits.length === 0) return undefined;
   const items: EditItem[] = [];
   for (const item of edits) {
@@ -91,7 +99,50 @@ export function editRequestFrom(input: unknown): NormalizedEditRequest | undefin
     if (!normalized) return undefined;
     items.push(normalized);
   }
-  return { path: path as string | null, edits: items };
+  return { path: effectivePath as string | null, edits: items };
+}
+
+/**
+ * Strip Gemma-4 tool-call bleed wrappers from a path string: `<|>`, `\u2502`, `|`
+ * pairs plus surrounding quotes/backticks, applied iteratively. Returns the
+ * cleaned path, or null when nothing usable remains (caller rejects).
+ */
+export function sanitizePath(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  let s = value.trim();
+  let changed = true;
+  while (changed) {
+    changed = false;
+    if (s.startsWith("<|>") && s.endsWith("<|>") && s.length > 6) {
+      s = s.slice(3, -3).trim();
+      changed = true;
+    }
+    if (s.startsWith("\u2502") && s.endsWith("\u2502") && s.length > 2) {
+      s = s.slice(1, -1).trim();
+      changed = true;
+    }
+    if (s.startsWith("|") && s.endsWith("|") && s.length > 2) {
+      s = s.slice(1, -1).trim();
+      changed = true;
+    }
+    if (
+      (s.startsWith('"') && s.endsWith('"')) ||
+      (s.startsWith("'") && s.endsWith("'")) ||
+      (s.startsWith("`") && s.endsWith("`"))
+    ) {
+      s = s.slice(1, -1).trim();
+      changed = true;
+    }
+    if (s.startsWith("<|>")) {
+      s = s.slice(3).trim();
+      changed = true;
+    }
+    if (s.endsWith("<|>")) {
+      s = s.slice(0, -3).trim();
+      changed = true;
+    }
+  }
+  return s.length > 0 ? s : null;
 }
 
 export const EDIT_TUPLE_HINT =
