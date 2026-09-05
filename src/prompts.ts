@@ -14,12 +14,10 @@ export interface ToolGuidance {
 
 export const EDIT_DESCRIPTION =
   "Edit a range of lines in a text file with `{ \"path\": path, \"edits\": [[remove_from, remove_to, replacement_text], ...] }`. " +
-  "`path` is the file path or `null`. `read` returns `HASH\u2502content` (e.g. `wUp\u2502    \"site\": {`) \u2014 for `edit`, " +
-  "`remove_from`/`remove_to` are HASH anchors (bare 3-char value before `\u2502`, e.g. \"wUp\", \"AU6\"), never `HASH\u2502content` or line content. " +
-  "`replacement_text` is bare content without `HASH\u2502`, lines joined by \\n (e.g. \"    \\\"site\\\": {\\n        \\\"class\\\": SiteScraper,\"); use \"\" to delete. " +
-  "Example: read shows `wUp\u2502    \"site\": {` + `AU6\u2502        \"name\": \"old\",` \u2192 edit " +
-  "`{\"path\":\"scrape.py\",\"edits\":[[\"wUp\",\"AU6\",\"    \\\"site\\\": {\\n        \\\"class\\\": SiteScraper,\"]]}`. " +
-  "Edits in one call apply atomically; after success reuse `HASH\u2502content` from the returned diff for the next edit (no re-read needed). On failure follow the error hint.";
+  "`path` is file path or null. `read` shows `HASH\u2502content` (e.g. `wUp\u2502  \"site\": {`) \u2014 use bare 3-char HASH anchors for " +
+  "`remove_from`/`remove_to` (e.g. \"wUp\"), never `HASH\u2502content`. `replacement_text` is bare content, \\n joins lines, \"\" deletes. " +
+  "Example: `{\"path\":\"a.py\",\"edits\":[[\"wUp\",\"AU6\",\"new\"]]}`. Edits are atomic; reuse `HASH\u2502content` from the diff after success. " +
+  "On failure follow the error hint: `[MODEL]` errors need a retry with fresh anchors, `[USER]` notices are human-only.";
 
 export const EDIT_GUIDANCE: ToolGuidance = {
   intro: "Edit a range of lines via a bare 3-char HASH anchor \u2014 payload is { path, edits: [[hash,hash,text]] } (single-file atomic, null path infers).",
@@ -30,6 +28,8 @@ export const EDIT_GUIDANCE: ToolGuidance = {
     "`edit`: every `\\n` in `replacement_text` separates lines; mirror trailing blank lines explicitly (use \"\" to delete a range).",
     "`edit`: after a successful edit the returned diff shows fresh anchors (`HASH\u2502content`) \u2014 copy new `HASH` values from there for the next edit; no need to re-read.",
     "`edit`: `remove_from`/`remove_to` are inclusive; batch multiple edits to the same file only when independent \u2014 they apply atomically (fail \u2192 nothing written).",
+    "`edit`: `[MODEL]` errors (e.g. `E_STALE_*`, `E_UNSERVED_*`, `E_BAD_PAYLOAD`, `E_SERVED_ECHO`) need a retry \u2014 `[USER]` warnings/`drift:` notices are human-only.",
+    "`edit`: on `E_STALE_RANGE`/`E_UNSERVED_RANGE` retry from the echoed fresh anchors (no re-read needed); on `E_STALE_ANCHOR` re-read.",
   ],
 };
 
