@@ -2,8 +2,12 @@
 
 ### Features
 
-- **session-view:** canon-deficit drift instead of hash rotation (Closes #46)
+- **session-view:** canon-deficit drift instead of hash rotation (Closes #46) (#50)
 - user/model audience split + glossary error codes (#49) (BREAKING CHANGE)
+
+### Fixed
+
+- **edit:** Gemma-4 tool-call bleed hardening + prompt channel wording (Closes #47)
 
 ### Documentation
 
