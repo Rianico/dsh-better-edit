@@ -42,6 +42,7 @@ export function createSelfHealWatcher(options: SelfHealOptions): () => void {
 				?.layers?.scoped?.get?.(agent)?.tools as
 				| { get?: (name: string) => unknown; data?: Map<string, unknown> }
 				| undefined;
+			if (!layer) return;
 			const currentRead = layer?.get?.("read") ?? layer?.data?.get?.("read");
 			const currentEdit = layer?.get?.("edit") ?? layer?.data?.get?.("edit");
 			const readOk = currentRead === hashReadDef;
@@ -72,6 +73,7 @@ export function createSelfHealWatcher(options: SelfHealOptions): () => void {
 						?.layers?.scoped?.get?.(agent)?.tools as
 						| { get?: (name: string) => unknown; data?: Map<string, unknown> }
 						| undefined;
+					if (!currentLayer) return;
 					if (restoreEdit) {
 						try {
 							currentLayer?.data?.delete?.("edit");
