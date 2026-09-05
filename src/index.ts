@@ -15,17 +15,16 @@
  * `agentPresets` service keep the compiled defaults unchanged.
  * @module dsh-better-edit
  */
-
 import type { Context } from "@deepseek-ai/cordis";
 import type { Agent } from "@deepseek-ai/dsh-agent";
 import type { FileSystem } from "@deepseek-ai/dsh-fs";
 import { ctxFsIO } from "./fs-bridge.js";
 import { FsSandboxController } from "./sandbox.js";
-import { registerReadTool } from "./tool-read.js";
-import { registerEditTool } from "./tool-edit.js";
+import { buildReadTool } from "./tool-read.js";
+import { buildEditTool } from "./tool-edit.js";
 import { registerUndoTool } from "./tool-undo.js";
 import { registerWriteHook } from "./write-hook.js";
-
+import { createSelfHealWatcher } from "./self-heal.js";
 import { initHasher } from "./hashline/hash-assign.js";
 import {
 	composeSections,
@@ -116,12 +115,27 @@ function installAgentTools(rootCtx: Context, agent: Agent): void {
 		// exec.agent.session.header.cwd.
 		const io = ctxFsIO(rootCtx.fs as FileSystem, rootCtx);
 		const disposers: Array<() => void> = [];
-		disposers.push(registerReadTool(rootCtx, agent.ctx, io));
 		const sandbox = new FsSandboxController(rootCtx);
-		disposers.push(registerEditTool(rootCtx, agent.ctx, io, sandbox));
-				disposers.push(registerUndoTool(rootCtx, agent.ctx, io, sandbox));
+		// Keep owned definitions by reference for self-heal identity check
+		const hashReadDef = buildReadTool(io);
+		disposers.push(agent.ctx.tools.register(hashReadDef));
+		const hashEditDef = buildEditTool(io, sandbox);
+		disposers.push(agent.ctx.tools.register(hashEditDef));
+		disposers.push(registerUndoTool(rootCtx, agent.ctx, io, sandbox));
 		disposers.push(registerWriteHook(rootCtx, agent.ctx, io));
 
+		const toolsSvc = rootCtx.get("tools");
+		disposers.push(
+			createSelfHealWatcher({
+				agentId: agent.id,
+				rootCtx,
+				agent,
+				agentCtx: agent.ctx,
+				toolsSvc,
+				hashReadDef,
+				hashEditDef,
+			}),
+		);
 		// Shadow the preset's built-in tool guidance with the hashline
 		// contract. Same section names on the agent's own layer win over the
 		// preset's; text and order come from the per-preset resolution.
