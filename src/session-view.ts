@@ -240,7 +240,7 @@ export async function recordServed(
 	}
 }
 
-export async function recordServedTruncated(sessionKey: string, path: string, rows: ServedEntry[], lineCount: number, clearFrom = 0): Promise<void> {
+export async function recordServedTruncated(sessionKey: string, path: string, rows: ServedEntry[], lineCount: number, clearFrom = 0, fullCanons?: readonly (string | null)[]): Promise<void> {
 	if (rows.length === 0) return;
 	try {
 		const store = await loadServedStore();
@@ -249,6 +249,22 @@ export async function recordServedTruncated(sessionKey: string, path: string, ro
 			const updated = _mergeServedRows(current, rows, { truncateTo: lineCount, clearFrom });
 			if (current.length !== updated.length || current.some((v, i) => v !== updated[i])) {
 				store.upsertServed(sessionKey, path, JSON.stringify(updated));
+			}
+			if (fullCanons) {
+				// #53: hashes without fresh canons leave the verify collision-guard
+				// comparing live content against stale metadata (false E_STALE_RANGE).
+				// Refresh canons for recorded rows; null where served is null so the
+				// parallel arrays stay consistent (canon null <=> served null).
+				const currentCanons = store.getServedCanons(sessionKey, path);
+				const rowCanon = new Map<number, string | null>();
+				for (const row of rows) rowCanon.set(row.position, fullCanons[row.position] ?? null);
+				const updatedCanons: (string | null)[] = [];
+				for (let i = 0; i < updated.length; i++) {
+					updatedCanons.push(
+						updated[i] === null ? null : rowCanon.has(i) ? rowCanon.get(i)! : (currentCanons[i] ?? null),
+					);
+				}
+				store.upsertServedCanons(sessionKey, path, JSON.stringify(updatedCanons));
 			}
 			addRetiredAnchors(
 				store,

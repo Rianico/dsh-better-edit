@@ -7,7 +7,8 @@
 
 ### Fixed
 
-- review follow-ups from 1.6.0 absorb (Closes #55)
+- **served:** refresh canons on truncated serve records (Closes #53)
+- review follow-ups from 1.6.0 absorb (Closes #55) (#56)
 - **served:** epoch lifecycle belongs to full reads (Closes #48) (#54)
 - **edit:** Gemma-4 tool-call bleed hardening + prompt channel wording (Closes #47) (#52)
 

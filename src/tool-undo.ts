@@ -12,7 +12,7 @@ import { cntDiff, splitLines, codeOf } from "./utils.js";
 import { assertUndoRequest } from "./contract.js";
 import { normalizeRequest as normReq } from "./contract.js";
 import { upsertSnapshotFor } from "./hash-store.js";
-import { contentChecksum } from "./hashline/hash-assign.js";
+import { canon, contentChecksum } from "./hashline/hash-assign.js";
 import { lineHashes } from "./hashline/hash.js";
 import { changedRange } from "./hashline/anchor-pipeline.js";
 import { getUndo, clearUndo } from "./undo-edit.js";
@@ -193,6 +193,7 @@ export function buildUndoTool(io: FileIO, sandbox: FsSandboxController) {
 						undoDenseRows,
 						splitLines(undo.content).length,
 						restoredRange?.firstChangedLine ?? undoDiffResult.firstChangedLine ?? 0,
+						splitLines(undo.content).map((l) => canon(l)),
 					);
 				}
 
