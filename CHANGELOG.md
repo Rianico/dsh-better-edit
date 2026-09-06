@@ -1,3 +1,9 @@
+## [Unreleased]
+
+### Documentation
+
+- **context:** retired anchor replaces tombstone; add hazard card and epoch glossary
+
 ## [0.7.0](https://github.com/Rianico/dsh-better-edit/compare/v0.6.3...v0.7.0) (2026-09-06)
 
 ### Features
