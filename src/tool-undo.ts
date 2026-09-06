@@ -93,8 +93,8 @@ export function buildUndoTool(io: FileIO, sandbox: FsSandboxController) {
 
 				const { text: currentStripped } = stripBOM(currentRaw);
 				const currentNormalized = toLF(currentStripped);
-				// undo is file-global: must block hashes retired by any session, not just current session, to prevent recycling current-file-only hash - test expects global
-				const reservations = await loadAnchorReservations(absolutePath);
+				// Per-session reservations: retired/ served are per (session, path) per ADR-0013; file snapshots stay global last-writer-wins
+				const reservations = await loadAnchorReservations(sessionKey, absolutePath);
 				const currentHashes = await lineHashes(
 					currentNormalized,
 					absolutePath,

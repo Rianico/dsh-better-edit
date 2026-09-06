@@ -55,10 +55,25 @@ export const HASH_RE = new RegExp(`^${HASH_CLASS}$`);
 export const ANCHOR_LEN = HASH_LEN;
 export const HASH_SEP = "│";
 export const HASH_SPACE = ALPH.length ** HASH_LEN;
+// MAX_HASH_LINES is the anchor-space size (62³), not a line-count limit.
+// File line-count limits use maxLines (e.g. 200k) and report E_LARGE_FILE;
+// anchor-space exhaustion reports E_ANCHOR_SPACE_EXHAUSTED — see nextZeroBit.
 export const MAX_HASH_LINES = HASH_SPACE;
 export const HASH_PROBE_STRIDE = ALPH.length ** 2 + ALPH.length + 1;
 
-function idxToHash(idx: number): string {
+export class AnchorSpaceExhaustedError extends Error {
+  readonly code = "E_ANCHOR_SPACE_EXHAUSTED";
+  readonly retiredCount: number;
+  readonly servedCount: number;
+  constructor(retiredCount: number, servedCount: number, reservedCount: number) {
+    super(`[MODEL] [E_ANCHOR_SPACE_EXHAUSTED] Anchor space exhausted (retired ${retiredCount} + served ${servedCount} = ${reservedCount} of ${HASH_SPACE}); promotion will clear retired — re-read recommended, stale-anchor checks degraded until next full read.`);
+    this.name = "AnchorSpaceExhaustedError";
+    this.retiredCount = retiredCount;
+    this.servedCount = servedCount;
+  }
+}
+
+export function idxToHash(idx: number): string {
   let out = "";
   for (let j = 0; j < HASH_LEN; j++) {
     out = ALPH[idx % ALPH.length]! + out;
@@ -67,7 +82,7 @@ function idxToHash(idx: number): string {
   return out;
 }
 const hashCache = new Map<number, string>();
-function hashAt(idx: number): string {
+export function hashAt(idx: number): string {
   let hash = hashCache.get(idx);
   if (hash === undefined) {
     hash = idxToHash(idx);
@@ -120,7 +135,7 @@ function nextZeroBit(bits: Uint32Array, start: number): number {
     idx += HASH_PROBE_STRIDE;
     if (idx >= totalBits) idx -= totalBits;
   }
-  throw new Error(`[MODEL] [E_LARGE_FILE] Cannot allocate a unique hash anchor: the file exceeds the ${HASH_SPACE}-line limit for ${HASH_LEN}-char hashline anchors.`);
+  throw new Error(`[MODEL] [E_ANCHOR_SPACE_EXHAUSTED] Anchor space exhausted — probing failed over ${HASH_SPACE} slots (reserved full).`);
 }
 function assignHash(used: Uint32Array, baseIdx: number, hint: { value: number }): string {
   if (!getBit(used, baseIdx)) {
@@ -136,6 +151,9 @@ function assignHash(used: Uint32Array, baseIdx: number, hint: { value: number })
 export function lineHashesPure(
   content: string,
   reservedHashes: ReadonlySet<string> = new Set(),
+  // optional counts for richer error — when caller knows retired vs served split
+  retiredCount?: number,
+  servedCount?: number,
 ): string[] {
   const lines = splitLines(content);
   const hashes = new Array<string>(lines.length);
@@ -143,12 +161,23 @@ export function lineHashesPure(
   for (const hash of reservedHashes) markHashUsed(used, hash);
   const hint = { value: 0 };
   const canonCache = new Map<string, string>();
-  for (let i = 0; i < lines.length; i++) {
-    const c = getCanon(canonCache, lines[i]!);
-    const baseIdx = (xxh32(c) >>> 14) % HASH_SPACE;
-    const h = assignHash(used, baseIdx, hint);
-    hashes[i] = h;
-    rememberHashCanon(h, c);
+  try {
+    for (let i = 0; i < lines.length; i++) {
+      const c = getCanon(canonCache, lines[i]!);
+      const baseIdx = (xxh32(c) >>> 14) % HASH_SPACE;
+      const h = assignHash(used, baseIdx, hint);
+      hashes[i] = h;
+      rememberHashCanon(h, c);
+    }
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : String(e);
+    if (msg.includes("E_ANCHOR_SPACE_EXHAUSTED") || msg.includes("Cannot allocate")) {
+      const rc = retiredCount ?? reservedHashes.size;
+      const sc = servedCount ?? 0;
+      const reserved = reservedHashes.size;
+      throw new AnchorSpaceExhaustedError(rc, sc, reserved);
+    }
+    throw e;
   }
   return hashes;
 }
@@ -182,6 +211,8 @@ export function mapStableHashes(
   newContent: string,
   removedHashes?: Set<string>,
   reservedHashes: ReadonlySet<string> = new Set(),
+  retiredCount?: number,
+  servedCount?: number,
 ): string[] {
   const oldLines = splitLines(oldContent);
   const newLines = splitLines(newContent);
@@ -244,13 +275,23 @@ export function mapStableHashes(
     markUsed(entry.hash);
     rememberHashCanon(entry.hash, getCanon(canonCache, oldLines[entry.index]!));
   }
-  for (let i = 0; i < newLines.length; i++) {
-    if (newHashes[i]) continue;
-    const c = getCanon(canonCache, newLines[i]!);
-    const baseIdx = (xxh32(c) >>> 14) % HASH_SPACE;
-    const h = assignHash(used, baseIdx, hint);
-    newHashes[i] = h;
-    rememberHashCanon(h, c);
+  try {
+    for (let i = 0; i < newLines.length; i++) {
+      if (newHashes[i]) continue;
+      const c = getCanon(canonCache, newLines[i]!);
+      const baseIdx = (xxh32(c) >>> 14) % HASH_SPACE;
+      const h = assignHash(used, baseIdx, hint);
+      newHashes[i] = h;
+      rememberHashCanon(h, c);
+    }
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : String(e);
+    if (msg.includes("E_ANCHOR_SPACE_EXHAUSTED")) {
+      const rc = retiredCount ?? reservedHashes.size;
+      const sc = servedCount ?? 0;
+      throw new AnchorSpaceExhaustedError(rc, sc, reservedHashes.size);
+    }
+    throw e;
   }
   return newHashes;
 }

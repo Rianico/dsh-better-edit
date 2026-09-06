@@ -430,7 +430,7 @@ describe("served state — schema versioning", () => {
 			db.close();
 
 			const store = await loadServedStore();
-			expect(store.getAnchorReservations(path).reservedHashes).toEqual(
+			expect(store.getAnchorReservations("sessionA", path).reservedHashes).toEqual(
 				new Set(["AAA"]),
 			);
 			expect((await loadHashStore()).getSnapshot(path, content)).toBeUndefined();

@@ -569,7 +569,7 @@ export function verifyServedRange(args: {
 	fileLines: string[];
 	filePath?: string;
 	servedCanons?: (string | null)[];
-	tombstone?: ReadonlySet<string>;
+	retired?: ReadonlySet<string>;
 	epochSnapshotId?: string;
 	curSnapshotId?: string;
 	strictPos?: boolean;
@@ -585,7 +585,7 @@ export function verifyServedRange(args: {
 		filePath,
 	} = args;
 	const where = filePath ? ` in ${filePath}` : "";
-	const tombstone = args.tombstone ?? new Set<string>();
+	const retiredSet = args.retired ?? new Set<string>();
 	const servedCanons = args.servedCanons;
 	const strictPos = args.strictPos ?? false;
 	const epochSnapshotId = args.epochSnapshotId;
@@ -614,18 +614,18 @@ export function verifyServedRange(args: {
 	// Tombstone check for boundaries (whole-span S@3==S@3)
 	// If hash was freed in this epoch, any reuse is stale even at same pos+same canon.
 	// Early reject checks canon change to avoid false positive on same line re-read.
-	if (tombstone.has(startHash) || tombstone.has(endHash)) {
-		const tombstonedHash = tombstone.has(startHash) ? startHash : endHash;
+	if (retiredSet.has(startHash) || retiredSet.has(endHash)) {
+		const retiredHash = retiredSet.has(startHash) ? startHash : endHash;
 		if (servedCanons) {
-			const pos = fileHashes.indexOf(tombstonedHash);
+			const pos = fileHashes.indexOf(retiredHash);
 			if (pos >= 0) {
-				const servedIdx = served.indexOf(tombstonedHash);
+				const servedIdx = served.indexOf(retiredHash);
 				const expected = servedIdx >= 0 ? servedCanons[servedIdx] : undefined;
 				const actual = canon(fileLines[pos] ?? "");
 				if (expected !== undefined && expected !== null && expected !== actual) {
 					throw new ServedRejectionError({
 						code: "E_STALE_RANGE",
-						message: `[MODEL] [E_STALE_RANGE] anchor "${tombstonedHash}" was freed since last full read (tombstoned, canon changed from "${expected}" to "${actual}"). Re-read.\nCurrent range:\n${echo}`,
+						message: `[MODEL] [E_STALE_RANGE] anchor "${retiredHash}" was freed since last full read (retired, canon changed from "${expected}" to "${actual}"). Re-read.\nCurrent range:\n${echo}`,
 						firstOffendingLine: pos + 1,
 						servedRows: echoRows,
 					});
@@ -891,13 +891,13 @@ export function verifyServedRange(args: {
 		// Tombstone interior check (whole-span) — gated on canon inequality (fail-closed only for different canon)
 		for (let k = 0; k < servedLen; k++) {
 			const h = fileHashes[startLine - 1 + k];
-			if (h && tombstone.has(h)) {
+			if (h && retiredSet.has(h)) {
 				const expectedCanon = servedCanons?.[from + k] ?? undefined;
 				const actualCanon = canon(fileLines[startLine - 1 + k] ?? "");
 				if (expectedCanon !== undefined && expectedCanon !== null && expectedCanon !== actualCanon) {
 					throw new ServedRejectionError({
 						code: "E_STALE_RANGE",
-						message: `[MODEL] [E_STALE_RANGE] line ${startLine + k}${where} uses tombstoned anchor "${h}" (freed since last full read, canon changed). Re-read.\nCurrent range:\n${echo}`,
+						message: `[MODEL] [E_STALE_RANGE] line ${startLine + k}${where} uses retired anchor "${h}" (freed since last full read, canon changed). Re-read.\nCurrent range:\n${echo}`,
 						firstOffendingLine: startLine + k,
 						servedRows: echoRows,
 					});
@@ -1074,7 +1074,7 @@ export function applyEdit(
 	filePath?: string,
 	served?: (string | null)[],
 	servedCanons?: (string | null)[],
-	tombstone?: ReadonlySet<string>,
+	retired?: ReadonlySet<string>,
 	epochSnapshotId?: string,
 	curSnapshotId?: string,
 	strictPos?: boolean,
@@ -1158,7 +1158,7 @@ if (served) {
 			fileLines: lineIndex.fileLines,
 			filePath,
 			servedCanons,
-			tombstone,
+			retired,
 			epochSnapshotId,
 			curSnapshotId,
 			strictPos,

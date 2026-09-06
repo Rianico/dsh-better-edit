@@ -59,7 +59,7 @@ describe("retired hash anchors", () => {
 		});
 	});
 
-	it("keeps tombstones through a partial read and clears them after a full read", async () => {
+	it("keeps retired anchors through a partial read and clears them after a full read", async () => {
 		const initial = "one\ntwo\nthree\nfour\n";
 
 		await withTempFile("pages.txt", initial, async ({ cwd, path }) => {
@@ -279,12 +279,12 @@ describe("retired hash anchors", () => {
 				expect(currentOnlyAnchor).toBe("quC");
 
 				const servedStore = await loadServedStore();
+				servedStore.deleteServed("test-session", path);
 				servedStore.upsertRetiredAnchors(
-					"other-session",
+					"test-session",
 					path,
 					JSON.stringify([oldAnchor]),
 				);
-				servedStore.deleteServed("test-session", path);
 			});
 
 			const undo = harness.getTool("undo_last_edit") as {
