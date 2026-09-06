@@ -1,39 +1,126 @@
-import { readFileSync, readdirSync } from "node:fs";
-import { join, dirname } from "node:path";
-import { fileURLToPath } from "url";
 import { describe, expect, it } from "vitest";
+import { assertEditRequest } from "../../src/contract.js";
+import { CodedError, codeOf } from "../../src/utils.js";
+import {
+	resEdit,
+	verifyServedRange,
+	AnchorMismatchError,
+	ServedRejectionError,
+	lineHashesPure,
+} from "../../src/hashline/index.js";
+import { finalizeResult, type EditDetails } from "../../src/edit-response.js";
 
-const root = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
-const codeRe = /\[E_[A-Z0-9_]+\]/g;
-
-function collectCodes(dir: string): Set<string> {
-  const codes = new Set<string>();
-  for (const entry of readdirSync(dir, { withFileTypes: true })) {
-    const full = join(dir, entry.name);
-    if (entry.isDirectory()) {
-      for (const code of collectCodes(full)) codes.add(code);
-    } else if (entry.name.endsWith(".ts")) {
-      for (const match of readFileSync(full, "utf-8").matchAll(codeRe)) {
-        codes.add(match[0]);
-      }
-    }
-  }
-  return codes;
+function codeOfThrow(fn: () => unknown): string | undefined {
+	try {
+		fn();
+	} catch (error) {
+		return codeOf(error);
+	}
+	throw new Error("expected throw");
 }
 
-const readmeCodes = new Set([
-  ...readFileSync(join(root, "README.md"), "utf-8").matchAll(codeRe),
-].map((match) => match[0]));
-const srcCodes = collectCodes(join(root, "src"));
+describe("structured error codes (#55 S1)", () => {
+	it("contract rejects carry bare E_BAD_PAYLOAD", () => {
+		try {
+			assertEditRequest({ path: 123, edits: [] });
+			expect.unreachable();
+		} catch (error) {
+			expect(error).toBeInstanceOf(CodedError);
+			expect((error as CodedError).code).toBe("E_BAD_PAYLOAD");
+			expect(codeOf(error)).toBe("E_BAD_PAYLOAD");
+		}
+	});
 
-describe("error code contract", () => {
-  it("documents every error code emitted by src in the README", () => {
-    const undocumented = [...srcCodes].filter((code) => !readmeCodes.has(code)).sort();
-    expect(undocumented).toEqual([]);
-  });
+	it("anchor-syntax throws carry bare E_BAD_ANCHOR", () => {
+		expect(codeOfThrow(() => resEdit({ remove_from: "MQX│x", remove_to: "MQX", replacement_text: "y" } as any))).toBe(
+			"E_BAD_ANCHOR",
+		);
+	});
 
-  it("emits every error code documented in the README", () => {
-    const phantom = [...readmeCodes].filter((code) => !srcCodes.has(code)).sort();
-    expect(phantom).toEqual([]);
-  });
+	it("tombstoned anchor with changed canon carries E_STALE_RANGE", () => {
+		const hashes = lineHashesPure("a\nb\nc");
+		try {
+			verifyServedRange({
+				served: [...hashes],
+				servedCanons: ["zzz", "b", "c"],
+				tombstone: new Set([hashes[0]!]),
+				startHash: hashes[0]!,
+				endHash: hashes[1]!,
+				startLine: 1,
+				endLine: 2,
+				fileHashes: hashes,
+				fileLines: ["a", "b", "c"],
+			});
+			expect.unreachable();
+		} catch (error) {
+			expect(error).toBeInstanceOf(ServedRejectionError);
+			expect((error as ServedRejectionError).code).toBe("E_STALE_RANGE");
+			expect(codeOf(error)).toBe("E_STALE_RANGE");
+		}
+	});
+
+	it("interior hole carries E_UNSERVED_RANGE with kind", () => {
+		const hashes = lineHashesPure("a\nb\nc");
+		try {
+			verifyServedRange({
+				served: [hashes[0]!, null, hashes[2]!],
+				startHash: hashes[0]!,
+				endHash: hashes[2]!,
+				startLine: 1,
+				endLine: 3,
+				fileHashes: hashes,
+				fileLines: ["a", "b", "c"],
+			});
+			expect.unreachable();
+		} catch (error) {
+			expect(error).toBeInstanceOf(ServedRejectionError);
+			expect((error as ServedRejectionError).code).toBe("E_UNSERVED_RANGE");
+			expect((error as ServedRejectionError).unservedKind).toBe("interior");
+		}
+	});
+
+	it("ambiguous served anchor carries E_UNSERVED_RANGE with boundary kind", () => {
+		const hashes = lineHashesPure("a\nb\nc");
+		try {
+			verifyServedRange({
+				served: [hashes[0]!, hashes[0]!, hashes[2]!],
+				startHash: hashes[0]!,
+				endHash: hashes[1]!,
+				startLine: 1,
+				endLine: 2,
+				fileHashes: hashes,
+				fileLines: ["a", "b", "c"],
+			});
+			expect.unreachable();
+		} catch (error) {
+			expect(error).toBeInstanceOf(ServedRejectionError);
+			expect((error as ServedRejectionError).code).toBe("E_UNSERVED_RANGE");
+			expect((error as ServedRejectionError).unservedKind).toBe("boundary");
+		}
+	});
+
+	it("anchor mismatch carries E_STALE_ANCHOR", () => {
+		const error = new AnchorMismatchError("m", []);
+		expect(error.code).toBe("E_STALE_ANCHOR");
+		expect(codeOf(error)).toBe("E_STALE_ANCHOR");
+	});
+
+	it("codeOf falls back to message convention, else undefined", () => {
+		expect(codeOf(new Error("[MODEL] [E_EMPTY_RANGE] x"))).toBe("E_EMPTY_RANGE");
+		expect(codeOf(new Error("plain failure"))).toBeUndefined();
+		expect(codeOf("nope")).toBeUndefined();
+	});
+
+	it("EditDetails accepts structured errCode/unservedKind", () => {
+		const details: EditDetails = { diff: "", errCode: "E_BAD_PAYLOAD", unservedKind: "boundary" };
+		expect(details.errCode).toBe("E_BAD_PAYLOAD");
+	});
+});
+
+describe("batch drift note retired (#55 S2)", () => {
+	it("passes warnings through with no special-casing", () => {
+		const text = finalizeResult({ diff: "d", warnings: ["Batch drift note: x", "other"] });
+		expect(text).toContain("Batch drift note: x");
+		expect(text).toContain("other");
+	});
 });

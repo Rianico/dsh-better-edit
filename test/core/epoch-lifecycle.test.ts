@@ -54,30 +54,19 @@ describe("epoch lifecycle belongs to full reads (#69)", () => {
 		try {
 			const sessionKey = sessionKeyFor("t4-epoch");
 			const path = join(home, "e.txt");
-			await recordServed(
-				sessionKey,
-				path,
-				[
-					{ position: 0, hash: "aaa" },
-					{ position: 1, hash: "bbb" },
-				],
-				2,
-				["aaa", "bbb"],
-				["a", "b"],
-				"snap-full",
-			);
+			await recordServed(sessionKey, path, [{ position: 0, hash: "aaa" }, { position: 1, hash: "bbb" }], 2, {
+				hashes: ["aaa", "bbb"],
+				canons: ["a", "b"],
+				snapshotId: "snap-full",
+			});
 			expect(await loadEpochSnapshotId(sessionKey, path)).toBe("snap-full");
 
 			await markDriftReported(sessionKey, path, ["bbb"]);
-			await recordServed(
-				sessionKey,
-				path,
-				[{ position: 1, hash: "BBB" }],
-				2,
-				["aaa", "BBB"],
-				["a", "b"],
-				"snap-partial",
-			);
+			await recordServed(sessionKey, path, [{ position: 1, hash: "BBB" }], 2, {
+				hashes: ["aaa", "BBB"],
+				canons: ["a", "b"],
+				snapshotId: "snap-partial",
+			});
 			const stored = await loadServed(sessionKey, path);
 			expect(stored).toEqual(["aaa", "BBB"]);
 			expect(await loadEpochSnapshotId(sessionKey, path)).toBe("snap-full");

@@ -5,6 +5,10 @@ import { visLines, clipLine } from "./utils.js";
 
 export type EditDetails = {
 	diff: string;
+	/** Bare `E_*` code for the primary error signal, if any (no `[MODEL]` prefix). Structured counterpart to message-string codes. */
+	errCode?: string;
+	/** Disambiguator for `E_UNSERVED_RANGE`: boundary miss vs interior hole. */
+	unservedKind?: "boundary" | "interior";
 	firstChangedLine?: number;
 	snapshotId?: string;
 	classification?: "noop";
@@ -103,10 +107,7 @@ export interface FinalizeInput {
 }
 
 export function finalizeResult(input: FinalizeInput): string {
-	const modelWarnings = input.warnings?.filter(
-		(w) => !w.startsWith("Batch drift note:"),
-	);
-	const base = input.diff + warnBlock(modelWarnings);
+	const base = input.diff + warnBlock(input.warnings);
 	return base;
 }
 
@@ -154,10 +155,7 @@ export function buildNoop(input: NoopInput): TResult {
 	const noopDetailsText = noopEdit
 		? `Edit for ${noopEdit.loc} is identical to current content:\n  ${noopEdit.loc}: ${clipLine(noopEdit.currentContent)}`
 		: "The edit produced identical content.";
-	const modelWarnings = warnings?.filter(
-		(w) => !w.startsWith("Batch drift note:"),
-	);
-	const text = `No changes made to ${path}\nClassification: noop\n${noopDetailsText}${warnBlock(modelWarnings)}`;
+	const text = `No changes made to ${path}\nClassification: noop\n${noopDetailsText}${warnBlock(warnings)}`;
 
 	const metrics = buildMetrics({
 		classification: "noop",
@@ -202,10 +200,7 @@ export function buildChanged(input: SuccessInput): TResult {
 	);
 	const addedLines = editMeta.addedLines;
 	const removedLines = editMeta.removedLines;
-	const modelWarnings = warnings?.filter(
-		(w) => !w.startsWith("Batch drift note:"),
-	);
-	const warningsBlock = warnBlock(modelWarnings);
+	const warningsBlock = warnBlock(warnings);
 	const successPrefix = `Successfully edited in ${path}.`;
 	const lineSummary =
 		addedLines > 0 || removedLines > 0
@@ -283,10 +278,7 @@ export function buildBatchResult(sections: BatchSection[]): TResult {
 		.join("\n\n");
 
 	if (allNoop) {
-		const modelWarnings = warnings.filter(
-			(w) => !w.startsWith("Batch drift note:"),
-		);
-		const text = `No changes made. All ${totalEdits} edit(s) in the batch produced identical content.\nClassification: noop${warnBlock(modelWarnings)}`;
+			const text = `No changes made. All ${totalEdits} edit(s) in the batch produced identical content.\nClassification: noop${warnBlock(warnings)}`;
 		return {
 			content: [{ type: "text", text }],
 			details: {
@@ -330,10 +322,7 @@ export function buildBatchResult(sections: BatchSection[]): TResult {
 			? ` Added ${addedLines} line(s), removed ${removedLines} line(s).`
 			: "";
 	const summary = `Successfully edited ${appliedFiles.length} file(s) — ${appliedTotal} of ${totalEdits} edit(s) applied${noopTotal > 0 ? ` (${noopTotal} noop)` : ""}.${lineSummary}`;
-	const modelWarnings = warnings.filter(
-		(w) => !w.startsWith("Batch drift note:"),
-	);
-	const baseText = `${summary}${warnBlock(modelWarnings)}`;
+	const baseText = `${summary}${warnBlock(warnings)}`;
 	const diffSection = formatDiffCard(diff);
 	const text = `${baseText}${diffSection}`;
 
