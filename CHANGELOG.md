@@ -1,12 +1,12 @@
 ## [Unreleased]
 
-### Documentation
-
-- **context:** retired anchor replaces tombstone; add hazard card and epoch glossary
-
 ### Fixed
 
 - **hashline:** retired hazard GC and stable reuse for anchor-space deadlock
+
+### Documentation
+
+- **context:** retired anchor replaces tombstone; add hazard card and epoch glossary (#58)
 
 ## [0.7.0](https://github.com/Rianico/dsh-better-edit/compare/v0.6.3...v0.7.0) (2026-09-06)
 
