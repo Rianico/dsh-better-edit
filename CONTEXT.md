@@ -22,7 +22,7 @@ _Avoid_: —
 The project's core contract: per-line anchors are content-derived with ASCII whitespace (`[ \t\r\n]`) stripped, stable for unchanged lines and across whitespace-only formatting, and position-independent; an anchor that cannot be resolved is rejected, never fuzzy-matched or silently relocated. Byte-level detection of non-whitespace changes is unchanged — token-level edits still rotate the anchor (ADR-0005).
 
 **anchor staleness**:
-An anchor (one line, `remove_from` or `remove_to`) that no longer resolves against the current file because the line's content changed since it was served (`hash`/`canon`/`tombstone` miss). The model must re-`read` for fresh anchors.
+An anchor (one line, `remove_from` or `remove_to`) that no longer resolves against the current file because the line's content changed since it was served (`hash`/`canon`/`retired` miss). The model must re-`read` for fresh anchors.
 _Avoid_: boundary staleness (use `anchor` for one line, `served range` for span)
 
 **interior**:
@@ -44,7 +44,7 @@ The model-facing word for the `served span` — the span between `remove_from` a
 _Avoid_: range (use `served range` for verified span, `range` for current file run)
 
 **served-range staleness**:
-The condition where the `served range` (span between anchors) cannot be reconciled with served state: interior `served span` vs `current span` mismatch (`hash`/`canon`/`tombstone`/`len`). Reported as `[E_STALE_RANGE]` (changed) or `[E_UNSERVED_RANGE]` (never-served, `details.unservedKind` `boundary`|`interior`). Both do `reject-and-serve`.
+The condition where the `served range` (span between anchors) cannot be reconciled with served state: interior `served span` vs `current span` mismatch (`hash`/`canon`/`retired`/`len`). Reported as `[E_STALE_RANGE]` (changed) or `[E_UNSERVED_RANGE]` (never-served, `details.unservedKind` `boundary`|`interior`). Both do `reject-and-serve`.
 _Avoid_: range staleness (use `served range` for span)
 
 **never-served**:
@@ -105,6 +105,22 @@ _Avoid_: duplicate serve (conflates duplicated content with relocated-line-keeps
 **relocated line keeps its hash**:
 The file condition where a line's content survives an external write and, because no probe collision occurs at its new spot, the same hash is reproduced by a fresh hashing pass. Distinct from "duplicated content" (same text at two positions in one file gets two different hashes via probing).
 _Avoid_: duplicate content (implies same hash, which perfect hashing prevents)
+
+**retired anchor** (replaces `tombstone` — ADR-0013 term, DB column `served.retired`, code var `tombstone` is now `retired`):
+A hash freed by an edit since the last epoch (full read) that must not be reallocated while the model may still hold it. Per `(session, path)`. GC analogy: garbage not yet reclaimable. Replaces `tombstone` everywhere in docs; see also `retired entry` and `hazard card`.
+_Avoid_: tombstone (legacy term — use `retired anchor` for the hash, `retired entry` for the per-position record)
+
+**retired entry**:
+The per-position death record `{hash, deathPos}` (and implicitly `deathEpoch = snapshotId`) that makes the retired set precise. A retired anchor at `deathPos` is reclaimable only after that position's hazard card is cleared. Enables incremental GC — paging re-reads sweep incrementally instead of requiring a full-file stop-the-world clear.
+_Avoid_: retired hash without position (implies heap-granular set)
+
+**hazard card** (aka **coverage card**):
+Per-position `bitset<N>` tracking which file positions the model has re-observed since retirement. `read` that serves position `p` marks `card[p]=clean`. When `card[deathPos]` turns clean, `retiredEntries` with that `deathPos` are swept. Full-file `all clean` is equivalent to the old full-read valve but incremental; powers per-position hazard-pointer reclamation (Q7b).
+_Avoid_: coverage epoch as single counter (too coarse)
+
+**anchor epoch**:
+The generation bound to `snapshotId` of the last full read that produced the current `served`+`retired` generation (Q8a — no separate counter; epoch is `snapshotId`). Promotion on hash-space exhaustion bumps epoch by `clear retired` + loud degraded warning, not by clearing `served`.
+_Avoid_: epoch counter (only needed if HASH_LEN 3→4 widens)
 
 **read_skill**:
 To read a file's content as plain text — no hash prefixes, no served rows, but maintaining `file encoding state` for round-trip. The model's tool for loading skill content (SKILL.md or any file in its directory) to invoke and consume; `read` remains the hashed read for edit targets. `read_skill` follows the same `BOM → strict UTF-8 → autoGuess` capture path as `read`, records `file encoding state` (so a later `write` can round-trip), but never records `served state` — it cannot authorize `edit` anchors.
