@@ -17,7 +17,7 @@
  * @module dsh-better-edit/hashline/anchor-pipeline
  */
 
-import { abortIf, splitLines, rejectUnknownFields, clipLine } from "../utils.js";
+import { abortIf, splitLines, rejectUnknownFields, clipLine, CodedError } from "../utils.js";
 import { HASH_CLASS, HL_BARE_PREFIX_RE, HL_PREFIX_PLUS_RE, HL_PREFIX_MINUS_RE, HASH_SEP, ANCHOR_LEN, ALPH_RE, canon, lineHashesPure, getCanonForHash, rememberHashCanon } from "./hash-assign.js";
 import { recordServed, servedPositionsOf } from "../session-view.js";
 import { SERVED_ECHO_CAP } from "../constants.js";
@@ -65,7 +65,7 @@ function parseRef(ref: string): Anchor {
 		return { hash: trimmed };
 	}
 
-	throw new Error(diagRef(ref));
+	throw new CodedError("E_BAD_ANCHOR", diagRef(ref));
 }
 
 export const parseHashRef = parseRef;
@@ -223,28 +223,28 @@ function assertItem(edit: Record<string, unknown>): void {
 	);
 
 	if ("remove_from" in edit && typeof edit.remove_from !== "string") {
-		throw new Error(
+		throw new CodedError("E_BAD_PAYLOAD",
 			`[MODEL] [E_BAD_PAYLOAD] Field "remove_from" must be an anchor string (3-char hash).`,
 		);
 	}
 	if ("remove_to" in edit && typeof edit.remove_to !== "string") {
-		throw new Error(
+		throw new CodedError("E_BAD_PAYLOAD",
 			`[MODEL] [E_BAD_PAYLOAD] Field "remove_to" must be an anchor string (3-char hash).`,
 		);
 	}
 	if (!("replacement_text" in edit)) {
-		throw new Error(
+		throw new CodedError("E_BAD_PAYLOAD",
 			`[MODEL] [E_BAD_PAYLOAD] The edit requires a "replacement_text" field. Provide the replacement text (use "" to delete).`,
 		);
 	}
 	if (typeof edit.replacement_text !== "string") {
-		throw new Error(NEW_CONTENT_NOT_STRING_MSG);
+		throw new CodedError("E_BAD_PAYLOAD", NEW_CONTENT_NOT_STRING_MSG);
 	}
 	if (
 		typeof edit.remove_from !== "string" ||
 		typeof edit.remove_to !== "string"
 	) {
-		throw new Error(
+		throw new CodedError("E_BAD_PAYLOAD",
 			`[MODEL] [E_BAD_PAYLOAD] The edit requires "remove_from" and "remove_to" anchor strings (3-char hashes from read output).`,
 		);
 	}
@@ -271,7 +271,7 @@ export function resEdit(edit: HTEdit, _warnings?: string[]): HEdit {
 			const hash = firstHashFromBlock(trimmed);
 			if (hash) {
 				const lines = trimmed.split("\n").length;
-				throw new Error(`[MODEL] [E_BAD_ANCHOR] extracted first hash "${hash}" from ${lines}-line block — use bare "${hash}" next time`);
+				throw new CodedError("E_BAD_ANCHOR",`[MODEL] [E_BAD_ANCHOR] extracted first hash "${hash}" from ${lines}-line block — use bare "${hash}" next time`);
 			}
 		}
 		const match = trimmed.match(ANCHOR_ROW_RE);
@@ -284,7 +284,7 @@ export function resEdit(edit: HTEdit, _warnings?: string[]): HEdit {
 			} else {
 				message = `[E_BAD_ANCHOR] stripped "HASH│" prefix from remove_from/remove_to "${trimmed}".`;
 			}
-			throw new Error(`[MODEL] ${message}`);
+			throw new CodedError("E_BAD_ANCHOR", `[MODEL] ${message}`);
 		}
 		return ref;
 	}) as [string, string];
@@ -428,7 +428,7 @@ function valEdit(
 		return { resolved: undefined, mismatches };
 	}
 	if (startResolved.line > endResolved.line) {
-		throw new Error(
+		throw new CodedError("E_REVERSED_ANCHORS",
 			`[MODEL] [E_REVERSED_ANCHORS] Range start line ${startResolved.line} must be <= end line ${endResolved.line} (anchors ${edit.hash_bounds[0].hash} and ${edit.hash_bounds[1].hash}).`,
 		);
 	}
@@ -456,7 +456,7 @@ export interface ServedRow {
 	hash: string;
 }
 
-export class ServedRejectionError extends Error {
+export class ServedRejectionError extends CodedError {
 	readonly code: ServedCode;
 	readonly unservedKind: "boundary" | "interior" | undefined;
 	readonly firstOffendingLine: number | undefined;
@@ -469,7 +469,7 @@ export class ServedRejectionError extends Error {
 		firstOffendingLine?: number;
 		servedRows: ServedRow[];
 	}) {
-		super(opts.message);
+		super(opts.code, opts.message);
 		this.name = "ServedRejectionError";
 		this.code = opts.code;
 		this.unservedKind = opts.unservedKind;
@@ -484,11 +484,11 @@ export function isServedRejection(
 	return error instanceof ServedRejectionError;
 }
 
-export class AnchorMismatchError extends Error {
+export class AnchorMismatchError extends CodedError {
 	readonly servedRows: ServedRow[];
 
 	constructor(message: string, servedRows: ServedRow[]) {
-		super(message);
+		super("E_STALE_ANCHOR", message);
 		this.name = "AnchorMismatchError";
 		this.servedRows = servedRows;
 	}
@@ -497,10 +497,10 @@ export class AnchorMismatchError extends Error {
 /** Thrown when replacement_text carries anchor-syntax garbage (HASH│/diff-preview prefixes).
  * Carries the stripped edit so applyEdit can distinguish served-echo (→ E_SERVED_ECHO
  * denial downstream) from garbage (→ E_BAD_ANCHOR stands). */
-export class BadAnchorError extends Error {
+export class BadAnchorError extends CodedError {
 	readonly stripped: HEdit;
 	constructor(message: string, stripped: HEdit) {
-		super(message);
+		super("E_BAD_ANCHOR", message);
 		this.name = "BadAnchorError";
 		this.stripped = stripped;
 	}

@@ -15,6 +15,7 @@ import {
 import { abortIf } from "./utils.js";
 import { execute } from "./mutation.js";
 import { EDIT_DESCRIPTION } from "./prompts.js";
+import { codeOf } from "./utils.js";
 import type { FileIO } from "./fs-bridge.js";
 import { execCwd, execSessionKey } from "./workspace-context.js";
 import type { FsSandboxController, FsEscalationArgs } from "./sandbox.js";
@@ -40,7 +41,7 @@ async function resolveNullPath(edits: Array<{ remove_from: string; remove_to: st
       throw new Error(`[MODEL] [E_BAD_PAYLOAD] Edit request requires a non-empty "path" string; the anchors match multiple known files: ${matches.join(", ")}. Include the intended path.`);
     }
   } catch (e) {
-    if (e instanceof Error && e.message.includes("[E_BAD_PAYLOAD]")) throw e;
+    if (codeOf(e) === "E_BAD_PAYLOAD") throw e;
     return undefined;
   }
   return undefined;

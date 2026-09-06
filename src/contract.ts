@@ -10,7 +10,7 @@
  */
 
 import { EDITS_MAX_ITEMS } from "./constants.js";
-import { isRec, normalizeFilePath, rejectUnknownFields } from "./utils.js";
+import { isRec, normalizeFilePath, rejectUnknownFields, CodedError } from "./utils.js";
 
 // ---- request shapes --------------------------------------------------------
 
@@ -107,42 +107,44 @@ export function editRequestFrom(input: unknown): NormalizedEditRequest | undefin
  * pairs plus surrounding quotes/backticks, applied iteratively. Returns the
  * cleaned path, or null when nothing usable remains (caller rejects).
  */
+/** Paired/single bleed wrappers, longest-token first. Each entry strips one layer. */
+const PATH_WRAPPERS: ReadonlyArray<{
+	open: string;
+	close: string;
+	/** Minimum surviving length guard (keeps `"<|>"` alone from vanishing mid-loop). */
+	minLen: number;
+	pairOnly: boolean;
+}> = [
+	{ open: "<|>", close: "<|>", minLen: 6, pairOnly: false },
+	{ open: "\u2502", close: "\u2502", minLen: 2, pairOnly: true },
+	{ open: "|", close: "|", minLen: 2, pairOnly: true },
+	{ open: '"', close: '"', minLen: 0, pairOnly: true },
+	{ open: "'", close: "'", minLen: 0, pairOnly: true },
+	{ open: "`", close: "`", minLen: 0, pairOnly: true },
+];
+
 export function sanitizePath(value: unknown): string | null {
-  if (typeof value !== "string") return null;
-  let s = value.trim();
-  let changed = true;
-  while (changed) {
-    changed = false;
-    if (s.startsWith("<|>") && s.endsWith("<|>") && s.length > 6) {
-      s = s.slice(3, -3).trim();
-      changed = true;
-    }
-    if (s.startsWith("\u2502") && s.endsWith("\u2502") && s.length > 2) {
-      s = s.slice(1, -1).trim();
-      changed = true;
-    }
-    if (s.startsWith("|") && s.endsWith("|") && s.length > 2) {
-      s = s.slice(1, -1).trim();
-      changed = true;
-    }
-    if (
-      (s.startsWith('"') && s.endsWith('"')) ||
-      (s.startsWith("'") && s.endsWith("'")) ||
-      (s.startsWith("`") && s.endsWith("`"))
-    ) {
-      s = s.slice(1, -1).trim();
-      changed = true;
-    }
-    if (s.startsWith("<|>")) {
-      s = s.slice(3).trim();
-      changed = true;
-    }
-    if (s.endsWith("<|>")) {
-      s = s.slice(0, -3).trim();
-      changed = true;
-    }
-  }
-  return s.length > 0 ? s : null;
+	if (typeof value !== "string") return null;
+	let cleaned = value.trim();
+	let changed = true;
+	while (changed) {
+		changed = false;
+		for (const w of PATH_WRAPPERS) {
+			if (cleaned.length > w.minLen && cleaned.startsWith(w.open) && cleaned.endsWith(w.close)) {
+				cleaned = cleaned.slice(w.open.length, -w.close.length).trim();
+				changed = true;
+			} else if (!w.pairOnly) {
+				if (cleaned.startsWith(w.open)) {
+					cleaned = cleaned.slice(w.open.length).trim();
+					changed = true;
+				} else if (cleaned.endsWith(w.close)) {
+					cleaned = cleaned.slice(0, -w.close.length).trim();
+					changed = true;
+				}
+			}
+		}
+	}
+	return cleaned.length > 0 ? cleaned : null;
 }
 
 export const EDIT_TUPLE_HINT =
@@ -200,52 +202,52 @@ export function prepareEditArguments(args: unknown): Record<string, unknown> {
   if (valid) {
     return { path: valid.path, edits: (args as Record<string, unknown>).edits };
   }
-  throw new Error(`[MODEL] [E_BAD_PAYLOAD] ${EDIT_TUPLE_HINT} ${describeReceived(args)}`);
+  throw new CodedError("E_BAD_PAYLOAD",`[MODEL] [E_BAD_PAYLOAD] ${EDIT_TUPLE_HINT} ${describeReceived(args)}`);
 }
 
 // ---- assertions ---------------------------------------------------------------
 
 export function assertEditRequest(request: unknown): asserts request is NormalizedEditRequest {
   if (!isNormalizedEdit(request)) {
-    throw new Error("[MODEL] [E_BAD_PAYLOAD] Edit request must be exactly { path, edits: [[remove_from, remove_to, replacement_text], ...] }.");
+    throw new CodedError("E_BAD_PAYLOAD", "[MODEL] [E_BAD_PAYLOAD] Edit request must be exactly { path, edits: [[remove_from, remove_to, replacement_text], ...] }.");
   }
   rejectUnknownFields(request as Record<string, unknown>, EDIT_KS, "Edit request");
   const req = request as NormalizedEditRequest;
   if (req.path !== null && (typeof req.path !== "string" || req.path.length === 0)) {
-    throw new Error('[MODEL] [E_BAD_PAYLOAD] Edit request path must be a non-empty string or null.');
+    throw new CodedError("E_BAD_PAYLOAD", '[MODEL] [E_BAD_PAYLOAD] Edit request path must be a non-empty string or null.');
   }
   if (!Array.isArray(req.edits) || req.edits.length === 0) {
-    throw new Error('[MODEL] [E_BAD_PAYLOAD] Edit request requires a non-empty "edits" array.');
+    throw new CodedError("E_BAD_PAYLOAD", '[MODEL] [E_BAD_PAYLOAD] Edit request requires a non-empty "edits" array.');
   }
   if (req.edits.length > EDITS_MAX_ITEMS) {
-    throw new Error(`[MODEL] [E_BAD_PAYLOAD] edit accepts at most ${EDITS_MAX_ITEMS} edits; got ${req.edits.length}. Split the batch.`);
+    throw new CodedError("E_BAD_PAYLOAD",`[MODEL] [E_BAD_PAYLOAD] edit accepts at most ${EDITS_MAX_ITEMS} edits; got ${req.edits.length}. Split the batch.`);
   }
   for (let index = 0; index < req.edits.length; index++) {
     const item = req.edits[index]!;
     if (typeof item.remove_from !== "string" || typeof item.remove_to !== "string" || typeof item.replacement_text !== "string") {
-      throw new Error(`[MODEL] [E_BAD_PAYLOAD] Edit request edits[${index}] must be a three-position array [remove_from, remove_to, replacement_text].`);
+      throw new CodedError("E_BAD_PAYLOAD",`[MODEL] [E_BAD_PAYLOAD] Edit request edits[${index}] must be a three-position array [remove_from, remove_to, replacement_text].`);
     }
   }
 }
 
 // legacy — now always fails with new shape message (batch_edit removed)
 export function assertBatchEditRequest(_request: unknown): asserts _request is BatchEditParams {
-  throw new Error("[MODEL] [E_BAD_PAYLOAD] batch_edit has been removed. Use edit with { path, edits: [[remove_from, remove_to, replacement_text], ...] }.");
+  throw new CodedError("E_BAD_PAYLOAD", "[MODEL] [E_BAD_PAYLOAD] batch_edit has been removed. Use edit with { path, edits: [[remove_from, remove_to, replacement_text], ...] }.");
 }
 
 export function assertReadRequest(request: unknown): asserts request is ReadParams {
-  if (!isRec(request)) throw new Error("[MODEL] [E_BAD_PAYLOAD] Read request must be an object.");
+  if (!isRec(request)) throw new CodedError("E_BAD_PAYLOAD", "[MODEL] [E_BAD_PAYLOAD] Read request must be an object.");
   rejectUnknownFields(request, READ_KS, "Read request");
   if (typeof request.path !== "string" || request.path.length === 0) {
-    throw new Error('[MODEL] [E_BAD_PAYLOAD] Read request requires a non-empty "path" string.');
+    throw new CodedError("E_BAD_PAYLOAD", '[MODEL] [E_BAD_PAYLOAD] Read request requires a non-empty "path" string.');
   }
 }
 
 export function assertUndoRequest(request: unknown): asserts request is UndoParams {
-  if (!isRec(request)) throw new Error("[MODEL] [E_BAD_PAYLOAD] undo_last_edit request must be an object.");
+  if (!isRec(request)) throw new CodedError("E_BAD_PAYLOAD", "[MODEL] [E_BAD_PAYLOAD] undo_last_edit request must be an object.");
   normalizeFilePath(request);
   if (typeof request.path !== "string" || request.path.length === 0) {
-    throw new Error('[MODEL] [E_BAD_PAYLOAD] undo_last_edit request requires a non-empty "path" string.');
+    throw new CodedError("E_BAD_PAYLOAD", '[MODEL] [E_BAD_PAYLOAD] undo_last_edit request requires a non-empty "path" string.');
   }
 }
 

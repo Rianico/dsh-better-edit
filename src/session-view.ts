@@ -171,24 +171,29 @@ export async function retireAnchors(
 	});
 }
 
+/** Full-file context for a complete read — when present and matching `rows`, the call is a full read. */
+export interface FullReadContext {
+	hashes: readonly string[];
+	canons?: readonly (string | null)[];
+	snapshotId?: string;
+}
+
 export async function recordServed(
 	sessionKey: string,
 	path: string,
 	rows: ServedEntry[],
 	lineCount?: number,
-	fullReadHashes?: readonly string[],
-	fullReadCanons?: readonly (string | null)[],
-	fullReadSnapshotId?: string,
+	full?: FullReadContext,
 ): Promise<void> {
 	if (rows.length === 0) return;
 	try {
 		const store = await loadServedStore();
 		const isFullRead =
-			fullReadHashes !== undefined &&
-			rows.length === fullReadHashes.length &&
+			full !== undefined &&
+			rows.length === full.hashes.length &&
 			rows.every(
 				(row, index) =>
-					row.position === index && row.hash === fullReadHashes[index],
+					row.position === index && row.hash === full.hashes[index],
 			);
 		withStore(() => {
 			const current = store.getServed(sessionKey, path);
@@ -198,16 +203,16 @@ export async function recordServed(
 			}
 			if (isFullRead) {
 				store.clearRetiredAnchors(sessionKey, path);
-				if (fullReadCanons) store.upsertServedCanons(sessionKey, path, JSON.stringify(fullReadCanons));
-				if (fullReadSnapshotId) store.upsertEpochSnapshotId(sessionKey, path, fullReadSnapshotId);
+				if (full?.canons) store.upsertServedCanons(sessionKey, path, JSON.stringify(full.canons));
+				if (full?.snapshotId) store.upsertEpochSnapshotId(sessionKey, path, full.snapshotId);
 			} else {
 			// For partial reads, update canons for the served rows via hash-to-canon map (robust for partial views)
-				if (fullReadCanons && fullReadHashes) {
+				if (full?.canons && full.hashes) {
 					const canonByHash = new Map<string, string | null>();
-					for (let i = 0; i < fullReadHashes.length; i++) {
-						const h = fullReadHashes[i]!;
-						const c = fullReadCanons[i] ?? null;
-						if (h) canonByHash.set(h, c);
+					for (let i = 0; i < full.hashes.length; i++) {
+						const lineHash = full.hashes[i]!;
+						const lineCanon = full.canons[i] ?? null;
+						if (lineHash) canonByHash.set(lineHash, lineCanon);
 					}
 					const currentCanons = store.getServedCanons(sessionKey, path);
 					const updatedCanons = currentCanons.slice();

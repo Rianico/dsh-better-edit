@@ -91,15 +91,11 @@ export async function readAndServe(
 		for (let i = 0; i < view.hashes.length; i++) {
 			fullCanons.push(canons[i] ?? null);
 		}
-		await recordServed(
-			sessionKey,
-			view.absolutePath,
-			view.served,
-			view.hashes.length,
-			view.hashes,
-			fullCanons,
+		await recordServed(sessionKey, view.absolutePath, view.served, view.hashes.length, {
+			hashes: view.hashes,
+			canons: fullCanons,
 			snapshotId,
-		);
+		});
 	}
 	// #69: epoch lifecycle belongs to full reads — a partial (paged or
 	// truncated) read merges window rows only and must not clear the

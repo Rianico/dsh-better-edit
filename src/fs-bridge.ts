@@ -38,6 +38,7 @@ import {
   prepareForSave,
 } from "./file-encoding-state.js";
 import type { FileEncodingState } from "./file-encoding-state.js";
+import { codeOf } from "./utils.js";
 
 // Re-export file encoding state seam for backward compat (file-view, read-and-serve, tests)
 export type { FileEncodingState } from "./file-encoding-state.js";
@@ -370,7 +371,7 @@ export function localIO(): FileIO {
         return decoded.text;
       } catch (error) {
         // Local fallback: when autoGuess off, E_UNSUPPORTED_FILE should fall back to raw UTF-8 with � (no throw)
-        if (error instanceof Error && error.message.includes("[E_UNSUPPORTED_FILE]")) {
+        if (codeOf(error) === "E_UNSUPPORTED_FILE") {
           return readFile(absolutePath, "utf-8");
         }
         throw error;
