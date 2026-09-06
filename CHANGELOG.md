@@ -1,21 +1,21 @@
-## [Unreleased]
+## [0.7.0](https://github.com/Rianico/dsh-better-edit/compare/v0.6.3...v0.7.0) (2026-09-06)
 
 ### Features
 
-- **session-view:** canon-deficit drift instead of hash rotation (Closes #46) (#50)
-- user/model audience split + glossary error codes (#49)
+* **session-view:** canon-deficit drift instead of hash rotation (Closes [#46](https://github.com/Rianico/dsh-better-edit/issues/46)) ([#50](https://github.com/Rianico/dsh-better-edit/issues/50)) ([44ba1b3](https://github.com/Rianico/dsh-better-edit/commit/44ba1b3ea3c33759c879363a7e18b4d718edd4d9)), closes [#68](https://github.com/Rianico/dsh-better-edit/issues/68)
+* user/model audience split + glossary error codes ([#49](https://github.com/Rianico/dsh-better-edit/issues/49)) ([1559fc5](https://github.com/Rianico/dsh-better-edit/commit/1559fc5d135d006faa86aa656c166a5e3fa3be08)), closes [#48](https://github.com/Rianico/dsh-better-edit/issues/48) [#45](https://github.com/Rianico/dsh-better-edit/issues/45)
 
-### Fixed
+### Bug Fixes
 
-- **served:** refresh canons on truncated serve records (Closes #53)
-- review follow-ups from 1.6.0 absorb (Closes #55) (#56)
-- **served:** epoch lifecycle belongs to full reads (Closes #48) (#54)
-- **edit:** Gemma-4 tool-call bleed hardening + prompt channel wording (Closes #47) (#52)
+* **edit:** Gemma-4 tool-call bleed hardening + prompt channel wording (Closes [#47](https://github.com/Rianico/dsh-better-edit/issues/47)) ([#52](https://github.com/Rianico/dsh-better-edit/issues/52)) ([55e8d21](https://github.com/Rianico/dsh-better-edit/commit/55e8d21bcc57e87ee674c4d7484da0cd200e2e03)), closes [#55](https://github.com/Rianico/dsh-better-edit/issues/55)
+* review follow-ups from 1.6.0 absorb (Closes [#55](https://github.com/Rianico/dsh-better-edit/issues/55)) ([#56](https://github.com/Rianico/dsh-better-edit/issues/56)) ([d6a9cbb](https://github.com/Rianico/dsh-better-edit/commit/d6a9cbb5ae071892dd88aefdaa6b9d875aa091e7))
+* **served:** epoch lifecycle belongs to full reads (Closes [#48](https://github.com/Rianico/dsh-better-edit/issues/48)) ([#54](https://github.com/Rianico/dsh-better-edit/issues/54)) ([959f355](https://github.com/Rianico/dsh-better-edit/commit/959f355b0866a6a892dda2a149cc20c6505fc9ad)), closes [#69](https://github.com/Rianico/dsh-better-edit/issues/69)
+* **served:** refresh canons on truncated serve records (Closes [#53](https://github.com/Rianico/dsh-better-edit/issues/53)) ([#57](https://github.com/Rianico/dsh-better-edit/issues/57)) ([1f8601c](https://github.com/Rianico/dsh-better-edit/commit/1f8601cc8b3608bc79acb82130abbe37990aef75))
 
 ### Documentation
 
-- **absorb:** record v1.6.0 checkpoint 87a17eb after T1-T4
-- migrate CLAUDE.md to AGENTS.md with symlink
+* **absorb:** record v1.6.0 checkpoint 87a17eb after T1-T4 ([8afba98](https://github.com/Rianico/dsh-better-edit/commit/8afba9842628e44a011c266956d8746725295c11))
+* migrate CLAUDE.md to AGENTS.md with symlink ([4706b6e](https://github.com/Rianico/dsh-better-edit/commit/4706b6e15f6a0ca627059087e3f05953b7b2ae6e))
 
 ## [0.6.3](https://github.com/Rianico/dsh-better-edit/compare/v0.6.2...v0.6.3) (2026-09-05)
 
