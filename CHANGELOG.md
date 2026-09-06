@@ -1,12 +1,12 @@
-## [Unreleased]
+## [0.7.1](https://github.com/Rianico/dsh-better-edit/compare/v0.7.0...v0.7.1) (2026-09-06)
 
-### Fixed
+### Bug Fixes
 
-- **hashline:** retired hazard GC and stable reuse for anchor-space deadlock
+* **hashline:** retired hazard GC and stable reuse for anchor-space deadlock ([#59](https://github.com/Rianico/dsh-better-edit/issues/59)) ([2487c43](https://github.com/Rianico/dsh-better-edit/commit/2487c43e6d0ec8e5af15b42495bc4f8d7e3ca89a)), closes [#51](https://github.com/Rianico/dsh-better-edit/issues/51) [#51](https://github.com/Rianico/dsh-better-edit/issues/51) [#51](https://github.com/Rianico/dsh-better-edit/issues/51)
 
 ### Documentation
 
-- **context:** retired anchor replaces tombstone; add hazard card and epoch glossary (#58)
+* **context:** retired anchor replaces tombstone; add hazard card and epoch glossary ([#58](https://github.com/Rianico/dsh-better-edit/issues/58)) ([287b68e](https://github.com/Rianico/dsh-better-edit/commit/287b68efc97bea940fd881a8ca1e8755b2da311a)), closes [#51](https://github.com/Rianico/dsh-better-edit/issues/51)
 
 ## [0.7.0](https://github.com/Rianico/dsh-better-edit/compare/v0.6.3...v0.7.0) (2026-09-06)
 
