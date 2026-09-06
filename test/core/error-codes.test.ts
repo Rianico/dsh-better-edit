@@ -37,13 +37,13 @@ describe("structured error codes (#55 S1)", () => {
 		);
 	});
 
-	it("tombstoned anchor with changed canon carries E_STALE_RANGE", () => {
+	it("retired anchor with changed canon carries E_STALE_RANGE", () => {
 		const hashes = lineHashesPure("a\nb\nc");
 		try {
 			verifyServedRange({
 				served: [...hashes],
 				servedCanons: ["zzz", "b", "c"],
-				tombstone: new Set([hashes[0]!]),
+				retired: new Set([hashes[0]!]),
 				startHash: hashes[0]!,
 				endHash: hashes[1]!,
 				startLine: 1,

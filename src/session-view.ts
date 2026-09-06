@@ -29,6 +29,7 @@ import {
 	withStore,
 	type AnchorReservations,
 	type ServedPersistence,
+	type RetiredEntry,
 } from "./hash-store.js";
 import { SERVED_ECHO_CAP } from "./constants.js";
 import type { ServedRow, ResolvedRange } from "./hashline/anchor-pipeline.js";
@@ -107,10 +108,11 @@ export async function loadServed(sessionKey: string, path: string): Promise<(str
 
 /** Anchors that must not be allocated while any session can still remember them. */
 export async function loadAnchorReservations(
+	sessionKey: string,
 	path: string,
 ): Promise<AnchorReservations> {
 	const store = await loadServedStore();
-	return store.getAnchorReservations(path);
+	return store.getAnchorReservations(sessionKey, path);
 }
 
 export async function loadServedCanons(sessionKey: string, path: string): Promise<(string | null)[]> {
@@ -142,7 +144,27 @@ function addRetiredAnchors(
 		}
 		retired.add(hash);
 	}
+	// Persist as legacy string array for backward compat; new entries with deathPos use object form via addRetiredEntries
 	store.upsertRetiredAnchors(sessionKey, path, JSON.stringify([...retired]));
+}
+
+function addRetiredEntries(
+	store: ServedPersistence,
+	sessionKey: string,
+	path: string,
+	entries: RetiredEntry[],
+): void {
+	if (entries.length === 0) return;
+	const existing = store.getRetiredEntries(sessionKey, path);
+	const seen = new Set(existing.map((e) => e.hash));
+	for (const e of entries) {
+		if (!HASH_RE.test(e.hash)) throw new TypeError(`Invalid retired hash: ${e.hash}`);
+		if (!seen.has(e.hash)) {
+			existing.push(e);
+			seen.add(e.hash);
+		}
+	}
+	store.upsertRetiredAnchors(sessionKey, path, JSON.stringify(existing));
 }
 
 function displacedHashes(
@@ -155,6 +177,63 @@ function displacedHashes(
 			(hash): hash is string => hash !== null && !remaining.has(hash),
 		),
 	);
+}
+
+function displacedEntries(
+	current: readonly (string | null)[],
+	updated: readonly (string | null)[],
+): RetiredEntry[] {
+	const remaining = new Set(updated.filter((hash): hash is string => hash !== null));
+	const entries: RetiredEntry[] = [];
+	for (let i = 0; i < current.length; i++) {
+		const h = current[i];
+		if (h !== null && !remaining.has(h)) {
+			entries.push({ hash: h, deathPos: i });
+		}
+	}
+	return entries;
+}
+
+// deathPos=null = legacy/unknown position (pre-GC String[] format or migration).
+// These entries are NOT swept incrementally — retained until full-recordServed (isFullRead) or major-GC promotion clears retired.
+// Incremental hazard sweep only frees deathPos (number) whose card was re-observed; null survives partial sweeps by design (minor leak documented here) and is drained only on epoch promotion/full read.
+function sweepRetiredByPositions(
+	store: ServedPersistence,
+	sessionKey: string,
+	path: string,
+	servedPositions: ReadonlySet<number>,
+): void {
+	if (servedPositions.size === 0) return;
+	const entries = store.getRetiredEntries(sessionKey, path);
+	if (entries.length === 0) return;
+	const filtered = entries.filter((e) => e.deathPos === null || !servedPositions.has(e.deathPos));
+	if (filtered.length !== entries.length) {
+		store.upsertRetiredAnchors(sessionKey, path, JSON.stringify(filtered));
+	}
+}
+
+function sweepAndRetire(
+	store: ServedPersistence,
+	sessionKey: string,
+	path: string,
+	current: readonly (string | null)[],
+	updated: readonly (string | null)[],
+	rows: readonly ServedEntry[],
+): void {
+	const servedPositions = new Set<number>(rows.map((r) => r.position));
+	const existingCards = store.getCards(sessionKey, path);
+	let cardsChanged = false;
+	for (const pos of servedPositions) if (!existingCards.has(pos)) { existingCards.add(pos); cardsChanged = true; }
+	if (cardsChanged) store.upsertCards(sessionKey, path, JSON.stringify([...existingCards]));
+	const existingEntries = store.getRetiredEntries(sessionKey, path);
+	const displaced = displacedEntries(current, updated);
+	const existingHashes = new Set(existingEntries.map((e) => e.hash));
+	const filteredDisplaced = displaced.filter((e) => !existingHashes.has(e.hash));
+	const afterSweep = existingEntries.filter((e) => e.deathPos === null || !existingCards.has(e.deathPos));
+	const merged = [...afterSweep, ...filteredDisplaced];
+	if (merged.length !== existingEntries.length || filteredDisplaced.length > 0 || cardsChanged) {
+		store.upsertRetiredAnchors(sessionKey, path, JSON.stringify(merged));
+	}
 }
 
 /** Keep freed anchors dead for this session until it has seen the whole file again. */
@@ -203,6 +282,7 @@ export async function recordServed(
 			}
 			if (isFullRead) {
 				store.clearRetiredAnchors(sessionKey, path);
+				store.clearCards(sessionKey, path);
 				if (full?.canons) store.upsertServedCanons(sessionKey, path, JSON.stringify(full.canons));
 				if (full?.snapshotId) store.upsertEpochSnapshotId(sessionKey, path, full.snapshotId);
 			} else {
@@ -225,14 +305,7 @@ export async function recordServed(
 					while (updatedCanons.length > 0 && updatedCanons[updatedCanons.length - 1] === null) updatedCanons.pop();
 					store.upsertServedCanons(sessionKey, path, JSON.stringify(updatedCanons));
 				}
-				// #69: partial reads merge window rows + canons only — the epoch
-				// snapshotId advances on full reads alone (see isFullRead above).
-				addRetiredAnchors(
-					store,
-					sessionKey,
-					path,
-					displacedHashes(current, updated),
-				);
+				sweepAndRetire(store, sessionKey, path, current, updated, rows);
 			}
 		});
 	} catch (error) {
@@ -266,12 +339,7 @@ export async function recordServedTruncated(sessionKey: string, path: string, ro
 				}
 				store.upsertServedCanons(sessionKey, path, JSON.stringify(updatedCanons));
 			}
-			addRetiredAnchors(
-				store,
-				sessionKey,
-				path,
-				displacedHashes(current, updated),
-			);
+			sweepAndRetire(store, sessionKey, path, current, updated, rows);
 		});
 	} catch (error) {
 		console.error("Failed to record truncated served rows:", error);
@@ -383,7 +451,7 @@ export interface DriftNoticeResult {
 type RotatedSurvivorCheck = (servedPos: number) => boolean;
 
 /**
- * WHY (#68 hash-rotation vs content loss): probing + tombstone growth reassign
+ * WHY (#68 hash-rotation vs content loss): probing + retired growth reassign
  * distinct hashes to identical duplicate lines across sequential edits, so a
  * served hash missing from the result set may still survive under a fresh hash.
  * Suppress those by consuming one matching canon outside the edited span;

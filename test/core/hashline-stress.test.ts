@@ -184,7 +184,7 @@ describe("hash collision stress tests", () => {
   it("throws a clear error when hash space is exhausted", () => {
     const line = "x";
     const content = Array.from({ length: HASH_SPACE + 1 }, () => line).join("\n");
-    expect(() => lineHashesPure(content)).toThrow("E_LARGE_FILE");
+    expect(() => lineHashesPure(content)).toThrow("E_ANCHOR_SPACE_EXHAUSTED");
   }, 300_000);
 });
 

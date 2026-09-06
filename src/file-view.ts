@@ -22,7 +22,7 @@ import { constants } from "node:fs";
 import { open as fsOpen, stat as fsStat } from "fs/promises";
 import { access as fsAccess } from "fs/promises";
 import { fileTypeFromBuffer } from "file-type";
-import { SNIFF_BYTES, MAX_BYTES, MAX_READ_LINE_BYTES } from "./constants.js";
+import { SNIFF_BYTES, MAX_BYTES, MAX_READ_LINE_BYTES, eLargeFileMsg } from "./constants.js";
 import { lineHashes, fmtRegion, HASH_SEP } from "./hashline/index.js";
 import { HASH_SPACE } from "./hashline/hash-assign.js";
 import { visLines, abortIf, errCode } from "./utils.js";
@@ -255,9 +255,7 @@ export async function loadFileKindAndText(
           if (decoded.charCodeAt(i) === 10) newlineCount++;
         }
         if (newlineCount > options.maxLines) {
-          throw new Error(
-            `[MODEL] [E_LARGE_FILE] ${options.displayPath ?? filePath} has more than ${options.maxLines} lines, exceeding the ${options.maxLines}-line edit limit. Hashline editing targets source-sized files; for very large files use write or a non-line-based approach.`,
-          );
+          throw new Error(eLargeFileMsg(options.displayPath ?? filePath, newlineCount, options.maxLines));
         }
       }
       return decoded;
@@ -373,6 +371,7 @@ export interface ReadNormOptions {
   noPersist?: boolean;
   reservedHashes?: ReadonlySet<string>;
   retiredHashes?: ReadonlySet<string>;
+  previous?: { content: string; hashes: string[]; removedHashes?: Set<string> };
 }
 
 export async function normFromText(input: {
@@ -386,6 +385,7 @@ export async function normFromText(input: {
   reservedHashes?: ReadonlySet<string>;
   retiredHashes?: ReadonlySet<string>;
   hadUtf8DecodeErrors?: boolean;
+  previous?: { content: string; hashes: string[]; removedHashes?: Set<string> };
 }): Promise<NormFile> {
   const { absolutePath, displayPath, signal } = input;
   abortIf(signal);
@@ -395,15 +395,13 @@ export async function normFromText(input: {
   if (input.maxLines !== undefined) {
     const lineCount = visLines(normalized).length;
     if (lineCount > input.maxLines) {
-      throw new Error(
-        `[MODEL] [E_LARGE_FILE] ${displayPath} has ${lineCount} lines, exceeding the ${input.maxLines}-line edit limit. Hashline editing targets source-sized files; for very large files use write or a non-line-based approach.`,
-      );
+      throw new Error(eLargeFileMsg(displayPath, lineCount, input.maxLines));
     }
   }
   const fileHashes = await lineHashes(
     normalized,
     absolutePath,
-    undefined,
+    input.previous,
     input.store,
     input.noPersist !== true,
     input.reservedHashes,
@@ -449,6 +447,7 @@ export async function readNormFile(
     reservedHashes: options?.reservedHashes,
     retiredHashes: options?.retiredHashes,
     hadUtf8DecodeErrors: file.hadUtf8DecodeErrors,
+    previous: options?.previous,
   });
 }
 
@@ -644,6 +643,7 @@ export interface ReadViewOpts extends PreviewOpts {
   signal?: AbortSignal;
   reservedHashes?: ReadonlySet<string>;
   retiredHashes?: ReadonlySet<string>;
+  previous?: { content: string; hashes: string[]; removedHashes?: Set<string> };
 }
 
 export async function preview(
@@ -678,6 +678,7 @@ export async function readView(
       maxLines: MAX_HASH_LINES,
       reservedHashes: opts.reservedHashes,
       retiredHashes: opts.retiredHashes,
+      previous: opts.previous,
     });
   const r = await fmtReadPreview(
     normalized,

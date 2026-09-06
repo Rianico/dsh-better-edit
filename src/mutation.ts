@@ -123,7 +123,7 @@ export async function execPipeline(
 	abortIf(signal)
 	const absolutePath = await io.resolve(path, cwd, signal)
 	const sessionKeyEarly = options?.sessionKey ?? sessionKeyFor(undefined)
-	const perSessionTombstoneForNorm = await loadRetiredAnchors(sessionKeyEarly, absolutePath)
+	const perSessionRetiredForNorm = await loadRetiredAnchors(sessionKeyEarly, absolutePath)
 	const rawText = await io.readText(absolutePath, signal)
 	const {
 		normalized: originalNormalized,
@@ -139,8 +139,8 @@ export async function execPipeline(
 		maxLines: MAX_HASH_LINES,
 		store: hashStore,
 		noPersist: options?.noPersist,
-		reservedHashes: perSessionTombstoneForNorm,
-		retiredHashes: perSessionTombstoneForNorm,
+		reservedHashes: perSessionRetiredForNorm,
+		retiredHashes: perSessionRetiredForNorm,
 	})
 
 	const sessionKey = options?.sessionKey ?? sessionKeyFor(undefined)
@@ -149,8 +149,8 @@ export async function execPipeline(
 	const epochSnapshotId = await loadEpochSnapshotId(sessionKey, absolutePath)
 	let curSnapshotId: string | undefined
 	try { curSnapshotId = (await fileSnap(absolutePath)).snapshotId } catch {}
-	const strictPos = false; // automatic resist: pos-free for exterior shift, strict via tombstone+canon (changed ∩ [L,R] handled by tombstone interior gated on canon)
-	const tombstonePerSession = await loadRetiredAnchors(sessionKey, absolutePath)
+	const strictPos = epochSnapshotId !== undefined && curSnapshotId !== undefined && epochSnapshotId !== curSnapshotId; // automatic: strict when epoch mismatch (conservative, future: changed∩[L,R] refined)
+	const retiredPerSession = await loadRetiredAnchors(sessionKey, absolutePath)
 	const policy: ServeRecordPolicy =
 		options?.noPersist === true ? 'preview' : 'live'
 
@@ -168,9 +168,9 @@ export async function execPipeline(
 			warnings: editWarnings,
 			store: hashStore,
 			persist: options?.noPersist !== true,
-			reservedHashes: perSessionTombstoneForNorm,
+			reservedHashes: perSessionRetiredForNorm,
 			servedCanons,
-			tombstone: tombstonePerSession,
+			retired: retiredPerSession,
 			epochSnapshotId,
 			curSnapshotId,
 			strictPos,

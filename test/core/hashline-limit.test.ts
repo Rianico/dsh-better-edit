@@ -33,7 +33,7 @@ describe("hashline limits", () => {
     const content = Array.from({ length: MAX_HASH_LINES + 1 }, () => "x").join(
       "\n",
     );
-    expect(() => lineHashesPure(content)).toThrow("E_LARGE_FILE");
+    expect(() => lineHashesPure(content)).toThrow("E_ANCHOR_SPACE_EXHAUSTED");
   }, 300_000);
 
   it("preserves unique hashes at the boundary through the store path", async () => {

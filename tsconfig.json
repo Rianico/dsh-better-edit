@@ -1,3 +1,8 @@
+// SAFETY ladder §3 — noUncheckedIndexedAccess / exactOptionalPropertyTypes remain false (deferred)
+// Reason: enabling either flag fans to ~30+ narrowing errors across mutation/engine, hash-store, session-view, anchor-pipeline
+// (blast radius per F-07-R1). Deferred per common/development-patterns.md ladder: fix code first → line ignore → file → targeted config
+// Targeted config (one category, 50+ hits) requires authority + review trigger — not in this PR.
+// Code still maintains invariants via explicit guards (filter(Boolean) served checks, HASH_RE validation) rather than compiler-enforced narrowing.
 {
   "compilerOptions": {
     "target": "ES2023",

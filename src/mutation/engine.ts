@@ -35,6 +35,44 @@ import {
 	type NEdit,
 } from "../hashline/anchor-pipeline.js";
 import { lineHashes } from "../hashline/hash.js";
+import { AnchorSpaceExhaustedError, HASH_SPACE } from "../hashline/hash-assign.js";
+
+function isAnchorSpaceExhausted(e: unknown): boolean {
+	return e instanceof AnchorSpaceExhaustedError || (e instanceof Error && e.message.includes("E_ANCHOR_SPACE_EXHAUSTED"));
+}
+
+function promotionWarning(retiredSize: number, servedLen: number): string {
+	return `[E_ANCHOR_SPACE_EXHAUSTED] Anchor space exhausted (retired ${retiredSize} + served ${servedLen} of ${HASH_SPACE}); promotion cleared retired — re-read recommended, stale-anchor checks degraded until next full read.`;
+}
+
+async function clearRetiredForPromotion(sessionKey: string | undefined, absolutePath: string): Promise<void> {
+	try {
+		const { loadServedStore } = await import("../hash-store.js");
+		const store = await loadServedStore();
+		store.clearRetiredAnchors(sessionKey ?? "", absolutePath);
+		try { store.clearCards(sessionKey ?? "", absolutePath); } catch {}
+	} catch {}
+}
+
+async function retryLineHashesWithPromotion(
+	sessionKey: string | undefined,
+	absolutePath: string,
+	retired: ReadonlySet<string> | undefined,
+	served: readonly (string | null)[] | undefined,
+	warnings: string[],
+	fn: (reserved: Set<string>, retired: Set<string>) => Promise<string[]>,
+): Promise<string[]> {
+	await clearRetiredForPromotion(sessionKey, absolutePath);
+	const servedLen = served?.filter((h): h is string => h !== null).length ?? 0;
+	warnings.push(promotionWarning(retired?.size ?? 0, servedLen));
+	const recomputed = new Set<string>((served?.filter((h): h is string => h !== null) ?? []) as string[]);
+	try {
+		return await fn(recomputed, new Set<string>());
+	} catch (e2: unknown) {
+		if (isAnchorSpaceExhausted(e2)) throw new Error(`[MODEL] [E_ANCHOR_SPACE_EXHAUSTED] Anchor space exhausted even after promotion (served ${servedLen} of ${HASH_SPACE}); file too large for hashline — use write.`);
+		throw e2;
+	}
+}
 import { MAX_HASH_LINES } from "../hashline/hash-assign.js";
 import {
 	AnchorMismatchError,
@@ -195,10 +233,11 @@ export interface ApplyOneInput {
 	persist: boolean;
 	reservedHashes?: ReadonlySet<string>;
 	servedCanons?: (string | null)[];
-	tombstone?: ReadonlySet<string>;
+	retired?: ReadonlySet<string>;
 	epochSnapshotId?: string;
 	curSnapshotId?: string;
 	strictPos?: boolean;
+	sessionKey?: string;
 	/** Pre-resolved edit (single path keeps resEdit before IO for error order). */
 	edit?: HEdit;
 }
@@ -250,6 +289,7 @@ export async function applyOne(
 		}
 	}
 
+	const retiredForApply = input.retired;
 	let anchorResult: ReturnType<typeof applyEdit>;
 	try {
 		anchorResult = applyEdit(
@@ -260,7 +300,7 @@ export async function applyOne(
 			input.displayPath,
 			input.served,
 			input.servedCanons,
-			input.tombstone,
+			retiredForApply,
 			input.epochSnapshotId,
 			input.curSnapshotId,
 			input.strictPos,
@@ -280,9 +320,13 @@ export async function applyOne(
 	const removedHashes = noop
 		? undefined
 		: collectRemovedHashes(edit, input.hashes);
-	const resultHashes = noop
-		? input.hashes
-		: await lineHashes(
+	const retiredForHash = input.retired;
+	let resultHashes: string[];
+	if (noop) {
+		resultHashes = input.hashes;
+	} else {
+		try {
+			resultHashes = await lineHashes(
 				result,
 				input.absolutePath,
 				{
@@ -293,7 +337,32 @@ export async function applyOne(
 				input.store,
 				input.persist,
 				input.reservedHashes,
+				retiredForHash,
 			);
+		} catch (e: unknown) {
+			if (!isAnchorSpaceExhausted(e)) throw e;
+			resultHashes = await retryLineHashesWithPromotion(
+				input.sessionKey,
+				input.absolutePath,
+				retiredForHash,
+				input.served,
+				input.warnings ?? [],
+				(recomputed, emptyRetired) => lineHashes(
+					result,
+					input.absolutePath,
+					{
+						content: input.content,
+						hashes: input.hashes,
+						removedHashes,
+					},
+					input.store,
+					input.persist,
+					recomputed,
+					emptyRetired,
+				),
+			);
+		}
+	}
 	const { totalAddedLines, totalRemovedLines } = countLineChanges(
 		edit,
 		input.countHashes ?? input.hashes,
@@ -440,8 +509,8 @@ export async function runFileEdits(
 	const first = items[0]!;
 	abortIf(opts.signal);
 	const absolutePath = first.absolutePath;
-	const perSessionTombstone = await loadRetiredAnchors(opts.sessionKey, absolutePath);
-	const reservedHashes = new Set(perSessionTombstone);
+	const perSessionRetired = await loadRetiredAnchors(opts.sessionKey, absolutePath);
+	const reservedHashes = new Set(perSessionRetired);
 	const rawText = await io.readText(absolutePath, opts.signal);
 	const {
 		normalized: originalNormalized,
@@ -456,7 +525,7 @@ export async function runFileEdits(
 		signal: opts.signal,
 		maxLines: MAX_HASH_LINES,
 		reservedHashes,
-		retiredHashes: perSessionTombstone,
+		retiredHashes: perSessionRetired,
 	});
 
 	const served = await loadServed(opts.sessionKey, absolutePath);
@@ -464,7 +533,7 @@ export async function runFileEdits(
 	const epochSnapshotId = await loadEpochSnapshotId(opts.sessionKey, absolutePath);
 	let curSnapshotId: string | undefined;
 	try { curSnapshotId = (await fileSnap(absolutePath)).snapshotId; } catch {}
-	const strictPos = false; // automatic resist: pos-free for exterior shift, strict via tombstone+canon for whole-span rebind
+	const strictPos = epochSnapshotId !== undefined && curSnapshotId !== undefined && epochSnapshotId !== curSnapshotId; // automatic: strict when epoch mismatch (conservative, future: changed∩[L,R] refined)
 	const warnings: string[] = [];
 
 	let currentContent = originalNormalized;
@@ -500,7 +569,7 @@ export async function runFileEdits(
 				persist: false,
 				reservedHashes,
 				servedCanons,
-				tombstone: new Set([...perSessionTombstone, ...Array.from(newlyRetired)]),
+				retired: new Set([...perSessionRetired, ...Array.from(newlyRetired)]),
 				epochSnapshotId,
 				curSnapshotId,
 				strictPos,
@@ -607,19 +676,43 @@ export async function runFileEdits(
 	const result = currentContent;
 	let resultHashes = currentHashes;
 	if (appliedCount > 0 && lastApplied) {
-		resultHashes = await lineHashes(
-			result,
-			absolutePath,
-			{
-				content: lastApplied.content,
-				hashes: lastApplied.hashes,
-				removedHashes: lastApplied.removedHashes,
-			},
-			undefined,
-			true,
-			reservedHashes,
-			perSessionTombstone,
-		);
+		try {
+			resultHashes = await lineHashes(
+				result,
+				absolutePath,
+				{
+					content: lastApplied.content,
+					hashes: lastApplied.hashes,
+					removedHashes: lastApplied.removedHashes,
+				},
+				undefined,
+				true,
+				reservedHashes,
+				perSessionRetired,
+			);
+		} catch (e: unknown) {
+			if (!isAnchorSpaceExhausted(e)) throw e;
+			resultHashes = await retryLineHashesWithPromotion(
+				opts.sessionKey,
+				absolutePath,
+				perSessionRetired,
+				served,
+				warnings,
+				(recomputed, emptyRetired) => lineHashes(
+					result,
+					absolutePath,
+					{
+						content: lastApplied.content,
+					hashes: lastApplied.hashes,
+					removedHashes: lastApplied.removedHashes,
+					},
+					undefined,
+					true,
+					recomputed,
+					emptyRetired,
+				),
+			);
+		}
 		await retireAnchors(opts.sessionKey, absolutePath, newlyRetired);
 	}
 
@@ -682,4 +775,3 @@ export async function runFileEdits(
 
 // ---------------------------------------------------------------------------
 // the write transaction
-

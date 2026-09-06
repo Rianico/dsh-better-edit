@@ -9,7 +9,7 @@
  */
 import { splitLines } from "../utils.js";
 import { loadHashStore, type HashStore } from "../hash-store.js";
-import { contentChecksum, initHasher, HASH_RE } from "./hash-assign.js";
+import { contentChecksum, initHasher, HASH_RE, AnchorSpaceExhaustedError } from "./hash-assign.js";
 import { lineHashesPure, mapStableHashes } from "./hash-assign.js";
 
 export interface HashSnapshotIO {
@@ -78,6 +78,8 @@ export async function lineHashes(
       content,
       previous.removedHashes,
       reservedHashes,
+      retiredHashes.size,
+      previous.hashes.length,
     );
     if (persist !== false && io) {
       try {
@@ -97,7 +99,7 @@ export async function lineHashes(
     }
   }
   if (cached && !cached.some((hash) => retiredHashes.has(hash))) return cached;
-  const newHashes = lineHashesPure(content, reservedHashes);
+  const newHashes = lineHashesPure(content, reservedHashes, retiredHashes.size, 0);
   if (persist !== false && io) {
     try {
       await io.upsert(path, contentChecksum(content), splitLines(content).length, newHashes);

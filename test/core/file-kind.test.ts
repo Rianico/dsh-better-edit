@@ -112,7 +112,7 @@ describe("loadFileKindAndText — maxLines early bailout", () => {
       const path = join(cwd, "many-lines.txt");
       await expect(
         loadFileKindAndText(path, { maxLines: 5 }),
-      ).rejects.toThrow(/\[E_LARGE_FILE\].*more than 5 lines/);
+      ).rejects.toThrow(/\[E_LARGE_FILE\].*exceeding the 5-line/);
     });
   });
 

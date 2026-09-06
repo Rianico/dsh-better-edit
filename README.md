@@ -28,7 +28,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-0.6.1-blue.svg" alt="Version">
+  <img src="https://img.shields.io/badge/version-0.7.0-blue.svg" alt="Version">
   <img src="https://img.shields.io/badge/license-MIT-green.svg" alt="MIT License">
   <img src="https://img.shields.io/badge/DeepSeek_Harness-Plugin-blueviolet.svg" alt="DeepSeek Harness Plugin">
   <img src="https://img.shields.io/npm/v/dsh-better-edit" alt="npm version">
@@ -64,7 +64,7 @@
 > - **Position-free.** `read 1..5` → `insert @0` → `edit 10..12` still lands at `10..12`. Anchors are `canon(line)` hashes, not positions (ADR-0013). Exterior drift is a notice, not a re-read.
 > - **Fewer round-trips.** Single-session `1 read → N edits` — no ritual re-reads. Multi-session exterior `A:10..12 / B:20..30` also passes; only overlapping `A∩B≠∅` retries once via `servedRows` (no full `read`). Harness `9/9` green.
 > - **Fewer tokens.** Compact payload `{path, edits:[[from,to,text]]}` + never echoing `old_string`; diff/echo/rejection rows count as serves. Envelope `-40%` pinned 12-edit corpus, session `-55.8%` on external-drift.
-> - **Concurrent-safe, not silent.** `tombstone` per `(session,path)` epoch blocks re-bound `S@3→@3`; `canon` + `hash` + `changed∩[L,R]` makes `pos-free` single-thread and `strict` only on true overlap. One retry vs silent wrong-line.
+> - **Concurrent-safe, not silent.** `retired anchor` per `(session,path)` epoch blocks re-bound `S@3→@3`; `retired` + `canon` + `hash` + `changed∩[L,R]` makes `pos-free` single-thread and `strict` only on true overlap. One retry vs silent wrong-line.
 
 Not for one-line touch-ups (near parity) or new files (`write`). Pays off in long sessions and structural edits.
 
@@ -190,7 +190,7 @@ Single stochastic run, `opencode-go/gpt-5.6-luna` high. [Artifact](https://githu
 | Code | Meaning |
 | --- | --- |
 | `[E_BAD_PAYLOAD]` | Bad tuple shape (payload must be `{path, edits}` with 3-position tuples) |
-| `[E_STALE_ANCHOR]` | No line (hash/tombstone/canon miss) / multi-line → `read` |
+| `[E_STALE_ANCHOR]` | No line (hash/retired/canon miss) / multi-line → `read` |
 | `[E_BAD_ANCHOR]` | Not bare `3-char`, or `replacement_text` carries `HASH│`/diff-preview prefixes — refused, remove and retry |
 | `[E_SERVED_ECHO]` | Copied `HASH│` from same session/path/line — refused, remove and retry |
 | `[E_EMPTY_RANGE]`/`[E_NOT_FOUND]`/`[E_ACCESS]`/`[E_UNSUPPORTED_FILE]`/`[E_LARGE_FILE]` | Empty guard / missing / access / binary / >238,328 lines |
@@ -275,7 +275,7 @@ Saved **313 (31%)**. Reproduce: upstream `npm run benchmark`. See [`pi-better-ed
 
 ## Roadmap
 
-**Current `0.6.1`:** pos-free `resist`/`strict` + tombstone/canons/epoch, per-session `(session,path)` store, `1222` tests, `9/9` harness.
+**Current `0.7.0`:** pos-free `resist`/`strict` + retired anchor/canons/epoch, per-session `(session,path)` store, `1222` tests, `9/9` harness.
 
 <details><summary>Next</summary>
 

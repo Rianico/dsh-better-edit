@@ -114,6 +114,8 @@ interface Prepared {
 	servedCanonsClear: (...params: SqlParams) => void;
 	servedSnapshotUpsert: (...params: SqlParams) => void;
 	servedSnapshotClear: (...params: SqlParams) => void;
+	servedCardsUpsert: (...params: SqlParams) => void;
+	servedCardsClear: (...params: SqlParams) => void;
 	servedDelete: (...params: SqlParams) => void;
 	servedDeletePath: (...params: SqlParams) => void;
 	servedWipe: (...params: SqlParams) => void;
@@ -168,10 +170,14 @@ export interface HashStore {
 export interface ServedPersistence {
   getServed(sessionKey: string, path: string): (string | null)[];
   getServedReported(sessionKey: string, path: string): Set<string>;
-  getAnchorReservations(path: string): AnchorReservations;
+  getAnchorReservations(sessionKey: string, path: string): AnchorReservations;
   getRetiredAnchors(sessionKey: string, path: string): Set<string>;
+  getRetiredEntries(sessionKey: string, path: string): RetiredEntry[];
   getServedCanons(sessionKey: string, path: string): (string | null)[];
   getEpochSnapshotId(sessionKey: string, path: string): string | undefined;
+  getCards(sessionKey: string, path: string): Set<number>;
+  upsertCards(sessionKey: string, path: string, cardsJson: string): void;
+  clearCards(sessionKey: string, path: string): void;
   upsertServed(sessionKey: string, path: string, hashesJson: string): void;
   upsertServedReported(sessionKey: string, path: string, reportedJson: string): void;
   clearServedReported(sessionKey: string, path: string): void;
@@ -190,6 +196,56 @@ export interface ServedPersistence {
 export interface AnchorReservations {
   reservedHashes: Set<string>;
   retiredHashes: Set<string>;
+}
+
+export type DeathPos = number | null;
+
+export interface RetiredEntry {
+  hash: string;
+  deathPos: DeathPos;
+}
+
+export function isValidRetiredEntry(value: unknown): value is RetiredEntry {
+  if (typeof value !== "object" || value === null) return false;
+  const v = value as Record<string, unknown>;
+  return typeof v.hash === "string" && (v.deathPos === null || typeof v.deathPos === "number") && HASH_RE.test(v.hash);
+}
+
+export function isValidRetiredEntries(value: unknown): value is RetiredEntry[] {
+  if (!Array.isArray(value)) return false;
+  for (const e of value) if (!isValidRetiredEntry(e)) return false;
+  return true;
+}
+
+function coerceRetiredEntry(e: unknown): RetiredEntry | null {
+  if (typeof e === "string" && HASH_RE.test(e)) return { hash: e, deathPos: null };
+  if (typeof e !== "object" || e === null || !("hash" in (e as Record<string, unknown>))) return null;
+  const ee = e as Record<string, unknown>;
+  if (typeof ee.hash !== "string" || !HASH_RE.test(ee.hash)) return null;
+  const rawPos = ee.deathPos;
+  const deathPos: DeathPos = typeof rawPos === "number" && rawPos !== -1 ? (rawPos as number) : null;
+  return { hash: ee.hash, deathPos };
+}
+
+function parseRetiredJson(raw: string | null | undefined): RetiredEntry[] {
+  if (raw === null || raw === undefined || raw === "") return [];
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (!Array.isArray(parsed) || parsed.length === 0) return [];
+    if (isValidRetiredEntries(parsed)) {
+      return (parsed as RetiredEntry[]).map((e) => (e.deathPos === -1 ? { hash: e.hash, deathPos: null } : e));
+    }
+    const out: RetiredEntry[] = [];
+    for (const e of parsed as unknown[]) {
+      const coerced = coerceRetiredEntry(e);
+      if (coerced) out.push(coerced);
+    }
+    if (out.length > 0) return out;
+    if (isValidHashList(parsed)) return (parsed as string[]).map((h) => ({ hash: h, deathPos: null }));
+    return [];
+  } catch {
+    return [];
+  }
 }
 
 export type InternalHashStore = HashStore & ServedPersistence;
@@ -334,6 +390,7 @@ function buildStore(db: DatabaseSync): { db: DatabaseSync; stmts: Prepared } {
 			"retired TEXT, " +
 			"canons TEXT, " +
 			"snapshotId TEXT, " +
+			"cards TEXT, " +
 			"updated_at INTEGER NOT NULL, " +
 			"PRIMARY KEY (session_id, path)" +
 			")",
@@ -382,6 +439,12 @@ function buildStore(db: DatabaseSync): { db: DatabaseSync; stmts: Prepared } {
 	if (!snapshotColumns.some((column) => column.name === "snapshotId")) {
 		db.exec("ALTER TABLE served ADD COLUMN snapshotId TEXT");
 	}
+	const cardsColumns = db.prepare("PRAGMA table_info(served)").all() as {
+		name: string;
+	}[];
+	if (!cardsColumns.some((column) => column.name === "cards")) {
+		db.exec("ALTER TABLE served ADD COLUMN cards TEXT");
+	}
 	db
 		.prepare(
 			"INSERT INTO meta (key, value) VALUES ('version', ?) " +
@@ -412,7 +475,7 @@ function buildStore(db: DatabaseSync): { db: DatabaseSync; stmts: Prepared } {
 		"DELETE FROM undo WHERE updated_at < ?",
 	);
 	const servedGetStmt = db.prepare(
-		"SELECT hashes, reported, retired, canons, snapshotId FROM served WHERE session_id = ? AND path = ?",
+		"SELECT hashes, reported, retired, canons, snapshotId, cards FROM served WHERE session_id = ? AND path = ?",
 	);
 	const servedAllForPathStmt = db.prepare(
 		"SELECT session_id, hashes, retired FROM served WHERE path = ?",
@@ -448,6 +511,13 @@ function buildStore(db: DatabaseSync): { db: DatabaseSync; stmts: Prepared } {
 	);
 	const servedSnapshotClearStmt = db.prepare(
 		"UPDATE served SET snapshotId = NULL, updated_at = ? WHERE session_id = ? AND path = ?",
+	);
+	const servedCardsUpsertStmt = db.prepare(
+		"INSERT INTO served (session_id, path, hashes, cards, updated_at) VALUES (?, ?, '[]', ?, ?) " +
+			"ON CONFLICT(session_id, path) DO UPDATE SET cards = excluded.cards, updated_at = excluded.updated_at",
+	);
+	const servedCardsClearStmt = db.prepare(
+		"UPDATE served SET cards = NULL, updated_at = ? WHERE session_id = ? AND path = ?",
 	);
 	const servedDeleteStmt = db.prepare(
 		"DELETE FROM served WHERE session_id = ? AND path = ?",
@@ -537,6 +607,16 @@ function buildStore(db: DatabaseSync): { db: DatabaseSync; stmts: Prepared } {
 		servedSnapshotClear: (...params) => {
 			withBusyRetry(() => {
 				servedSnapshotClearStmt.run(params[1], params[0], params[2]);
+			});
+		},
+		servedCardsUpsert: (...params) => {
+			withBusyRetry(() => {
+				servedCardsUpsertStmt.run(...params);
+			});
+		},
+		servedCardsClear: (...params) => {
+			withBusyRetry(() => {
+				servedCardsClearStmt.run(params[1], params[0], params[2]);
 			});
 		},
 		servedDelete: (...params) => {
@@ -682,29 +762,26 @@ function makeDomainStore(stmts: Prepared): InternalHashStore {
 				return new Set();
 			}
 		},
-		getAnchorReservations(path) {
+		getAnchorReservations(sessionKey, path) {
 			const reservedHashes = new Set<string>();
 			const retiredHashes = new Set<string>();
-			for (const row of stmts.servedAllForPath(path)) {
-				try {
-					const served = JSON.parse(row.hashes as string) as unknown;
-					const retired =
-						row.retired === null || row.retired === undefined
-							? []
-							: (JSON.parse(row.retired as string) as unknown);
-					if (!isValidServedList(served) || !isValidHashList(retired)) {
-						throw new TypeError("invalid stored anchor reservations");
-					}
-					for (const hash of served) {
-						if (hash !== null) reservedHashes.add(hash);
-					}
-					for (const hash of retired) {
-						reservedHashes.add(hash);
-						retiredHashes.add(hash);
-					}
-				} catch (error) {
-					stmts.servedDelete(row.session_id as string, path);
+			const row = stmts.servedGet(sessionKey, path);
+			if (!row) return { reservedHashes, retiredHashes };
+			try {
+				const served = JSON.parse(row.hashes as string) as unknown;
+				if (!isValidServedList(served)) {
+					throw new TypeError("invalid stored anchor reservations");
 				}
+				for (const hash of served) {
+					if (hash !== null) reservedHashes.add(hash);
+				}
+				const retiredEntries = parseRetiredJson(row.retired as string | null);
+				for (const e of retiredEntries) {
+					reservedHashes.add(e.hash);
+					retiredHashes.add(e.hash);
+				}
+			} catch (error) {
+				stmts.servedDelete(sessionKey, path);
 			}
 			return { reservedHashes, retiredHashes };
 		},
@@ -714,14 +791,21 @@ function makeDomainStore(stmts: Prepared): InternalHashStore {
 				return new Set();
 			}
 			try {
-				const parsed = JSON.parse(row.retired as string) as unknown;
-				if (!isValidHashList(parsed)) {
-					throw new TypeError("invalid retired anchors");
-				}
-				return new Set(parsed);
+				const entries = parseRetiredJson(row.retired as string);
+				return new Set(entries.map((e) => e.hash));
 			} catch (error) {
 				stmts.servedDelete(sessionKey, path);
 				return new Set();
+			}
+		},
+		getRetiredEntries(sessionKey, path): RetiredEntry[] {
+			const row = stmts.servedGet(sessionKey, path);
+			if (!row || row.retired === null || row.retired === undefined) return [];
+			try {
+				return parseRetiredJson(row.retired as string);
+			} catch {
+				stmts.servedDelete(sessionKey, path);
+				return [];
 			}
 		},
 		upsertServed(sessionKey, path, hashesJson) {
@@ -772,6 +856,23 @@ function makeDomainStore(stmts: Prepared): InternalHashStore {
 		},
 		clearEpochSnapshotId(sessionKey, path) {
 			stmts.servedSnapshotClear(sessionKey, Date.now(), path);
+		},
+		getCards(sessionKey, path) {
+			const row = stmts.servedGet(sessionKey, path);
+			if (!row || row.cards === null || row.cards === undefined) return new Set<number>();
+			try {
+				const parsed = JSON.parse(row.cards as string) as unknown;
+				if (!Array.isArray(parsed)) return new Set<number>();
+				return new Set(parsed.filter((v): v is number => typeof v === "number" && Number.isInteger(v) && v >= 0));
+			} catch {
+				return new Set<number>();
+			}
+		},
+		upsertCards(sessionKey, path, cardsJson) {
+			stmts.servedCardsUpsert(sessionKey, path, cardsJson, Date.now());
+		},
+		clearCards(sessionKey, path) {
+			stmts.servedCardsClear(sessionKey, Date.now(), path);
 		},
 		deleteServed(sessionKey, path) {
 			stmts.servedDelete(sessionKey, path);
