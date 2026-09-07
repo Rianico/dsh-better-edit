@@ -1,3 +1,13 @@
+## [Unreleased]
+
+### Fixed
+
+- **script:** correct repo inference and headless dispatch for gh-release
+
+### Documentation
+
+- **agents:** sync AGENTS.md — remove tag-first releasing, fix git guide and upstream cursor
+
 ## [0.7.1](https://github.com/Rianico/dsh-better-edit/compare/v0.7.0...v0.7.1) (2026-09-06)
 
 ### Bug Fixes
