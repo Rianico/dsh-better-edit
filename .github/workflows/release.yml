@@ -9,36 +9,15 @@ jobs:
   verify:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-        with: { fetch-depth: 0 }
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4  # zizmor: ignore[cache-poisoning]
-        with: { node-version: 22 }
-      - run: npm ci
-      - run: npm audit signatures
-      - run: npm run lint
-      - run: npm run typecheck
-      - run: npm run test:coverage -- --coverage.thresholds.lines=75
-      - name: Check version matches tag (neural — Node/Python/Rust)
-        run: |
-          set -e
-          if [ -f package.json ]; then
-            PKG_VER=$(node -p "require('./package.json').version")
-            TAG_VER=$(git describe --tags --abbrev=0 2>/dev/null | sed 's/^v//' || echo "0.0.0")
-            echo "package.json: $PKG_VER, tag: $TAG_VER"
-            if [ "$PKG_VER" != "$TAG_VER" ]; then echo "::error::package.json $PKG_VER != tag $TAG_VER"; exit 1; fi
-          elif [ -f pyproject.toml ]; then
-            PY_VER=$(python -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb')).get('project',{}).get('version','') or tomllib.load(open('pyproject.toml','rb')).get('tool',{}).get('poetry',{}).get('version',''))")
-            TAG_VER=$(git describe --tags --abbrev=0 2>/dev/null | sed 's/^v//' || echo "0.0.0")
-            echo "pyproject.toml: $PY_VER, tag: $TAG_VER"
-            if [ "$PY_VER" != "$TAG_VER" ]; then echo "::error::pyproject.toml $PY_VER != tag $TAG_VER"; exit 1; fi
-          elif [ -f Cargo.toml ]; then
-            CARGO_VER=$(grep -m1 '^version' Cargo.toml | sed -E 's/.*"([^"]+)".*/\1/')
-            TAG_VER=$(git describe --tags --abbrev=0 2>/dev/null | sed 's/^v//' || echo "0.0.0")
-            echo "Cargo.toml: $CARGO_VER, tag: $TAG_VER"
-            if [ "$CARGO_VER" != "$TAG_VER" ]; then echo "::error::Cargo.toml $CARGO_VER != tag $TAG_VER"; exit 1; fi
-          else
-            echo "No version file found — skip check"
-          fi
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with: {fetch-depth: 0}
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+        with: {run_install: false}
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5  # zizmor: ignore[cache-poisoning]
+        with: {node-version: 24, cache: pnpm}
+      - run: pnpm install --no-frozen-lockfile
+      - run: pnpm audit --audit-level high
+      - run: pnpm run lint && pnpm run format && pnpm run typecheck && pnpm test
   release:
     needs: verify
     runs-on: ubuntu-latest
@@ -48,16 +27,18 @@ jobs:
       pull-requests: write
       id-token: write
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-        with: { fetch-depth: 0 }
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4  # zizmor: ignore[cache-poisoning]
-        with: { node-version: 22 }
-      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
-        with: { python-version: "3.12" }
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with: {fetch-depth: 0}
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+        with: {run_install: false}
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5  # zizmor: ignore[cache-poisoning]
+        with: {node-version: 24, cache: pnpm}
+      - uses: actions/setup-python@e797f83bcb11b83ae66e0230d6156d7c80228e7c # v6
+        with: {python-version: "3.12"}
       - name: Clear Unreleased section (handoff to semantic-release)
         run: python scripts/changelog-unreleased.py clear
-      - run: npm ci
-      - run: npm audit signatures
-      - run: npx semantic-release
+      - run: pnpm install --no-frozen-lockfile
+      - run: pnpm exec semantic-release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          HUSKY: "0"

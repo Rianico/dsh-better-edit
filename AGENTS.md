@@ -1,10 +1,13 @@
 # dsh-better-edit — notes for agents
 
-A DeepSeek Harness (`dsh`) plugin: hashline-anchored `read`/`edit`/`undo_last_edit` tools (`read_skill` for plain skill loads) plus per-preset guidance overrides. TypeScript, vitest. Checks: `npm run typecheck`, `npm test`, `npm run build`.
+A DeepSeek Harness (`dsh`) plugin: hashline-anchored `read`/`edit`/`undo_last_edit` tools (`read_skill` for plain skill loads) plus per-preset guidance overrides. TypeScript, vitest. Checks: `pnpm run typecheck`, `pnpm test`, `pnpm run build`.
 
 ## Working with Git
 
 Prefer issues + pull requests. See `CONTRIBUTING.md` for Conventional Commits (commitlint + husky) and `Closes #NN` convention.
+### Runtime
+
+TypeScript: pnpm v12 + .nvmrc (24) + TS v7 + Vite v8, verify via oxlint/oxfmt/tsc/vitest; see package.json
 
 ## Upstream sync — absorbing pi-better-edit
 
@@ -18,7 +21,7 @@ Procedure — repeat every sync and record the new hash here:
 2. Diff the range: `git -C ../pi-better-edit diff <last>..HEAD --stat` + `docs/adr/` scan + `benchmarks/results/` if present.
 3. Plan: refresh `docs/absorption-plan.md` with Basis (`pi-better-edit@<last>..HEAD`), Decisions, Phases — preserve deep seams (HashAssign, SessionView, FileView, Mutation, AnchorPipeline), no flatten.
 4. Port: per-ticket worktrees `absorb/tN-*` on seams, then integration `absorb/tN-integration`; keep payload contract `{path, edits:[[h,h,t]]}` (ADR-0007) and whitespace-insensitive canon `CANON_VERSION=2`.
-5. Verify each worktree and integration: `npm run typecheck && npm test` (integration also `npm run build`).
+5. Verify each worktree and integration: `pnpm run typecheck && pnpm test` (integration also `pnpm run build`).
 6. Record: update this section's `Last absorbed checkpoint` to the new upstream HEAD hash (full 40-char), append to `Checkpoint history` below and to `CHANGELOG.md` absorbed-range note.
 7. Commit/PR: `absorb: pi-better-edit <short> — <summary>`, branch `absorb/<topic>`, PR with `Closes #NN`.
 
