@@ -74,6 +74,23 @@ export function itemFromTuple(value: unknown): EditItem | undefined {
   return { remove_from, remove_to, replacement_text };
 }
 
+/**
+ * Accept both the tuple form (["a", "b", "c"]) and the object form
+ * ({ remove_from, remove_to, replacement_text }) per edits entry (#64).
+ * Missing/mistyped fields and unknown fields still return undefined so the
+ * caller rejects with E_BAD_PAYLOAD.
+ */
+export function itemFromEntry(value: unknown): EditItem | undefined {
+  if (Array.isArray(value)) return itemFromTuple(value);
+  if (isRec(value)) {
+    const { remove_from, remove_to, replacement_text } = value as Record<string, unknown>;
+    if (typeof remove_from !== "string" || typeof remove_to !== "string" || typeof replacement_text !== "string") return undefined;
+    if (Object.keys(value).some((k) => !["remove_from", "remove_to", "replacement_text"].includes(k))) return undefined;
+    return { remove_from, remove_to, replacement_text };
+  }
+  return undefined;
+}
+
 export function editRequestFrom(input: unknown): NormalizedEditRequest | undefined {
   if (!isRec(input) || !("path" in input) || !("edits" in input)) return undefined;
   const rec = input as Record<string, unknown>;
@@ -95,7 +112,7 @@ export function editRequestFrom(input: unknown): NormalizedEditRequest | undefin
   if (!Array.isArray(edits) || edits.length === 0) return undefined;
   const items: EditItem[] = [];
   for (const item of edits) {
-    const normalized = itemFromTuple(item);
+    const normalized = itemFromEntry(item);
     if (!normalized) return undefined;
     items.push(normalized);
   }

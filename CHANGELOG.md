@@ -1,5 +1,9 @@
 ## [Unreleased]
 
+### Features
+
+- **edit:** accept object-form edits entries, closes #64
+
 ### Fixed
 
 - **script:** correct repo inference and headless dispatch for gh-release

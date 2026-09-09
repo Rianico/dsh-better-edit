@@ -136,3 +136,39 @@ describe("coverage: contract.ts", () => {
     expect(() => assertUndoRequest({} as any)).toThrow();
   });
 });
+
+describe("object-form edits entries (#64)", () => {
+  it("accepts object entries", () => {
+    const req = editRequestFrom({
+      path: "file.txt",
+      edits: [{ remove_from: "a", remove_to: "b", replacement_text: "c" }],
+    });
+    expect(req?.edits).toEqual([{ remove_from: "a", remove_to: "b", replacement_text: "c" }]);
+  });
+
+  it("accepts mixed tuple/object batches", () => {
+    const req = editRequestFrom({
+      path: "file.txt",
+      edits: [
+        ["a", "a", "x"],
+        { remove_from: "b", remove_to: "b", replacement_text: "y" },
+      ],
+    });
+    expect(req?.edits).toHaveLength(2);
+    expect(req?.edits[1]).toEqual({ remove_from: "b", remove_to: "b", replacement_text: "y" });
+  });
+
+  it("still rejects invalid objects (missing/unknown fields)", () => {
+    expect(editRequestFrom({ path: "file.txt", edits: [{ remove_from: "a" }] })).toBeUndefined();
+    expect(
+      editRequestFrom({
+        path: "file.txt",
+        edits: [{ remove_from: "a", remove_to: "b", replacement_text: "c", path: "z" }],
+      }),
+    ).toBeUndefined();
+    expect(
+      editRequestFrom({ path: "file.txt", edits: [{ remove_from: 1 as unknown as string, remove_to: "b", replacement_text: "c" }] }),
+    ).toBeUndefined();
+    expect(editRequestFrom({ path: "file.txt", edits: ["not-an-entry" as unknown as [string, string, string]] })).toBeUndefined();
+  });
+});
