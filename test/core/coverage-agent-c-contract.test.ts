@@ -15,7 +15,11 @@ import {
 
 describe("coverage: contract.ts", () => {
   it("itemFromTuple valid and invalid", () => {
-    expect(itemFromTuple(["a", "b", "c"])).toEqual({ remove_from: "a", remove_to: "b", replacement_text: "c" });
+    expect(itemFromTuple(["a", "b", "c"])).toEqual({
+      remove_from: "a",
+      remove_to: "b",
+      replacement_text: "c",
+    });
     expect(itemFromTuple(["a", "b"])).toBeUndefined();
     expect(itemFromTuple(["a", "b", "c", "d"])).toBeUndefined();
     expect(itemFromTuple(["a", "b", 123 as any])).toBeUndefined();
@@ -36,21 +40,36 @@ describe("coverage: contract.ts", () => {
     expect(editRequestFrom(null as any)).toBeUndefined();
     expect(editRequestFrom("string" as any)).toBeUndefined();
     // file_path alias handling (just ensures not throwing, returns undefined due to invalid shape after alias? but should handle)
-    expect(editRequestFrom({ path: "a", edits: [["a", "b", "c"]], file_path: "other" } as any)).toBeDefined();
+    expect(
+      editRequestFrom({ path: "a", edits: [["a", "b", "c"]], file_path: "other" } as any),
+    ).toBeDefined();
   });
 
   it("normalizeRequest handles non-record, tuple normalization, and preserves sandbox fields", () => {
     expect(normalizeRequest(null)).toBeNull();
     expect(normalizeRequest("string")).toBe("string");
-    const rec = { path: "a.txt", edits: [["h1", "h2", "content"]] as any, sandbox_permissions: "rw", justification: "test" };
+    const rec = {
+      path: "a.txt",
+      edits: [["h1", "h2", "content"]] as any,
+      sandbox_permissions: "rw",
+      justification: "test",
+    };
     const norm = normalizeRequest(rec) as any;
     expect(norm.path).toBe("a.txt");
     expect(norm.edits[0].remove_from).toBe("h1");
     expect(norm[normalizedEdit]).toBe(true);
     // file_path alias
-    const withAlias = { file_path: "b.txt", path: undefined as any, edits: [["h1", "h2", "x"]] } as any;
+    const withAlias = {
+      file_path: "b.txt",
+      path: undefined as any,
+      edits: [["h1", "h2", "x"]],
+    } as any;
     // normalizeFilePath will map file_path to path - test via normalizeRequest
-    const normAlias = normalizeRequest({ file_path: "b.txt", path: "b.txt", edits: [["h1", "h2", "x"]] } as any) as any;
+    const normAlias = normalizeRequest({
+      file_path: "b.txt",
+      path: "b.txt",
+      edits: [["h1", "h2", "x"]],
+    } as any) as any;
     expect(normAlias.path).toBe("b.txt");
     // invalid shape returns record unchanged
     const invalid = normalizeRequest({ path: "a", edits: [] } as any) as any;
@@ -86,16 +105,24 @@ describe("coverage: contract.ts", () => {
     expect(() => assertEditRequest(good)).not.toThrow();
 
     // not normalized
-    expect(() => assertEditRequest({ path: "a", edits: [{ remove_from: "a", remove_to: "b", replacement_text: "c" }] } as any)).toThrow(/E_BAD_PAYLOAD/);
+    expect(() =>
+      assertEditRequest({
+        path: "a",
+        edits: [{ remove_from: "a", remove_to: "b", replacement_text: "c" }],
+      } as any),
+    ).toThrow(/E_BAD_PAYLOAD/);
 
     // unknown fields
-    const withExtra = { ...good as any, extraField: "bad" };
+    const withExtra = { ...(good as any), extraField: "bad" };
     // need to add symbol again because spread loses symbol
     Object.defineProperty(withExtra, normalizedEdit, { value: true, enumerable: false });
     expect(() => assertEditRequest(withExtra)).toThrow();
 
     // empty path
-    const emptyPath: any = { path: "", edits: [{ remove_from: "a", remove_to: "b", replacement_text: "c" }] };
+    const emptyPath: any = {
+      path: "",
+      edits: [{ remove_from: "a", remove_to: "b", replacement_text: "c" }],
+    };
     Object.defineProperty(emptyPath, normalizedEdit, { value: true, enumerable: false });
     expect(() => assertEditRequest(emptyPath)).toThrow(/path must be a non-empty string/);
 
@@ -105,12 +132,22 @@ describe("coverage: contract.ts", () => {
     expect(() => assertEditRequest(emptyEdits)).toThrow(/non-empty/);
 
     // too many edits
-    const many: any = { path: "a", edits: Array.from({ length: 33 }, () => ({ remove_from: "a", remove_to: "b", replacement_text: "c" })) };
+    const many: any = {
+      path: "a",
+      edits: Array.from({ length: 33 }, () => ({
+        remove_from: "a",
+        remove_to: "b",
+        replacement_text: "c",
+      })),
+    };
     Object.defineProperty(many, normalizedEdit, { value: true, enumerable: false });
     expect(() => assertEditRequest(many)).toThrow(/at most/);
 
     // bad edit item type
-    const badItem: any = { path: "a", edits: [{ remove_from: 123 as any, remove_to: "b", replacement_text: "c" }] };
+    const badItem: any = {
+      path: "a",
+      edits: [{ remove_from: 123 as any, remove_to: "b", replacement_text: "c" }],
+    };
     Object.defineProperty(badItem, normalizedEdit, { value: true, enumerable: false });
     expect(() => assertEditRequest(badItem)).toThrow(/edits\[0\]/);
   });
@@ -149,10 +186,7 @@ describe("object-form edits entries (#64)", () => {
   it("accepts mixed tuple/object batches", () => {
     const req = editRequestFrom({
       path: "file.txt",
-      edits: [
-        ["a", "a", "x"],
-        { remove_from: "b", remove_to: "b", replacement_text: "y" },
-      ],
+      edits: [["a", "a", "x"], { remove_from: "b", remove_to: "b", replacement_text: "y" }],
     });
     expect(req?.edits).toHaveLength(2);
     expect(req?.edits[1]).toEqual({ remove_from: "b", remove_to: "b", replacement_text: "y" });
@@ -167,8 +201,16 @@ describe("object-form edits entries (#64)", () => {
       }),
     ).toBeUndefined();
     expect(
-      editRequestFrom({ path: "file.txt", edits: [{ remove_from: 1 as unknown as string, remove_to: "b", replacement_text: "c" }] }),
+      editRequestFrom({
+        path: "file.txt",
+        edits: [{ remove_from: 1 as unknown as string, remove_to: "b", replacement_text: "c" }],
+      }),
     ).toBeUndefined();
-    expect(editRequestFrom({ path: "file.txt", edits: ["not-an-entry" as unknown as [string, string, string]] })).toBeUndefined();
+    expect(
+      editRequestFrom({
+        path: "file.txt",
+        edits: ["not-an-entry" as unknown as [string, string, string]],
+      }),
+    ).toBeUndefined();
   });
 });

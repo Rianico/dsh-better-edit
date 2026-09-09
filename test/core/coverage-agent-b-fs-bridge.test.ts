@@ -82,8 +82,14 @@ describe("mapFsError", () => {
 });
 
 describe("encoding memo", () => {
-  beforeEach(() => { clearEncodingState(); clearAutoGuessFooter(); });
-  afterEach(() => { clearEncodingState(); clearAutoGuessFooter(); });
+  beforeEach(() => {
+    clearEncodingState();
+    clearAutoGuessFooter();
+  });
+  afterEach(() => {
+    clearEncodingState();
+    clearAutoGuessFooter();
+  });
   it("set/get/clear encoding state", () => {
     setEncodingState("k1", { encoding: "gbk", hasBOM: false, version: "v1" });
     expect(getEncodingState("k1")).toEqual({ encoding: "gbk", hasBOM: false, version: "v1" });
@@ -111,8 +117,14 @@ describe("encoding memo", () => {
 });
 
 describe("ctxFsIO", () => {
-  beforeEach(() => { clearEncodingState(); clearAutoGuessFooter(); });
-  afterEach(() => { clearEncodingState(); clearAutoGuessFooter(); });
+  beforeEach(() => {
+    clearEncodingState();
+    clearAutoGuessFooter();
+  });
+  afterEach(() => {
+    clearEncodingState();
+    clearAutoGuessFooter();
+  });
 
   it("resolve delegates to fs", async () => {
     const fs: any = makeFs();
@@ -140,7 +152,9 @@ describe("ctxFsIO", () => {
     const fs: any = makeFs();
     const ctx: any = makeCtx();
     const io = ctxFsIO(fs, ctx);
-    await expect(io.readText("/abs/file.txt", undefined, "not-an-enc")).rejects.toThrow(/E_BAD_ENCODING|bad encoding/i);
+    await expect(io.readText("/abs/file.txt", undefined, "not-an-enc")).rejects.toThrow(
+      /E_BAD_ENCODING|bad encoding/i,
+    );
   });
 
   it("readText normal path calls readText and restore BOM", async () => {
@@ -175,7 +189,9 @@ describe("ctxFsIO", () => {
     _resetConfigCache();
     const gbkBytes = (await import("iconv-lite")).default.encode("你好世界 hello world", "gbk");
     const fs: any = makeFs({
-      readText: vi.fn(async () => { throw Object.assign(new Error("not text"), { code: "FS_NOT_TEXT" }); }),
+      readText: vi.fn(async () => {
+        throw Object.assign(new Error("not text"), { code: "FS_NOT_TEXT" });
+      }),
       stat: vi.fn(async () => ({ size: gbkBytes.length, version: "v1" })),
       readBytes: vi.fn(async () => gbkBytes),
     });
@@ -196,14 +212,27 @@ describe("ctxFsIO", () => {
     const ctx: any = makeCtx();
     setEncodingState("tk:/abs/file.txt", { encoding: "utf8", hasBOM: false, version: "v1" });
     const io = ctxFsIO(fs, ctx);
-    await io.writeText("/abs/file.txt", "new content", undefined, { agent: { session: { id: "s1" } } } as any, undefined);
+    await io.writeText(
+      "/abs/file.txt",
+      "new content",
+      undefined,
+      { agent: { session: { id: "s1" } } } as any,
+      undefined,
+    );
     expect(fs.writeText).toHaveBeenCalled();
-    expect(ctx.emit).toHaveBeenCalledWith("fs/observed", expect.anything(), expect.objectContaining({ kind: "present" }), expect.anything());
+    expect(ctx.emit).toHaveBeenCalledWith(
+      "fs/observed",
+      expect.anything(),
+      expect.objectContaining({ kind: "present" }),
+      expect.anything(),
+    );
   });
 
   it("writeText maps FS errors", async () => {
     const fs: any = makeFs({
-      writeText: vi.fn(async () => { throw Object.assign(new Error("x"), { code: "FS_STALE_VERSION" }); }),
+      writeText: vi.fn(async () => {
+        throw Object.assign(new Error("x"), { code: "FS_STALE_VERSION" });
+      }),
       stat: vi.fn(async () => ({ version: "v1" })),
     });
     const ctx: any = makeCtx();
@@ -216,11 +245,20 @@ describe("ctxFsIO", () => {
     const ctx: any = makeCtx();
     const io = ctxFsIO(fs, ctx);
     await io.emitObserved("/abs/file.txt", { agent: { session: { id: "s1" } } } as any);
-    expect(ctx.emit).toHaveBeenCalledWith("fs/observed", expect.anything(), expect.objectContaining({ version: "v5" }), expect.anything());
+    expect(ctx.emit).toHaveBeenCalledWith(
+      "fs/observed",
+      expect.anything(),
+      expect.objectContaining({ version: "v5" }),
+      expect.anything(),
+    );
   });
 
   it("emitObserved swallows errors", async () => {
-    const fs: any = makeFs({ stat: vi.fn(async () => { throw new Error("fail"); }) });
+    const fs: any = makeFs({
+      stat: vi.fn(async () => {
+        throw new Error("fail");
+      }),
+    });
     const ctx: any = makeCtx();
     const io = ctxFsIO(fs, ctx);
     await expect(io.emitObserved("/abs/file.txt")).resolves.toBeUndefined();
@@ -231,7 +269,9 @@ describe("ctxFsIO", () => {
     const ctx: any = makeCtx();
     const io = ctxFsIO(fs, ctx);
     expect(await io.statVersion("/abs/file.txt")).toBe("v3");
-    fs.stat = vi.fn(async () => { throw new Error("not found"); });
+    fs.stat = vi.fn(async () => {
+      throw new Error("not found");
+    });
     const io2 = ctxFsIO(fs, ctx);
     expect(await io2.statVersion("/abs/file.txt")).toBeUndefined();
     fs.stat = vi.fn(async () => ({}));
@@ -244,11 +284,13 @@ describe("localIO", () => {
   let dir: string;
   beforeEach(async () => {
     dir = await mkdtemp(join(tmpdir(), "localio-"));
-    clearEncodingState(); clearAutoGuessFooter();
+    clearEncodingState();
+    clearAutoGuessFooter();
   });
   afterEach(async () => {
     await rm(dir, { recursive: true, force: true });
-    clearEncodingState(); clearAutoGuessFooter();
+    clearEncodingState();
+    clearAutoGuessFooter();
   });
 
   it("resolve returns canonical path", async () => {
@@ -279,7 +321,9 @@ describe("localIO", () => {
     const p = join(dir, "any.txt");
     await writeFile(p, "hi");
     const io = localIO();
-    await expect((io as any).readText(p, undefined, "not-an-enc")).rejects.toThrow(/E_BAD_ENCODING/);
+    await expect((io as any).readText(p, undefined, "not-an-enc")).rejects.toThrow(
+      /E_BAD_ENCODING/,
+    );
   });
 
   it("readText with explicit encoding decodes", async () => {
@@ -320,7 +364,8 @@ describe("localIO", () => {
     const p = join(dir, "a.txt");
     await writeFile(p, "hi");
     const io = localIO();
-    const ac = new AbortController(); ac.abort();
+    const ac = new AbortController();
+    ac.abort();
     await expect(io.readText(p, ac.signal)).rejects.toThrow();
   });
 });

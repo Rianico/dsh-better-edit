@@ -24,15 +24,19 @@ export type Hasher = {
 let hasher: Hasher | null = null;
 export function getH(): Hasher {
   if (hasher) return hasher;
-  throw new Error("xxhash-wasm hasher not initialized; await initHasher() before calling hashline APIs.");
+  throw new Error(
+    "xxhash-wasm hasher not initialized; await initHasher() before calling hashline APIs.",
+  );
 }
-const hasherP: Promise<Hasher> = xxhash().then((h) => {
-  hasher = h as unknown as Hasher;
-  return hasher;
-}).catch((err: unknown) => {
-  console.error("xxhash-wasm initialization failed:", err);
-  throw err;
-});
+const hasherP: Promise<Hasher> = xxhash()
+  .then((h) => {
+    hasher = h as unknown as Hasher;
+    return hasher;
+  })
+  .catch((err: unknown) => {
+    console.error("xxhash-wasm initialization failed:", err);
+    throw err;
+  });
 export function initHasher(): Promise<Hasher> {
   return hasherP;
 }
@@ -66,7 +70,9 @@ export class AnchorSpaceExhaustedError extends Error {
   readonly retiredCount: number;
   readonly servedCount: number;
   constructor(retiredCount: number, servedCount: number, reservedCount: number) {
-    super(`[MODEL] [E_ANCHOR_SPACE_EXHAUSTED] Anchor space exhausted (retired ${retiredCount} + served ${servedCount} = ${reservedCount} of ${HASH_SPACE}); promotion will clear retired — re-read recommended, stale-anchor checks degraded until next full read.`);
+    super(
+      `[MODEL] [E_ANCHOR_SPACE_EXHAUSTED] Anchor space exhausted (retired ${retiredCount} + served ${servedCount} = ${reservedCount} of ${HASH_SPACE}); promotion will clear retired — re-read recommended, stale-anchor checks degraded until next full read.`,
+    );
     this.name = "AnchorSpaceExhaustedError";
     this.retiredCount = retiredCount;
     this.servedCount = servedCount;
@@ -122,7 +128,7 @@ function getCanon(cache: Map<string, string>, line: string): string {
 }
 const BITSET_WORDS = Math.ceil(HASH_SPACE / 32);
 function getBit(bits: Uint32Array, idx: number): boolean {
-  return (bits[idx >>> 5] >>> (idx & 31) & 1) !== 0;
+  return ((bits[idx >>> 5] >>> (idx & 31)) & 1) !== 0;
 }
 function setBit(bits: Uint32Array, idx: number): void {
   bits[idx >>> 5] |= 1 << (idx & 31);
@@ -135,7 +141,9 @@ function nextZeroBit(bits: Uint32Array, start: number): number {
     idx += HASH_PROBE_STRIDE;
     if (idx >= totalBits) idx -= totalBits;
   }
-  throw new Error(`[MODEL] [E_ANCHOR_SPACE_EXHAUSTED] Anchor space exhausted — probing failed over ${HASH_SPACE} slots (reserved full).`);
+  throw new Error(
+    `[MODEL] [E_ANCHOR_SPACE_EXHAUSTED] Anchor space exhausted — probing failed over ${HASH_SPACE} slots (reserved full).`,
+  );
 }
 function assignHash(used: Uint32Array, baseIdx: number, hint: { value: number }): string {
   if (!getBit(used, baseIdx)) {
@@ -200,7 +208,10 @@ function nearestNew(candidates: number[], target: number): number {
   }
   const left = lo - 1;
   const right = lo;
-  if (left >= 0 && (right >= candidates.length || target - candidates[left]! <= candidates[right]! - target)) {
+  if (
+    left >= 0 &&
+    (right >= candidates.length || target - candidates[left]! <= candidates[right]! - target)
+  ) {
     return left;
   }
   return right < candidates.length ? right : -1;

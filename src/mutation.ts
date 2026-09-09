@@ -46,21 +46,18 @@ import {
   recordEchoServes,
   type ServeRecordPolicy,
 } from "./hashline/anchor-pipeline.js";
-import { sessionKeyFor } from "./workspace-context.js"
+import { sessionKeyFor } from "./workspace-context.js";
 import {
-	loadServed,
-	loadServedCanons,
-	loadEpochSnapshotId,
-	loadRetiredAnchors,
-	scanDrift,
-	recordServedTruncated,
+  loadServed,
+  loadServedCanons,
+  loadEpochSnapshotId,
+  loadRetiredAnchors,
+  scanDrift,
+  recordServedTruncated,
 } from "./session-view.js";
 import { abortIf, splitLines } from "./utils.js";
 import { applyOne } from "./mutation/engine.js";
-import {
-  runFileEdits,
-  resolveMissingPath,
-} from "./mutation/engine.js";
+import { runFileEdits, resolveMissingPath } from "./mutation/engine.js";
 import type { FileEditResult, PreparedItem } from "./mutation/engine.js";
 import { saveUndo } from "./undo-edit.js";
 import { restoreEndings } from "./edit-diff.js";
@@ -71,190 +68,190 @@ import { computeDrift } from "./session-view.js";
 import { trackNoopPayload, clearNoopLoop, noopPayloadKey } from "./noop-guard.js";
 
 export interface PipelineResult {
-	path: string
-	absolutePath: string
-	originalNormalized: string
-	result: string
-	bom: string
-	originalEnding: LineEnding
-	hadUtf8DecodeErrors: boolean
-	warnings: string[]
-	noopEdit?: NEdit
-	firstChangedLine?: number
-	lastChangedLine?: number
-	originalHashes: string[]
-	resultHashes: string[]
-	totalAddedLines: number
-	totalRemovedLines: number
-	driftNotice?: string
-	range: ResolvedRange
+  path: string;
+  absolutePath: string;
+  originalNormalized: string;
+  result: string;
+  bom: string;
+  originalEnding: LineEnding;
+  hadUtf8DecodeErrors: boolean;
+  warnings: string[];
+  noopEdit?: NEdit;
+  firstChangedLine?: number;
+  lastChangedLine?: number;
+  originalHashes: string[];
+  resultHashes: string[];
+  totalAddedLines: number;
+  totalRemovedLines: number;
+  driftNotice?: string;
+  range: ResolvedRange;
 }
 
 export interface ExecPipelineOptions {
-	signal?: AbortSignal
-	store?: HashStore
-	noPersist?: boolean
-	sessionKey?: string
+  signal?: AbortSignal;
+  store?: HashStore;
+  noPersist?: boolean;
+  sessionKey?: string;
 }
 
 export async function execPipeline(
-	io: FileIO,
-	params: EditParams,
-	cwd: string,
-	options?: ExecPipelineOptions,
+  io: FileIO,
+  params: EditParams,
+  cwd: string,
+  options?: ExecPipelineOptions,
 ): Promise<PipelineResult> {
-	const path = params.path
+  const path = params.path;
 
-	const editWarnings: string[] = []
-	// Resolve the edit up front (before IO) so malformed anchors fail before
-	// any filesystem work, exactly as the tool always did.
-	const edit = resEdit(
-		{
-			remove_from: params.remove_from,
-			remove_to: params.remove_to,
-			replacement_text: params.replacement_text,
-		},
-		editWarnings,
-	)
+  const editWarnings: string[] = [];
+  // Resolve the edit up front (before IO) so malformed anchors fail before
+  // any filesystem work, exactly as the tool always did.
+  const edit = resEdit(
+    {
+      remove_from: params.remove_from,
+      remove_to: params.remove_to,
+      replacement_text: params.replacement_text,
+    },
+    editWarnings,
+  );
 
-	const hashStore = options?.store
-	const signal = options?.signal
+  const hashStore = options?.store;
+  const signal = options?.signal;
 
-	abortIf(signal)
-	const absolutePath = await io.resolve(path, cwd, signal)
-	const sessionKeyEarly = options?.sessionKey ?? sessionKeyFor(undefined)
-	const perSessionRetiredForNorm = await loadRetiredAnchors(sessionKeyEarly, absolutePath)
-	const rawText = await io.readText(absolutePath, signal)
-	const {
-		normalized: originalNormalized,
-		bom,
-		originalEnding,
-		fileHashes: originalHashes,
-		hadUtf8DecodeErrors,
-	} = await normFromText({
-		absolutePath,
-		rawText,
-		displayPath: path,
-		signal,
-		maxLines: MAX_HASH_LINES,
-		store: hashStore,
-		noPersist: options?.noPersist,
-		reservedHashes: perSessionRetiredForNorm,
-		retiredHashes: perSessionRetiredForNorm,
-	})
+  abortIf(signal);
+  const absolutePath = await io.resolve(path, cwd, signal);
+  const sessionKeyEarly = options?.sessionKey ?? sessionKeyFor(undefined);
+  const perSessionRetiredForNorm = await loadRetiredAnchors(sessionKeyEarly, absolutePath);
+  const rawText = await io.readText(absolutePath, signal);
+  const {
+    normalized: originalNormalized,
+    bom,
+    originalEnding,
+    fileHashes: originalHashes,
+    hadUtf8DecodeErrors,
+  } = await normFromText({
+    absolutePath,
+    rawText,
+    displayPath: path,
+    signal,
+    maxLines: MAX_HASH_LINES,
+    store: hashStore,
+    noPersist: options?.noPersist,
+    reservedHashes: perSessionRetiredForNorm,
+    retiredHashes: perSessionRetiredForNorm,
+  });
 
-	const sessionKey = options?.sessionKey ?? sessionKeyFor(undefined)
-	const served = await loadServed(sessionKey, absolutePath)
-	const servedCanons = await loadServedCanons(sessionKey, absolutePath)
-	const epochSnapshotId = await loadEpochSnapshotId(sessionKey, absolutePath)
-	let curSnapshotId: string | undefined
-	try { curSnapshotId = (await fileSnap(absolutePath)).snapshotId } catch {}
-	const strictPos = epochSnapshotId !== undefined && curSnapshotId !== undefined && epochSnapshotId !== curSnapshotId; // automatic: strict when epoch mismatch (conservative, future: changed∩[L,R] refined)
-	const retiredPerSession = await loadRetiredAnchors(sessionKey, absolutePath)
-	const policy: ServeRecordPolicy =
-		options?.noPersist === true ? 'preview' : 'live'
+  const sessionKey = options?.sessionKey ?? sessionKeyFor(undefined);
+  const served = await loadServed(sessionKey, absolutePath);
+  const servedCanons = await loadServedCanons(sessionKey, absolutePath);
+  const epochSnapshotId = await loadEpochSnapshotId(sessionKey, absolutePath);
+  let curSnapshotId: string | undefined;
+  try {
+    curSnapshotId = (await fileSnap(absolutePath)).snapshotId;
+  } catch {}
+  const strictPos =
+    epochSnapshotId !== undefined &&
+    curSnapshotId !== undefined &&
+    epochSnapshotId !== curSnapshotId; // automatic: strict when epoch mismatch (conservative, future: changed∩[L,R] refined)
+  const retiredPerSession = await loadRetiredAnchors(sessionKey, absolutePath);
+  const policy: ServeRecordPolicy = options?.noPersist === true ? "preview" : "live";
 
-	const applied = await applyOne(
-		{
-			content: originalNormalized,
-			hashes: originalHashes,
-			served,
-			removeFrom: params.remove_from,
-			removeTo: params.remove_to,
-			replacementText: params.replacement_text,
-			absolutePath,
-			displayPath: path,
-			signal,
-			warnings: editWarnings,
-			store: hashStore,
-			persist: options?.noPersist !== true,
-			reservedHashes: perSessionRetiredForNorm,
-			servedCanons,
-			retired: retiredPerSession,
-			epochSnapshotId,
-			curSnapshotId,
-			strictPos,
-			edit,
-		},
-		async (error) => {
-			if (
-				error instanceof AnchorMismatchError ||
-				error instanceof ServedRejectionError
-			) {
-				await recordEchoServes(
-					sessionKey,
-					absolutePath,
-					error.servedRows,
-					policy,
-					originalHashes.length,
-				)
-			}
-			throw error
-		},
-	)
-	const result = applied.result
-	const isNoop = applied.noop
-	const warnings = [...editWarnings, ...(applied.anchorWarnings ?? [])]
+  const applied = await applyOne(
+    {
+      content: originalNormalized,
+      hashes: originalHashes,
+      served,
+      removeFrom: params.remove_from,
+      removeTo: params.remove_to,
+      replacementText: params.replacement_text,
+      absolutePath,
+      displayPath: path,
+      signal,
+      warnings: editWarnings,
+      store: hashStore,
+      persist: options?.noPersist !== true,
+      reservedHashes: perSessionRetiredForNorm,
+      servedCanons,
+      retired: retiredPerSession,
+      epochSnapshotId,
+      curSnapshotId,
+      strictPos,
+      edit,
+    },
+    async (error) => {
+      if (error instanceof AnchorMismatchError || error instanceof ServedRejectionError) {
+        await recordEchoServes(
+          sessionKey,
+          absolutePath,
+          error.servedRows,
+          policy,
+          originalHashes.length,
+        );
+      }
+      throw error;
+    },
+  );
+  const result = applied.result;
+  const isNoop = applied.noop;
+  const warnings = [...editWarnings, ...(applied.anchorWarnings ?? [])];
 
-	let driftNotice: string | undefined
-	if (options?.noPersist !== true) {
-		try {
-			driftNotice = await scanDrift({
-				sessionKey,
-				served,
-				resultHashes: applied.hashes,
-				resultLines: splitLines(result),
-				range: applied.range,
-				path: absolutePath,
-			})
-		} catch (error) {
-			console.error('Failed to compute drift notice:', error)
-		}
-	}
+  let driftNotice: string | undefined;
+  if (options?.noPersist !== true) {
+    try {
+      driftNotice = await scanDrift({
+        sessionKey,
+        served,
+        resultHashes: applied.hashes,
+        resultLines: splitLines(result),
+        range: applied.range,
+        path: absolutePath,
+      });
+    } catch (error) {
+      console.error("Failed to compute drift notice:", error);
+    }
+  }
 
-	return {
-		path,
-		absolutePath,
-		originalNormalized,
-		result,
-		bom,
-		originalEnding,
-		hadUtf8DecodeErrors,
-		warnings,
-		noopEdit: applied.noopEdit,
-		firstChangedLine: applied.firstChangedLine,
-		lastChangedLine: applied.lastChangedLine,
-		originalHashes,
-		resultHashes: applied.hashes,
-		totalAddedLines: applied.totalAddedLines,
-		totalRemovedLines: applied.totalRemovedLines,
-		driftNotice,
-		range: applied.range,
-	}
+  return {
+    path,
+    absolutePath,
+    originalNormalized,
+    result,
+    bom,
+    originalEnding,
+    hadUtf8DecodeErrors,
+    warnings,
+    noopEdit: applied.noopEdit,
+    firstChangedLine: applied.firstChangedLine,
+    lastChangedLine: applied.lastChangedLine,
+    originalHashes,
+    resultHashes: applied.hashes,
+    totalAddedLines: applied.totalAddedLines,
+    totalRemovedLines: applied.totalRemovedLines,
+    driftNotice,
+    range: applied.range,
+  };
 }
 
 /** Resolve the display path a caller names against the session cwd. */
 export function resolveDisplayPath(path: string, cwd: string): string {
-	return toCwd(path, cwd)
+  return toCwd(path, cwd);
 }
 
 /** Snapshot bookkeeping for noop/success results (best-effort). */
 export async function snapshotIdFor(
-	io: FileIO,
-	absolutePath: string,
-	signal?: AbortSignal,
+  io: FileIO,
+  absolutePath: string,
+  signal?: AbortSignal,
 ): Promise<string | undefined> {
-	try {
-		return await io.statVersion(absolutePath, signal)
-	} catch {
-		try {
-			return (await fileSnap(absolutePath)).snapshotId
-		} catch {
-			return undefined
-		}
-	}
+  try {
+    return await io.statVersion(absolutePath, signal);
+  } catch {
+    try {
+      return (await fileSnap(absolutePath)).snapshotId;
+    } catch {
+      return undefined;
+    }
+  }
 }
-
 
 // Engine helpers are private to Mutation — not re-exported for new code.
 // Deprecated re-exports kept for existing tests (commitlint: ignore):
@@ -266,7 +263,6 @@ export type { RMeta, BatchSection };
 export { genDiff, restoreEndings, toLF, stripBOM };
 export { computeDrift, scanDrift };
 export { trackNoopPayload, clearNoopLoop, noopPayloadKey };
-
 
 // ---------------------------------------------------------------------------
 // Transaction (private to Mutation) — persist-undo → write → restore
@@ -309,7 +305,11 @@ async function persistUndoAndWrite(opts: PersistWriteOptions): Promise<void> {
     });
     if (!undo.persisted) {
       for (const u of undos) {
-        try { await u.restore(); } catch (e) { console.error("Failed to restore undo entry after abort:", e); }
+        try {
+          await u.restore();
+        } catch (e) {
+          console.error("Failed to restore undo entry after abort:", e);
+        }
       }
       throw new Error(opts.undoUnavailableMessage(file.displayPath));
     }
@@ -339,24 +339,38 @@ async function persistUndoAndWrite(opts: PersistWriteOptions): Promise<void> {
           opts.exec,
           opts.sandboxPolicy,
         );
-      } catch (e) { console.error("Failed to restore file after write failure:", e); }
-      try { await w.restore(); } catch (e) { console.error("Failed to restore undo entry after write failure:", e); }
+      } catch (e) {
+        console.error("Failed to restore file after write failure:", e);
+      }
+      try {
+        await w.restore();
+      } catch (e) {
+        console.error("Failed to restore undo entry after write failure:", e);
+      }
     }
     if (opts.restoreUnwrittenUndos) {
       for (const u of undos) {
         if (written.includes(u)) continue;
-        try { await u.restore(); } catch (e) { console.error("Failed to restore undo entry after write failure:", e); }
+        try {
+          await u.restore();
+        } catch (e) {
+          console.error("Failed to restore undo entry after write failure:", e);
+        }
       }
     }
     throw opts.sandbox.mapError(error, opts.sandboxPolicy);
   }
 }
 
-async function commitSingle(opts: Omit<PersistWriteOptions, "restoreUnwrittenUndos">): Promise<void> {
+async function commitSingle(
+  opts: Omit<PersistWriteOptions, "restoreUnwrittenUndos">,
+): Promise<void> {
   return persistUndoAndWrite({ ...opts, restoreUnwrittenUndos: true });
 }
 
-async function commitBatch(opts: Omit<PersistWriteOptions, "restoreUnwrittenUndos">): Promise<void> {
+async function commitBatch(
+  opts: Omit<PersistWriteOptions, "restoreUnwrittenUndos">,
+): Promise<void> {
   return persistUndoAndWrite({ ...opts, restoreUnwrittenUndos: false });
 }
 
@@ -481,57 +495,57 @@ export async function execute(opts: {
 
 /** Apply a single edit — owns read→normalize→loadServed→applyOne→stableRehash→drift. */
 export async function applySingle(
- io: FileIO,
- params: EditParams,
- cwd: string,
- opts?: {
-  sessionKey?: string;
-  signal?: AbortSignal;
-  store?: HashStore;
-  noPersist?: boolean;
- },
+  io: FileIO,
+  params: EditParams,
+  cwd: string,
+  opts?: {
+    sessionKey?: string;
+    signal?: AbortSignal;
+    store?: HashStore;
+    noPersist?: boolean;
+  },
 ): Promise<PipelineResult> {
- return execPipeline(io, params, cwd, opts);
+  return execPipeline(io, params, cwd, opts);
 }
 
 /** Apply a per-file sequence (batch's group) — owns the loop + unionRange + counters. */
 export async function applySequence(
- io: FileIO,
- items: PreparedItem[],
- ctx: { sessionKey: string; signal?: AbortSignal },
+  io: FileIO,
+  items: PreparedItem[],
+  ctx: { sessionKey: string; signal?: AbortSignal },
 ): Promise<FileEditResult> {
- return runFileEdits(io, items, ctx);
+  return runFileEdits(io, items, ctx);
 }
 
 /** Commit the transaction — owns persist-undo → write → restore. */
 export async function commit(opts: {
- io: FileIO;
- files: Array<{
-  absolutePath: string;
-  displayPath: string;
-  originalNormalized: string;
-  bom: string;
-  originalEnding: import("./edit-diff.js").LineEnding;
-  originalHashes: string[];
-  result: string;
- }>;
- exec: ToolExecution;
- sandbox: FsSandboxController;
- sandboxPolicy: SandboxExecutionPolicy | undefined;
- signal?: AbortSignal;
- undoUnavailableMessage: (displayPath: string) => string;
- restoreUnwrittenUndos?: boolean;
+  io: FileIO;
+  files: Array<{
+    absolutePath: string;
+    displayPath: string;
+    originalNormalized: string;
+    bom: string;
+    originalEnding: import("./edit-diff.js").LineEnding;
+    originalHashes: string[];
+    result: string;
+  }>;
+  exec: ToolExecution;
+  sandbox: FsSandboxController;
+  sandboxPolicy: SandboxExecutionPolicy | undefined;
+  signal?: AbortSignal;
+  undoUnavailableMessage: (displayPath: string) => string;
+  restoreUnwrittenUndos?: boolean;
 }): Promise<void> {
- return persistUndoAndWrite({
-  io: opts.io,
-  files: opts.files,
-  exec: opts.exec,
-  sandbox: opts.sandbox,
-  sandboxPolicy: opts.sandboxPolicy,
-  signal: opts.signal,
-  undoUnavailableMessage: opts.undoUnavailableMessage,
-  restoreUnwrittenUndos: opts.restoreUnwrittenUndos ?? false,
- });
+  return persistUndoAndWrite({
+    io: opts.io,
+    files: opts.files,
+    exec: opts.exec,
+    sandbox: opts.sandbox,
+    sandboxPolicy: opts.sandboxPolicy,
+    signal: opts.signal,
+    undoUnavailableMessage: opts.undoUnavailableMessage,
+    restoreUnwrittenUndos: opts.restoreUnwrittenUndos ?? false,
+  });
 }
 
 export { commitSingle, commitBatch };

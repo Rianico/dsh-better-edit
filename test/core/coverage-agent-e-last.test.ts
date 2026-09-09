@@ -17,7 +17,10 @@ describe("coverage-agent-e last", () => {
     const { buildUndoTool } = await import("../../src/tool-undo.js");
     const { localIO } = await import("../../src/fs-bridge.js");
     const { FsSandboxController } = await import("../../src/sandbox.js");
-    const sandbox = new FsSandboxController({ fs: { sandboxMode: undefined }, get: () => undefined } as any);
+    const sandbox = new FsSandboxController({
+      fs: { sandboxMode: undefined },
+      get: () => undefined,
+    } as any);
     const readTool = buildReadTool(localIO(), sandbox as any);
     expect(readTool.name).toBe("read");
     const undoTool = buildUndoTool(localIO(), sandbox as any);

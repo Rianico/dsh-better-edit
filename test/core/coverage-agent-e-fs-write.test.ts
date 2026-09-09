@@ -90,7 +90,9 @@ describe("coverage-agent-e fs-write", () => {
       // The dir is new, so sweep will run
       await mod.writeAtomic(join(dir, "z.txt"), "after");
       // stale should be removed or still there but not throw
-      const exists = await stat(stalePath).then(() => true).catch(() => false);
+      const exists = await stat(stalePath)
+        .then(() => true)
+        .catch(() => false);
       // if sweep succeeded, stale should be gone
       expect(typeof exists).toBe("boolean");
     } finally {
@@ -144,7 +146,7 @@ describe("coverage-agent-e fs-write", () => {
       const { writeAtomic } = await import("../../src/fs-write.js");
       await writeAtomic(p, "new");
       const st = await stat(p);
-      expect((st.mode & 0o777)).toBe(0o600);
+      expect(st.mode & 0o777).toBe(0o600);
     } finally {
       await rm(dir, { recursive: true, force: true });
     }

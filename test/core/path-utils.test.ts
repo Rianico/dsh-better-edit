@@ -7,9 +7,7 @@ describe("toCwd", () => {
   const cwd = "/home/user/project";
 
   it("resolves a relative path against cwd", () => {
-    expect(toCwd("src/main.ts", cwd)).toBe(
-      resolve(cwd, "src/main.ts"),
-    );
+    expect(toCwd("src/main.ts", cwd)).toBe(resolve(cwd, "src/main.ts"));
   });
 
   it("returns absolute paths unchanged", () => {
@@ -17,9 +15,7 @@ describe("toCwd", () => {
   });
 
   it("expands ~ to home directory", () => {
-    expect(toCwd("~/file.txt", cwd)).toBe(
-      os.homedir() + "/file.txt",
-    );
+    expect(toCwd("~/file.txt", cwd)).toBe(os.homedir() + "/file.txt");
   });
 
   it("expands bare ~ to home directory", () => {
@@ -27,20 +23,14 @@ describe("toCwd", () => {
   });
 
   it("preserves a leading @ in relative paths", () => {
-    expect(toCwd("@src/main.ts", cwd)).toBe(
-      resolve(cwd, "@src/main.ts"),
-    );
+    expect(toCwd("@src/main.ts", cwd)).toBe(resolve(cwd, "@src/main.ts"));
   });
 
   it("preserves unicode spaces in file names", () => {
-    expect(toCwd("src/my\u00A0file.ts", cwd)).toBe(
-      resolve(cwd, "src/my\u00A0file.ts"),
-    );
+    expect(toCwd("src/my\u00A0file.ts", cwd)).toBe(resolve(cwd, "src/my\u00A0file.ts"));
   });
 
   it("does not treat @~ as home-directory expansion", () => {
-    expect(toCwd("@~/notes.md", cwd)).toBe(
-      resolve(cwd, "@~/notes.md"),
-    );
+    expect(toCwd("@~/notes.md", cwd)).toBe(resolve(cwd, "@~/notes.md"));
   });
 });

@@ -68,7 +68,8 @@ describe("coverage-agent-e final", () => {
   });
 
   it("fs-bridge encoding memo", async () => {
-    const { setEncodingState, getEncodingState, clearEncodingState } = await import("../../src/fs-bridge.js");
+    const { setEncodingState, getEncodingState, clearEncodingState } =
+      await import("../../src/fs-bridge.js");
     setEncodingState("k-test", { encoding: "gbk", hasBOM: true, version: "v1" });
     expect(getEncodingState("k-test")?.encoding).toBe("gbk");
     clearEncodingState("k-test");

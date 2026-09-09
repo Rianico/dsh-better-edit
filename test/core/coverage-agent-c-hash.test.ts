@@ -75,7 +75,13 @@ describe("coverage: hash.ts snapshotIOFor / isValidHashList", () => {
       get: vi.fn(async () => undefined),
       upsert: vi.fn(async () => {}),
     };
-    const hashes = await lineHashes(newContent, home.testPath, { content: prevContent, hashes: prevHashes }, io as any, true);
+    const hashes = await lineHashes(
+      newContent,
+      home.testPath,
+      { content: prevContent, hashes: prevHashes },
+      io as any,
+      true,
+    );
     expect(hashes).toHaveLength(3);
     expect(io.upsert).toHaveBeenCalled();
   });
@@ -85,12 +91,22 @@ describe("coverage: hash.ts snapshotIOFor / isValidHashList", () => {
     const prevHashes = lineHashesPure(prevContent);
     const io = {
       get: vi.fn(async () => undefined),
-      upsert: vi.fn(async () => { throw new Error("db fail"); }),
+      upsert: vi.fn(async () => {
+        throw new Error("db fail");
+      }),
     };
     const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
-    const hashes = await lineHashes("a\nb\nc", home.testPath, { content: prevContent, hashes: prevHashes }, io as any);
+    const hashes = await lineHashes(
+      "a\nb\nc",
+      home.testPath,
+      { content: prevContent, hashes: prevHashes },
+      io as any,
+    );
     expect(hashes).toHaveLength(3);
-    expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining("Failed to persist"), expect.anything());
+    expect(consoleSpy).toHaveBeenCalledWith(
+      expect.stringContaining("Failed to persist"),
+      expect.anything(),
+    );
     consoleSpy.mockRestore();
   });
 
@@ -108,7 +124,9 @@ describe("coverage: hash.ts snapshotIOFor / isValidHashList", () => {
 
   it("lineHashes handles io.get failure", async () => {
     const io = {
-      get: vi.fn(async () => { throw new Error("read fail"); }),
+      get: vi.fn(async () => {
+        throw new Error("read fail");
+      }),
       upsert: vi.fn(async () => {}),
     };
     const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
@@ -121,12 +139,17 @@ describe("coverage: hash.ts snapshotIOFor / isValidHashList", () => {
   it("lineHashes handles io.upsert failure after computing new hashes", async () => {
     const io = {
       get: vi.fn(async () => undefined),
-      upsert: vi.fn(async () => { throw new Error("upsert fail"); }),
+      upsert: vi.fn(async () => {
+        throw new Error("upsert fail");
+      }),
     };
     const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     const result = await lineHashes("a\nb\nc", home.testPath, undefined, io as any);
     expect(result).toHaveLength(3);
-    expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining("Failed to persist"), expect.anything());
+    expect(consoleSpy).toHaveBeenCalledWith(
+      expect.stringContaining("Failed to persist"),
+      expect.anything(),
+    );
     consoleSpy.mockRestore();
   });
 
@@ -137,7 +160,13 @@ describe("coverage: hash.ts snapshotIOFor / isValidHashList", () => {
     };
     // previous path with persist false
     const prevHashes = lineHashesPure("a\nb");
-    const res1 = await lineHashes("a\nb\nc", home.testPath, { content: "a\nb", hashes: prevHashes }, io as any, false);
+    const res1 = await lineHashes(
+      "a\nb\nc",
+      home.testPath,
+      { content: "a\nb", hashes: prevHashes },
+      io as any,
+      false,
+    );
     expect(io.upsert).not.toHaveBeenCalled();
     // no previous, persist false should still not call get with deleteCorrupt true? check
     const io2 = { get: vi.fn(async () => ["cached"]), upsert: vi.fn(async () => {}) };

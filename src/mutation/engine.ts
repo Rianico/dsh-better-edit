@@ -20,76 +20,85 @@ import { canon } from "../hashline/hash-assign.js";
 import { fileSnap } from "../file-view.js";
 import { normFromText } from "../file-reader.js";
 import {
-	scanDrift,
-	loadServed,
-	loadServedCanons,
-	loadEpochSnapshotId,
-	loadRetiredAnchors,
-	retireAnchors,
+  scanDrift,
+  loadServed,
+  loadServedCanons,
+  loadEpochSnapshotId,
+  loadRetiredAnchors,
+  retireAnchors,
 } from "../session-view.js";
 import {
-	applyEdit,
-	resEdit,
-	parseHashRef,
-	type HEdit,
-	type NEdit,
+  applyEdit,
+  resEdit,
+  parseHashRef,
+  type HEdit,
+  type NEdit,
 } from "../hashline/anchor-pipeline.js";
 import { lineHashes } from "../hashline/hash.js";
 import { AnchorSpaceExhaustedError, HASH_SPACE } from "../hashline/hash-assign.js";
 
 function isAnchorSpaceExhausted(e: unknown): boolean {
-	return e instanceof AnchorSpaceExhaustedError || (e instanceof Error && e.message.includes("E_ANCHOR_SPACE_EXHAUSTED"));
+  return (
+    e instanceof AnchorSpaceExhaustedError ||
+    (e instanceof Error && e.message.includes("E_ANCHOR_SPACE_EXHAUSTED"))
+  );
 }
 
 function promotionWarning(retiredSize: number, servedLen: number): string {
-	return `[E_ANCHOR_SPACE_EXHAUSTED] Anchor space exhausted (retired ${retiredSize} + served ${servedLen} of ${HASH_SPACE}); promotion cleared retired — re-read recommended, stale-anchor checks degraded until next full read.`;
+  return `[E_ANCHOR_SPACE_EXHAUSTED] Anchor space exhausted (retired ${retiredSize} + served ${servedLen} of ${HASH_SPACE}); promotion cleared retired — re-read recommended, stale-anchor checks degraded until next full read.`;
 }
 
-async function clearRetiredForPromotion(sessionKey: string | undefined, absolutePath: string): Promise<void> {
-	try {
-		const { loadServedStore } = await import("../hash-store.js");
-		const store = await loadServedStore();
-		store.clearRetiredAnchors(sessionKey ?? "", absolutePath);
-		try { store.clearCards(sessionKey ?? "", absolutePath); } catch {}
-	} catch {}
+async function clearRetiredForPromotion(
+  sessionKey: string | undefined,
+  absolutePath: string,
+): Promise<void> {
+  try {
+    const { loadServedStore } = await import("../hash-store.js");
+    const store = await loadServedStore();
+    store.clearRetiredAnchors(sessionKey ?? "", absolutePath);
+    try {
+      store.clearCards(sessionKey ?? "", absolutePath);
+    } catch {}
+  } catch {}
 }
 
 async function retryLineHashesWithPromotion(
-	sessionKey: string | undefined,
-	absolutePath: string,
-	retired: ReadonlySet<string> | undefined,
-	served: readonly (string | null)[] | undefined,
-	warnings: string[],
-	fn: (reserved: Set<string>, retired: Set<string>) => Promise<string[]>,
+  sessionKey: string | undefined,
+  absolutePath: string,
+  retired: ReadonlySet<string> | undefined,
+  served: readonly (string | null)[] | undefined,
+  warnings: string[],
+  fn: (reserved: Set<string>, retired: Set<string>) => Promise<string[]>,
 ): Promise<string[]> {
-	await clearRetiredForPromotion(sessionKey, absolutePath);
-	const servedLen = served?.filter((h): h is string => h !== null).length ?? 0;
-	warnings.push(promotionWarning(retired?.size ?? 0, servedLen));
-	const recomputed = new Set<string>((served?.filter((h): h is string => h !== null) ?? []) as string[]);
-	try {
-		return await fn(recomputed, new Set<string>());
-	} catch (e2: unknown) {
-		if (isAnchorSpaceExhausted(e2)) throw new Error(`[MODEL] [E_ANCHOR_SPACE_EXHAUSTED] Anchor space exhausted even after promotion (served ${servedLen} of ${HASH_SPACE}); file too large for hashline — use write.`);
-		throw e2;
-	}
+  await clearRetiredForPromotion(sessionKey, absolutePath);
+  const servedLen = served?.filter((h): h is string => h !== null).length ?? 0;
+  warnings.push(promotionWarning(retired?.size ?? 0, servedLen));
+  const recomputed = new Set<string>(
+    (served?.filter((h): h is string => h !== null) ?? []) as string[],
+  );
+  try {
+    return await fn(recomputed, new Set<string>());
+  } catch (e2: unknown) {
+    if (isAnchorSpaceExhausted(e2))
+      throw new Error(
+        `[MODEL] [E_ANCHOR_SPACE_EXHAUSTED] Anchor space exhausted even after promotion (served ${servedLen} of ${HASH_SPACE}); file too large for hashline — use write.`,
+      );
+    throw e2;
+  }
 }
 import { MAX_HASH_LINES } from "../hashline/hash-assign.js";
 import {
-	AnchorMismatchError,
-	ServedRejectionError,
-	buildRangeEcho,
-	fmtServedRows,
-	recordEchoServes,
-	type ResolvedRange,
-	type ServeRecordPolicy,
-	type ServedRow,
+  AnchorMismatchError,
+  ServedRejectionError,
+  buildRangeEcho,
+  fmtServedRows,
+  recordEchoServes,
+  type ResolvedRange,
+  type ServeRecordPolicy,
+  type ServedRow,
 } from "../hashline/anchor-pipeline.js";
 import { findSnapshotPathsByHashes } from "../hash-store.js";
-import {
-	clearNoopLoop,
-	noopPayloadKey,
-	trackNoopPayload,
-} from "../noop-guard.js";
+import { clearNoopLoop, noopPayloadKey, trackNoopPayload } from "../noop-guard.js";
 import { NOOP_LOOP_THRESHOLD } from "../constants.js";
 import { abortIf, splitLines } from "../utils.js";
 
@@ -97,32 +106,32 @@ import { abortIf, splitLines } from "../utils.js";
 // shared types
 
 export interface PreparedItem {
-	index: number;
-	path: string;
-	absolutePath: string;
-	remove_from: string;
-	remove_to: string;
-	replacement_text: string;
-	pathWarning?: string;
+  index: number;
+  path: string;
+  absolutePath: string;
+  remove_from: string;
+  remove_to: string;
+  replacement_text: string;
+  pathWarning?: string;
 }
 
 export interface FileEditResult {
-	displayPath: string;
-	absolutePath: string;
-	originalNormalized: string;
-	result: string;
-	bom: string;
-	originalEnding: LineEnding;
-	hadUtf8DecodeErrors: boolean;
-	warnings: string[];
-	originalHashes: string[];
-	resultHashes: string[];
-	appliedCount: number;
-	noopCount: number;
-	totalAddedLines: number;
-	totalRemovedLines: number;
-	driftNotice: string | undefined;
-	range: ResolvedRange;
+  displayPath: string;
+  absolutePath: string;
+  originalNormalized: string;
+  result: string;
+  bom: string;
+  originalEnding: LineEnding;
+  hadUtf8DecodeErrors: boolean;
+  warnings: string[];
+  originalHashes: string[];
+  resultHashes: string[];
+  appliedCount: number;
+  noopCount: number;
+  totalAddedLines: number;
+  totalRemovedLines: number;
+  driftNotice: string | undefined;
+  range: ResolvedRange;
 }
 
 // ---------------------------------------------------------------------------
@@ -134,128 +143,125 @@ export interface FileEditResult {
  * warning, or undefined when no resolution is possible.
  */
 export async function resolveMissingPath(
-	request: Record<string, unknown>,
+  request: Record<string, unknown>,
 ): Promise<{ path: string; warning: string } | undefined> {
-	if (typeof request.path === "string") return undefined;
-	const from = request.remove_from;
-	const to = request.remove_to;
-	if (typeof from !== "string" || typeof to !== "string") return undefined;
-	const hashes: string[] = [];
-	for (const ref of [from, to]) {
-		try {
-			hashes.push(parseHashRef(ref).hash);
-		} catch {
-			return undefined;
-		}
-	}
-	let matches: string[];
-	try {
-		matches = await findSnapshotPathsByHashes(hashes);
-	} catch {
-		return undefined;
-	}
-	if (matches.length === 1) {
-		return {
-			path: matches[0]!,
-			warning: `[MODEL] [E_BAD_PAYLOAD] Autocorrected: missing "path" resolved to ${matches[0]} — the only file whose stored hashes contain both anchors.`,
-		};
-	}
-	if (matches.length > 1) {
-		throw new Error(
-			`[MODEL] [E_BAD_PAYLOAD] Edit request requires a non-empty "path" string; the anchors match multiple known files: ${matches.join(', ')}. Include the intended path.`,
-		);
-	}
-	return undefined;
+  if (typeof request.path === "string") return undefined;
+  const from = request.remove_from;
+  const to = request.remove_to;
+  if (typeof from !== "string" || typeof to !== "string") return undefined;
+  const hashes: string[] = [];
+  for (const ref of [from, to]) {
+    try {
+      hashes.push(parseHashRef(ref).hash);
+    } catch {
+      return undefined;
+    }
+  }
+  let matches: string[];
+  try {
+    matches = await findSnapshotPathsByHashes(hashes);
+  } catch {
+    return undefined;
+  }
+  if (matches.length === 1) {
+    return {
+      path: matches[0]!,
+      warning: `[MODEL] [E_BAD_PAYLOAD] Autocorrected: missing "path" resolved to ${matches[0]} — the only file whose stored hashes contain both anchors.`,
+    };
+  }
+  if (matches.length > 1) {
+    throw new Error(
+      `[MODEL] [E_BAD_PAYLOAD] Edit request requires a non-empty "path" string; the anchors match multiple known files: ${matches.join(", ")}. Include the intended path.`,
+    );
+  }
+  return undefined;
 }
 
 /** The hashes a range edit removes, for stable re-hash bookkeeping. */
-export function collectRemovedHashes(
-	edit: HEdit,
-	originalHashes: string[],
-): Set<string> {
-	const removedHashes = new Set<string>();
-	const startHash = edit.hash_bounds[0].hash;
-	const endHash = edit.hash_bounds[1].hash;
-	const startLine = originalHashes.indexOf(startHash);
-	const endLine = originalHashes.indexOf(endHash);
-	if (startLine >= 0 && endLine >= 0) {
-		const firstLine = Math.min(startLine, endLine);
-		const lastLine = Math.max(startLine, endLine);
-		for (let i = firstLine; i <= lastLine; i++) {
-			removedHashes.add(originalHashes[i]!);
-		}
-	}
-	return removedHashes;
+export function collectRemovedHashes(edit: HEdit, originalHashes: string[]): Set<string> {
+  const removedHashes = new Set<string>();
+  const startHash = edit.hash_bounds[0].hash;
+  const endHash = edit.hash_bounds[1].hash;
+  const startLine = originalHashes.indexOf(startHash);
+  const endLine = originalHashes.indexOf(endHash);
+  if (startLine >= 0 && endLine >= 0) {
+    const firstLine = Math.min(startLine, endLine);
+    const lastLine = Math.max(startLine, endLine);
+    for (let i = firstLine; i <= lastLine; i++) {
+      removedHashes.add(originalHashes[i]!);
+    }
+  }
+  return removedHashes;
 }
 
 /** Added/removed line counts for one resolved edit against a file's original hashes. */
 export function countLineChanges(
-	edit: HEdit,
-	originalHashes: string[],
-	isNoop: boolean,
-	removedAutoFixes: number,
+  edit: HEdit,
+  originalHashes: string[],
+  isNoop: boolean,
+  removedAutoFixes: number,
 ): { totalAddedLines: number; totalRemovedLines: number } {
-	if (isNoop) return { totalAddedLines: 0, totalRemovedLines: 0 };
-	let totalRemovedLines = 0;
-	const startLine = originalHashes.indexOf(edit.hash_bounds[0].hash);
-	const endLine = originalHashes.indexOf(edit.hash_bounds[1].hash);
-	if (startLine >= 0 && endLine >= 0) {
-		totalRemovedLines = Math.abs(endLine - startLine) + 1;
-	}
-	return {
-		totalAddedLines: Math.max(0, edit.content_lines.length - removedAutoFixes),
-		totalRemovedLines,
-	};
+  if (isNoop) return { totalAddedLines: 0, totalRemovedLines: 0 };
+  let totalRemovedLines = 0;
+  const startLine = originalHashes.indexOf(edit.hash_bounds[0].hash);
+  const endLine = originalHashes.indexOf(edit.hash_bounds[1].hash);
+  if (startLine >= 0 && endLine >= 0) {
+    totalRemovedLines = Math.abs(endLine - startLine) + 1;
+  }
+  return {
+    totalAddedLines: Math.max(0, edit.content_lines.length - removedAutoFixes),
+    totalRemovedLines,
+  };
 }
 
 // ---------------------------------------------------------------------------
 // apply-one
 
 export interface ApplyOneInput {
-	content: string;
-	hashes: string[];
-	served: (string | null)[];
-	removeFrom: string;
-	removeTo: string;
-	replacementText: string;
-	absolutePath: string;
-	displayPath: string;
-	signal?: AbortSignal;
-	/** Shared warnings array; resEdit warnings are pushed here. */
-	warnings: string[];
-	/**
-	 * The hashes to count added/removed lines against. Defaults to `hashes`;
-	 * the batch sequencer passes the file's ORIGINAL hashes so later edits in
-	 * a sequence still count against the file as first served.
-	 */
-	countHashes?: string[];
-	store?: HashStore;
-	persist: boolean;
-	reservedHashes?: ReadonlySet<string>;
-	servedCanons?: (string | null)[];
-	retired?: ReadonlySet<string>;
-	epochSnapshotId?: string;
-	curSnapshotId?: string;
-	strictPos?: boolean;
-	sessionKey?: string;
-	/** Pre-resolved edit (single path keeps resEdit before IO for error order). */
-	edit?: HEdit;
+  content: string;
+  hashes: string[];
+  served: (string | null)[];
+  removeFrom: string;
+  removeTo: string;
+  replacementText: string;
+  absolutePath: string;
+  displayPath: string;
+  signal?: AbortSignal;
+  /** Shared warnings array; resEdit warnings are pushed here. */
+  warnings: string[];
+  /**
+   * The hashes to count added/removed lines against. Defaults to `hashes`;
+   * the batch sequencer passes the file's ORIGINAL hashes so later edits in
+   * a sequence still count against the file as first served.
+   */
+  countHashes?: string[];
+  store?: HashStore;
+  persist: boolean;
+  reservedHashes?: ReadonlySet<string>;
+  servedCanons?: (string | null)[];
+  retired?: ReadonlySet<string>;
+  epochSnapshotId?: string;
+  curSnapshotId?: string;
+  strictPos?: boolean;
+  sessionKey?: string;
+  /** Pre-resolved edit (single path keeps resEdit before IO for error order). */
+  edit?: HEdit;
 }
 
 export interface ApplyOneResult {
-	result: string;
-	/** Stable re-hash after the edit (equals `hashes` for a noop). */
-	hashes: string[];
-	range: ResolvedRange;
-	noop: boolean;
-	edit: HEdit;
-	noopEdit?: NEdit;
-	firstChangedLine?: number;
-	lastChangedLine?: number;
-	removedHashes: Set<string> | undefined;
-	totalAddedLines: number;
-	totalRemovedLines: number;
-	anchorWarnings: string[] | undefined;
+  result: string;
+  /** Stable re-hash after the edit (equals `hashes` for a noop). */
+  hashes: string[];
+  range: ResolvedRange;
+  noop: boolean;
+  edit: HEdit;
+  noopEdit?: NEdit;
+  firstChangedLine?: number;
+  lastChangedLine?: number;
+  removedHashes: Set<string> | undefined;
+  totalAddedLines: number;
+  totalRemovedLines: number;
+  anchorWarnings: string[] | undefined;
 }
 
 /**
@@ -268,143 +274,139 @@ export interface ApplyOneResult {
  * the batch path wraps with [E_BATCH_ABORT] plus the current-range echo.
  */
 export async function applyOne(
-	input: ApplyOneInput,
-	onReject: (error: unknown, edit: HEdit | undefined) => Promise<never>,
+  input: ApplyOneInput,
+  onReject: (error: unknown, edit: HEdit | undefined) => Promise<never>,
 ): Promise<ApplyOneResult> {
-	let edit: HEdit;
-	if (input.edit) {
-		edit = input.edit;
-	} else {
-		try {
-			edit = resEdit(
-				{
-					remove_from: input.removeFrom,
-					remove_to: input.removeTo,
-					replacement_text: input.replacementText,
-				},
-				input.warnings,
-			);
-		} catch (error) {
-			return onReject(error, undefined);
-		}
-	}
+  let edit: HEdit;
+  if (input.edit) {
+    edit = input.edit;
+  } else {
+    try {
+      edit = resEdit(
+        {
+          remove_from: input.removeFrom,
+          remove_to: input.removeTo,
+          replacement_text: input.replacementText,
+        },
+        input.warnings,
+      );
+    } catch (error) {
+      return onReject(error, undefined);
+    }
+  }
 
-	const retiredForApply = input.retired;
-	let anchorResult: ReturnType<typeof applyEdit>;
-	try {
-		anchorResult = applyEdit(
-			input.content,
-			edit,
-			input.signal,
-			input.hashes,
-			input.displayPath,
-			input.served,
-			input.servedCanons,
-			retiredForApply,
-			input.epochSnapshotId,
-			input.curSnapshotId,
-			input.strictPos,
-		);
-	} catch (error) {
-		if (
-			error instanceof AnchorMismatchError ||
-			error instanceof ServedRejectionError
-		) {
-			return onReject(error, edit);
-		}
-		throw error;
-	}
+  const retiredForApply = input.retired;
+  let anchorResult: ReturnType<typeof applyEdit>;
+  try {
+    anchorResult = applyEdit(
+      input.content,
+      edit,
+      input.signal,
+      input.hashes,
+      input.displayPath,
+      input.served,
+      input.servedCanons,
+      retiredForApply,
+      input.epochSnapshotId,
+      input.curSnapshotId,
+      input.strictPos,
+    );
+  } catch (error) {
+    if (error instanceof AnchorMismatchError || error instanceof ServedRejectionError) {
+      return onReject(error, edit);
+    }
+    throw error;
+  }
 
-	const result = anchorResult.content;
-	const noop = result === input.content;
-	const removedHashes = noop
-		? undefined
-		: collectRemovedHashes(edit, input.hashes);
-	const retiredForHash = input.retired;
-	let resultHashes: string[];
-	if (noop) {
-		resultHashes = input.hashes;
-	} else {
-		try {
-			resultHashes = await lineHashes(
-				result,
-				input.absolutePath,
-				{
-					content: input.content,
-					hashes: input.hashes,
-					removedHashes,
-				},
-				input.store,
-				input.persist,
-				input.reservedHashes,
-				retiredForHash,
-			);
-		} catch (e: unknown) {
-			if (!isAnchorSpaceExhausted(e)) throw e;
-			resultHashes = await retryLineHashesWithPromotion(
-				input.sessionKey,
-				input.absolutePath,
-				retiredForHash,
-				input.served,
-				input.warnings ?? [],
-				(recomputed, emptyRetired) => lineHashes(
-					result,
-					input.absolutePath,
-					{
-						content: input.content,
-						hashes: input.hashes,
-						removedHashes,
-					},
-					input.store,
-					input.persist,
-					recomputed,
-					emptyRetired,
-				),
-			);
-		}
-	}
-	const { totalAddedLines, totalRemovedLines } = countLineChanges(
-		edit,
-		input.countHashes ?? input.hashes,
-		noop,
-		0,
-	);
+  const result = anchorResult.content;
+  const noop = result === input.content;
+  const removedHashes = noop ? undefined : collectRemovedHashes(edit, input.hashes);
+  const retiredForHash = input.retired;
+  let resultHashes: string[];
+  if (noop) {
+    resultHashes = input.hashes;
+  } else {
+    try {
+      resultHashes = await lineHashes(
+        result,
+        input.absolutePath,
+        {
+          content: input.content,
+          hashes: input.hashes,
+          removedHashes,
+        },
+        input.store,
+        input.persist,
+        input.reservedHashes,
+        retiredForHash,
+      );
+    } catch (e: unknown) {
+      if (!isAnchorSpaceExhausted(e)) throw e;
+      resultHashes = await retryLineHashesWithPromotion(
+        input.sessionKey,
+        input.absolutePath,
+        retiredForHash,
+        input.served,
+        input.warnings ?? [],
+        (recomputed, emptyRetired) =>
+          lineHashes(
+            result,
+            input.absolutePath,
+            {
+              content: input.content,
+              hashes: input.hashes,
+              removedHashes,
+            },
+            input.store,
+            input.persist,
+            recomputed,
+            emptyRetired,
+          ),
+      );
+    }
+  }
+  const { totalAddedLines, totalRemovedLines } = countLineChanges(
+    edit,
+    input.countHashes ?? input.hashes,
+    noop,
+    0,
+  );
 
-	return {
-		result,
-		hashes: resultHashes,
-		range: anchorResult.range,
-		noop,
-		edit,
-		noopEdit: anchorResult.noopEdit,
-		firstChangedLine: anchorResult.firstChangedLine,
-		lastChangedLine: anchorResult.lastChangedLine,
-		removedHashes,
-		totalAddedLines,
-		totalRemovedLines,
-		anchorWarnings: anchorResult.warnings,
-	};
+  return {
+    result,
+    hashes: resultHashes,
+    range: anchorResult.range,
+    noop,
+    edit,
+    noopEdit: anchorResult.noopEdit,
+    firstChangedLine: anchorResult.firstChangedLine,
+    lastChangedLine: anchorResult.lastChangedLine,
+    removedHashes,
+    totalAddedLines,
+    totalRemovedLines,
+    anchorWarnings: anchorResult.warnings,
+  };
 }
 
 // ---------------------------------------------------------------------------
 // noop-loop guard
 
 export interface NoopLoopOptions {
-	absolutePath: string;
-	removeFrom: string;
-	removeTo: string;
-	replacementText: string;
-	displayPath: string;
-	/** Batch item index; undefined = single-edit flavor. */
-	index?: number;
-	count: number;
-	sessionKey: string;
-	originalHashes: string[];
-	originalNormalized: string;
-	/** Single-edit flavor only: the edit's range, for the echo rows. */
-	range?: ResolvedRange;
-	/** Batch flavor: precomputed echo rows for the failed item (may be absent). */
-	echoRows?: ServedRow[];
+  absolutePath: string;
+  removeFrom: string;
+  removeTo: string;
+  replacementText: string;
+  displayPath: string;
+  /** Batch item index; undefined = single-edit flavor. */
+  index?: number;
+  count: number;
+  sessionKey: string;
+  originalHashes: string[];
+  originalNormalized: string;
+  /** Single-edit flavor only: the edit's range, for the echo rows. */
+  range?: ResolvedRange;
+  /** Batch flavor: precomputed echo rows for the failed item (may be absent). */
+  echoRows?: ServedRow[];
 }
 
 /**
@@ -413,86 +415,60 @@ export interface NoopLoopOptions {
  * echo serves) once the payload has been submitted NOOP_LOOP_THRESHOLD times
  * with no change. Messages are byte-identical to the pre-engine tools.
  */
-export async function enforceNoopLoop(
-	opts: NoopLoopOptions,
-): Promise<string | undefined> {
-	const {
-		absolutePath,
-		removeFrom,
-		removeTo,
-		displayPath,
-		index,
-		count,
-		sessionKey,
-		originalHashes,
-	} = opts;
+export async function enforceNoopLoop(opts: NoopLoopOptions): Promise<string | undefined> {
+  const {
+    absolutePath,
+    removeFrom,
+    removeTo,
+    displayPath,
+    index,
+    count,
+    sessionKey,
+    originalHashes,
+  } = opts;
 
-	if (index === undefined) {
-		if (count >= NOOP_LOOP_THRESHOLD) {
-			const echoRows = buildRangeEcho(
-				opts.range!.startLine,
-				opts.range!.endLine,
-				originalHashes,
-			);
-			const echo = fmtServedRows(
-				echoRows,
-				splitLines(opts.originalNormalized),
-			);
-			await recordEchoServes(
-				sessionKey,
-				absolutePath,
-				echoRows,
-				"live",
-				originalHashes.length,
-			);
-			throw new Error(
-				`[E_NOOP_LOOP] identical edit (${removeFrom} → ${removeTo} in ${displayPath}) submitted ${count}×, no changes each time. Range already contains this text; resend will reject. Current range:\n${echo}`,
-			);
-		}
-		if (count === 2) {
-			return `[E_NOOP_LOOP] Notice: identical edit (${removeFrom} → ${removeTo} in ${displayPath}) no-op'd twice; range already has this text. Resend will reject.`;
-		}
-		return undefined;
-	}
+  if (index === undefined) {
+    if (count >= NOOP_LOOP_THRESHOLD) {
+      const echoRows = buildRangeEcho(opts.range!.startLine, opts.range!.endLine, originalHashes);
+      const echo = fmtServedRows(echoRows, splitLines(opts.originalNormalized));
+      await recordEchoServes(sessionKey, absolutePath, echoRows, "live", originalHashes.length);
+      throw new Error(
+        `[E_NOOP_LOOP] identical edit (${removeFrom} → ${removeTo} in ${displayPath}) submitted ${count}×, no changes each time. Range already contains this text; resend will reject. Current range:\n${echo}`,
+      );
+    }
+    if (count === 2) {
+      return `[E_NOOP_LOOP] Notice: identical edit (${removeFrom} → ${removeTo} in ${displayPath}) no-op'd twice; range already has this text. Resend will reject.`;
+    }
+    return undefined;
+  }
 
-	if (count >= NOOP_LOOP_THRESHOLD) {
-		const originalLines = splitLines(opts.originalNormalized);
-		const echoRows = opts.echoRows;
-		if (echoRows) {
-			await recordEchoServes(
-				sessionKey,
-				absolutePath,
-				echoRows,
-				"live",
-				originalHashes.length,
-			);
-		}
-		throw new Error(
-			`[E_NOOP_LOOP] edits[${index}] (${displayPath}): identical edit (${removeFrom} → ${removeTo}) submitted ${count}×, no changes each time. Range already has this text; resend will reject the batch.` +
-				(echoRows
-					? ` Current on-disk range:\n${fmtServedRows(echoRows, originalLines)}`
-					: ""),
-		);
-	}
-	if (count === 2) {
-		return `[E_NOOP_LOOP] Notice: edits[${index}] (${displayPath}) — identical edit no-op'd twice; range already has this text. Resend will reject the batch.`;
-	}
-	return undefined;
+  if (count >= NOOP_LOOP_THRESHOLD) {
+    const originalLines = splitLines(opts.originalNormalized);
+    const echoRows = opts.echoRows;
+    if (echoRows) {
+      await recordEchoServes(sessionKey, absolutePath, echoRows, "live", originalHashes.length);
+    }
+    throw new Error(
+      `[E_NOOP_LOOP] edits[${index}] (${displayPath}): identical edit (${removeFrom} → ${removeTo}) submitted ${count}×, no changes each time. Range already has this text; resend will reject the batch.` +
+        (echoRows ? ` Current on-disk range:\n${fmtServedRows(echoRows, originalLines)}` : ""),
+    );
+  }
+  if (count === 2) {
+    return `[E_NOOP_LOOP] Notice: edits[${index}] (${displayPath}) — identical edit no-op'd twice; range already has this text. Resend will reject the batch.`;
+  }
+  return undefined;
 }
 
 // ---------------------------------------------------------------------------
 // per-file sequencer (batch)
 
-function echoRowsForItem(
-	edit: HEdit,
-	originalHashes: string[],
-): ServedRow[] | undefined {
-	const startHash = edit.hash_bounds[0].hash;
-	const endHash = edit.hash_bounds[1].hash;
-	const s = originalHashes.indexOf(startHash);
-	const e = originalHashes.indexOf(endHash);
-	if (s < 0 || e < 0) return undefined;
-	return buildRangeEcho(Math.min(s, e) + 1, Math.max(s, e) + 1, originalHashes);
+function echoRowsForItem(edit: HEdit, originalHashes: string[]): ServedRow[] | undefined {
+  const startHash = edit.hash_bounds[0].hash;
+  const endHash = edit.hash_bounds[1].hash;
+  const s = originalHashes.indexOf(startHash);
+  const e = originalHashes.indexOf(endHash);
+  if (s < 0 || e < 0) return undefined;
+  return buildRangeEcho(Math.min(s, e) + 1, Math.max(s, e) + 1, originalHashes);
 }
 
 /**
@@ -502,275 +478,271 @@ function echoRowsForItem(
  * transaction ({@link persistUndoAndWrite}): nothing here writes to disk.
  */
 export async function runFileEdits(
-	io: FileIO,
-	items: PreparedItem[],
-	opts: { signal?: AbortSignal; sessionKey: string },
+  io: FileIO,
+  items: PreparedItem[],
+  opts: { signal?: AbortSignal; sessionKey: string },
 ): Promise<FileEditResult> {
-	const first = items[0]!;
-	abortIf(opts.signal);
-	const absolutePath = first.absolutePath;
-	const perSessionRetired = await loadRetiredAnchors(opts.sessionKey, absolutePath);
-	const reservedHashes = new Set(perSessionRetired);
-	const rawText = await io.readText(absolutePath, opts.signal);
-	const {
-		normalized: originalNormalized,
-		bom,
-		originalEnding,
-		fileHashes: originalHashes,
-		hadUtf8DecodeErrors,
-	} = await normFromText({
-		absolutePath,
-		rawText,
-		displayPath: first.path,
-		signal: opts.signal,
-		maxLines: MAX_HASH_LINES,
-		reservedHashes,
-		retiredHashes: perSessionRetired,
-	});
+  const first = items[0]!;
+  abortIf(opts.signal);
+  const absolutePath = first.absolutePath;
+  const perSessionRetired = await loadRetiredAnchors(opts.sessionKey, absolutePath);
+  const reservedHashes = new Set(perSessionRetired);
+  const rawText = await io.readText(absolutePath, opts.signal);
+  const {
+    normalized: originalNormalized,
+    bom,
+    originalEnding,
+    fileHashes: originalHashes,
+    hadUtf8DecodeErrors,
+  } = await normFromText({
+    absolutePath,
+    rawText,
+    displayPath: first.path,
+    signal: opts.signal,
+    maxLines: MAX_HASH_LINES,
+    reservedHashes,
+    retiredHashes: perSessionRetired,
+  });
 
-	const served = await loadServed(opts.sessionKey, absolutePath);
-	const servedCanons = await loadServedCanons(opts.sessionKey, absolutePath);
-	const epochSnapshotId = await loadEpochSnapshotId(opts.sessionKey, absolutePath);
-	let curSnapshotId: string | undefined;
-	try { curSnapshotId = (await fileSnap(absolutePath)).snapshotId; } catch {}
-	const strictPos = epochSnapshotId !== undefined && curSnapshotId !== undefined && epochSnapshotId !== curSnapshotId; // automatic: strict when epoch mismatch (conservative, future: changed∩[L,R] refined)
-	const warnings: string[] = [];
+  const served = await loadServed(opts.sessionKey, absolutePath);
+  const servedCanons = await loadServedCanons(opts.sessionKey, absolutePath);
+  const epochSnapshotId = await loadEpochSnapshotId(opts.sessionKey, absolutePath);
+  let curSnapshotId: string | undefined;
+  try {
+    curSnapshotId = (await fileSnap(absolutePath)).snapshotId;
+  } catch {}
+  const strictPos =
+    epochSnapshotId !== undefined &&
+    curSnapshotId !== undefined &&
+    epochSnapshotId !== curSnapshotId; // automatic: strict when epoch mismatch (conservative, future: changed∩[L,R] refined)
+  const warnings: string[] = [];
 
-	let currentContent = originalNormalized;
-	let currentHashes = originalHashes;
-	let appliedCount = 0;
-	let noopCount = 0;
-	let totalAddedLines = 0;
-	let totalRemovedLines = 0;
-	let unionStartLine = Infinity;
-	let unionEndLine = -Infinity;
-	let unionStartHash = "";
-	let unionEndHash = "";
-	let lastApplied:
-		| { content: string; hashes: string[]; removedHashes: Set<string> }
-		| undefined;
-	const newlyRetired = new Set<string>();
+  let currentContent = originalNormalized;
+  let currentHashes = originalHashes;
+  let appliedCount = 0;
+  let noopCount = 0;
+  let totalAddedLines = 0;
+  let totalRemovedLines = 0;
+  let unionStartLine = Infinity;
+  let unionEndLine = -Infinity;
+  let unionStartHash = "";
+  let unionEndHash = "";
+  let lastApplied: { content: string; hashes: string[]; removedHashes: Set<string> } | undefined;
+  const newlyRetired = new Set<string>();
 
-	for (const item of items) {
-		abortIf(opts.signal);
-		const applied = await applyOne(
-			{
-				content: currentContent,
-				hashes: currentHashes,
-				served,
-				removeFrom: item.remove_from,
-				removeTo: item.remove_to,
-				replacementText: item.replacement_text,
-				absolutePath,
-				displayPath: item.path,
-				signal: opts.signal,
-				warnings,
-				countHashes: originalHashes,
-				persist: false,
-				reservedHashes,
-				servedCanons,
-				retired: new Set([...perSessionRetired, ...Array.from(newlyRetired)]),
-				epochSnapshotId,
-				curSnapshotId,
-				strictPos,
-			},
-			async (error, edit) => {
-				if (
-					error instanceof AnchorMismatchError ||
-					error instanceof ServedRejectionError
-				) {
-					const originalLines = splitLines(originalNormalized);
-					const echoRows =
-						error.servedRows.length > 0
-							? error.servedRows
-							: edit
-								? echoRowsForItem(edit, originalHashes)
-								: undefined;
-					if (echoRows) {
-						await recordEchoServes(
-							opts.sessionKey,
-							absolutePath,
-							echoRows,
-							"live",
-							originalHashes.length,
-						);
-					}
-					const echoBlock = echoRows
-						? ` Current on-disk range for edits[${item.index}] (unchanged — nothing was written):\n${fmtServedRows(echoRows, originalLines)}`
-						: " Call read() to get fresh anchors.";
-					throw new Error(
-						`[E_BATCH_ABORT] edits[${item.index}] (${item.path}) failed: ${error.message}${echoBlock}\n` +
-							"The whole batch was rejected and NOTHING was written — no file changed and earlier items in the batch were NOT applied. Fix the failing edit (and any later edit that depends on it), then resubmit the batch.",
-					);
-				}
-				const message =
-					error instanceof Error ? error.message : String(error);
-				throw new Error(
-					`[E_BATCH_ABORT] edits[${item.index}] (${item.path}) failed: ${message}\n` +
-						"The whole batch was rejected and NOTHING was written — no file changed and earlier items in the batch were NOT applied.",
-				);
-			},
-		);
+  for (const item of items) {
+    abortIf(opts.signal);
+    const applied = await applyOne(
+      {
+        content: currentContent,
+        hashes: currentHashes,
+        served,
+        removeFrom: item.remove_from,
+        removeTo: item.remove_to,
+        replacementText: item.replacement_text,
+        absolutePath,
+        displayPath: item.path,
+        signal: opts.signal,
+        warnings,
+        countHashes: originalHashes,
+        persist: false,
+        reservedHashes,
+        servedCanons,
+        retired: new Set([...perSessionRetired, ...Array.from(newlyRetired)]),
+        epochSnapshotId,
+        curSnapshotId,
+        strictPos,
+      },
+      async (error, edit) => {
+        if (error instanceof AnchorMismatchError || error instanceof ServedRejectionError) {
+          const originalLines = splitLines(originalNormalized);
+          const echoRows =
+            error.servedRows.length > 0
+              ? error.servedRows
+              : edit
+                ? echoRowsForItem(edit, originalHashes)
+                : undefined;
+          if (echoRows) {
+            await recordEchoServes(
+              opts.sessionKey,
+              absolutePath,
+              echoRows,
+              "live",
+              originalHashes.length,
+            );
+          }
+          const echoBlock = echoRows
+            ? ` Current on-disk range for edits[${item.index}] (unchanged — nothing was written):\n${fmtServedRows(echoRows, originalLines)}`
+            : " Call read() to get fresh anchors.";
+          throw new Error(
+            `[E_BATCH_ABORT] edits[${item.index}] (${item.path}) failed: ${error.message}${echoBlock}\n` +
+              "The whole batch was rejected and NOTHING was written — no file changed and earlier items in the batch were NOT applied. Fix the failing edit (and any later edit that depends on it), then resubmit the batch.",
+          );
+        }
+        const message = error instanceof Error ? error.message : String(error);
+        throw new Error(
+          `[E_BATCH_ABORT] edits[${item.index}] (${item.path}) failed: ${message}\n` +
+            "The whole batch was rejected and NOTHING was written — no file changed and earlier items in the batch were NOT applied.",
+        );
+      },
+    );
 
-		const range = applied.range;
-		if (range.startLine < unionStartLine) {
-			unionStartLine = range.startLine;
-			unionStartHash = range.startHash;
-		}
-		if (range.endLine > unionEndLine) {
-			unionEndLine = range.endLine;
-			unionEndHash = range.endHash;
-		}
+    const range = applied.range;
+    if (range.startLine < unionStartLine) {
+      unionStartLine = range.startLine;
+      unionStartHash = range.startHash;
+    }
+    if (range.endLine > unionEndLine) {
+      unionEndLine = range.endLine;
+      unionEndHash = range.endHash;
+    }
 
-		if (applied.noop) {
-			noopCount += 1;
-			const payload = noopPayloadKey(
-				absolutePath,
-				item.remove_from,
-				item.remove_to,
-				item.replacement_text,
-			);
-			const count = trackNoopPayload(absolutePath, payload);
-			const notice = await enforceNoopLoop({
-				absolutePath,
-				removeFrom: item.remove_from,
-				removeTo: item.remove_to,
-				replacementText: item.replacement_text,
-				displayPath: item.path,
-				index: item.index,
-				count,
-				sessionKey: opts.sessionKey,
-				originalHashes,
-				originalNormalized,
-				echoRows: echoRowsForItem(applied.edit, originalHashes),
-			});
-			if (notice) warnings.push(notice);
-			warnings.push(
-				`edits[${item.index}] (${item.path}) was a noop: the range already contains the replacement text.`,
-			);
-			if (applied.anchorWarnings?.length)
-				warnings.push(...applied.anchorWarnings);
-			continue;
-		}
+    if (applied.noop) {
+      noopCount += 1;
+      const payload = noopPayloadKey(
+        absolutePath,
+        item.remove_from,
+        item.remove_to,
+        item.replacement_text,
+      );
+      const count = trackNoopPayload(absolutePath, payload);
+      const notice = await enforceNoopLoop({
+        absolutePath,
+        removeFrom: item.remove_from,
+        removeTo: item.remove_to,
+        replacementText: item.replacement_text,
+        displayPath: item.path,
+        index: item.index,
+        count,
+        sessionKey: opts.sessionKey,
+        originalHashes,
+        originalNormalized,
+        echoRows: echoRowsForItem(applied.edit, originalHashes),
+      });
+      if (notice) warnings.push(notice);
+      warnings.push(
+        `edits[${item.index}] (${item.path}) was a noop: the range already contains the replacement text.`,
+      );
+      if (applied.anchorWarnings?.length) warnings.push(...applied.anchorWarnings);
+      continue;
+    }
 
-		appliedCount += 1;
-		const removedHashes = applied.removedHashes!;
-		for (const hash of removedHashes) {
-			reservedHashes.add(hash);
-			newlyRetired.add(hash);
-		}
-		totalAddedLines += applied.totalAddedLines;
-		totalRemovedLines += applied.totalRemovedLines;
-		lastApplied = {
-			content: currentContent,
-			hashes: currentHashes,
-			removedHashes,
-		};
-		currentContent = applied.result;
-		currentHashes = applied.hashes;
-		clearNoopLoop(absolutePath);
-		if (applied.anchorWarnings?.length)
-			warnings.push(...applied.anchorWarnings);
-	}
+    appliedCount += 1;
+    const removedHashes = applied.removedHashes!;
+    for (const hash of removedHashes) {
+      reservedHashes.add(hash);
+      newlyRetired.add(hash);
+    }
+    totalAddedLines += applied.totalAddedLines;
+    totalRemovedLines += applied.totalRemovedLines;
+    lastApplied = {
+      content: currentContent,
+      hashes: currentHashes,
+      removedHashes,
+    };
+    currentContent = applied.result;
+    currentHashes = applied.hashes;
+    clearNoopLoop(absolutePath);
+    if (applied.anchorWarnings?.length) warnings.push(...applied.anchorWarnings);
+  }
 
-	const result = currentContent;
-	let resultHashes = currentHashes;
-	if (appliedCount > 0 && lastApplied) {
-		try {
-			resultHashes = await lineHashes(
-				result,
-				absolutePath,
-				{
-					content: lastApplied.content,
-					hashes: lastApplied.hashes,
-					removedHashes: lastApplied.removedHashes,
-				},
-				undefined,
-				true,
-				reservedHashes,
-				perSessionRetired,
-			);
-		} catch (e: unknown) {
-			if (!isAnchorSpaceExhausted(e)) throw e;
-			resultHashes = await retryLineHashesWithPromotion(
-				opts.sessionKey,
-				absolutePath,
-				perSessionRetired,
-				served,
-				warnings,
-				(recomputed, emptyRetired) => lineHashes(
-					result,
-					absolutePath,
-					{
-						content: lastApplied.content,
-					hashes: lastApplied.hashes,
-					removedHashes: lastApplied.removedHashes,
-					},
-					undefined,
-					true,
-					recomputed,
-					emptyRetired,
-				),
-			);
-		}
-		await retireAnchors(opts.sessionKey, absolutePath, newlyRetired);
-	}
+  const result = currentContent;
+  let resultHashes = currentHashes;
+  if (appliedCount > 0 && lastApplied) {
+    try {
+      resultHashes = await lineHashes(
+        result,
+        absolutePath,
+        {
+          content: lastApplied.content,
+          hashes: lastApplied.hashes,
+          removedHashes: lastApplied.removedHashes,
+        },
+        undefined,
+        true,
+        reservedHashes,
+        perSessionRetired,
+      );
+    } catch (e: unknown) {
+      if (!isAnchorSpaceExhausted(e)) throw e;
+      resultHashes = await retryLineHashesWithPromotion(
+        opts.sessionKey,
+        absolutePath,
+        perSessionRetired,
+        served,
+        warnings,
+        (recomputed, emptyRetired) =>
+          lineHashes(
+            result,
+            absolutePath,
+            {
+              content: lastApplied.content,
+              hashes: lastApplied.hashes,
+              removedHashes: lastApplied.removedHashes,
+            },
+            undefined,
+            true,
+            recomputed,
+            emptyRetired,
+          ),
+      );
+    }
+    await retireAnchors(opts.sessionKey, absolutePath, newlyRetired);
+  }
 
-	if (hadUtf8DecodeErrors) {
-		warnings.push(
-			"Non-UTF-8 bytes were shown as U+FFFD; this edit rewrote the file as UTF-8.",
-		);
-	}
-	if (first.pathWarning) warnings.unshift(first.pathWarning);
+  if (hadUtf8DecodeErrors) {
+    warnings.push("Non-UTF-8 bytes were shown as U+FFFD; this edit rewrote the file as UTF-8.");
+  }
+  if (first.pathWarning) warnings.unshift(first.pathWarning);
 
-	let driftNotice: string | undefined;
-	if (appliedCount > 0 && unionStartLine !== Infinity) {
-		const resultLines = splitLines(result);
-		const originalLines = splitLines(originalNormalized);
-		try {
-			driftNotice = await scanDrift({
-				sessionKey: opts.sessionKey,
-				served,
-				resultHashes,
-				resultLines,
-				range: {
-					startLine: unionStartLine,
-					endLine: unionEndLine,
-					startHash: unionStartHash,
-					endHash: unionEndHash,
-					delta: resultLines.length - originalLines.length,
-				},
-				path: absolutePath,
-			});
-		} catch (error) {
-			console.error("Failed to compute drift notice:", error);
-		}
-	}
+  let driftNotice: string | undefined;
+  if (appliedCount > 0 && unionStartLine !== Infinity) {
+    const resultLines = splitLines(result);
+    const originalLines = splitLines(originalNormalized);
+    try {
+      driftNotice = await scanDrift({
+        sessionKey: opts.sessionKey,
+        served,
+        resultHashes,
+        resultLines,
+        range: {
+          startLine: unionStartLine,
+          endLine: unionEndLine,
+          startHash: unionStartHash,
+          endHash: unionEndHash,
+          delta: resultLines.length - originalLines.length,
+        },
+        path: absolutePath,
+      });
+    } catch (error) {
+      console.error("Failed to compute drift notice:", error);
+    }
+  }
 
-	return {
-		displayPath: first.path,
-		absolutePath,
-		originalNormalized,
-		result,
-		bom,
-		originalEnding,
-		hadUtf8DecodeErrors,
-		warnings,
-		originalHashes,
-		resultHashes,
-		appliedCount,
-		noopCount,
-		totalAddedLines,
-		totalRemovedLines,
-		driftNotice,
-		range: {
-			startLine: unionStartLine,
-			endLine: unionEndLine,
-			startHash: unionStartHash,
-			endHash: unionEndHash,
-			delta: splitLines(result).length - splitLines(originalNormalized).length,
-		},
-	};
+  return {
+    displayPath: first.path,
+    absolutePath,
+    originalNormalized,
+    result,
+    bom,
+    originalEnding,
+    hadUtf8DecodeErrors,
+    warnings,
+    originalHashes,
+    resultHashes,
+    appliedCount,
+    noopCount,
+    totalAddedLines,
+    totalRemovedLines,
+    driftNotice,
+    range: {
+      startLine: unionStartLine,
+      endLine: unionEndLine,
+      startHash: unionStartHash,
+      endHash: unionEndHash,
+      delta: splitLines(result).length - splitLines(originalNormalized).length,
+    },
+  };
 }
 
 // ---------------------------------------------------------------------------

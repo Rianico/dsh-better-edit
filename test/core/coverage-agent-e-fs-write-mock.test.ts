@@ -15,7 +15,9 @@ vi.mock("node:fs/promises", async () => {
       if ((globalThis as any).__mockOpenThrow) {
         (globalThis as any).__mockOpenThrow = false;
         return {
-          writeFile: async () => { throw new Error("write fail"); },
+          writeFile: async () => {
+            throw new Error("write fail");
+          },
           chmod: async () => {},
           sync: async () => {},
           close: async () => {},
@@ -44,7 +46,10 @@ describe("coverage-agent-e fs-write mock", () => {
     const dir = await mkdtemp(join(tmpdir(), "e-mock-readdir-"));
     try {
       await writeAtomic(join(dir, "a.txt"), "hello");
-      expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining("failed to sweep"), expect.anything());
+      expect(consoleSpy).toHaveBeenCalledWith(
+        expect.stringContaining("failed to sweep"),
+        expect.anything(),
+      );
     } finally {
       consoleSpy.mockRestore();
       await rm(dir, { recursive: true, force: true });

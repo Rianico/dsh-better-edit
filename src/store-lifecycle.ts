@@ -46,7 +46,9 @@ function gitignoreHasEntry(ws: string): boolean {
     const content = readFileSync(join(ws, ".gitignore"), "utf-8");
     return content.split("\n").some((l) => {
       const t = l.trim();
-      return t === ".dsh_better_edit" || t === ".dsh_better_edit/" || t.startsWith(".dsh_better_edit/");
+      return (
+        t === ".dsh_better_edit" || t === ".dsh_better_edit/" || t.startsWith(".dsh_better_edit/")
+      );
     });
   } catch {
     return false;
@@ -71,16 +73,22 @@ function handleGitPollution(storePath: string): void {
           appendFileSync(gitignorePath, `${prefix}.dsh_better_edit/\n`);
         }
       } catch (error) {
-        console.warn(`dsh-better-edit: failed to update .gitignore for ${ws}: ${error instanceof Error ? error.message : String(error)}`);
+        console.warn(
+          `dsh-better-edit: failed to update .gitignore for ${ws}: ${error instanceof Error ? error.message : String(error)}`,
+        );
       }
       return;
     }
 
     if (warnedGitWarn.has(ws)) return;
     warnedGitWarn.add(ws);
-    console.warn(`dsh-better-edit: workspace store at ${ws}/.dsh_better_edit/ not in .gitignore — add ".dsh_better_edit/" to .gitignore or set storeDir: central / autoGitignore: true`);
+    console.warn(
+      `dsh-better-edit: workspace store at ${ws}/.dsh_better_edit/ not in .gitignore — add ".dsh_better_edit/" to .gitignore or set storeDir: central / autoGitignore: true`,
+    );
   } catch (error) {
-    console.warn(`dsh-better-edit: handleGitPollution failed: ${error instanceof Error ? error.message : String(error)}`); // best-effort, never throw at store open
+    console.warn(
+      `dsh-better-edit: handleGitPollution failed: ${error instanceof Error ? error.message : String(error)}`,
+    ); // best-effort, never throw at store open
   }
 }
 
@@ -95,7 +103,9 @@ export async function runCentralJanitorIfDue(): Promise<void> {
   try {
     cfg = loadConfig();
   } catch (error) {
-    console.warn(`dsh-better-edit: loadConfig failed in janitor: ${error instanceof Error ? error.message : String(error)}`);
+    console.warn(
+      `dsh-better-edit: loadConfig failed in janitor: ${error instanceof Error ? error.message : String(error)}`,
+    );
     return;
   }
   if (cfg.storeDir === "workspace") return;
@@ -110,23 +120,23 @@ export async function runCentralJanitorIfDue(): Promise<void> {
     return;
   }
 
-  	const liveDirs = new Set<string>();
-	if (getStores) {
-		for (const storePath of getStores().keys()) {
-			if (storePath.startsWith(runtimeDir + "/")) {
-				const base = storePath.slice(runtimeDir.length + 1).split("/")[0];
-				if (base) liveDirs.add(base);
-			}
-		}
-	}
-	if (getOpenings) {
-		for (const storePath of getOpenings().keys()) {
-			if (storePath.startsWith(runtimeDir + "/")) {
-				const base = storePath.slice(runtimeDir.length + 1).split("/")[0];
-				if (base) liveDirs.add(base);
-			}
-		}
-	}
+  const liveDirs = new Set<string>();
+  if (getStores) {
+    for (const storePath of getStores().keys()) {
+      if (storePath.startsWith(runtimeDir + "/")) {
+        const base = storePath.slice(runtimeDir.length + 1).split("/")[0];
+        if (base) liveDirs.add(base);
+      }
+    }
+  }
+  if (getOpenings) {
+    for (const storePath of getOpenings().keys()) {
+      if (storePath.startsWith(runtimeDir + "/")) {
+        const base = storePath.slice(runtimeDir.length + 1).split("/")[0];
+        if (base) liveDirs.add(base);
+      }
+    }
+  }
 
   const infos: { name: string; dir: string; mtimeMs: number; totalBytes: number }[] = [];
   for (const name of entries) {
@@ -136,14 +146,21 @@ export async function runCentralJanitorIfDue(): Promise<void> {
       const st = await stat(dir);
       if (!st.isDirectory()) continue;
       let totalBytes = 0;
-      for (const file of ["hash-store.sqlite", "hash-store.sqlite-wal", "hash-store.sqlite-shm", ".wsPath"] as const) {
+      for (const file of [
+        "hash-store.sqlite",
+        "hash-store.sqlite-wal",
+        "hash-store.sqlite-shm",
+        ".wsPath",
+      ] as const) {
         try {
           totalBytes += (await stat(join(dir, file))).size;
         } catch {}
       }
       infos.push({ name, dir, mtimeMs: st.mtimeMs, totalBytes });
     } catch (error) {
-      console.warn(`dsh-better-edit: stat failed for central dir ${dir}: ${error instanceof Error ? error.message : String(error)}`);
+      console.warn(
+        `dsh-better-edit: stat failed for central dir ${dir}: ${error instanceof Error ? error.message : String(error)}`,
+      );
     }
   }
 
@@ -175,12 +192,16 @@ export async function runCentralJanitorIfDue(): Promise<void> {
         try {
           tmpDb.exec("PRAGMA wal_checkpoint(TRUNCATE)");
         } catch (error) {
-          console.warn(`dsh-better-edit: wal_checkpoint failed for ${dbPath}: ${error instanceof Error ? error.message : String(error)}`);
+          console.warn(
+            `dsh-better-edit: wal_checkpoint failed for ${dbPath}: ${error instanceof Error ? error.message : String(error)}`,
+          );
         } finally {
           try {
             tmpDb.close();
           } catch (error) {
-            console.warn(`dsh-better-edit: close failed for ${dbPath}: ${error instanceof Error ? error.message : String(error)}`);
+            console.warn(
+              `dsh-better-edit: close failed for ${dbPath}: ${error instanceof Error ? error.message : String(error)}`,
+            );
           }
         }
       }
@@ -203,7 +224,9 @@ export async function onStoreOpen(
   try {
     stmts.servedPruneOlderThan(Date.now() - SERVED_TTL_MS);
   } catch (error) {
-    console.warn(`dsh-better-edit: served prune failed for ${storePath}: ${error instanceof Error ? error.message : String(error)}`);
+    console.warn(
+      `dsh-better-edit: served prune failed for ${storePath}: ${error instanceof Error ? error.message : String(error)}`,
+    );
   }
   try {
     const cfg = loadConfig();
@@ -211,7 +234,9 @@ export async function onStoreOpen(
       stmts.undoPruneOlderThan(Date.now() - cfg.undo_ttl_s * 1000);
     }
   } catch (error) {
-    console.warn(`dsh-better-edit: undo prune failed for ${storePath}: ${error instanceof Error ? error.message : String(error)}`);
+    console.warn(
+      `dsh-better-edit: undo prune failed for ${storePath}: ${error instanceof Error ? error.message : String(error)}`,
+    );
   }
 
   // pruneMissing throttled per-store 24h
@@ -222,7 +247,9 @@ export async function onStoreOpen(
       store.pruneMissing().catch((e) => console.error("pruneMissing failed:", e));
     }
   } catch (error) {
-    console.warn(`dsh-better-edit: pruneMissing throttling check failed: ${error instanceof Error ? error.message : String(error)}`);
+    console.warn(
+      `dsh-better-edit: pruneMissing throttling check failed: ${error instanceof Error ? error.message : String(error)}`,
+    );
   }
 }
 

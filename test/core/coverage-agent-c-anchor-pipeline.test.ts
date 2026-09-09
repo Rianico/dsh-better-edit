@@ -36,31 +36,47 @@ describe("coverage: anchor-pipeline parseHashRef / diagRef branches", () => {
 });
 
 describe("coverage: anchor-pipeline resEdit warnings", () => {
-	it("rejects HASH│ prefix in remove_from/to with E_BAD_ANCHOR", () => {
-		const warnings: string[] = [];
-		const edit: any = { remove_from: "abc│content", remove_to: "def│content", replacement_text: "new" };
-		expect(() => resEdit(edit, warnings)).toThrow(/\[E_BAD_ANCHOR\]/);
-		expect(warnings).toEqual([]);
-	});
-	it("rejects diff markers +/- in anchors with E_BAD_ANCHOR", () => {
-		const w1: string[] = [];
-		expect(() => resEdit({ remove_from: "+abc│x", remove_to: "abc", replacement_text: "y" } as any, w1)).toThrow(/\[E_BAD_ANCHOR\]/);
-		expect(() => resEdit({ remove_from: "+abc│x", remove_to: "abc", replacement_text: "y" } as any, w1)).toThrow(/diff-preview/);
-		const w2: string[] = [];
-		expect(() => resEdit({ remove_from: "-abc│x", remove_to: "abc", replacement_text: "y" } as any, w2)).toThrow(/\[E_BAD_ANCHOR\]/);
-		expect(() => resEdit({ remove_from: "-abc│x", remove_to: "abc", replacement_text: "y" } as any, w2)).toThrow(/leading "-"/);
-	});
-	it("rejects multiline anchor block with E_BAD_ANCHOR", () => {
-		const warnings: string[] = [];
-		const block = "abc│first\nother line\ndef│second";
-		const edit: any = { remove_from: block, remove_to: "def", replacement_text: "new" };
-		expect(() => resEdit(edit, warnings)).toThrow(/\[E_BAD_ANCHOR\]/);
-		expect(() => resEdit(edit, warnings)).toThrow(/extracted first hash/);
-	});
+  it("rejects HASH│ prefix in remove_from/to with E_BAD_ANCHOR", () => {
+    const warnings: string[] = [];
+    const edit: any = {
+      remove_from: "abc│content",
+      remove_to: "def│content",
+      replacement_text: "new",
+    };
+    expect(() => resEdit(edit, warnings)).toThrow(/\[E_BAD_ANCHOR\]/);
+    expect(warnings).toEqual([]);
+  });
+  it("rejects diff markers +/- in anchors with E_BAD_ANCHOR", () => {
+    const w1: string[] = [];
+    expect(() =>
+      resEdit({ remove_from: "+abc│x", remove_to: "abc", replacement_text: "y" } as any, w1),
+    ).toThrow(/\[E_BAD_ANCHOR\]/);
+    expect(() =>
+      resEdit({ remove_from: "+abc│x", remove_to: "abc", replacement_text: "y" } as any, w1),
+    ).toThrow(/diff-preview/);
+    const w2: string[] = [];
+    expect(() =>
+      resEdit({ remove_from: "-abc│x", remove_to: "abc", replacement_text: "y" } as any, w2),
+    ).toThrow(/\[E_BAD_ANCHOR\]/);
+    expect(() =>
+      resEdit({ remove_from: "-abc│x", remove_to: "abc", replacement_text: "y" } as any, w2),
+    ).toThrow(/leading "-"/);
+  });
+  it("rejects multiline anchor block with E_BAD_ANCHOR", () => {
+    const warnings: string[] = [];
+    const block = "abc│first\nother line\ndef│second";
+    const edit: any = { remove_from: block, remove_to: "def", replacement_text: "new" };
+    expect(() => resEdit(edit, warnings)).toThrow(/\[E_BAD_ANCHOR\]/);
+    expect(() => resEdit(edit, warnings)).toThrow(/extracted first hash/);
+  });
   it("rejects missing fields", () => {
     // remove_from must be string
-    expect(() => resEdit({ remove_from: 123 as any, remove_to: "abc", replacement_text: "x" } as any)).toThrow();
-    expect(() => resEdit({ remove_from: "abc", remove_to: "abc", replacement_text: 123 as any } as any)).toThrow();
+    expect(() =>
+      resEdit({ remove_from: 123 as any, remove_to: "abc", replacement_text: "x" } as any),
+    ).toThrow();
+    expect(() =>
+      resEdit({ remove_from: "abc", remove_to: "abc", replacement_text: 123 as any } as any),
+    ).toThrow();
     expect(() => resEdit({ remove_from: "abc", remove_to: "abc" } as any)).toThrow();
     expect(() => resEdit({ remove_from: "abc" } as any, [] as any)).toThrow();
     expect(() => resEdit({ replacement_text: "x" } as any)).toThrow();
@@ -76,18 +92,24 @@ describe("coverage: anchor-pipeline resEdit warnings", () => {
 });
 
 describe("coverage: anchor-pipeline applyEdit", () => {
-	it("rejects bare HASH│ prefixes in content lines with E_BAD_ANCHOR", () => {
-		const content = "a\nb\nc";
-		const hashes = lineHashesPure(content);
-		const edit: any = { hash_bounds: [{ hash: hashes[0]! }, { hash: hashes[0]! }], content_lines: [`${hashes[1]!}│b`, "new line"] };
-		expect(() => applyEdit(content, edit, undefined, hashes)).toThrow(/\[E_BAD_ANCHOR\]/);
-		expect(() => applyEdit(content, edit, undefined, hashes)).toThrow(/HASH│/);
-	});
+  it("rejects bare HASH│ prefixes in content lines with E_BAD_ANCHOR", () => {
+    const content = "a\nb\nc";
+    const hashes = lineHashesPure(content);
+    const edit: any = {
+      hash_bounds: [{ hash: hashes[0]! }, { hash: hashes[0]! }],
+      content_lines: [`${hashes[1]!}│b`, "new line"],
+    };
+    expect(() => applyEdit(content, edit, undefined, hashes)).toThrow(/\[E_BAD_ANCHOR\]/);
+    expect(() => applyEdit(content, edit, undefined, hashes)).toThrow(/HASH│/);
+  });
 
   it("strips diff +/- prefixes from content lines", () => {
     const content = "a\nb\nc";
     const hashes = lineHashesPure(content);
-    const edit: any = { hash_bounds: [{ hash: hashes[1]! }, { hash: hashes[1]! }], content_lines: ["+new", "-old", "keep"] };
+    const edit: any = {
+      hash_bounds: [{ hash: hashes[1]! }, { hash: hashes[1]! }],
+      content_lines: ["+new", "-old", "keep"],
+    };
     const result = applyEdit(content, edit, undefined, hashes);
     expect(result.content).toContain("keep");
   });
@@ -95,7 +117,10 @@ describe("coverage: anchor-pipeline applyEdit", () => {
     const content = "a\nb\nc\nd";
     const hashes = lineHashesPure(content);
     // reversed: remove_from is line 3, remove_to is line 1
-    const edit: any = { hash_bounds: [{ hash: hashes[2]! }, { hash: hashes[0]! }], content_lines: ["X"] };
+    const edit: any = {
+      hash_bounds: [{ hash: hashes[2]! }, { hash: hashes[0]! }],
+      content_lines: ["X"],
+    };
     const result = applyEdit(content, edit, undefined, hashes);
     expect(result.warnings?.some((w) => w.includes("reversed"))).toBe(true);
     expect(result.content).toContain("X");
@@ -105,12 +130,18 @@ describe("coverage: anchor-pipeline applyEdit", () => {
     const content = "a\nb\nc\nd\ne";
     const hashes = lineHashesPure(content);
     // edit replacing lines 2-3 (b,c) but include trailing dup d which equals file line after range — now kept
-    const edit: any = { hash_bounds: [{ hash: hashes[1]! }, { hash: hashes[2]! }], content_lines: ["B", "C", "d"] };
+    const edit: any = {
+      hash_bounds: [{ hash: hashes[1]! }, { hash: hashes[2]! }],
+      content_lines: ["B", "C", "d"],
+    };
     const result = applyEdit(content, edit, undefined, hashes);
     expect(result.autoFixes ?? []).toHaveLength(0);
     expect(result.content).toBe("a\nB\nC\nd\nd\ne");
     // also test leading dup
-    const edit2: any = { hash_bounds: [{ hash: hashes[1]! }, { hash: hashes[2]! }], content_lines: ["a", "B", "C"] };
+    const edit2: any = {
+      hash_bounds: [{ hash: hashes[1]! }, { hash: hashes[2]! }],
+      content_lines: ["a", "B", "C"],
+    };
     const result2 = applyEdit(content, edit2, undefined, hashes);
     expect(result2.autoFixes ?? []).toHaveLength(0);
     expect(result2.content).toBe("a\na\nB\nC\nd\ne");
@@ -129,7 +160,10 @@ describe("coverage: anchor-pipeline applyEdit", () => {
     // forge hashes with duplicate
     const dupHashes = [...hashes];
     dupHashes[2] = hashes[0]!;
-    const edit: any = { hash_bounds: [{ hash: hashes[0]! }, { hash: hashes[0]! }], content_lines: ["X"] };
+    const edit: any = {
+      hash_bounds: [{ hash: hashes[0]! }, { hash: hashes[0]! }],
+      content_lines: ["X"],
+    };
     expect(() => applyEdit(content, edit, undefined, dupHashes)).toThrow(/E_STALE_ANCHOR/);
   });
 
@@ -138,14 +172,22 @@ describe("coverage: anchor-pipeline applyEdit", () => {
     const hashes = lineHashesPure(content);
     const served = [...hashes];
     // make replacement start with served hash + │
-    const edit: any = { hash_bounds: [{ hash: hashes[0]! }, { hash: hashes[0]! }], content_lines: [`${hashes[0]!}│a`, "new"] };
-    expect(() => applyEdit(content, edit, undefined, hashes, "file.txt", served as any)).toThrow(/E_SERVED_ECHO/);
+    const edit: any = {
+      hash_bounds: [{ hash: hashes[0]! }, { hash: hashes[0]! }],
+      content_lines: [`${hashes[0]!}│a`, "new"],
+    };
+    expect(() => applyEdit(content, edit, undefined, hashes, "file.txt", served as any)).toThrow(
+      /E_SERVED_ECHO/,
+    );
   });
 
   it("noop returns noopEdit", () => {
     const content = "a\nb\nc";
     const hashes = lineHashesPure(content);
-    const edit: any = { hash_bounds: [{ hash: hashes[1]! }, { hash: hashes[1]! }], content_lines: ["b"] };
+    const edit: any = {
+      hash_bounds: [{ hash: hashes[1]! }, { hash: hashes[1]! }],
+      content_lines: ["b"],
+    };
     const result = applyEdit(content, edit, undefined, hashes);
     expect(result.content).toBe(content);
     expect(result.noopEdit).toBeDefined();
@@ -155,7 +197,10 @@ describe("coverage: anchor-pipeline applyEdit", () => {
   it("empty file and empty replacement edge cases", () => {
     const content = "a";
     const hashes = lineHashesPure(content);
-    const edit: any = { hash_bounds: [{ hash: hashes[0]! }, { hash: hashes[0]! }], content_lines: [] };
+    const edit: any = {
+      hash_bounds: [{ hash: hashes[0]! }, { hash: hashes[0]! }],
+      content_lines: [],
+    };
     expect(() => applyEdit(content, edit, undefined, hashes)).toThrow(/E_EMPTY_RANGE/);
   });
   it("findNewEdge stub returns undefined (boundaryDups removed)", () => {
@@ -168,7 +213,10 @@ describe("coverage: anchor-pipeline applyEdit", () => {
   it("warnUnicodeEsc adds warning", () => {
     const content = "a\nb\nc";
     const hashes = lineHashesPure(content);
-    const edit: any = { hash_bounds: [{ hash: hashes[0]! }, { hash: hashes[0]! }], content_lines: ["\\uDDDD test"] };
+    const edit: any = {
+      hash_bounds: [{ hash: hashes[0]! }, { hash: hashes[0]! }],
+      content_lines: ["\\uDDDD test"],
+    };
     const result = applyEdit(content, edit, undefined, hashes);
     expect(result.warnings?.some((w) => w.includes("uDDDD"))).toBe(true);
   });
@@ -176,7 +224,10 @@ describe("coverage: anchor-pipeline applyEdit", () => {
   it("abort signal throws", () => {
     const content = "a\nb\nc";
     const hashes = lineHashesPure(content);
-    const edit: any = { hash_bounds: [{ hash: hashes[0]! }, { hash: hashes[0]! }], content_lines: ["X"] };
+    const edit: any = {
+      hash_bounds: [{ hash: hashes[0]! }, { hash: hashes[0]! }],
+      content_lines: ["X"],
+    };
     const controller = new AbortController();
     controller.abort();
     expect(() => applyEdit(content, edit, controller.signal, hashes)).toThrow();

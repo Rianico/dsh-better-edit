@@ -2,7 +2,7 @@
 
 **Date:** 2026-08-30  
 **Upstream:** `deepseek-ai/deepseek-harness@master` (`cd5ef81`), `dsh-fs@0.1.0-rc.6` (developer preview — breaking changes allowed)  
-**Local plugin:** `dsh-better-edit@0.5.0`, `src/fs-bridge.ts` (`ctxFsIO`/`localIO`), `src/file-view.ts`  
+**Local plugin:** `dsh-better-edit@0.5.0`, `src/fs-bridge.ts` (`ctxFsIO`/`localIO`), `src/file-view.ts`
 
 ## 1. Executive Summary
 
@@ -10,12 +10,12 @@
 
 ## 2. DSH FS Seam Map (primary sources)
 
-| Role | Package | What it owns | Source |
-| ------ | --------- | -------------- | -------- |
-| Service Definition | `@deepseek-ai/dsh-fs` | Abstract `FileSystem` class + 13 primitives + `FsError` taxonomy + `fs/*` events | `packages/fs/fs/src/index.ts`, `packages/fs/fs/src/types.ts` |
-| Provider — local | `@deepseek-ai/dsh-fs-local` | `realpath` identity, `probe`/`probeNoFollow`, `readWholeText`/`streamWholeText`/`readWholeBytes`, atomic `writeFileAtomic`, per-key lock | `packages/fs/fs-local/src/index.ts`, `packages/fs/fs-local/src/fsio.ts` |
-| Consumer — tools | `@deepseek-ai/dsh-tool-fs` | Model `read`/`write`/`edit` schemas (snake_case), `resolveRegularReadTarget` + windowing + `fs/observed` emit | `packages/fs/tool-fs/src/read.ts`, `read-target.ts`, `write.ts`, `edit.ts` |
-| Policy | `@deepseek-ai/dsh-fs-observation-policy` | `WeakMap<owner, Map<targetKey, FsObservation>>`, `fs/write-intent` + `fs/edit-intent` waterfalls + `fs/observed` recorder | `packages/fs/fs-observation-policy/src/index.ts`, `docs/subsystems/filesystem.md#Observed-file state` |
+| Role               | Package                                  | What it owns                                                                                                                             | Source                                                                                                |
+| ------------------ | ---------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| Service Definition | `@deepseek-ai/dsh-fs`                    | Abstract `FileSystem` class + 13 primitives + `FsError` taxonomy + `fs/*` events                                                         | `packages/fs/fs/src/index.ts`, `packages/fs/fs/src/types.ts`                                          |
+| Provider — local   | `@deepseek-ai/dsh-fs-local`              | `realpath` identity, `probe`/`probeNoFollow`, `readWholeText`/`streamWholeText`/`readWholeBytes`, atomic `writeFileAtomic`, per-key lock | `packages/fs/fs-local/src/index.ts`, `packages/fs/fs-local/src/fsio.ts`                               |
+| Consumer — tools   | `@deepseek-ai/dsh-tool-fs`               | Model `read`/`write`/`edit` schemas (snake_case), `resolveRegularReadTarget` + windowing + `fs/observed` emit                            | `packages/fs/tool-fs/src/read.ts`, `read-target.ts`, `write.ts`, `edit.ts`                            |
+| Policy             | `@deepseek-ai/dsh-fs-observation-policy` | `WeakMap<owner, Map<targetKey, FsObservation>>`, `fs/write-intent` + `fs/edit-intent` waterfalls + `fs/observed` recorder                | `packages/fs/fs-observation-policy/src/index.ts`, `docs/subsystems/filesystem.md#Observed-file state` |
 
 **primitives (13):** `resolve`, `processPath`, `processPathFromHostPath`, `fileUrl`, `contains`, `stat`, `lstat`, `readText`, `streamText`, `readBytes`, `listDir`, `writeText`, `editText`. No delete/rename/copy/watch — deferred by design.
 
@@ -44,20 +44,25 @@ abstract editText(target: FsTarget, edit: FsEditRequest, expected?: {version: Fs
 ```ts
 // helper
 function decodeUtf8(buf: Uint8Array): string {
-  try { return new TextDecoder('utf-8', {fatal:true}).decode(buf) }
-  catch (e) { if (e instanceof TypeError) throw notTextError(verb, displayPath); throw e }
+  try {
+    return new TextDecoder("utf-8", { fatal: true }).decode(buf);
+  } catch (e) {
+    if (e instanceof TypeError) throw notTextError(verb, displayPath);
+    throw e;
+  }
 }
 function notTextError(verb, displayPath) {
-  return new FsError(`cannot ${verb} "${displayPath}": invalid UTF-8 text`, 'FS_NOT_TEXT')
+  return new FsError(`cannot ${verb} "${displayPath}": invalid UTF-8 text`, "FS_NOT_TEXT");
 }
 
 // whole-file read
 export async function readWholeText(target, signal): Promise<string> {
-  await statRegularFile(target, 'read', signal)          // throws FS_NOT_FOUND / FS_NOT_REGULAR_FILE
-  const raw = await readFileAbortable(target.targetKey, 'read', signal)
-  if (raw.subarray(0, BINARY_SAMPLE_BYTES).includes(0))  // BINARY_SAMPLE_BYTES=8192
-    throw new FsError(`cannot read "${displayPath}": binary file`, 'FS_NOT_TEXT')
-  return decodeUtf8(raw, 'read', displayPath)            // FS_NOT_TEXT on any non-UTF-8 byte
+  await statRegularFile(target, "read", signal); // throws FS_NOT_FOUND / FS_NOT_REGULAR_FILE
+  const raw = await readFileAbortable(target.targetKey, "read", signal);
+  if (raw.subarray(0, BINARY_SAMPLE_BYTES).includes(0))
+    // BINARY_SAMPLE_BYTES=8192
+    throw new FsError(`cannot read "${displayPath}": binary file`, "FS_NOT_TEXT");
+  return decodeUtf8(raw, "read", displayPath); // FS_NOT_TEXT on any non-UTF-8 byte
 }
 
 export async function* streamWholeText(target, signal) {
@@ -65,17 +70,17 @@ export async function* streamWholeText(target, signal) {
 }
 
 export async function readForEdit(absolutePath, displayPath, signal) {
-  if (buffer.includes(0)) throw FsError('binary file','FS_NOT_TEXT')
-  const raw = decodeUtf8(buffer,'edit',displayPath)      // FS_NOT_TEXT on invalid UTF-8
-  return {content: normalizeLineEndings(raw), lineEndings: detectLineEndings(raw)}
+  if (buffer.includes(0)) throw FsError("binary file", "FS_NOT_TEXT");
+  const raw = decodeUtf8(buffer, "edit", displayPath); // FS_NOT_TEXT on invalid UTF-8
+  return { content: normalizeLineEndings(raw), lineEndings: detectLineEndings(raw) };
 }
 ```
 
 So `FS_NOT_TEXT` conflates **two cases** the issue lumps together but which want different UX:
 
-| Case | Detection | Example bytes |
-|------|-----------|---------------|
-| Binary | NUL in first 8 KiB | `0x68 0x00 0x69` → `"h\0i"` |  
+| Case           | Detection                 | Example bytes                                                                             |
+| -------------- | ------------------------- | ----------------------------------------------------------------------------------------- |
+| Binary         | NUL in first 8 KiB        | `0x68 0x00 0x69` → `"h\0i"`                                                               |
 | Non-UTF-8 text | fatal `TextDecoder` throw | `GBK "你好"` → `0xC4 0xE3 0xBA 0xC3`; `CP1251 "Привет"` → `0xCF 0xF0 …`; `0xFF` lone byte |
 
 Current consumer `tool-fs/src/read.ts` does **not** handle `FS_NOT_TEXT` specially — it just surfaces it. `tool-fs` streaming path chooses `streamText` when `size >= STREAM_MIN_SIZE (10 MiB)`, else `readText`; neither has an encoding param.
@@ -105,7 +110,7 @@ async readText(absolutePath, signal) {
 `src/file-view.ts:loadFileKindAndText` (used only when `readView` goes via `file-view`):
 
 ```ts
-const decoder = new TextDecoder("utf-8", {fatal:false, ignoreBOM:true})
+const decoder = new TextDecoder("utf-8", { fatal: false, ignoreBOM: true });
 // hadUtf8DecodeErrors flagged via \uFFFD, surfaced as
 // "[Non-UTF-8 bytes shown as U+FFFD; editing rewrites the file as UTF-8.]"
 ```
@@ -159,9 +164,9 @@ write: Map<targetKey, {encoding, version}> → encode on writeText
 
 ```ts
 // in FsError, carry diagnosis in cause.data
-throw new FsError(`cannot read "${displayPath}": invalid UTF-8 text`, 'FS_NOT_TEXT', {
-  cause: { sampleHex: raw.subarray(0,128), hasNul, firstInvalidOffset }
-})
+throw new FsError(`cannot read "${displayPath}": invalid UTF-8 text`, "FS_NOT_TEXT", {
+  cause: { sampleHex: raw.subarray(0, 128), hasNul, firstInvalidOffset },
+});
 ```
 
 Consumers keep current `code` routing; nicer message is free. DSH docs already show `cause` chaining in `HarnessError`.
@@ -217,29 +222,37 @@ Tool `read` keeps snake_case, no `encoding` field — plugin `better-edit` would
 ```ts
 // dsh-fs/src/types.ts — new vocabulary (optional, not required for T4 alone)
 export interface FsText {
-  text: string        // always UTF-8, LF-normalized like today
-  encoding: string    // 'utf-8' | 'utf-16le' | 'gbk' | …
-  hadDecodeErrors: boolean
-  hadBOM: boolean
+  text: string; // always UTF-8, LF-normalized like today
+  encoding: string; // 'utf-8' | 'utf-16le' | 'gbk' | …
+  hadDecodeErrors: boolean;
+  hadBOM: boolean;
 }
 
 // dsh-fs-local/src/fsio.ts — internal helper
-function decodePermissive(raw: Uint8Array, displayPath: string): {text:string, encoding:string} {
-  if (raw.subarray(0,8192).includes(0)) throw FsError('binary','FS_NOT_TEXT')
-  try { return {text: new TextDecoder('utf-8',{fatal:true}).decode(raw), encoding:'utf-8'} }
-  catch (e) {
+function decodePermissive(
+  raw: Uint8Array,
+  displayPath: string,
+): { text: string; encoding: string } {
+  if (raw.subarray(0, 8192).includes(0)) throw FsError("binary", "FS_NOT_TEXT");
+  try {
+    return { text: new TextDecoder("utf-8", { fatal: true }).decode(raw), encoding: "utf-8" };
+  } catch (e) {
     // BOM
-    if (raw[0]===0xFF && raw[1]===0xFE && raw[2]===0x00 && raw[3]===0x00) return {text: new TextDecoder('utf-32le').decode(raw.subarray(4)), encoding:'utf-32le'}
-    if (raw[0]===0xFF && raw[1]===0xFE) return {text: new TextDecoder('utf-16le').decode(raw.subarray(2)), encoding:'utf-16le'}
+    if (raw[0] === 0xff && raw[1] === 0xfe && raw[2] === 0x00 && raw[3] === 0x00)
+      return { text: new TextDecoder("utf-32le").decode(raw.subarray(4)), encoding: "utf-32le" };
+    if (raw[0] === 0xff && raw[1] === 0xfe)
+      return { text: new TextDecoder("utf-16le").decode(raw.subarray(2)), encoding: "utf-16le" };
     // … utf-32be/utf-16be …
     // allowlist fallback
-    for (const enc of ['gbk','shift_jis','windows-1251']) {
+    for (const enc of ["gbk", "shift_jis", "windows-1251"]) {
       try {
-        const text = iconv.decode(raw, enc)
-        if (!text.includes('\uFFFD')) return {text, encoding: enc}
+        const text = iconv.decode(raw, enc);
+        if (!text.includes("\uFFFD")) return { text, encoding: enc };
       } catch {}
     }
-    throw new FsError(`cannot read "${displayPath}": invalid UTF-8 text`, 'FS_NOT_TEXT', {cause:{hasNul:false}})
+    throw new FsError(`cannot read "${displayPath}": invalid UTF-8 text`, "FS_NOT_TEXT", {
+      cause: { hasNul: false },
+    });
   }
 }
 ```

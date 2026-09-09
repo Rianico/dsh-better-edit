@@ -1,9 +1,23 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import iconv from "iconv-lite";
-import { decodeForOpen, recordOpenState, getEncodingState, clearEncodingState, getAutoGuessFooter, clearAutoGuessFooter, buildTop3ErrorMessage } from "../../src/file-encoding-state.js";
+import {
+  decodeForOpen,
+  recordOpenState,
+  getEncodingState,
+  clearEncodingState,
+  getAutoGuessFooter,
+  clearAutoGuessFooter,
+  buildTop3ErrorMessage,
+} from "../../src/file-encoding-state.js";
 
-const cfgOff = { autoGuessEncoding: false, supportedEncodings: ["gbk", "big5", "shift_jis", "euc-kr", "windows-1251", "iso-8859-1"] };
-const cfgOn = { autoGuessEncoding: true, supportedEncodings: ["gbk", "big5", "shift_jis", "euc-kr", "windows-1251", "iso-8859-1"] };
+const cfgOff = {
+  autoGuessEncoding: false,
+  supportedEncodings: ["gbk", "big5", "shift_jis", "euc-kr", "windows-1251", "iso-8859-1"],
+};
+const cfgOn = {
+  autoGuessEncoding: true,
+  supportedEncodings: ["gbk", "big5", "shift_jis", "euc-kr", "windows-1251", "iso-8859-1"],
+};
 
 describe("file-encoding-state — deterministic admission (pure, no filesystem)", () => {
   beforeEach(() => {
@@ -39,12 +53,16 @@ describe("file-encoding-state — deterministic admission (pure, no filesystem)"
 
   it("unknown hint throws E_BAD_ENCODING", async () => {
     const bytes = Buffer.from("hi");
-    await expect(decodeForOpen(bytes, cfgOff, { encodingHint: "not-an-enc" })).rejects.toThrow(/E_BAD_ENCODING/);
+    await expect(decodeForOpen(bytes, cfgOff, { encodingHint: "not-an-enc" })).rejects.toThrow(
+      /E_BAD_ENCODING/,
+    );
   });
 
   it("E_UNSUPPORTED_FILE + Top-3 always pushed when autoGuess off and not UTF-8", async () => {
     const gbkBytes = iconv.encode("你好世界你好", "gbk");
-    await expect(decodeForOpen(gbkBytes, cfgOff, { displayPath: "/abs/gbk.txt" })).rejects.toThrow(/E_UNSUPPORTED_FILE.*Top-3 guesses/);
+    await expect(decodeForOpen(gbkBytes, cfgOff, { displayPath: "/abs/gbk.txt" })).rejects.toThrow(
+      /E_UNSUPPORTED_FILE.*Top-3 guesses/,
+    );
     await expect(decodeForOpen(gbkBytes, cfgOff)).rejects.toThrow(/Top-3 guesses/);
   });
 
@@ -59,7 +77,12 @@ describe("file-encoding-state — deterministic admission (pure, no filesystem)"
   });
 
   it("autoGuess on with BOM: BOM still wins over guessing", async () => {
-    const bytes = new Uint8Array([0xef, 0xbb, 0xbf, ...Buffer.from("hello utf8 with bom", "utf-8")]);
+    const bytes = new Uint8Array([
+      0xef,
+      0xbb,
+      0xbf,
+      ...Buffer.from("hello utf8 with bom", "utf-8"),
+    ]);
     const res = await decodeForOpen(bytes, cfgOn);
     expect(res.hasBOM).toBe(true);
     expect(res.encoding).toBe("utf8bom");

@@ -23,31 +23,31 @@ import type { ToolExecution } from "@deepseek-ai/dsh-tools";
 const current = new AsyncLocalStorage<string>();
 
 export function withWorkspace<T>(cwd: string, fn: () => Promise<T>): Promise<T> {
-	return current.run(cwd, fn);
+  return current.run(cwd, fn);
 }
 
 export function workspaceCwd(): string | undefined {
-	return current.getStore();
+  return current.getStore();
 }
 
 // --- sessionKey helpers ---
 let fallbackSessionKey: string | undefined;
 
 export function sessionKeyFor(sessionId?: string): string {
-	if (sessionId && sessionId.length > 0) return sessionId;
-	// fallback for previews/tests
-	return fallbackSessionKey ??= randomUUID();
+  if (sessionId && sessionId.length > 0) return sessionId;
+  // fallback for previews/tests
+  return (fallbackSessionKey ??= randomUUID());
 }
 
 export function execCwd(exec: ToolExecution): string {
-	return exec.agent?.session.header.cwd ?? process.cwd();
+  return exec.agent?.session.header.cwd ?? process.cwd();
 }
 
 export function execSessionKey(exec: ToolExecution): string {
-	return sessionKeyFor(exec.agent?.session.id);
+  return sessionKeyFor(exec.agent?.session.id);
 }
 
 // For tests: reset the fallback UUID so tests can be isolated
 export function _resetWorkspaceContextForTests(): void {
-	fallbackSessionKey = undefined;
+  fallbackSessionKey = undefined;
 }

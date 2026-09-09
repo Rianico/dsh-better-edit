@@ -75,7 +75,6 @@ describe("visLines", () => {
   });
 });
 
-
 describe("rejectUnknownFields", () => {
   it("does not throw when all fields are allowed", () => {
     const obj = { path: "test.txt", changes: [] };
@@ -98,40 +97,37 @@ describe("rejectUnknownFields", () => {
   it("throws [E_BAD_PAYLOAD] for a single unknown field", () => {
     const obj = { path: "test.txt", unknown_field: "value" };
     const allowed = new Set(["path"]);
-    expect(() => rejectUnknownFields(obj, allowed, "Request")).toThrow(
-      /\[E_BAD_PAYLOAD\]/,
-    );
+    expect(() => rejectUnknownFields(obj, allowed, "Request")).toThrow(/\[E_BAD_PAYLOAD\]/);
   });
 
   it("includes the unknown field name in the error message", () => {
     const obj = { path: "test.txt", extra: "value" };
     const allowed = new Set(["path"]);
-    expect(() => rejectUnknownFields(obj, allowed, "Request")).toThrow(
-      /extra/,
-    );
+    expect(() => rejectUnknownFields(obj, allowed, "Request")).toThrow(/extra/);
   });
 
   it("includes the label in the error message", () => {
     const obj = { path: "test.txt", extra: "value" };
     const allowed = new Set(["path"]);
-    expect(() => rejectUnknownFields(obj, allowed, "Edit request")).toThrow(
-      /Edit request/,
-    );
+    expect(() => rejectUnknownFields(obj, allowed, "Edit request")).toThrow(/Edit request/);
   });
 
   it("reports multiple unknown fields", () => {
     const obj = { path: "test.txt", a: 1, b: 2, c: 3 };
     const allowed = new Set(["path"]);
-    expect(() => rejectUnknownFields(obj, allowed, "Request")).toThrow(
-      /a, b, c/,
-    );
+    expect(() => rejectUnknownFields(obj, allowed, "Request")).toThrow(/a, b, c/);
   });
 
   it("appends the hint string when provided", () => {
     const obj = { path: "test.txt", extra: "value" };
     const allowed = new Set(["path"]);
     expect(() =>
-      rejectUnknownFields(obj, allowed, "Edit 0", "Each edit takes only { replacement_text, remove_from, remove_to }."),
+      rejectUnknownFields(
+        obj,
+        allowed,
+        "Edit 0",
+        "Each edit takes only { replacement_text, remove_from, remove_to }.",
+      ),
     ).toThrow(/Each edit takes only/);
   });
 
@@ -160,9 +156,7 @@ describe("rejectUnknownFields", () => {
   it("reports fields in insertion order", () => {
     const obj = { z: 1, a: 2, m: 3 };
     const allowed = new Set(["x"]);
-    expect(() => rejectUnknownFields(obj, allowed, "Request")).toThrow(
-      /z, a, m/,
-    );
+    expect(() => rejectUnknownFields(obj, allowed, "Request")).toThrow(/z, a, m/);
   });
 });
 

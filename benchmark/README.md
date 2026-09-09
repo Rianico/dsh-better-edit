@@ -3,21 +3,21 @@
 `run.mjs` compares the **model-side token cost** of three edit patterns applied to the **same file
 with the same 12 replacements**:
 
-| | hashline (this plugin) | str_replace (traditional) | @oh-my-pi/hashline (patch) |
-| --- | --- | --- | --- |
-| request | `{ path, remove_from, remove_to, replacement_text }` | `{ path, old_string, new_string }` | `[PATH#TAG]` + `PUT N.=M:` + `+TEXT` rows |
-| old text echoed? | **never** — 2×3-char anchors | **verbatim** (`old_string`) | **never** — the range deletes, body is final content |
-| lines addressed by | content hash | text match | **number** + full-file content-hash tag |
+|                    | hashline (this plugin)                               | str_replace (traditional)          | @oh-my-pi/hashline (patch)                           |
+| ------------------ | ---------------------------------------------------- | ---------------------------------- | ---------------------------------------------------- |
+| request            | `{ path, remove_from, remove_to, replacement_text }` | `{ path, old_string, new_string }` | `[PATH#TAG]` + `PUT N.=M:` + `+TEXT` rows            |
+| old text echoed?   | **never** — 2×3-char anchors                         | **verbatim** (`old_string`)        | **never** — the range deletes, body is final content |
+| lines addressed by | content hash                                         | text match                         | **number** + full-file content-hash tag              |
 
 An edit that replaces `L` lines sends `O(L)` fewer tokens than `str_replace` for every arm that
 skips `old_string`. That saving is the whole point of the [hashline edit
 pattern](../../#why-hashline): the model output that would transcribe the old code (and
-often transcribe it *wrong* — the "harness problem") is replaced by a stable content address — or,
+often transcribe it _wrong_ — the "harness problem") is replaced by a stable content address — or,
 for `@oh-my-pi/hashline`, by a line number bound to a full-file content hash.
 
 `@oh-my-pi/hashline` is measured in **both** of the format's modes:
 
-- **seq** — one `[PATH#TAG]` section per edit (tool-loop style). Line numbers are the *current*
+- **seq** — one `[PATH#TAG]` section per edit (tool-loop style). Line numbers are the _current_
   ones: the format's own rules say every edit renumbers and changes the tag.
 - **batch** — one patch document with all 12 hunks fixed to the **original** line numbers ("numbers
   are original, never shifted by hunks"), the `[PATH#TAG]` header counted once. This is the
@@ -55,7 +55,7 @@ fixed 4-hex placeholder (`a1b2`), because any 4-hex value tokenizes identically.
   text is **identical** for every arm — only the request encoding differs.
 - **Tokenizer** — `js-tiktoken` `cl100k_base` (pinned devDependency), the standard OpenAI BPE
   vocabulary. Falls back to the `chars/4` heuristic if js-tiktoken is missing; `chars/4`
-  *under*-counts code tokens, so the fallback flatters the replacement-style arms, never hashline.
+  _under_-counts code tokens, so the fallback flatters the replacement-style arms, never hashline.
 - **What's counted** — the edit request as the model would emit it: JSON tool calls
   (`JSON.stringify`, so newlines are `\n`-escaped) for hashline and str_replace; raw patch text
   (literal newlines) for oh-my-pi, per its documented usage. Read traffic is identical for every
@@ -68,23 +68,23 @@ fixed 4-hex placeholder (`a1b2`), because any 4-hex value tokenizes identically.
 
 ## Results (cl100k_base, js-tiktoken)
 
-| scenario | lines | hashline | str_replace | oh-my-pi seq | oh-my-pi batch |
-| --- | ---: | ---: | ---: | ---: | ---: |
-| single · constant | 1 | 37 | 37 | 27 | — |
-| single · comment | 1 | 39 | 39 | 29 | — |
-| single · assignment | 1 | 36 | 38 | 28 | — |
-| single · signature | 1 | 40 | 43 | 32 | — |
-| single · guard | 1 | 43 | 46 | 35 | — |
-| single · expression | 1 | 40 | 45 | 32 | — |
-| single · getter | 1 | 33 | 32 | 25 | — |
-| single · export fn | 1 | 41 | 44 | 33 | — |
-| multi · 3-line if-block | 3 | 60 | 84 | 50 | — |
-| multi · 6-line helper body | 6 | 73 | 128 | 63 | — |
-| multi · 10-line loop block | 10 | 79 | 149 | 70 | — |
-| multi · 15-line method body | 15 | 181 | 330 | 166 | — |
-| **single-line ×8** | | **309** | **324** | **241** | — |
-| **multi-line ×4** | | **393** | **691** | **349** | — |
-| **TOTAL ×12** | | **702** | **1015** | **590** | **480** |
+| scenario                    | lines | hashline | str_replace | oh-my-pi seq | oh-my-pi batch |
+| --------------------------- | ----: | -------: | ----------: | -----------: | -------------: |
+| single · constant           |     1 |       37 |          37 |           27 |              — |
+| single · comment            |     1 |       39 |          39 |           29 |              — |
+| single · assignment         |     1 |       36 |          38 |           28 |              — |
+| single · signature          |     1 |       40 |          43 |           32 |              — |
+| single · guard              |     1 |       43 |          46 |           35 |              — |
+| single · expression         |     1 |       40 |          45 |           32 |              — |
+| single · getter             |     1 |       33 |          32 |           25 |              — |
+| single · export fn          |     1 |       41 |          44 |           33 |              — |
+| multi · 3-line if-block     |     3 |       60 |          84 |           50 |              — |
+| multi · 6-line helper body  |     6 |       73 |         128 |           63 |              — |
+| multi · 10-line loop block  |    10 |       79 |         149 |           70 |              — |
+| multi · 15-line method body |    15 |      181 |         330 |          166 |              — |
+| **single-line ×8**          |       |  **309** |     **324** |      **241** |              — |
+| **multi-line ×4**           |       |  **393** |     **691** |      **349** |              — |
+| **TOTAL ×12**               |       |  **702** |    **1015** |      **590** |        **480** |
 
 Saved vs `str_replace`: hashline **313 (31%)** · oh-my-pi per-edit **425 (42%)** · oh-my-pi batch
 **535 (53%)**.
@@ -93,7 +93,7 @@ Saved vs `str_replace`: hashline **313 (31%)** · oh-my-pi per-edit **425 (42%)*
   roughly cancel a one-line `old_string`), 29–47% on multi-line ranges. Savings scale with the size
   of the replaced text.
 - **oh-my-pi vs str_replace** — 26% on single lines (no JSON envelope), 40–53% on multi-line
-  ranges. The payload is *lighter* than this plugin's tool call: a patch language skips JSON keys,
+  ranges. The payload is _lighter_ than this plugin's tool call: a patch language skips JSON keys,
   braces, and escaping. That is a real property of the format, and this README does not hide it.
 - **oh-my-pi batch vs per-edit** — 590 → 480 tokens: 12 headers collapse into 1. The format's
   natural one-document mode.
@@ -103,7 +103,7 @@ oh-my-pi per-edit **~1.7× less**, oh-my-pi batch **~2.1× less**.
 
 ## Why this plugin still exists (honest reading)
 
-The token headline over `str_replace` belongs to the *pattern*, not to any one implementation —
+The token headline over `str_replace` belongs to the _pattern_, not to any one implementation —
 `@oh-my-pi/hashline`'s payload is lighter still. The differences that matter are not in this table:
 
 - **What the model must track between edits.** hashline anchors are content addresses: edit one part
@@ -119,18 +119,18 @@ The token headline over `str_replace` belongs to the *pattern*, not to any one i
   returns the anchors, `edit`/`batch_edit`/`undo_last_edit` consume them, all inside DeepSeek
   Harness.
 - **The model skill floor.** `edit` has the same call shape as `str_replace` — any model that can
-  call an edit tool can call it. A patch language must be *learned*: `PUT N.=M:` vs `PUT N*:`,
+  call an edit tool can call it. A patch language must be _learned_: `PUT N.=M:` vs `PUT N*:`,
   registers, block-openers, the anti-patterns.
 
-## What this does *not* measure
+## What this does _not_ measure
 
 - **Transcription failure and retries.** The baseline assumes the model reproduces `old_string`
   perfectly. In practice that is the dominant failure mode — the original
   [harness-problem blog](https://stencil.so/blog/the-harness-problem) reported 46–51% patch failure
   rates for several models with replace-style edits, and a 61% output-token reduction after
   switching to anchored edits. Every such failure costs a re-read plus a retry; hashline's
-  reject-and-serve rejects *before* writing and hands the model fresh anchors.
-- **Renumber/tag-chase cost.** The 590/480 oh-my-pi numbers assume the model gets the *right*
+  reject-and-serve rejects _before_ writing and hands the model fresh anchors.
+- **Renumber/tag-chase cost.** The 590/480 oh-my-pi numbers assume the model gets the _right_
   line numbers and tag every round, for free. Getting them wrong costs a re-read or a merge.
 - **Block ops.** `PUT N*:` resolves a whole syntactic block in one hunk; this benchmark's edits
   are all exact ranges, which is the least favourable case for block ops.

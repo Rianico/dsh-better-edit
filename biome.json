@@ -101,9 +101,7 @@
   },
   "overrides": [
     {
-      "includes": [
-        "src/hashline/**"
-      ],
+      "includes": ["src/hashline/**"],
       "linter": {
         "rules": {
           "style": {
@@ -113,18 +111,13 @@
       }
     },
     {
-      "includes": [
-        "**/*.json",
-        "**/*.cjs"
-      ],
+      "includes": ["**/*.json", "**/*.cjs"],
       "linter": {
         "enabled": false
       }
     },
     {
-      "includes": [
-        "test/**"
-      ],
+      "includes": ["test/**"],
       "linter": {
         "rules": {
           "suspicious": {

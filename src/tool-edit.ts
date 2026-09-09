@@ -8,10 +8,7 @@
 
 import type { Context } from "@deepseek-ai/cordis";
 import { defineTool } from "@deepseek-ai/dsh-tools";
-import {
-  normalizeRequest as normReq,
-  assertEditRequest,
-} from "./contract.js";
+import { normalizeRequest as normReq, assertEditRequest } from "./contract.js";
 import { abortIf } from "./utils.js";
 import { execute } from "./mutation.js";
 import { EDIT_DESCRIPTION } from "./prompts.js";
@@ -24,7 +21,9 @@ import { findSnapshotPathsByHashes } from "./hash-store.js";
 import { parseHashRef } from "./hashline/anchor-pipeline.js";
 import type { PreparedItem } from "./edit-engine.js";
 
-async function resolveNullPath(edits: Array<{ remove_from: string; remove_to: string }>): Promise<{ path: string; warning: string } | undefined> {
+async function resolveNullPath(
+  edits: Array<{ remove_from: string; remove_to: string }>,
+): Promise<{ path: string; warning: string } | undefined> {
   if (edits.length === 0) return undefined;
   const first = edits[0]!;
   try {
@@ -38,7 +37,9 @@ async function resolveNullPath(edits: Array<{ remove_from: string; remove_to: st
       };
     }
     if (matches.length > 1) {
-      throw new Error(`[MODEL] [E_BAD_PAYLOAD] Edit request requires a non-empty "path" string; the anchors match multiple known files: ${matches.join(", ")}. Include the intended path.`);
+      throw new Error(
+        `[MODEL] [E_BAD_PAYLOAD] Edit request requires a non-empty "path" string; the anchors match multiple known files: ${matches.join(", ")}. Include the intended path.`,
+      );
     }
   } catch (e) {
     if (codeOf(e) === "E_BAD_PAYLOAD") throw e;
@@ -60,8 +61,12 @@ export function buildEditTool(io: FileIO, sandbox: FsSandboxController) {
       } as unknown as import("@deepseek-ai/dsh-tools").ValueSchemaSpec & { required?: true },
       edits: {
         type: "array",
-        description: "Ordered list of edit tuples [remove_from, remove_to, replacement_text] — one edit per tuple, single-file atomic",
-        items: { type: "json" as const, description: "[remove_from, remove_to, replacement_text]" } as unknown as import("@deepseek-ai/dsh-tools").ValueSchemaSpec,
+        description:
+          "Ordered list of edit tuples [remove_from, remove_to, replacement_text] — one edit per tuple, single-file atomic",
+        items: {
+          type: "json" as const,
+          description: "[remove_from, remove_to, replacement_text]",
+        } as unknown as import("@deepseek-ai/dsh-tools").ValueSchemaSpec,
       } as unknown as import("@deepseek-ai/dsh-tools").ValueSchemaSpec & { required?: true },
       ...(sandbox.escalationModes.length > 0 ? sandbox.schemaFields() : {}),
     },
@@ -77,7 +82,12 @@ export function buildEditTool(io: FileIO, sandbox: FsSandboxController) {
 
         const canonical = normReq(args);
         assertEditRequest(canonical);
-        const req = canonical as unknown as { path: string | null; edits: Array<{ remove_from: string; remove_to: string; replacement_text: string }> & { [key: symbol]: unknown } };
+        const req = canonical as unknown as {
+          path: string | null;
+          edits: Array<{ remove_from: string; remove_to: string; replacement_text: string }> & {
+            [key: symbol]: unknown;
+          };
+        };
         let resolvedPath = req.path;
         let pathWarning: string | undefined;
         if (resolvedPath === null) {
@@ -86,7 +96,9 @@ export function buildEditTool(io: FileIO, sandbox: FsSandboxController) {
             resolvedPath = resolved.path;
             pathWarning = resolved.warning;
           } else {
-            throw new Error("[MODEL] [E_BAD_PAYLOAD] Edit request path is null and could not be inferred from anchors — anchors match no known file. Include the intended path.");
+            throw new Error(
+              "[MODEL] [E_BAD_PAYLOAD] Edit request path is null and could not be inferred from anchors — anchors match no known file. Include the intended path.",
+            );
           }
         }
         const sandboxPolicy = await sandbox.resolvePolicy(
@@ -117,6 +129,11 @@ export function buildEditTool(io: FileIO, sandbox: FsSandboxController) {
   });
 }
 
-export function registerEditTool(_rootCtx: Context, agentCtx: Context, io: FileIO, sandbox: FsSandboxController): () => void {
+export function registerEditTool(
+  _rootCtx: Context,
+  agentCtx: Context,
+  io: FileIO,
+  sandbox: FsSandboxController,
+): () => void {
   return agentCtx.tools.register(buildEditTool(io, sandbox));
 }

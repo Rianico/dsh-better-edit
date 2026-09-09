@@ -1,10 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { applyEdit, lineHashes, resEdit, canon } from "../../src/hashline/index.js";
-import {
-  firstNonEmptyIndex,
-  lastNonEmptyIndex,
-  splitLines,
-} from "../../src/utils.js";
+import { firstNonEmptyIndex, lastNonEmptyIndex, splitLines } from "../../src/utils.js";
 import { useTestHome, expectedEditContent } from "../support/fixtures.js";
 
 const home = useTestHome();
@@ -144,7 +140,9 @@ async function runStep(
     expect(result.autoFixes).toBeDefined();
     expect(result.autoFixes!.map((f) => f.kind)).toEqual(fixes.map((f) => f.kind));
     expect(result.autoFixes!.map((f) => f.removedLine)).toEqual(fixes.map((f) => f.removedLine));
-    expect(result.autoFixes!.map((f) => f.removedLineIndex)).toEqual(fixes.map((f) => f.removedLineIndex));
+    expect(result.autoFixes!.map((f) => f.removedLineIndex)).toEqual(
+      fixes.map((f) => f.removedLineIndex),
+    );
   } else {
     expect(result.autoFixes).toBeUndefined();
   }

@@ -93,7 +93,10 @@ describe("final90 anchor large", () => {
     const content = lines.join("\n");
     const hashes = lineHashesPure(content);
     // edit middle range
-    const edit: any = { hash_bounds: [{ hash: hashes[10]! }, { hash: hashes[20]! }], content_lines: ["replaced"] };
+    const edit: any = {
+      hash_bounds: [{ hash: hashes[10]! }, { hash: hashes[20]! }],
+      content_lines: ["replaced"],
+    };
     const res = applyEdit(content, edit, undefined, hashes);
     expect(res.content).toContain("replaced");
     expect(res.content.split("\n").length).toBeGreaterThan(150);
@@ -116,7 +119,16 @@ describe("final90 anchor large", () => {
         fileLines: ["a", "b", "c", "d"],
       }),
     ).not.toThrow();
-    expect(() => applyEdit(content, { hash_bounds: [{ hash: "zzz" }, { hash: "zzz" }], content_lines: ["x"] } as any, undefined, hashes, "f", served)).toThrow();
+    expect(() =>
+      applyEdit(
+        content,
+        { hash_bounds: [{ hash: "zzz" }, { hash: "zzz" }], content_lines: ["x"] } as any,
+        undefined,
+        hashes,
+        "f",
+        served,
+      ),
+    ).toThrow();
   });
 });
 
@@ -146,7 +158,14 @@ describe("final90 fs-bridge", () => {
   });
 
   it("covers encodingState helpers", async () => {
-    const { getEncodingState, setEncodingState, clearEncodingState, getAutoGuessFooter, setAutoGuessFooter, clearAutoGuessFooter } = await import("../../src/fs-bridge.js");
+    const {
+      getEncodingState,
+      setEncodingState,
+      clearEncodingState,
+      getAutoGuessFooter,
+      setAutoGuessFooter,
+      clearAutoGuessFooter,
+    } = await import("../../src/fs-bridge.js");
     setEncodingState("test-key", { encoding: "gbk", hasBOM: false, version: "1" });
     expect(getEncodingState("test-key")?.encoding).toBe("gbk");
     setAutoGuessFooter("test-key", "footer");

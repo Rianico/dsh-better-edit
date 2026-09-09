@@ -17,7 +17,10 @@ describe("coverage-f: anchor-pipeline large file pagination", () => {
     const lines = Array.from({ length: 200 }, (_, i) => `line ${i}`);
     const content = lines.join("\n");
     const hashes = lineHashesPure(content);
-    const edit: any = { hash_bounds: [{ hash: hashes[10]! }, { hash: hashes[20]! }], content_lines: ["replaced middle"] };
+    const edit: any = {
+      hash_bounds: [{ hash: hashes[10]! }, { hash: hashes[20]! }],
+      content_lines: ["replaced middle"],
+    };
     const res = applyEdit(content, edit, undefined, hashes);
     expect(res.content).toContain("replaced middle");
     expect(res.content.split("\n").length).toBeGreaterThan(180);
@@ -26,10 +29,16 @@ describe("coverage-f: anchor-pipeline large file pagination", () => {
     const lines = Array.from({ length: 200 }, (_, i) => `line ${i}`);
     const content = lines.join("\n");
     const hashes = lineHashesPure(content);
-    const editStart: any = { hash_bounds: [{ hash: hashes[0]! }, { hash: hashes[5]! }], content_lines: ["new start"] };
+    const editStart: any = {
+      hash_bounds: [{ hash: hashes[0]! }, { hash: hashes[5]! }],
+      content_lines: ["new start"],
+    };
     const r1 = applyEdit(content, editStart, undefined, hashes);
     expect(r1.content).toContain("new start");
-    const editEnd: any = { hash_bounds: [{ hash: hashes[195]! }, { hash: hashes[199]! }], content_lines: ["new end"] };
+    const editEnd: any = {
+      hash_bounds: [{ hash: hashes[195]! }, { hash: hashes[199]! }],
+      content_lines: ["new end"],
+    };
     const r2 = applyEdit(content, editEnd, undefined, hashes);
     expect(r2.content).toContain("new end");
   });
@@ -41,8 +50,13 @@ describe("coverage-f: anchor-pipeline fmtMismatch", () => {
     const hashes = lineHashesPure(content);
     const served: any = [...hashes];
     // make first hash stale
-    const edit: any = { hash_bounds: [{ hash: "zzz" }, { hash: hashes[2]! }], content_lines: ["X"] };
-    expect(() => applyEdit(content, edit, undefined, hashes, "file.txt", served)).toThrow(/E_STALE_ANCHOR/);
+    const edit: any = {
+      hash_bounds: [{ hash: "zzz" }, { hash: hashes[2]! }],
+      content_lines: ["X"],
+    };
+    expect(() => applyEdit(content, edit, undefined, hashes, "file.txt", served)).toThrow(
+      /E_STALE_ANCHOR/,
+    );
   });
   it("triggers E_STALE_ANCHOR", () => {
     const content = "a\nb\na\nb\na";
@@ -52,7 +66,10 @@ describe("coverage-f: anchor-pipeline fmtMismatch", () => {
     const dupContent = "dup\ndup\ndup";
     const dupHashes = lineHashesPure(dupContent);
     // dupHashes[0] == dupHashes[1] == dupHashes[2] because same content "dup" but hashes are per line content via xxhash, so they are same => ambiguous
-    const edit: any = { hash_bounds: [{ hash: dupHashes[0]! }, { hash: dupHashes[0]! }], content_lines: ["X"] };
+    const edit: any = {
+      hash_bounds: [{ hash: dupHashes[0]! }, { hash: dupHashes[0]! }],
+      content_lines: ["X"],
+    };
     // This should either succeed or throw ambiguous - both cover branches
     try {
       const res = applyEdit(dupContent, edit, undefined, dupHashes);
@@ -108,11 +125,17 @@ describe("coverage-f: anchor-pipeline no boundary dups (removed)", () => {
     const content = "a\nb\nc\nd\ne";
     const hashes = lineHashesPure(content);
     // trailing dup: replacement includes next line's content — now kept
-    const edit1: any = { hash_bounds: [{ hash: hashes[1]! }, { hash: hashes[2]! }], content_lines: ["B", "C", "d"] };
+    const edit1: any = {
+      hash_bounds: [{ hash: hashes[1]! }, { hash: hashes[2]! }],
+      content_lines: ["B", "C", "d"],
+    };
     const r1 = applyEdit(content, edit1, undefined, hashes);
     expect((r1 as any).autoFixes ?? (r1 as any).nes).toBeUndefined();
     // leading dup
-    const edit2: any = { hash_bounds: [{ hash: hashes[1]! }, { hash: hashes[2]! }], content_lines: ["a", "B", "C"] };
+    const edit2: any = {
+      hash_bounds: [{ hash: hashes[1]! }, { hash: hashes[2]! }],
+      content_lines: ["a", "B", "C"],
+    };
     const r2 = applyEdit(content, edit2, undefined, hashes);
     expect((r2 as any).autoFixes ?? (r2 as any).nes).toBeUndefined();
   });
@@ -140,7 +163,9 @@ describe("coverage-f: anchor-pipeline no boundary dups (removed)", () => {
     expect(() => parseHashRef(block)).toThrow();
   });
   it("covers resEdit unknown fields", () => {
-    expect(() => resEdit({ remove_from: "abc", remove_to: "abc", replacement_text: "x", extra: 1 } as any)).toThrow();
+    expect(() =>
+      resEdit({ remove_from: "abc", remove_to: "abc", replacement_text: "x", extra: 1 } as any),
+    ).toThrow();
   });
   it("covers assertAligned via fmtMismatch", async () => {
     // trigger assertAligned by mismatched lengths
@@ -165,7 +190,10 @@ describe("coverage-f: anchor-pipeline no boundary dups (removed)", () => {
   it("covers abort signal", () => {
     const content = "a\nb\nc";
     const hashes = lineHashesPure(content);
-    const edit: any = { hash_bounds: [{ hash: hashes[0]! }, { hash: hashes[0]! }], content_lines: ["X"] };
+    const edit: any = {
+      hash_bounds: [{ hash: hashes[0]! }, { hash: hashes[0]! }],
+      content_lines: ["X"],
+    };
     const ctrl = new AbortController();
     ctrl.abort();
     expect(() => applyEdit(content, edit, ctrl.signal, hashes)).toThrow();
@@ -173,7 +201,10 @@ describe("coverage-f: anchor-pipeline no boundary dups (removed)", () => {
   it("covers unicode warning", () => {
     const content = "a\nb\nc";
     const hashes = lineHashesPure(content);
-    const edit: any = { hash_bounds: [{ hash: hashes[0]! }, { hash: hashes[0]! }], content_lines: ["\\uDDDD"] };
+    const edit: any = {
+      hash_bounds: [{ hash: hashes[0]! }, { hash: hashes[0]! }],
+      content_lines: ["\\uDDDD"],
+    };
     const res = applyEdit(content, edit, undefined, hashes);
     expect(res.warnings !== undefined).toBe(true);
   });

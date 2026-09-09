@@ -11,12 +11,7 @@ import { isBlankOverride } from "./parse.js";
 import { GUIDANCE_SECTIONS, type GuidanceSection } from "./resolve.js";
 
 /** The presets shipped by the harness, each seeded with editable guidance. */
-export const DEFAULT_PRESETS: readonly string[] = [
-	"standard",
-	"code",
-	"minimal",
-	"cordis",
-];
+export const DEFAULT_PRESETS: readonly string[] = ["standard", "code", "minimal", "cordis"];
 
 /**
  * The root README: the per-preset customization convention users see in the
@@ -97,7 +92,7 @@ export const GUIDANCE_HOME_README_ZH = `# dsh-better-edit 指引
 
 /** The content a seeded override file carries, rendered from the current defaults. */
 function seededContent(section: GuidanceSection): string {
-	return `---\norder: ${section.defaultOrder}\n---\n\n${section.renderDefault()}`;
+  return `---\norder: ${section.defaultOrder}\n---\n\n${section.renderDefault()}`;
 }
 
 /**
@@ -108,20 +103,17 @@ function seededContent(section: GuidanceSection): string {
  * the file already exists. Errors propagate to the boot caller, which never
  * fails init.
  */
-async function healBlankOverride(
-	path: string,
-	section: GuidanceSection,
-): Promise<void> {
-	let content: string | undefined;
-	try {
-		content = await readFile(path, "utf-8");
-	} catch (error: unknown) {
-		// Vanished between readdir and read; nothing to heal.
-		if (errCode(error) === "ENOENT") return;
-		throw error;
-	}
-	if (!isBlankOverride(content)) return;
-	await writeFile(path, seededContent(section), { encoding: "utf-8" });
+async function healBlankOverride(path: string, section: GuidanceSection): Promise<void> {
+  let content: string | undefined;
+  try {
+    content = await readFile(path, "utf-8");
+  } catch (error: unknown) {
+    // Vanished between readdir and read; nothing to heal.
+    if (errCode(error) === "ENOENT") return;
+    throw error;
+  }
+  if (!isBlankOverride(content)) return;
+  await writeFile(path, seededContent(section), { encoding: "utf-8" });
 }
 
 /**
@@ -139,88 +131,86 @@ async function healBlankOverride(
  * first runs race safely.
  */
 export async function ensurePresetGuidance(homeDir: string): Promise<void> {
-	await mkdir(homeDir, { recursive: true });
-	await Promise.all(
-		DEFAULT_PRESETS.map(async (preset) => {
-			const dir = join(homeDir, preset);
-			await mkdir(dir, { recursive: true });
-			const existing = new Set(await readdir(dir));
-			await Promise.all(
-				GUIDANCE_SECTIONS.map(async (section) => {
-					const path = join(dir, section.file);
-					if (existing.has(section.file)) {
-						await healBlankOverride(path, section);
-						return;
-					}
-					await writeFile(path, seededContent(section), {
-						encoding: "utf-8",
-						flag: "wx",
-					}).catch((error: unknown) => {
-						// A concurrent writer landed first; never clobber it.
-						if (errCode(error) === "EEXIST") return;
-						throw error;
-					});
-				}),
-			);
-		}),
-	);
-	// Ghost seam cleanup (ADR-0003): remove orphan batch_edit.md override files left
-	// from pre-0.3.0 homes. The payload contract merged batch_edit into edit's
-	// {path, edits:[[hash,hash,text]]} arity — the file is dead. Best-effort,
-	// idempotent, concurrent-safe (ignore ENOENT).
-	for (const preset of DEFAULT_PRESETS) {
-		const ghost = join(homeDir, preset, "batch_edit.md");
-		await unlink(ghost).catch((error: unknown) => {
-			if (errCode(error) === "ENOENT") return;
-			throw error;
-		});
-	}
+  await mkdir(homeDir, { recursive: true });
+  await Promise.all(
+    DEFAULT_PRESETS.map(async (preset) => {
+      const dir = join(homeDir, preset);
+      await mkdir(dir, { recursive: true });
+      const existing = new Set(await readdir(dir));
+      await Promise.all(
+        GUIDANCE_SECTIONS.map(async (section) => {
+          const path = join(dir, section.file);
+          if (existing.has(section.file)) {
+            await healBlankOverride(path, section);
+            return;
+          }
+          await writeFile(path, seededContent(section), {
+            encoding: "utf-8",
+            flag: "wx",
+          }).catch((error: unknown) => {
+            // A concurrent writer landed first; never clobber it.
+            if (errCode(error) === "EEXIST") return;
+            throw error;
+          });
+        }),
+      );
+    }),
+  );
+  // Ghost seam cleanup (ADR-0003): remove orphan batch_edit.md override files left
+  // from pre-0.3.0 homes. The payload contract merged batch_edit into edit's
+  // {path, edits:[[hash,hash,text]]} arity — the file is dead. Best-effort,
+  // idempotent, concurrent-safe (ignore ENOENT).
+  for (const preset of DEFAULT_PRESETS) {
+    const ghost = join(homeDir, preset, "batch_edit.md");
+    await unlink(ghost).catch((error: unknown) => {
+      if (errCode(error) === "ENOENT") return;
+      throw error;
+    });
+  }
 
-	// Custom presets present on disk: heal existing blank section files only.
-	// Absence is respected — a custom preset's files are never fabricated, and
-	// malformed / non-blank / deliberate-blank files are left untouched.
-	const entries = await readdir(homeDir, { withFileTypes: true });
-	await Promise.all(
-		entries
-			.filter(
-				(entry) => entry.isDirectory() && !DEFAULT_PRESETS.includes(entry.name),
-			)
-			.map(async (entry) => {
-				const dir = join(homeDir, entry.name);
-				const existing = new Set(await readdir(dir));
-				await Promise.all(
-					GUIDANCE_SECTIONS.map(async (section) => {
-						if (!existing.has(section.file)) return;
-						await healBlankOverride(join(dir, section.file), section);
-					}),
-				);
-			}),
-	);
-	// Ghost seam cleanup for custom presets (same ADR-0003 dead file).
-	for (const entry of entries) {
-		if (!entry.isDirectory() || DEFAULT_PRESETS.includes(entry.name)) continue;
-		const ghost = join(homeDir, entry.name, "batch_edit.md");
-		await unlink(ghost).catch((error: unknown) => {
-			if (errCode(error) === "ENOENT") return;
-			throw error;
-		});
-	}
+  // Custom presets present on disk: heal existing blank section files only.
+  // Absence is respected — a custom preset's files are never fabricated, and
+  // malformed / non-blank / deliberate-blank files are left untouched.
+  const entries = await readdir(homeDir, { withFileTypes: true });
+  await Promise.all(
+    entries
+      .filter((entry) => entry.isDirectory() && !DEFAULT_PRESETS.includes(entry.name))
+      .map(async (entry) => {
+        const dir = join(homeDir, entry.name);
+        const existing = new Set(await readdir(dir));
+        await Promise.all(
+          GUIDANCE_SECTIONS.map(async (section) => {
+            if (!existing.has(section.file)) return;
+            await healBlankOverride(join(dir, section.file), section);
+          }),
+        );
+      }),
+  );
+  // Ghost seam cleanup for custom presets (same ADR-0003 dead file).
+  for (const entry of entries) {
+    if (!entry.isDirectory() || DEFAULT_PRESETS.includes(entry.name)) continue;
+    const ghost = join(homeDir, entry.name, "batch_edit.md");
+    await unlink(ghost).catch((error: unknown) => {
+      if (errCode(error) === "ENOENT") return;
+      throw error;
+    });
+  }
 
-	const homeFiles = new Set(await readdir(homeDir));
-	const readmes: Array<[string, string]> = [
-		["README.md", GUIDANCE_HOME_README],
-		["README.zh.md", GUIDANCE_HOME_README_ZH],
-	];
-	await Promise.all(
-		readmes.map(async ([file, content]) => {
-			if (homeFiles.has(file)) return;
-			await writeFile(join(homeDir, file), content, {
-				encoding: "utf-8",
-				flag: "wx",
-			}).catch((error: unknown) => {
-				if (errCode(error) === "EEXIST") return;
-				throw error;
-			});
-		}),
-	);
+  const homeFiles = new Set(await readdir(homeDir));
+  const readmes: Array<[string, string]> = [
+    ["README.md", GUIDANCE_HOME_README],
+    ["README.zh.md", GUIDANCE_HOME_README_ZH],
+  ];
+  await Promise.all(
+    readmes.map(async ([file, content]) => {
+      if (homeFiles.has(file)) return;
+      await writeFile(join(homeDir, file), content, {
+        encoding: "utf-8",
+        flag: "wx",
+      }).catch((error: unknown) => {
+        if (errCode(error) === "EEXIST") return;
+        throw error;
+      });
+    }),
+  );
 }

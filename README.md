@@ -42,7 +42,7 @@
 
 ---
 
-> *"The harness — not the model — is the bottleneck."* — Can Bölük, [*The Harness Problem*](https://stencil.so/blog/the-harness-problem)
+> _"The harness — not the model — is the bottleneck."_ — Can Bölük, [_The Harness Problem_](https://stencil.so/blog/the-harness-problem)
 
 > **This is the harness fix.** Hashes replace line numbers — edits above don't shift anchors below. One `read` serves many `edit`s; drift outside your range passes with a notice, true conflicts retry with fresh anchors — no full `read` needed.
 
@@ -52,11 +52,11 @@
 
 **If you've watched `line 47 → 74` corrupt a file after an insert — this is for you.**
 
-| Before: `str_replace` / line numbers | After: hashline `edit` |
-| --- | --- |
-| Re-types old code (~5-6× billed) | Two `3-char` hashes, old text never echoed |
-| One insert shifts every number → silent wrong line | Content addresses — edits above don't move anchors below |
-| No check against what was shown | Every line verified; `[E_STALE_RANGE]`/`[E_UNSERVED_RANGE]` reject before write, then **reject-and-serve** returns fresh `HASH│content` |
+| Before: `str_replace` / line numbers               | After: hashline `edit`                                                                                                                  |
+| -------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| Re-types old code (~5-6× billed)                   | Two `3-char` hashes, old text never echoed                                                                                              |
+| One insert shifts every number → silent wrong line | Content addresses — edits above don't move anchors below                                                                                |
+| No check against what was shown                    | Every line verified; `[E_STALE_RANGE]`/`[E_UNSERVED_RANGE]` reject before write, then **reject-and-serve** returns fresh `HASH│content` |
 
 > [!TIP]
 > **Shining points — honest:**
@@ -84,15 +84,15 @@ No config. Next session runs with hashline tools. Verify:
 dsh --profile <name> --dump-config   # shows "# == dsh-better-edit" layer
 ```
 
-| Requirement | |
-| --- | --- |
-| Node | `^22.19.0 \|\| >=24.0.0` |
-| Profile | `dsh` profile (`dsh plugin` creates one) |
-| Backends | sandboxed / remote `ctx.fs` |
+| Requirement |                                          |
+| ----------- | ---------------------------------------- |
+| Node        | `^22.19.0 \|\| >=24.0.0`                 |
+| Profile     | `dsh` profile (`dsh plugin` creates one) |
+| Backends    | sandboxed / remote `ctx.fs`              |
 
 ### See it work
 
-`read` serves `HASH│content` — the hash *is* the address:
+`read` serves `HASH│content` — the hash _is_ the address:
 
 ```text
 ve7│function hello() {
@@ -119,7 +119,13 @@ Returns a diff with fresh anchors — next edit needs no `read`:
 Batch atomically — one `edit`, up to 32 same-file ranges:
 
 ```json
-{ "path": "src/main.ts", "edits": [["a1b","a1b","new line 1\n"], ["c3d","c3d","new line 2"]] }
+{
+  "path": "src/main.ts",
+  "edits": [
+    ["a1b", "a1b", "new line 1\n"],
+    ["c3d", "c3d", "new line 2"]
+  ]
+}
 ```
 
 One fails → none write (`[E_BATCH_ABORT]`).
@@ -135,11 +141,11 @@ Tenancy and prompt guidance declare once, read at `agent/session-start`, no code
 
 ```yaml
 # $DSH_HOME/plugins/dsh-better-edit/config.yaml
-storeDir: central              # central | workspace | /abs
+storeDir: central # central | workspace | /abs
 autoGitignore: false
-undo_ttl_s: 604800             # 7d, -1 forever
-storeMaxAgeS: 2592000          # 30d janitor
-storeMaxTotalBytes: 524288000  # 500 MB LRU
+undo_ttl_s: 604800 # 7d, -1 forever
+storeMaxAgeS: 2592000 # 30d janitor
+storeMaxTotalBytes: 524288000 # 500 MB LRU
 ```
 
 Env overrides yaml (`DSH_BETTER_EDIT_STORE_DIR`, `DSH_BETTER_EDIT_AUTO_GITIGNORE`).
@@ -158,17 +164,17 @@ Env overrides yaml (`DSH_BETTER_EDIT_STORE_DIR`, `DSH_BETTER_EDIT_AUTO_GITIGNORE
 
 Envelope change: hoist `path`, `edits:[[from,to,text]]`, never repeat `old_string`.
 
-| snapshot | `str_replace` | `edit` | `edit` multi | OMP per-edit | OMP batch |
-| --- | ---: | ---: | ---: | ---: | ---: |
-| pinned 12-edit corpus | 1,015 | 609 **-40.0%** | 582 **-42.7%** | 590 **-41.9%** | 480 **-52.7%** |
-| local snapshot | 358 | 272 **-24.0%** | 241 **-32.7%** | 268 **-25.1%** | 180 **-49.7%** |
+| snapshot              | `str_replace` |         `edit` |   `edit` multi |   OMP per-edit |      OMP batch |
+| --------------------- | ------------: | -------------: | -------------: | -------------: | -------------: |
+| pinned 12-edit corpus |         1,015 | 609 **-40.0%** | 582 **-42.7%** | 590 **-41.9%** | 480 **-52.7%** |
+| local snapshot        |           358 | 272 **-24.0%** | 241 **-32.7%** | 268 **-25.1%** | 180 **-49.7%** |
 
 Percent vs `str_replace`. External row pinned corpus, `cl100k_base`; local `npm run benchmark` in upstream.
 
-| engine | calls | tokens | saved | ok |
-| --- | ---: | ---: | ---: | :---: |
-| OMP | **6** | 28,467 | — | ✅ |
-| hashline `edit` | **3** | 12,593 | **-55.8%** | ✅ |
+| engine          | calls | tokens |      saved | ok  |
+| --------------- | ----: | -----: | ---------: | :-: |
+| OMP             | **6** | 28,467 |          — | ✅  |
+| hashline `edit` | **3** | 12,593 | **-55.8%** | ✅  |
 
 Single stochastic run, `opencode-go/gpt-5.6-luna` high. [Artifact](https://github.com/Rianico/pi-better-edit/blob/main/benchmarks/results/2026-08-17-practical-token-benchmark.md).
 
@@ -176,44 +182,44 @@ Single stochastic run, `opencode-go/gpt-5.6-luna` high. [Artifact](https://githu
 
 ## Tools
 
-| Tool | What it does |
-| --- | --- |
-| `read` | `HASH│content` with `offset`/`limit`; `[Showing N-M of T]` paging; `>200KB` lines show marker |
-| `read_skill` | Plain text, no hashes, no serves — editing after it needs a serve |
-| `edit` | `{path, edits:[[from,to,text]]}` `path:string\|null` inference, `""` deletes, atomic ≤32, verify-then-write |
-| `undo_last_edit` | `{path}` restores last edit (BOM/line endings/anchors), persisted |
+| Tool             | What it does                                                                                                |
+| ---------------- | ----------------------------------------------------------------------------------------------------------- |
+| `read`           | `HASH│content` with `offset`/`limit`; `[Showing N-M of T]` paging; `>200KB` lines show marker               |
+| `read_skill`     | Plain text, no hashes, no serves — editing after it needs a serve                                           |
+| `edit`           | `{path, edits:[[from,to,text]]}` `path:string\|null` inference, `""` deletes, atomic ≤32, verify-then-write |
+| `undo_last_edit` | `{path}` restores last edit (BOM/line endings/anchors), persisted                                           |
 
 `write` stays, but refuses an exact `HASH│` echo for same `session/path/line` before dispatch.
 
 ### Error codes
 
-| Code | Meaning |
-| --- | --- |
-| `[E_BAD_PAYLOAD]` | Bad tuple shape (payload must be `{path, edits}` with 3-position tuples) |
-| `[E_STALE_ANCHOR]` | No line (hash/retired/canon miss) / multi-line → `read` |
-| `[E_BAD_ANCHOR]` | Not bare `3-char`, or `replacement_text` carries `HASH│`/diff-preview prefixes — refused, remove and retry |
-| `[E_SERVED_ECHO]` | Copied `HASH│` from same session/path/line — refused, remove and retry |
-| `[E_EMPTY_RANGE]`/`[E_NOT_FOUND]`/`[E_ACCESS]`/`[E_UNSUPPORTED_FILE]`/`[E_LARGE_FILE]` | Empty guard / missing / access / binary / >238,328 lines |
-| `[E_REVERSED_ANCHORS]` | Swapped range — healed with dimmed `[USER]` notice on success, otherwise refused |
-| `[E_BAD_ENCODING]`/`[E_DECODE_FAILED]` | Encoding / decode failed |
-| `[E_NOT_OBSERVED]`/`[E_STALE_RANGE]`/`[E_UNSERVED_RANGE]` | Served-state miss — echoed fresh `HASH│content` |
-| `[E_UNDO_STALE]`/`[E_UNDO_UNAVAILABLE]` | Undo stale / unavailable |
-| `[E_NOOP_LOOP]`/`[E_BATCH_ABORT]` | 3× same no-op / atomic batch fail → nothing written |
+| Code                                                                                   | Meaning                                                                                                    |
+| -------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
+| `[E_BAD_PAYLOAD]`                                                                      | Bad tuple shape (payload must be `{path, edits}` with 3-position tuples)                                   |
+| `[E_STALE_ANCHOR]`                                                                     | No line (hash/retired/canon miss) / multi-line → `read`                                                    |
+| `[E_BAD_ANCHOR]`                                                                       | Not bare `3-char`, or `replacement_text` carries `HASH│`/diff-preview prefixes — refused, remove and retry |
+| `[E_SERVED_ECHO]`                                                                      | Copied `HASH│` from same session/path/line — refused, remove and retry                                     |
+| `[E_EMPTY_RANGE]`/`[E_NOT_FOUND]`/`[E_ACCESS]`/`[E_UNSUPPORTED_FILE]`/`[E_LARGE_FILE]` | Empty guard / missing / access / binary / >238,328 lines                                                   |
+| `[E_REVERSED_ANCHORS]`                                                                 | Swapped range — healed with dimmed `[USER]` notice on success, otherwise refused                           |
+| `[E_BAD_ENCODING]`/`[E_DECODE_FAILED]`                                                 | Encoding / decode failed                                                                                   |
+| `[E_NOT_OBSERVED]`/`[E_STALE_RANGE]`/`[E_UNSERVED_RANGE]`                              | Served-state miss — echoed fresh `HASH│content`                                                            |
+| `[E_UNDO_STALE]`/`[E_UNDO_UNAVAILABLE]`                                                | Undo stale / unavailable                                                                                   |
+| `[E_NOOP_LOOP]`/`[E_BATCH_ABORT]`                                                      | 3× same no-op / atomic batch fail → nothing written                                                        |
 
 Full list in `src/` — every rejection echoes fresh rows, no `read` needed.
 
 ## Comparison
 
-| | **dsh-better-edit** | @oh-my-pi/hashline | `str_replace` |
-| --- | --- | --- | --- |
-| Address | `HASH│` 3-char canon | `[path#tag]` + line | text match |
-| Whitespace-insen. | ✅ | ~ n/a | ❌ |
-| Duplicate lines | ✅ unique | ~ pos | ❌ first |
-| Verified vs served | ✅ every line | ~ file tag | ❌ |
-| Blind edit | ✅ reject | ~ | ❌ |
-| Batch atomic | ✅ | ✅ | ❌ |
-| Undo | ✅ | ❌ | ❌ |
-| Battery | 23/23 | 10/10 | — |
+|                    | **dsh-better-edit**  | @oh-my-pi/hashline  | `str_replace` |
+| ------------------ | -------------------- | ------------------- | ------------- |
+| Address            | `HASH│` 3-char canon | `[path#tag]` + line | text match    |
+| Whitespace-insen.  | ✅                   | ~ n/a               | ❌            |
+| Duplicate lines    | ✅ unique            | ~ pos               | ❌ first      |
+| Verified vs served | ✅ every line        | ~ file tag          | ❌            |
+| Blind edit         | ✅ reject            | ~                   | ❌            |
+| Batch atomic       | ✅                   | ✅                  | ❌            |
+| Undo               | ✅                   | ❌                  | ❌            |
+| Battery            | 23/23                | 10/10               | —             |
 
 `~` partial, `—` n/a. Same lineage — patch library vs dsh tool pair; pick by seam.
 
@@ -255,19 +261,19 @@ pnpm benchmark   # hash probe + session envelope (reads/retries/tokens)
 
 103-line file, 12 replacements (8×1 + 4×3/6/10/15), `cl100k_base`. `hashline` vs `str_replace` vs `oh-my-pi` `seq/batch`. Upstream is source of truth — same algorithm byte-for-byte.
 
-| Criterion | hashline | str_replace | seq / batch |
-| --- | :---: | :---: | :---: |
-| `old_string` echoed | never | every edit | never |
-| 12-edit saved | **31%** | 0% | **42% / 53%** |
-| multi-line saved | **29–47%** | 0% | **40–53%** |
-| 5× output cost | **~1.4× less** | 1× | **~1.7×/~2.1× less** |
-| Verified | 100% | none | tag only |
+| Criterion           |    hashline    | str_replace |     seq / batch      |
+| ------------------- | :------------: | :---------: | :------------------: |
+| `old_string` echoed |     never      | every edit  |        never         |
+| 12-edit saved       |    **31%**     |     0%      |    **42% / 53%**     |
+| multi-line saved    |   **29–47%**   |     0%      |      **40–53%**      |
+| 5× output cost      | **~1.4× less** |     1×      | **~1.7×/~2.1× less** |
+| Verified            |      100%      |    none     |       tag only       |
 
-| Scenario | hashline | str_replace |
-| --- | ---: | ---: |
-| `1×8` | 309 | 324 |
-| `3–15×4` | 393 | 691 |
-| **TOTAL ×12** | **702** | **1015** |
+| Scenario      | hashline | str_replace |
+| ------------- | -------: | ----------: |
+| `1×8`         |      309 |         324 |
+| `3–15×4`      |      393 |         691 |
+| **TOTAL ×12** |  **702** |    **1015** |
 
 Saved **313 (31%)**. Reproduce: upstream `npm run benchmark`. See [`pi-better-edit/benchmark/README.md`](https://github.com/Rianico/pi-better-edit/blob/main/benchmarks/README.md).
 
@@ -295,7 +301,7 @@ MIT — see [LICENSE](LICENSE).
 
 ## Acknowledgments
 
-From Can Bölük's [*The Harness Problem*](https://stencil.so/blog/the-harness-problem). Thanks to [pi-hashline-edit](https://github.com/RimuruW/pi-hashline-edit), [pi-hashline-edit-pro](https://github.com/YuGiMob/pi-hashline-edit-pro), [pi-better-edit](https://github.com/Rianico/pi-better-edit), [@oh-my-pi/hashline](https://www.npmjs.com/package/@oh-my-pi/hashline). Reading: [hash-anchors](https://dirac.run/posts/hash-anchors-myers-diff-single-token).
+From Can Bölük's [_The Harness Problem_](https://stencil.so/blog/the-harness-problem). Thanks to [pi-hashline-edit](https://github.com/RimuruW/pi-hashline-edit), [pi-hashline-edit-pro](https://github.com/YuGiMob/pi-hashline-edit-pro), [pi-better-edit](https://github.com/Rianico/pi-better-edit), [@oh-my-pi/hashline](https://www.npmjs.com/package/@oh-my-pi/hashline). Reading: [hash-anchors](https://dirac.run/posts/hash-anchors-myers-diff-single-token).
 
 ---
 

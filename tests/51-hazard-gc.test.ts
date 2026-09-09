@@ -1,7 +1,13 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { mkdtemp, rm, writeFile, mkdir } from "node:fs/promises";
 import { join } from "node:path";
-import { initHasher, HASH_SPACE, lineHashesPure, mapStableHashes, idxToHash } from "../src/hashline/hash-assign.js";
+import {
+  initHasher,
+  HASH_SPACE,
+  lineHashesPure,
+  mapStableHashes,
+  idxToHash,
+} from "../src/hashline/hash-assign.js";
 import { shutdownHashStore } from "../src/hash-store.js";
 import * as SessionView from "../src/session-view.js";
 import { vi } from "vitest";
@@ -32,10 +38,22 @@ describe("51 hazard GC", () => {
     const N = 20;
     const content = Array.from({ length: N }, (_, i) => `line ${i}`).join("\n");
     const realHashes = lineHashesPure(content);
-    await SessionView.recordServed(sessionKey, path, realHashes.map((h, i) => ({ position: i, hash: h })), N, { hashes: realHashes, canons: Array.from({length:N}, (_,i)=>`line${i}`), snapshotId: "snap1" });
+    await SessionView.recordServed(
+      sessionKey,
+      path,
+      realHashes.map((h, i) => ({ position: i, hash: h })),
+      N,
+      {
+        hashes: realHashes,
+        canons: Array.from({ length: N }, (_, i) => `line${i}`),
+        snapshotId: "snap1",
+      },
+    );
     const toRetire = realHashes.slice(0, 6);
     await SessionView.retireAnchors(sessionKey, path, toRetire);
-    const newContent = Array.from({ length: N }, (_, i) => i < 6 ? `changed ${i}` : `line ${i}`).join("\n");
+    const newContent = Array.from({ length: N }, (_, i) =>
+      i < 6 ? `changed ${i}` : `line ${i}`,
+    ).join("\n");
     const newHashes = lineHashesPure(newContent);
     const store = await (await import("../src/hash-store.js")).loadServedStore();
     const entries = toRetire.map((h, idx) => ({ hash: h, deathPos: idx }));
@@ -44,7 +62,11 @@ describe("51 hazard GC", () => {
     const before = store.getRetiredEntries(sessionKey, path);
     expect(before.length).toBe(6);
     const rows = newHashes.slice(0, 6).map((h, i) => ({ position: i, hash: h }));
-    await SessionView.recordServed(sessionKey, path, rows, N, { hashes: newHashes, canons: Array.from({length:N}, (_,i)=> i < 6 ? `changed${i}` : `line${i}`), snapshotId: "snap1" });
+    await SessionView.recordServed(sessionKey, path, rows, N, {
+      hashes: newHashes,
+      canons: Array.from({ length: N }, (_, i) => (i < 6 ? `changed${i}` : `line${i}`)),
+      snapshotId: "snap1",
+    });
     const after = store.getRetiredEntries(sessionKey, path);
     expect(after.length).toBe(0);
   });
@@ -52,7 +74,9 @@ describe("51 hazard GC", () => {
   it("stable reuse via mapStableHashes keeps anchors for unchanged lines", async () => {
     const oldContent = Array.from({ length: 10 }, (_, i) => `line ${i}`).join("\n");
     const oldHashes = lineHashesPure(oldContent);
-    const newLines = Array.from({ length: 10 }, (_, i) => i === 5 ? "changed line 5" : `line ${i}`);
+    const newLines = Array.from({ length: 10 }, (_, i) =>
+      i === 5 ? "changed line 5" : `line ${i}`,
+    );
     const newContent = newLines.join("\n");
     const newHashes = mapStableHashes(oldContent, oldHashes, newContent);
     for (let i = 0; i < 10; i++) {
@@ -71,7 +95,14 @@ describe("51 hazard GC", () => {
     expect(() => lineHashesPure(content)).not.toThrow("E_LARGE_FILE");
     const { normFromText } = await import("../src/file-view.js");
     const longContent = Array.from({ length: 300000 }, () => "y").join("\n");
-    await expect(normFromText({ absolutePath: "/tmp/foo.txt", rawText: longContent, displayPath: "foo.txt", maxLines: 200000 })).rejects.toThrow("E_LARGE_FILE");
+    await expect(
+      normFromText({
+        absolutePath: "/tmp/foo.txt",
+        rawText: longContent,
+        displayPath: "foo.txt",
+        maxLines: 200000,
+      }),
+    ).rejects.toThrow("E_LARGE_FILE");
   });
 
   it("promotion on exhaustion clears retired and succeeds with warning (simulated)", async () => {
@@ -80,15 +111,21 @@ describe("51 hazard GC", () => {
     const N = 20;
     const content = Array.from({ length: N }, (_, i) => `line ${i}`).join("\n");
     const hashes = lineHashesPure(content);
-    await SessionView.recordServed(sessionKey, path, hashes.map((h,i)=>({position:i, hash:h})), N, { hashes, canons: Array.from({length:N},(_,i)=>`line${i}`), snapshotId:"snap1"});
+    await SessionView.recordServed(
+      sessionKey,
+      path,
+      hashes.map((h, i) => ({ position: i, hash: h })),
+      N,
+      { hashes, canons: Array.from({ length: N }, (_, i) => `line${i}`), snapshotId: "snap1" },
+    );
     const store = await (await import("../src/hash-store.js")).loadServedStore();
     const fakeCount = 5000; // reduced for speed but still demonstrates promotion via hazard GC - use smaller than HASH_SPACE to avoid super heavy DB
     // Generate fake hashes via idxToHash for probing-uniqueness
-    const fakeHashes: {hash:string, deathPos:number|null}[] = [];
-    for (let i=0; i<fakeCount; i++) {
+    const fakeHashes: { hash: string; deathPos: number | null }[] = [];
+    for (let i = 0; i < fakeCount; i++) {
       const idx = (100000 + i) % HASH_SPACE;
       const h = idxToHash(idx);
-      fakeHashes.push({hash: h, deathPos: null});
+      fakeHashes.push({ hash: h, deathPos: null });
     }
     store.upsertRetiredAnchors(sessionKey, path, JSON.stringify(fakeHashes));
     const beforeRetired = store.getRetiredEntries(sessionKey, path);
@@ -99,15 +136,25 @@ describe("51 hazard GC", () => {
     const filePath = join(tmpDir, "file.txt");
     await writeFile(filePath, content, "utf-8");
     const store2 = await (await import("../src/hash-store.js")).loadServedStore();
-    const fakeHashes2: {hash:string, deathPos:number|null}[] = [];
-    for (let i=0; i<fakeCount; i++) {
+    const fakeHashes2: { hash: string; deathPos: number | null }[] = [];
+    for (let i = 0; i < fakeCount; i++) {
       const idx = (120000 + i) % HASH_SPACE;
       const h = idxToHash(idx);
-      fakeHashes2.push({hash: h, deathPos: null});
+      fakeHashes2.push({ hash: h, deathPos: null });
     }
     store2.upsertRetiredAnchors(sessionKey, filePath, JSON.stringify(fakeHashes2));
     const hashesForFile = lineHashesPure(content);
-    await SessionView.recordServed(sessionKey, filePath, hashesForFile.map((h,i)=>({position:i, hash:h})), hashesForFile.length, { hashes: hashesForFile, canons: Array.from({length:N},(_,i)=>`line${i}`), snapshotId:"snap1"});
+    await SessionView.recordServed(
+      sessionKey,
+      filePath,
+      hashesForFile.map((h, i) => ({ position: i, hash: h })),
+      hashesForFile.length,
+      {
+        hashes: hashesForFile,
+        canons: Array.from({ length: N }, (_, i) => `line${i}`),
+        snapshotId: "snap1",
+      },
+    );
     // Re-apply fake retired after recordServed cleared it (if full read clears)
     store2.upsertRetiredAnchors(sessionKey, filePath, JSON.stringify(fakeHashes2));
     const io = localIO();
@@ -161,7 +208,13 @@ describe("51 hazard GC", () => {
     const N = 10;
     const content = Array.from({ length: N }, (_, i) => `line ${i}`).join("\n");
     const hashes = lineHashesPure(content);
-    await SessionView.recordServed(sessionKey, path, hashes.map((h,i)=>({position:i, hash:h})), N, { hashes, canons: Array.from({length:N},(_,i)=>`line${i}`), snapshotId: "snap1"});
+    await SessionView.recordServed(
+      sessionKey,
+      path,
+      hashes.map((h, i) => ({ position: i, hash: h })),
+      N,
+      { hashes, canons: Array.from({ length: N }, (_, i) => `line${i}`), snapshotId: "snap1" },
+    );
     const store = await (await import("../src/hash-store.js")).loadServedStore();
     // Manually set retired: mix of -1 and 0..4
     const mixed = [
@@ -175,10 +228,14 @@ describe("51 hazard GC", () => {
     store.upsertRetiredAnchors(sessionKey, path, JSON.stringify(mixed));
     // Partial read serving 2..3 should sweep deathPos 2,3 but keep -1 and 4
     const newHashes = lineHashesPure(content);
-    const rows = [2,3].map(i=>({position:i, hash:newHashes[i]!}));
-    await SessionView.recordServed(sessionKey, path, rows, N, { hashes: newHashes, canons: Array.from({length:N},(_,i)=>`line${i}`), snapshotId: "snap1"});
+    const rows = [2, 3].map((i) => ({ position: i, hash: newHashes[i]! }));
+    await SessionView.recordServed(sessionKey, path, rows, N, {
+      hashes: newHashes,
+      canons: Array.from({ length: N }, (_, i) => `line${i}`),
+      snapshotId: "snap1",
+    });
     const afterPartial = store.getRetiredEntries(sessionKey, path);
-    const afterHashes = new Set(afterPartial.map(e=>e.hash));
+    const afterHashes = new Set(afterPartial.map((e) => e.hash));
     // -1 entries survive
     expect(afterHashes.has(hashes[0]!)).toBe(true);
     expect(afterHashes.has(hashes[1]!)).toBe(true);
@@ -188,8 +245,12 @@ describe("51 hazard GC", () => {
     // 4 remains (deathPos 4 not served)
     expect(afterHashes.has(hashes[4]!)).toBe(true);
     // Full read should clear -1 via isFullRead branch (promotion/full valve drains)
-    const fullRows = newHashes.map((h,i)=>({position:i, hash:h}));
-    await SessionView.recordServed(sessionKey, path, fullRows, N, { hashes: newHashes, canons: Array.from({length:N},(_,i)=>`line${i}`), snapshotId: "snap2"});
+    const fullRows = newHashes.map((h, i) => ({ position: i, hash: h }));
+    await SessionView.recordServed(sessionKey, path, fullRows, N, {
+      hashes: newHashes,
+      canons: Array.from({ length: N }, (_, i) => `line${i}`),
+      snapshotId: "snap2",
+    });
     const afterFull = store.getRetiredEntries(sessionKey, path);
     expect(afterFull.length).toBe(0);
   });
@@ -201,43 +262,73 @@ describe("51 hazard GC", () => {
     const content = Array.from({ length: N }, (_, i) => `line ${i}`).join("\n");
     const hashes = lineHashesPure(content);
     // Initial full served to establish baseline
-    await SessionView.recordServed(sessionKey, path, hashes.map((h,i)=>({position:i, hash:h})), N, { hashes, canons: Array.from({length:N},(_,i)=>`line${i}`), snapshotId: "snap-cards-1"});
+    await SessionView.recordServed(
+      sessionKey,
+      path,
+      hashes.map((h, i) => ({ position: i, hash: h })),
+      N,
+      {
+        hashes,
+        canons: Array.from({ length: N }, (_, i) => `line${i}`),
+        snapshotId: "snap-cards-1",
+      },
+    );
     const store = await (await import("../src/hash-store.js")).loadServedStore();
     // Create retired entries deathPos 0..999 via displaced simulation: use same hashes but deathPos distinct
-    const retired = Array.from({length: N}, (_, i)=> ({ hash: `R${String(i).padStart(4,"0")}`.slice(0,3).padEnd(3,"A"), deathPos: i }));
+    const retired = Array.from({ length: N }, (_, i) => ({
+      hash: `R${String(i).padStart(4, "0")}`.slice(0, 3).padEnd(3, "A"),
+      deathPos: i,
+    }));
     // Use real unique hashes for retired to avoid collision with served: generate via idxToHash
-    for (let i=0;i<N;i++) retired[i]!.hash = idxToHash((90000+i)%HASH_SPACE);
+    for (let i = 0; i < N; i++) retired[i]!.hash = idxToHash((90000 + i) % HASH_SPACE);
     store.clearRetiredAnchors(sessionKey, path);
     store.upsertRetiredAnchors(sessionKey, path, JSON.stringify(retired));
     // Also ensure cards initially empty
-    try { store.clearCards(sessionKey, path); } catch {}
+    try {
+      store.clearCards(sessionKey, path);
+    } catch {}
     let before = store.getRetiredEntries(sessionKey, path);
     expect(before.length).toBe(N);
     let cardsBefore = store.getCards(sessionKey, path);
     expect(cardsBefore.size).toBe(0);
     // Paged read 0..500: serve first half
-    const rowsFirst = Array.from({length: 500}, (_, i)=> ({position:i, hash: hashes[i]!}));
-    await SessionView.recordServed(sessionKey, path, rowsFirst, N, { hashes, canons: Array.from({length:N},(_,i)=>`line${i}`), snapshotId: "snap-cards-1"});
+    const rowsFirst = Array.from({ length: 500 }, (_, i) => ({ position: i, hash: hashes[i]! }));
+    await SessionView.recordServed(sessionKey, path, rowsFirst, N, {
+      hashes,
+      canons: Array.from({ length: N }, (_, i) => `line${i}`),
+      snapshotId: "snap-cards-1",
+    });
     const afterFirst = store.getRetiredEntries(sessionKey, path);
     expect(afterFirst.length).toBe(500);
     // deathPos 0..499 should be swept, 500..999 remain
-    const remainingDeathPos = new Set(afterFirst.map(e=>e.deathPos));
-    for (let i=0;i<500;i++) expect(remainingDeathPos.has(i)).toBe(false);
-    for (let i=500;i<1000;i++) expect(remainingDeathPos.has(i)).toBe(true);
+    const remainingDeathPos = new Set(afterFirst.map((e) => e.deathPos));
+    for (let i = 0; i < 500; i++) expect(remainingDeathPos.has(i)).toBe(false);
+    for (let i = 500; i < 1000; i++) expect(remainingDeathPos.has(i)).toBe(true);
     const cardsAfterFirst = store.getCards(sessionKey, path);
     expect(cardsAfterFirst.size).toBe(500);
-    for (let i=0;i<500;i++) expect(cardsAfterFirst.has(i)).toBe(true);
+    for (let i = 0; i < 500; i++) expect(cardsAfterFirst.has(i)).toBe(true);
     // Paged read 500..1000: serve second half
-    const rowsSecond = Array.from({length: 500}, (_, i)=> ({position:500+i, hash: hashes[500+i]!}));
-    await SessionView.recordServed(sessionKey, path, rowsSecond, N, { hashes, canons: Array.from({length:N},(_,i)=>`line${i}`), snapshotId: "snap-cards-1"});
+    const rowsSecond = Array.from({ length: 500 }, (_, i) => ({
+      position: 500 + i,
+      hash: hashes[500 + i]!,
+    }));
+    await SessionView.recordServed(sessionKey, path, rowsSecond, N, {
+      hashes,
+      canons: Array.from({ length: N }, (_, i) => `line${i}`),
+      snapshotId: "snap-cards-1",
+    });
     const afterSecond = store.getRetiredEntries(sessionKey, path);
     expect(afterSecond.length).toBe(0);
     const cardsAfterSecond = store.getCards(sessionKey, path);
     expect(cardsAfterSecond.size).toBe(1000);
-    for (let i=0;i<1000;i++) expect(cardsAfterSecond.has(i)).toBe(true);
+    for (let i = 0; i < 1000; i++) expect(cardsAfterSecond.has(i)).toBe(true);
     // Full read should clear cards and retired (already 0)
-    const fullRows = hashes.map((h,i)=>({position:i, hash:h}));
-    await SessionView.recordServed(sessionKey, path, fullRows, N, { hashes, canons: Array.from({length:N},(_,i)=>`line${i}`), snapshotId: "snap-cards-2"});
+    const fullRows = hashes.map((h, i) => ({ position: i, hash: h }));
+    await SessionView.recordServed(sessionKey, path, fullRows, N, {
+      hashes,
+      canons: Array.from({ length: N }, (_, i) => `line${i}`),
+      snapshotId: "snap-cards-2",
+    });
     const cardsAfterFull = store.getCards(sessionKey, path);
     expect(cardsAfterFull.size).toBe(0);
     const retiredAfterFull = store.getRetiredEntries(sessionKey, path);
@@ -262,7 +353,12 @@ describe("51 hazard GC", () => {
     const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
     for (let i = 0; i < 2000; i++) {
       let idx = (50000 + i) % 238328;
-      let h=""; let v=idx; for(let j=0;j<3;j++){ h = chars[v%62]! + h; v=Math.floor(v/62); }
+      let h = "";
+      let v = idx;
+      for (let j = 0; j < 3; j++) {
+        h = chars[v % 62]! + h;
+        v = Math.floor(v / 62);
+      }
       hugeRetired.add(h);
     }
     // Ensure hugeRetired does not overlap servedHashes (remove overlaps)

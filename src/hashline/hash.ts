@@ -26,23 +26,26 @@ export function setDefaultHashSnapshotIO(io: HashSnapshotIO | undefined): void {
 export function snapshotIOFor(store?: HashStore): HashSnapshotIO | undefined {
   if (store) {
     return {
-      get: (path, content, deleteCorrupt) => Promise.resolve(store.getSnapshot(path, content, deleteCorrupt)),
+      get: (path, content, deleteCorrupt) =>
+        Promise.resolve(store.getSnapshot(path, content, deleteCorrupt)),
       upsert: (path, checksum, lineCount, hashes) => {
         store.upsertSnapshot(path, checksum, lineCount, hashes);
         return Promise.resolve();
       },
     };
   }
-  return defaultHashSnapshotIO ?? {
-    get: async (path, content, deleteCorrupt) => {
-      const s = await loadHashStore();
-      return s.getSnapshot(path, content, deleteCorrupt);
-    },
-    upsert: async (path, checksum, lineCount, hashes) => {
-      const s = await loadHashStore();
-      s.upsertSnapshot(path, checksum, lineCount, hashes);
-    },
-  };
+  return (
+    defaultHashSnapshotIO ?? {
+      get: async (path, content, deleteCorrupt) => {
+        const s = await loadHashStore();
+        return s.getSnapshot(path, content, deleteCorrupt);
+      },
+      upsert: async (path, checksum, lineCount, hashes) => {
+        const s = await loadHashStore();
+        s.upsertSnapshot(path, checksum, lineCount, hashes);
+      },
+    }
+  );
 }
 
 export function isValidHashList(value: unknown): value is string[] {
@@ -69,7 +72,7 @@ export async function lineHashes(
   const io: HashSnapshotIO | undefined =
     ioOrStore && "getSnapshot" in ioOrStore
       ? snapshotIOFor(ioOrStore as HashStore)
-      : (ioOrStore as HashSnapshotIO | undefined) ?? snapshotIOFor(undefined);
+      : ((ioOrStore as HashSnapshotIO | undefined) ?? snapshotIOFor(undefined));
 
   if (previous) {
     const newHashes = mapStableHashes(

@@ -20,6 +20,6 @@ describe("coverage-last-90", () => {
     const m: any = await import("../../src/file-view.js");
     expect(m.formatSize(0)).toBe("0B");
     expect(m.formatSize(1024)).toContain("KB");
-    expect(m.formatSize(1024*1024)).toContain("MB");
+    expect(m.formatSize(1024 * 1024)).toContain("MB");
   });
 });

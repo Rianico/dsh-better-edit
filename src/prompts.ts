@@ -13,19 +13,20 @@ export interface ToolGuidance {
 }
 
 export const EDIT_DESCRIPTION =
-  "Edit a range of lines in a text file with `{ \"path\": path, \"edits\": [[remove_from, remove_to, replacement_text], ...] }` (tuple) or object `{remove_from, remove_to, replacement_text}` entries \u2014 mixed batches allowed. " +
-  "`path` is file path or null. `read` shows `HASH\u2502content` (e.g. `wUp\u2502  \"site\": {`) \u2014 use bare 3-char HASH anchors for " +
-  "`remove_from`/`remove_to` (e.g. \"wUp\"), never `HASH\u2502content`. `replacement_text` is bare content, \\n joins lines, \"\" deletes. " +
-  "Example: `{\"path\":\"a.py\",\"edits\":[[\"wUp\",\"AU6\",\"new\"]]}` (object form `{remove_from:\"wUp\",remove_to:\"AU6\",replacement_text:\"new\"}` equivalent). Edits are atomic; reuse `HASH\u2502content` from the diff after success. " +
+  'Edit a range of lines in a text file with `{ "path": path, "edits": [[remove_from, remove_to, replacement_text], ...] }` (tuple) or object `{remove_from, remove_to, replacement_text}` entries \u2014 mixed batches allowed. ' +
+  '`path` is file path or null. `read` shows `HASH\u2502content` (e.g. `wUp\u2502  "site": {`) \u2014 use bare 3-char HASH anchors for ' +
+  '`remove_from`/`remove_to` (e.g. "wUp"), never `HASH\u2502content`. `replacement_text` is bare content, \\n joins lines, "" deletes. ' +
+  'Example: `{"path":"a.py","edits":[["wUp","AU6","new"]]}` (object form `{remove_from:"wUp",remove_to:"AU6",replacement_text:"new"}` equivalent). Edits are atomic; reuse `HASH\u2502content` from the diff after success. ' +
   "On failure follow the error hint: `[MODEL]` errors need a retry with fresh anchors, `[USER]` notices are human-only.";
 
 export const EDIT_GUIDANCE: ToolGuidance = {
-  intro: "Edit a range of lines via a bare 3-char HASH anchor \u2014 payload is { path, edits: [[hash,hash,text]] } or { path, edits: [{remove_from, remove_to, replacement_text}] } (single-file atomic, null path infers; tuple and object forms are equivalent, mixed batches allowed).",
+  intro:
+    "Edit a range of lines via a bare 3-char HASH anchor \u2014 payload is { path, edits: [[hash,hash,text]] } or { path, edits: [{remove_from, remove_to, replacement_text}] } (single-file atomic, null path infers; tuple and object forms are equivalent, mixed batches allowed).",
   lines: [
-    "`edit`: `HASH` vs `HASH\u2502content` \u2014 `HASH` is the bare 3-char (e.g. \"wUp\"), `HASH\u2502content` is the full line from `read`/`diff` (e.g. `wUp\u2502    \"site\": {`); never mix them.",
+    '`edit`: `HASH` vs `HASH\u2502content` \u2014 `HASH` is the bare 3-char (e.g. "wUp"), `HASH\u2502content` is the full line from `read`/`diff` (e.g. `wUp\u2502    "site": {`); never mix them.',
     "`edit`: get `remove_from`/`remove_to` by copying only the 3 chars before `\u2502` from `read` output \u2014 never include `\u2502` or content after it.",
-    "`edit`: `replacement_text` is plain file content without `HASH\u2502` \u2014 e.g. \"    \\\"site\\\": {\\n        \\\"class\\\": SiteScraper,\" \u2014 never prefix lines with `HASH\u2502`.",
-    "`edit`: every `\\n` in `replacement_text` separates lines; mirror trailing blank lines explicitly (use \"\" to delete a range).",
+    '`edit`: `replacement_text` is plain file content without `HASH\u2502` \u2014 e.g. "    \\"site\\": {\\n        \\"class\\": SiteScraper," \u2014 never prefix lines with `HASH\u2502`.',
+    '`edit`: every `\\n` in `replacement_text` separates lines; mirror trailing blank lines explicitly (use "" to delete a range).',
     "`edit`: `edits` entries accept either tuple `[remove_from, remove_to, replacement_text]` or object `{remove_from, remove_to, replacement_text}` \u2014 mixed batches allowed, each entry normalizes independently; unknown fields (e.g. stray `path`) are rejected.",
     "`edit`: after a successful edit the returned diff shows fresh anchors (`HASH\u2502content`) \u2014 copy new `HASH` values from there for the next edit; no need to re-read.",
     "`edit`: `remove_from`/`remove_to` are inclusive; batch multiple edits to the same file only when independent \u2014 they apply atomically (fail \u2192 nothing written).",
@@ -40,7 +41,8 @@ export const READ_DESCRIPTION =
   "empty → HASH│ (edit to insert); pageable with offset/limit; BOM stripped; non-UTF-8 shown as U+FFFD.";
 
 export const READ_GUIDANCE: ToolGuidance = {
-  intro: "Use read, not shell commands, to inspect text files and obtain the HASH anchors the editing tools require.",
+  intro:
+    "Use read, not shell commands, to inspect text files and obtain the HASH anchors the editing tools require.",
   lines: [
     "`read`: call it only for content the tools have not served — a page you never saw, or lines past the post-edit diff.",
     "`read`: each row is `HASH│content`; the HASH is the anchor (no line numbers). Rejection echoes return fresh rows that count as serves.",

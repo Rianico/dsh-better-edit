@@ -38,13 +38,13 @@ describe("coverage-agent-d encoding extra", () => {
   });
 
   it("detectBom edge: utf32le vs utf16le priority", () => {
-    expect(detectBom(new Uint8Array([0xff,0xfe,0x00,0x00]))?.encoding).toBe("utf32le");
-    expect(detectBom(new Uint8Array([0x00,0x00,0xfe,0xff]))?.encoding).toBe("utf32be");
-    expect(detectBom(new Uint8Array([0xfe,0xff]))?.encoding).toBe("utf16be");
+    expect(detectBom(new Uint8Array([0xff, 0xfe, 0x00, 0x00]))?.encoding).toBe("utf32le");
+    expect(detectBom(new Uint8Array([0x00, 0x00, 0xfe, 0xff]))?.encoding).toBe("utf32be");
+    expect(detectBom(new Uint8Array([0xfe, 0xff]))?.encoding).toBe("utf16be");
   });
 
   it("scoreText low printable ratio branch", () => {
-    const low = String.fromCharCode(1,2,3,4,5,6);
+    const low = String.fromCharCode(1, 2, 3, 4, 5, 6);
     expect(scoreText(low, "gbk")).toBeLessThan(0);
     const withReplacement = "a\uFFFD";
     expect(scoreText(withReplacement, "gbk")).toBe(-1000);
@@ -55,7 +55,7 @@ describe("coverage-agent-d encoding extra", () => {
     expect(decodeBytes(Buffer.from("hi"), "utf8")).toBe("hi");
     expect(decodeBytes(Buffer.from("hi", "utf16le"), "utf16le")).toBe("hi");
     // utf16be via TextDecoder (in encoding.ts it uses TextDecoder for utf16be) - but our test used Buffer which is utf16le, so decode may fail; just check not throw
-    const beBytes = Buffer.from([0,104,0,105]);
+    const beBytes = Buffer.from([0, 104, 0, 105]);
     expect(decodeBytes(beBytes, "utf16be")).toBe("hi");
     // iconv-lite path
     const gbk = iconv.encode("你好", "gbk");
@@ -68,22 +68,23 @@ describe("coverage-agent-d encoding extra", () => {
     expect(encodeText("hi", "utf16le")).toBeDefined();
     const be = encodeText("hi", "utf16be");
     // encode may be via iconv, check roundtrip if defined
-    if (be) expect(iconv.decode(Buffer.from(be!), "utf16be")).toBe("hi"); else expect(be).toBeUndefined();
+    if (be) expect(iconv.decode(Buffer.from(be!), "utf16be")).toBe("hi");
+    else expect(be).toBeUndefined();
     const gbk = encodeText("你好", "gbk");
     expect(gbk).toBeDefined();
     // invalid enc should return undefined or not throw
     const bad = encodeText("hi", "not-an-enc");
-    expect(bad===undefined || bad instanceof Uint8Array).toBe(true);
+    expect(bad === undefined || bad instanceof Uint8Array).toBe(true);
   });
 
   it("top3Candidates normalizes allowlist and handles empty", () => {
     const b = iconv.encode("你好 world", "gbk");
     expect(top3Candidates(b, [])).toEqual([]);
-    const cands = top3Candidates(b, ["GBK","CP1251"]);
-    expect(cands.map(c=>c.encoding)).toContain("gbk");
+    const cands = top3Candidates(b, ["GBK", "CP1251"]);
+    expect(cands.map((c) => c.encoding)).toContain("gbk");
     // printableRatio <0.85 branch
-    const lowBytes = Buffer.from([0x01,0x02,0x03]);
-    const lowCands = top3Candidates(lowBytes, ["gbk","windows-1251"]);
+    const lowBytes = Buffer.from([0x01, 0x02, 0x03]);
+    const lowCands = top3Candidates(lowBytes, ["gbk", "windows-1251"]);
     expect(lowCands.length).toBe(2);
   });
 
@@ -93,7 +94,7 @@ describe("coverage-agent-d encoding extra", () => {
     const candsAscii = top3Candidates(ascii, ["gbk"]);
     expect(candsAscii[0]!.sample.length).toBeLessThanOrEqual(50);
     // long with non-ascii in middle
-    const long = iconv.encode("a".repeat(40)+"你好"+"b".repeat(40), "gbk");
+    const long = iconv.encode("a".repeat(40) + "你好" + "b".repeat(40), "gbk");
     const candsLong = top3Candidates(long, ["gbk"]);
     expect(candsLong[0]!.sample).toContain("\u4f60"); // will be decoded char
   });
@@ -106,21 +107,21 @@ describe("coverage-agent-d encoding extra", () => {
   it("detectWithChardet fallback when chardet missing or low confidence", async () => {
     const bytes = Buffer.from("short ascii");
     const r = await detectWithChardet(bytes, ["gbk"]);
-    expect(r===undefined || typeof r==="string").toBe(true);
-    const r2 = await detectWithChardet(Buffer.from([0xc4,0xe3]), ["gbk"]);
+    expect(r === undefined || typeof r === "string").toBe(true);
+    const r2 = await detectWithChardet(Buffer.from([0xc4, 0xe3]), ["gbk"]);
     // should not throw
-    expect(r2===undefined || typeof r2==="string").toBe(true);
+    expect(r2 === undefined || typeof r2 === "string").toBe(true);
   });
 
   it("chardetTop3Candidates returns filtered list", async () => {
     const bytes = iconv.encode("Привет мир", "windows-1251");
-    const cands = await chardetTop3Candidates(bytes, ["windows-1251","gbk"]);
+    const cands = await chardetTop3Candidates(bytes, ["windows-1251", "gbk"]);
     expect(Array.isArray(cands)).toBe(true);
   });
 
   it("getTop3Candidates falls back to heuristic", async () => {
     const bytes = iconv.encode("你好世界", "gbk");
-    const cands = await getTop3Candidates(bytes, ["gbk","windows-1251"]);
+    const cands = await getTop3Candidates(bytes, ["gbk", "windows-1251"]);
     expect(cands.length).toBeGreaterThan(0);
   });
 

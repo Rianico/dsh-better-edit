@@ -8,7 +8,8 @@ describe("coverage-agent-g hash-store", () => {
   afterEach(() => vi.restoreAllMocks());
 
   it("validators", async () => {
-    const { isValidHashList, isValidSnapshot, isValidServedList } = await import("../../src/hash-store.js");
+    const { isValidHashList, isValidSnapshot, isValidServedList } =
+      await import("../../src/hash-store.js");
     expect(isValidHashList(["abc"])).toBe(true);
     expect(isValidHashList("not-array")).toBe(false);
     expect(isValidHashList([123 as any])).toBe(false);
@@ -50,8 +51,10 @@ describe("coverage-agent-g hash-store", () => {
       expect(Array.isArray(matches)).toBe(true);
       shutdownHashStore();
     } finally {
-      if (prevHome === undefined) delete process.env.HOME; else process.env.HOME = prevHome;
-      if (prevDsh === undefined) delete process.env.DSH_HOME; else process.env.DSH_HOME = prevDsh;
+      if (prevHome === undefined) delete process.env.HOME;
+      else process.env.HOME = prevHome;
+      if (prevDsh === undefined) delete process.env.DSH_HOME;
+      else process.env.DSH_HOME = prevDsh;
       const { shutdownHashStore } = await import("../../src/hash-store.js");
       shutdownHashStore();
       await rm(dir, { recursive: true, force: true });
@@ -68,7 +71,13 @@ describe("coverage-agent-g hash-store", () => {
       const { loadHashStore, shutdownHashStore } = await import("../../src/hash-store.js");
       const store: any = await loadHashStore();
       const p = join(dir, "a.txt");
-      store.upsertUndo(p, { content: "c", bom: "", ending: "\n", hashes: ["abc"], resultContent: "r" });
+      store.upsertUndo(p, {
+        content: "c",
+        bom: "",
+        ending: "\n",
+        hashes: ["abc"],
+        resultContent: "r",
+      });
       expect(store.getUndo(p)?.content).toBe("c");
       expect(store.getUndo("/nope")).toBeUndefined();
       store.upsertServed("sess", p, JSON.stringify(["abc", null]));
@@ -83,8 +92,10 @@ describe("coverage-agent-g hash-store", () => {
       expect(store.allKnownPaths()).toBeDefined();
       shutdownHashStore();
     } finally {
-      if (prevHome === undefined) delete process.env.HOME; else process.env.HOME = prevHome;
-      if (prevDsh === undefined) delete process.env.DSH_HOME; else process.env.DSH_HOME = prevDsh;
+      if (prevHome === undefined) delete process.env.HOME;
+      else process.env.HOME = prevHome;
+      if (prevDsh === undefined) delete process.env.DSH_HOME;
+      else process.env.DSH_HOME = prevDsh;
       const { shutdownHashStore } = await import("../../src/hash-store.js");
       shutdownHashStore();
       await rm(dir, { recursive: true, force: true });
@@ -109,8 +120,10 @@ describe("coverage-agent-g hash-store", () => {
       expect(store.getSnapshot(missing, "x", false)).toBeUndefined();
       shutdownHashStore();
     } finally {
-      if (prevHome === undefined) delete process.env.HOME; else process.env.HOME = prevHome;
-      if (prevDsh === undefined) delete process.env.DSH_HOME; else process.env.DSH_HOME = prevDsh;
+      if (prevHome === undefined) delete process.env.HOME;
+      else process.env.HOME = prevHome;
+      if (prevDsh === undefined) delete process.env.DSH_HOME;
+      else process.env.DSH_HOME = prevDsh;
       const { shutdownHashStore } = await import("../../src/hash-store.js");
       shutdownHashStore();
       await rm(dir, { recursive: true, force: true });
@@ -160,7 +173,14 @@ describe("coverage-agent-g file-view", () => {
       const snap = await fileSnap(empty);
       expect(snap.snapshotId).toContain("v2|");
       const { normFromText } = await import("../../src/file-view.js");
-      await expect(normFromText({ absolutePath: empty, rawText: "a\n".repeat(100), displayPath: "x", maxLines: 10 })).rejects.toThrow(/E_LARGE_FILE/);
+      await expect(
+        normFromText({
+          absolutePath: empty,
+          rawText: "a\n".repeat(100),
+          displayPath: "x",
+          maxLines: 10,
+        }),
+      ).rejects.toThrow(/E_LARGE_FILE/);
       const { valAccess } = await import("../../src/file-view.js");
       await expect(valAccess("/nope/path", "/nope/path")).rejects.toThrow(/E_NOT_FOUND/);
       const { valKind } = await import("../../src/file-view.js");
@@ -182,7 +202,8 @@ describe("coverage-agent-g file-view", () => {
 
 describe("coverage-agent-g fixtures", () => {
   it("fixtures helpers", async () => {
-    const { withTempFile, setupIntegrationTest, getText, getWritableTempRoot } = await import("../support/fixtures.js");
+    const { withTempFile, setupIntegrationTest, getText, getWritableTempRoot } =
+      await import("../support/fixtures.js");
     await withTempFile("a.txt", "hello\n", async ({ cwd }) => {
       const harness = setupIntegrationTest(cwd);
       const res = await harness.readTool.execute("read", { path: "a.txt" } as any);

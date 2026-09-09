@@ -15,7 +15,14 @@
  * @module dsh-better-edit/file-encoding-state
  */
 
-import { detectBom, isValidUtf8, decodeBytes, normalizeEncoding, top3Candidates, chardetTop3Candidates } from "./encoding.js";
+import {
+  detectBom,
+  isValidUtf8,
+  decodeBytes,
+  normalizeEncoding,
+  top3Candidates,
+  chardetTop3Candidates,
+} from "./encoding.js";
 import type { CandidatePreview } from "./encoding.js";
 import { detectEnding, restoreEndings, toLF, type LineEnding } from "./edit-diff.js";
 
@@ -70,24 +77,41 @@ export function invalidateIfStale(targetKey: string, currentVersion: string | un
 // ---------------------------------------------------------------------------
 
 export function buildTop3ErrorMessage(displayPath: string, candidates: CandidatePreview[]): string {
-  const candStr = candidates.map((c) => `${c.encoding}("${c.sample.slice(0, 20).replace(/"/g, "'")}")`).join(", ");
+  const candStr = candidates
+    .map((c) => `${c.encoding}("${c.sample.slice(0, 20).replace(/"/g, "'")}")`)
+    .join(", ");
   return `[MODEL] [E_UNSUPPORTED_FILE] Path is not a readable UTF-8 text file: ${displayPath}. Hashline editing only supports text files. Top-3 guesses: ${candStr}. Try read({encoding: "<encoding>"}) or set DSH_BETTER_EDIT_AUTO_GUESS_ENCODING=true to auto-decode.`;
 }
 
-function buildAutoGuessFooterFromCandidates(candidates: Array<{ encoding: string; confidence?: number; score?: number; sample?: string }>): string {
+function buildAutoGuessFooterFromCandidates(
+  candidates: Array<{ encoding: string; confidence?: number; score?: number; sample?: string }>,
+): string {
   // chardet path vs heuristic path share same footer shape, just score vs confidence
   const candsStr = candidates
     .map((c) => {
-      const score = c.confidence !== undefined ? String(c.confidence) : c.score !== undefined ? c.score.toFixed(0) : "0";
+      const score =
+        c.confidence !== undefined
+          ? String(c.confidence)
+          : c.score !== undefined
+            ? c.score.toFixed(0)
+            : "0";
       return `${c.encoding} ${score}`;
     })
     .join(", ");
   const top = candidates[0]!;
-  const topScore = top.confidence !== undefined ? String(top.confidence) : top.score !== undefined ? (top.score as number).toFixed(0) : "0";
+  const topScore =
+    top.confidence !== undefined
+      ? String(top.confidence)
+      : top.score !== undefined
+        ? (top.score as number).toFixed(0)
+        : "0";
   return `\n\n[Auto-guessed: ${top.encoding} ${topScore}, candidates: ${candsStr} — re-read with read({encoding}) if garbled]`;
 }
 
-function isMidConfidenceChardet(top: { confidence: number }, second?: { confidence: number }): boolean {
+function isMidConfidenceChardet(
+  top: { confidence: number },
+  second?: { confidence: number },
+): boolean {
   return top.confidence < 70 || (second !== undefined && top.confidence - second.confidence < 10);
 }
 
@@ -146,12 +170,20 @@ export async function decodeForOpen(
     const slice = bom ? bytes.subarray(off) : bytes;
     // For BOM encodings, decode the full bytes (including BOM) via helper; otherwise hint
     let decoded: string | undefined;
-    if (bom && (bom.encoding === "utf8bom" || bom.encoding === "utf16le" || bom.encoding === "utf16be" || bom.encoding === "utf32le" || bom.encoding === "utf32be")) {
+    if (
+      bom &&
+      (bom.encoding === "utf8bom" ||
+        bom.encoding === "utf16le" ||
+        bom.encoding === "utf16be" ||
+        bom.encoding === "utf32le" ||
+        bom.encoding === "utf32be")
+    ) {
       // When hint differs from BOM, hint takes precedence for decoding the slice
       // but we preserve hasBOM from BOM sniff. For utf variants, BOM encoding
       // already handled; for explicit hint we decode slice with hint.
       decoded = decodeBytes(slice, hint);
-      if (decoded === undefined) throw new Error(`[E_DECODE_FAILED] Cannot decode bytes as ${hint}`);
+      if (decoded === undefined)
+        throw new Error(`[E_DECODE_FAILED] Cannot decode bytes as ${hint}`);
       return {
         text: decoded,
         encoding: hint,
@@ -206,18 +238,28 @@ export async function decodeForOpen(
       if (chardetCands.length > 0) {
         const top = chardetCands[0]!;
         const second = chardetCands[1];
-        const isMid = isMidConfidenceChardet(top as { confidence: number }, second as unknown as { confidence: number } | undefined);
+        const isMid = isMidConfidenceChardet(
+          top as { confidence: number },
+          second as unknown as { confidence: number } | undefined,
+        );
         const dec = decodeBytes(bytes, top.encoding);
         if (dec !== undefined && !dec.includes("\uFFFD")) {
           let footer: string | undefined;
-          if (isMid) footer = buildAutoGuessFooterFromCandidates(chardetCands as unknown as Array<{ encoding: string; confidence: number }>);
+          if (isMid)
+            footer = buildAutoGuessFooterFromCandidates(
+              chardetCands as unknown as Array<{ encoding: string; confidence: number }>,
+            );
           return {
             text: dec,
             encoding: top.encoding,
             hasBOM: false,
             lineEnding: detectEnding(dec),
             footer,
-            candidates: chardetCands.map((c) => ({ encoding: c.encoding, sample: c.sample, score: c.confidence })),
+            candidates: chardetCands.map((c) => ({
+              encoding: c.encoding,
+              sample: c.sample,
+              score: c.confidence,
+            })),
           };
         }
       }
@@ -236,7 +278,9 @@ export async function decodeForOpen(
         // Keep existing behavior: always a footer for heuristic, but mid decides inclusion — for now always include
         // to match prior fs-bridge which always built footerHeu.
         void isMid;
-        const footer = buildAutoGuessFooterFromCandidates(candidates as unknown as Array<{ encoding: string; score: number }>);
+        const footer = buildAutoGuessFooterFromCandidates(
+          candidates as unknown as Array<{ encoding: string; score: number }>,
+        );
         return {
           text: dec,
           encoding: best.encoding,
@@ -256,7 +300,11 @@ export async function decodeForOpen(
   try {
     const chardetCands = await chardetTop3Candidates(bytes, config.supportedEncodings);
     if (chardetCands.length > 0) {
-      candidates = chardetCands.map((c) => ({ encoding: c.encoding, sample: c.sample, score: c.confidence }));
+      candidates = chardetCands.map((c) => ({
+        encoding: c.encoding,
+        sample: c.sample,
+        score: c.confidence,
+      }));
     } else {
       candidates = top3Candidates(bytes, config.supportedEncodings);
     }
@@ -330,7 +378,12 @@ export function prepareForSave(
     };
   }
 
-  if (existingState && !opts.normalizeToUtf8 && existingState.encoding !== "utf8" && existingState.encoding !== "utf8bom") {
+  if (
+    existingState &&
+    !opts.normalizeToUtf8 &&
+    existingState.encoding !== "utf8" &&
+    existingState.encoding !== "utf8bom"
+  ) {
     // Legacy file, normalize false — preserve memo on wire (no transcode),
     // provider writes UTF-8 string, version bump will invalidate on next read.
     return { textToWrite: content };

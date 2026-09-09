@@ -7,10 +7,18 @@ describe("coverage-agent-e fixtures2", () => {
       const harness: any = setupIntegrationTest(cwd);
       // Test wrapEdit old shape
       const readRes = await harness.readTool.execute("read", { path: "a.txt" } as any);
-      const hash = getText(readRes).split("\n").find((l: string)=>l.includes("│"))!.split("│")[0]!;
+      const hash = getText(readRes)
+        .split("\n")
+        .find((l: string) => l.includes("│"))!
+        .split("│")[0]!;
       // old shape: remove_from etc directly - may succeed or fail depending on hash state, just ensure no unhandled throw
       try {
-        const oldRes = await harness.editTool.execute("edit", { path: "a.txt", remove_from: hash, remove_to: hash, replacement_text: "hi-old" } as any);
+        const oldRes = await harness.editTool.execute("edit", {
+          path: "a.txt",
+          remove_from: hash,
+          remove_to: hash,
+          replacement_text: "hi-old",
+        } as any);
         expect(typeof getText(oldRes)).toBe("string");
       } catch (e: any) {
         expect(String(e.message ?? e).length).toBeGreaterThan(0);
@@ -20,7 +28,10 @@ describe("coverage-agent-e fixtures2", () => {
       const { buildReadTool } = await import("../../src/tool-read.js");
       const { localIO } = await import("../../src/fs-bridge.js");
       const { FsSandboxController } = await import("../../src/sandbox.js");
-      const sandbox: any = new FsSandboxController({ fs: { sandboxMode: undefined }, get: () => undefined } as any);
+      const sandbox: any = new FsSandboxController({
+        fs: { sandboxMode: undefined },
+        get: () => undefined,
+      } as any);
       const customIo: any = {
         resolve: async (p: string) => p,
         readText: async () => "hi",
@@ -38,8 +49,14 @@ describe("coverage-agent-e fixtures2", () => {
       // We can test by calling harness with a tool that returns warning via edit that triggers warning (e.g., noop)
       // re-read for fresh hash to avoid stale
       const readRes2 = await harness.readTool.execute("read", { path: "a.txt" } as any);
-      const hash2 = getText(readRes2).split("\n").find((l: string)=>l.includes("│"))!.split("│")[0]!;
-      const noopRes = await harness.editTool.execute("edit", { path: "a.txt", edits: [[hash2, hash2, "hello"]] } as any);
+      const hash2 = getText(readRes2)
+        .split("\n")
+        .find((l: string) => l.includes("│"))!
+        .split("│")[0]!;
+      const noopRes = await harness.editTool.execute("edit", {
+        path: "a.txt",
+        edits: [[hash2, hash2, "hello"]],
+      } as any);
       expect(typeof getText(noopRes)).toBe("string");
     });
   });

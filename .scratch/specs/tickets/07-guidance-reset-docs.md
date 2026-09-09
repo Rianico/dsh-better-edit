@@ -26,9 +26,9 @@ A user recovers the compiled default guidance for a section/preset by **emptying
   - **Explicitly reverse** the old rationale "malformed fence degrades the WHOLE file to prose so the mistake stays visible in the rendered section" — that visibility is replaced by the fast-fail + warning (see the 0001 text quoting the prose fallback).
   - Keep the `order`/fence/fallback pipeline description otherwise intact.
 - [ ] `README.md` and `README.zh.md` (repo root): in/under the per-preset guidance section, add a **"Reset / restore defaults"** subsection. Instructions:
-  - *Delete the file, or empty it and remove the front-matter fence* — the compiled default renders at session-start and the file re-seeds at next boot.
-  - *Deliberately blank content* requires keeping a valid fence (a fence is an intent signal; it is never overwritten).
-  - *Broken fence* = the file is ignored (default renders), a warning is logged with file + reason, and the file is left untouched for repair.
+  - _Delete the file, or empty it and remove the front-matter fence_ — the compiled default renders at session-start and the file re-seeds at next boot.
+  - _Deliberately blank content_ requires keeping a valid fence (a fence is an intent signal; it is never overwritten).
+  - _Broken fence_ = the file is ignored (default renders), a warning is logged with file + reason, and the file is left untouched for repair.
   - Note shipped vs custom (custom-preset deletes stay absent) and that reset restores the current bundle defaults.
 - [ ] `CHANGELOG.md` gains an entry describing the feature (reset/restore defaults; fast-fail on malformed fences).
 - [ ] `CONTEXT.md` glossary is consistent with the final vocabulary (`Override file`, `Reset` already added during the design — verify nothing else needs updating: `guidance`, `guidance override`, `reset`).

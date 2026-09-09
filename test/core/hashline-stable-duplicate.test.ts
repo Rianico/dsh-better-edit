@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { lineHashes, applyEdit, type HEdit } from "../../src/hashline/index.js";
-import { useTestHome, withTempFile, setupIntegrationTest, getText, extractHash } from "../support/fixtures.js";
+import {
+  useTestHome,
+  withTempFile,
+  setupIntegrationTest,
+  getText,
+  extractHash,
+} from "../support/fixtures.js";
 
 const home = useTestHome();
 
@@ -193,7 +199,6 @@ describe("stable hashing with duplicate content lines", () => {
         undefined,
         ctx,
       );
-
 
       // The post-edit diff window covers only the changed region; anchors
       // outside it are recovered with a read (hashline's on-demand recovery),

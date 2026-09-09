@@ -86,12 +86,7 @@ export function tenancyFor(cwd?: string): Tenancy {
     return {
       dir,
       mode: "central",
-      runtimeDir: join(
-        resolveDshHome(),
-        "plugins",
-        "dsh-better-edit",
-        "runtime",
-      ),
+      runtimeDir: join(resolveDshHome(), "plugins", "dsh-better-edit", "runtime"),
       canonical,
     };
   }
@@ -115,11 +110,6 @@ export function hashStoreDir(cwd?: string): string {
 
 export function legacyHashStorePath(cwd?: string): string {
   if (cwd === undefined)
-    return join(
-      resolveDshHome(),
-      "plugins",
-      "dsh-better-edit",
-      "hash-store.json",
-    );
+    return join(resolveDshHome(), "plugins", "dsh-better-edit", "hash-store.json");
   return join(resolvePath(cwd), ".dsh_better_edit", "hash-store.json");
 }

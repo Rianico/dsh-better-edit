@@ -5,11 +5,7 @@ import {
   HASH_SPACE,
   MAX_HASH_LINES,
 } from "../../src/hashline/index.js";
-import {
-  useTestHome,
-  withTempFile,
-  setupReadTest,
-} from "../support/fixtures.js";
+import { useTestHome, withTempFile, setupReadTest } from "../support/fixtures.js";
 
 const home = useTestHome();
 
@@ -20,26 +16,19 @@ describe("hashline limits", () => {
   });
 
   it("hashes exactly MAX_HASH_LINES lines with unique anchors", () => {
-    const content = Array.from(
-      { length: MAX_HASH_LINES },
-      (_, i) => `line ${i}`,
-    ).join("\n");
+    const content = Array.from({ length: MAX_HASH_LINES }, (_, i) => `line ${i}`).join("\n");
     const hashes = lineHashesPure(content);
     expect(hashes).toHaveLength(MAX_HASH_LINES);
     expect(new Set(hashes).size).toBe(MAX_HASH_LINES);
   }, 300_000);
 
   it("throws a clear E_LARGE_FILE error above the limit", () => {
-    const content = Array.from({ length: MAX_HASH_LINES + 1 }, () => "x").join(
-      "\n",
-    );
+    const content = Array.from({ length: MAX_HASH_LINES + 1 }, () => "x").join("\n");
     expect(() => lineHashesPure(content)).toThrow("E_ANCHOR_SPACE_EXHAUSTED");
   }, 300_000);
 
   it("preserves unique hashes at the boundary through the store path", async () => {
-    const content = Array.from({ length: MAX_HASH_LINES }, (_, i) => `x${i}`).join(
-      "\n",
-    );
+    const content = Array.from({ length: MAX_HASH_LINES }, (_, i) => `x${i}`).join("\n");
     const hashes = await lineHashes(content, home.testPath);
     expect(hashes).toHaveLength(MAX_HASH_LINES);
     expect(new Set(hashes).size).toBe(MAX_HASH_LINES);
@@ -48,9 +37,7 @@ describe("hashline limits", () => {
 
 describe("read tool line cap", () => {
   it("rejects oversized files with E_LARGE_FILE before hashing", async () => {
-    const content = Array.from({ length: MAX_HASH_LINES + 1 }, () => "x").join(
-      "\n",
-    );
+    const content = Array.from({ length: MAX_HASH_LINES + 1 }, () => "x").join("\n");
     await withTempFile("huge.ts", content, async ({ cwd }) => {
       const { readTool, ctx } = setupReadTest(cwd);
       await expect(
@@ -60,18 +47,10 @@ describe("read tool line cap", () => {
   });
 
   it("reads a file at the limit without hashing errors", async () => {
-    const content = Array.from({ length: MAX_HASH_LINES }, (_, i) => `x${i}`).join(
-      "\n",
-    );
+    const content = Array.from({ length: MAX_HASH_LINES }, (_, i) => `x${i}`).join("\n");
     await withTempFile("big.ts", content, async ({ cwd }) => {
       const { readTool, ctx } = setupReadTest(cwd);
-      const result = await readTool.execute(
-        "r1",
-        { path: "big.ts" },
-        undefined,
-        undefined,
-        ctx,
-      );
+      const result = await readTool.execute("r1", { path: "big.ts" }, undefined, undefined, ctx);
       const text = result.content?.[0]?.text ?? "";
       expect(text).toContain("│x0");
       expect(text).toContain("[Showing lines 1-");

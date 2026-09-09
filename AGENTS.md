@@ -5,6 +5,7 @@ A DeepSeek Harness (`dsh`) plugin: hashline-anchored `read`/`edit`/`undo_last_ed
 ## Working with Git
 
 Prefer issues + pull requests. See `CONTRIBUTING.md` for Conventional Commits (commitlint + husky) and `Closes #NN` convention.
+
 ### Runtime
 
 TypeScript: pnpm v12 + .nvmrc (24) + TS v7 + Vite v8, verify via oxlint/oxfmt/tsc/vitest; see package.json

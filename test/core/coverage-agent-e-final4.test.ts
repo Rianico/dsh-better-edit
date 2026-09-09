@@ -4,7 +4,10 @@ describe("coverage-agent-e final4", () => {
   it("covers sandbox and tool branches", async () => {
     const { FsSandboxController } = await import("../../src/sandbox.js");
     // Test with different sandbox modes
-    const c1 = new FsSandboxController({ fs: { sandboxMode: undefined } as any, get: () => undefined } as any);
+    const c1 = new FsSandboxController({
+      fs: { sandboxMode: undefined } as any,
+      get: () => undefined,
+    } as any);
     expect(c1).toBeDefined();
     // Test with readOnly and policy
     const c2 = new FsSandboxController({
@@ -15,7 +18,8 @@ describe("coverage-agent-e final4", () => {
     // Test with workspace
     const c3 = new FsSandboxController({
       fs: { sandboxMode: "workspace" } as any,
-      get: (k: string) => (k === "sandboxPolicy" ? { root: "/tmp/ws", mode: "workspace" } : undefined),
+      get: (k: string) =>
+        k === "sandboxPolicy" ? { root: "/tmp/ws", mode: "workspace" } : undefined,
     } as any);
     expect(c3).toBeDefined();
   });

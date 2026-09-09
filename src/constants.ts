@@ -12,12 +12,10 @@ export const SERVED_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 export const SERVED_ECHO_CAP = 150;
 export const NOOP_LOOP_THRESHOLD = 3;
 export const NEW_CONTENT_NOT_STRING_MSG =
-	`[MODEL] [E_BAD_PAYLOAD] "replacement_text" must be a string with \\n line separators, not an array.` +
-	` Do not pass an array of lines — pass the replacement text as one string: "line1\\nline2". Use "" to delete a range.`;
+  `[MODEL] [E_BAD_PAYLOAD] "replacement_text" must be a string with \\n line separators, not an array.` +
+  ` Do not pass an array of lines — pass the replacement text as one string: "line1\\nline2". Use "" to delete a range.`;
 
 export function eLargeFileMsg(displayPath: string, lineCount: number, maxLines: number): string {
   return `[MODEL] [E_LARGE_FILE] ${displayPath} has ${lineCount} lines, exceeding the ${maxLines}-line edit limit. Hashline editing targets source-sized files; for very large files use write or a non-line-based approach.`;
 }
-export const E_ANCHOR_SPACE_EXHAUSTED_WARNING =
-  "[E_ANCHOR_SPACE_EXHAUSTED] Anchor space exhausted";
-
+export const E_ANCHOR_SPACE_EXHAUSTED_WARNING = "[E_ANCHOR_SPACE_EXHAUSTED] Anchor space exhausted";

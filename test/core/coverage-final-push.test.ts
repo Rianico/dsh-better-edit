@@ -78,7 +78,8 @@ describe("final-push encoding branches", () => {
   });
 
   it("detectBom edge cases", async () => {
-    const { detectBom, isValidUtf8, hasReplacementChar, decodeBytes, encodeText } = await import("../../src/encoding.js");
+    const { detectBom, isValidUtf8, hasReplacementChar, decodeBytes, encodeText } =
+      await import("../../src/encoding.js");
     expect(detectBom(new Uint8Array([0xef, 0xbb, 0xbf, 0x61]))?.encoding).toBe("utf8bom");
     expect(detectBom(new Uint8Array([0xff, 0xfe, 0x00, 0x00]))?.encoding).toBe("utf32le");
     expect(detectBom(new Uint8Array([0x00, 0x00, 0xfe, 0xff]))?.encoding).toBe("utf32be");
@@ -137,7 +138,9 @@ describe("final-push anchor-pipeline remaining", () => {
     const served = [...hashes];
     // make one hash stale to trigger mismatch formatting
     const edit: any = { hash_bounds: [{ hash: "zzz" }, { hash: "zzz" }], content_lines: ["X"] };
-    expect(() => applyEdit(content, edit, undefined, hashes, "file.txt", served as any)).toThrow(/E_STALE_ANCHOR/);
+    expect(() => applyEdit(content, edit, undefined, hashes, "file.txt", served as any)).toThrow(
+      /E_STALE_ANCHOR/,
+    );
   });
 
   it("verifyServedRange and applyEdit with abort", async () => {
@@ -159,7 +162,10 @@ describe("final-push anchor-pipeline remaining", () => {
       }),
     ).not.toThrow();
     // applyEdit with warnings for hash echo
-    const edit2: any = { hash_bounds: [{ hash: hashes[0]! }, { hash: hashes[0]! }], content_lines: ["new"] };
+    const edit2: any = {
+      hash_bounds: [{ hash: hashes[0]! }, { hash: hashes[0]! }],
+      content_lines: ["new"],
+    };
     const result = applyEdit(content, edit2, undefined, hashes);
     expect(result.content).toContain("new");
   });
@@ -168,14 +174,20 @@ describe("final-push anchor-pipeline remaining", () => {
 describe("final-push store-lifecycle and mutation branches", () => {
   it("store-lifecycle git pollution and pruneMissing", async () => {
     const mod = await import("../../src/store-lifecycle.js");
-    expect(() => mod.setStoresGetter(() => new Map(), () => new Map())).not.toThrow();
+    expect(() =>
+      mod.setStoresGetter(
+        () => new Map(),
+        () => new Map(),
+      ),
+    ).not.toThrow();
     mod._resetLifecycleForTests();
     await mod.onAppStart();
     await mod.onSessionStart();
     expect(true).toBe(true);
   });
   it("mutation noop policy edge cases", async () => {
-    const { trackNoopPayload, clearNoopLoop, noopPayloadKey } = await import("../../src/mutation.js");
+    const { trackNoopPayload, clearNoopLoop, noopPayloadKey } =
+      await import("../../src/mutation.js");
     const { runNoopPolicySync } = await import("../../src/noop-guard.js");
     const base = {
       absolutePath: "/tmp/a.txt",
@@ -215,7 +227,9 @@ describe("final-push hash-store branches", () => {
     const store = await loadHashStore();
     expect(store).toBeDefined();
     // try to trigger pruneMissing via lifecycle
-    const { pruneMissing } = await import("../../src/hash-store.js" as any).catch(() => ({ pruneMissing: undefined }));
+    const { pruneMissing } = await import("../../src/hash-store.js" as any).catch(() => ({
+      pruneMissing: undefined,
+    }));
     expect(true).toBe(true);
   });
 });

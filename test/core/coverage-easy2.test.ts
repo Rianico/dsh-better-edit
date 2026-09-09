@@ -7,9 +7,18 @@ describe("easy2 sandbox", () => {
   it("FsSandboxController basic", async () => {
     const { FsSandboxController } = await import("../../src/sandbox.js");
     // missing policy with confined fs should throw
-    expect(() => new FsSandboxController({ fs: { sandboxMode: "readOnly" } as any, get: () => undefined } as any)).toThrow();
+    expect(
+      () =>
+        new FsSandboxController({
+          fs: { sandboxMode: "readOnly" } as any,
+          get: () => undefined,
+        } as any),
+    ).toThrow();
     // with undefined mode should not throw
-    const ctrl = new FsSandboxController({ fs: { sandboxMode: undefined } as any, get: () => undefined } as any);
+    const ctrl = new FsSandboxController({
+      fs: { sandboxMode: undefined } as any,
+      get: () => undefined,
+    } as any);
     expect(ctrl).toBeDefined();
     expect(true).toBe(true);
   });
@@ -20,8 +29,15 @@ describe("easy2 tool-edit", () => {
     const { buildEditTool } = await import("../../src/tool-edit.js");
     const { localIO } = await import("../../src/fs-bridge.js");
     const { FsSandboxController } = await import("../../src/sandbox.js");
-    const sandbox = new FsSandboxController({ fs: { sandboxMode: undefined }, get: () => undefined } as any);
-    const tool = buildEditTool(localIO, sandbox as any, async () => ({ stdout: "", stderr: "", exitCode: 0 } as any));
+    const sandbox = new FsSandboxController({
+      fs: { sandboxMode: undefined },
+      get: () => undefined,
+    } as any);
+    const tool = buildEditTool(
+      localIO,
+      sandbox as any,
+      async () => ({ stdout: "", stderr: "", exitCode: 0 }) as any,
+    );
     expect(tool).toBeDefined();
     expect(tool.name).toBe("edit");
   });
@@ -38,7 +54,13 @@ describe("easy2 undo-edit", () => {
     try {
       const p = join(dir, "a.txt");
       await writeFile(p, "hello", "utf-8");
-      const entry = { content: "old", bom: "", originalEnding: "\n" as const, hashes: ["h1"], resultContent: "new" };
+      const entry = {
+        content: "old",
+        bom: "",
+        originalEnding: "\n" as const,
+        hashes: ["h1"],
+        resultContent: "new",
+      };
       const r = await mod.saveUndo(p, entry as any);
       expect(typeof r.persisted).toBe("boolean");
       const loaded = await mod.getUndo(p);
@@ -88,9 +110,15 @@ describe("easy2 hash-store", () => {
     expect(store).toBeDefined();
     const fakePath = join(tmpdir(), "easy2-hash-" + Date.now() + ".txt");
     let snap: any;
-    try { snap = await (store as any).getSnapshot?.(fakePath, "hello", false); } catch { snap = undefined; }
+    try {
+      snap = await (store as any).getSnapshot?.(fakePath, "hello", false);
+    } catch {
+      snap = undefined;
+    }
     expect(snap === undefined || Array.isArray(snap)).toBe(true);
-    try { await shutdownHashStore(); } catch {}
+    try {
+      await shutdownHashStore();
+    } catch {}
   });
 });
 
@@ -110,7 +138,9 @@ describe("easy2 guidance materialize", () => {
       // try to call with temp dir
       const dir = await mkdtemp(join(tmpdir(), "easy2-guid-"));
       try {
-        const res = await mod.materialize?.(dir, { preset: "default" } as any).catch(() => undefined);
+        const res = await mod
+          .materialize?.(dir, { preset: "default" } as any)
+          .catch(() => undefined);
         expect(res === undefined || typeof res === "object").toBe(true);
       } finally {
         await rm(dir, { recursive: true, force: true });

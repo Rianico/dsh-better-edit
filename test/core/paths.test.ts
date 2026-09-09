@@ -8,9 +8,7 @@ describe("configDir", () => {
     const previousDsh = process.env.DSH_HOME;
     delete process.env.DSH_HOME;
     try {
-      expect(configDir()).toBe(
-        join(defaultDshHome(), "plugins", "dsh-better-edit"),
-      );
+      expect(configDir()).toBe(join(defaultDshHome(), "plugins", "dsh-better-edit"));
     } finally {
       if (previousDsh === undefined) delete process.env.DSH_HOME;
       else process.env.DSH_HOME = previousDsh;
@@ -21,9 +19,7 @@ describe("configDir", () => {
     const previousDsh = process.env.DSH_HOME;
     process.env.DSH_HOME = "/custom/dsh";
     try {
-      expect(configDir()).toBe(
-        join("/custom/dsh", "plugins", "dsh-better-edit"),
-      );
+      expect(configDir()).toBe(join("/custom/dsh", "plugins", "dsh-better-edit"));
     } finally {
       if (previousDsh === undefined) delete process.env.DSH_HOME;
       else process.env.DSH_HOME = previousDsh;
@@ -34,9 +30,7 @@ describe("configDir", () => {
     const previousDsh = process.env.DSH_HOME;
     process.env.DSH_HOME = "   ";
     try {
-      expect(configDir()).toBe(
-        join(defaultDshHome(), "plugins", "dsh-better-edit"),
-      );
+      expect(configDir()).toBe(join(defaultDshHome(), "plugins", "dsh-better-edit"));
     } finally {
       if (previousDsh === undefined) delete process.env.DSH_HOME;
       else process.env.DSH_HOME = previousDsh;
@@ -95,13 +89,7 @@ describe("store tenancy — central default", () => {
         const dir = configDir("/ws/my-app");
         expect(
           dir.startsWith(
-            join(
-              "/tmp/dsh-home-test",
-              "plugins",
-              "dsh-better-edit",
-              "runtime",
-              "my-app-",
-            ),
+            join("/tmp/dsh-home-test", "plugins", "dsh-better-edit", "runtime", "my-app-"),
           ),
         ).toBe(true);
         expect(dir.slice(-8)).toMatch(/^[0-9a-f]{8}$/);
@@ -112,22 +100,17 @@ describe("store tenancy — central default", () => {
   it("env workspace overrides to legacy .dsh_better_edit", async () => {
     await withCleanEnv({ DSH_BETTER_EDIT_STORE_DIR: "workspace" }, async () => {
       const { configDir } = await import("../../src/paths.js");
-      expect(configDir("/ws/my-app")).toBe(
-        join("/ws/my-app", ".dsh_better_edit"),
-      );
+      expect(configDir("/ws/my-app")).toBe(join("/ws/my-app", ".dsh_better_edit"));
     });
   });
 
   it("env custom abs path uses hash suffix", async () => {
-    await withCleanEnv(
-      { DSH_BETTER_EDIT_STORE_DIR: "/custom/store" },
-      async () => {
-        const { configDir } = await import("../../src/paths.js");
-        const dir = configDir("/ws/my-app");
-        expect(dir.startsWith("/custom/store/")).toBe(true);
-        expect(dir.slice(-8)).toMatch(/^[0-9a-f]{8}$/);
-      },
-    );
+    await withCleanEnv({ DSH_BETTER_EDIT_STORE_DIR: "/custom/store" }, async () => {
+      const { configDir } = await import("../../src/paths.js");
+      const dir = configDir("/ws/my-app");
+      expect(dir.startsWith("/custom/store/")).toBe(true);
+      expect(dir.slice(-8)).toMatch(/^[0-9a-f]{8}$/);
+    });
   });
 
   it("malformed storeDir falls back to central with warn", async () => {
@@ -155,12 +138,9 @@ describe("store tenancy — central default", () => {
       const { loadConfig } = await import("../../src/paths.js");
       expect(loadConfig().autoGitignore).toBe(true);
     });
-    await withCleanEnv(
-      { DSH_BETTER_EDIT_AUTO_GITIGNORE: "False" },
-      async () => {
-        const { loadConfig } = await import("../../src/paths.js");
-        expect(loadConfig().autoGitignore).toBe(false);
-      },
-    );
+    await withCleanEnv({ DSH_BETTER_EDIT_AUTO_GITIGNORE: "False" }, async () => {
+      const { loadConfig } = await import("../../src/paths.js");
+      expect(loadConfig().autoGitignore).toBe(false);
+    });
   });
 });

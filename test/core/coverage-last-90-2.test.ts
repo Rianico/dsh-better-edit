@@ -9,7 +9,10 @@ describe("coverage-last-90-2", () => {
       expect(harness.io).toBeDefined();
       // This should hit makeTestSandbox
       const { FsSandboxController } = await import("../../src/sandbox.js");
-      const ctrl = new (FsSandboxController as any)({ fs: { sandboxMode: undefined }, get: () => undefined } as any);
+      const ctrl = new (FsSandboxController as any)({
+        fs: { sandboxMode: undefined },
+        get: () => undefined,
+      } as any);
       expect(ctrl).toBeDefined();
     });
   });

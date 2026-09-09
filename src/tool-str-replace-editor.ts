@@ -20,7 +20,12 @@
 import { defineTool } from "@deepseek-ai/dsh-tools";
 import type { FileIO } from "./fs-bridge.js";
 import { getAutoGuessFooter } from "./fs-bridge.js";
-import { getEncodingState, invalidateIfStale, prepareForSave, recordOpenState } from "./file-encoding-state.js";
+import {
+  getEncodingState,
+  invalidateIfStale,
+  prepareForSave,
+  recordOpenState,
+} from "./file-encoding-state.js";
 import { stripBOM } from "./edit-diff.js";
 import { renderTextWarning } from "./render-text-warning.js";
 import { execCwd, withWorkspace } from "./workspace-context.js";
@@ -118,7 +123,12 @@ function restoreForSave(content: string, absolutePath: string): string {
 }
 
 function autoGuessWarning(absolutePath: string, rawPath: string): string | undefined {
-  return getAutoGuessFooter(absolutePath) ?? getAutoGuessFooter(rawPath) ?? getAutoGuessFooter(absolutePath.replace(/\\/g, "/")) ?? undefined;
+  return (
+    getAutoGuessFooter(absolutePath) ??
+    getAutoGuessFooter(rawPath) ??
+    getAutoGuessFooter(absolutePath.replace(/\\/g, "/")) ??
+    undefined
+  );
 }
 
 export function buildStrReplaceEditorTool(io: FileIO) {

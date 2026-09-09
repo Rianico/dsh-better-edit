@@ -71,7 +71,14 @@ describe("buildChanged", () => {
       resultHashes,
       warnings: undefined,
       snapshotId: "snap1",
-      editMeta: { editsAttempted: 1, noopEditsCount: 0, firstChangedLine: 2, lastChangedLine: 2, addedLines: 1, removedLines: 1 },
+      editMeta: {
+        editsAttempted: 1,
+        noopEditsCount: 0,
+        firstChangedLine: 2,
+        lastChangedLine: 2,
+        addedLines: 1,
+        removedLines: 1,
+      },
     });
     expect(output.content[0].text).toContain("Successfully edited in test.txt");
     expect(output.content[0].text).toContain("Added 1 line(s), removed 1 line(s).");
@@ -93,9 +100,16 @@ describe("buildChanged", () => {
       resultHashes,
       warnings: ["Boundary duplication (leading)"],
       snapshotId: "snap1",
-      editMeta: { editsAttempted: 1, noopEditsCount: 0, firstChangedLine: 2, lastChangedLine: 2, addedLines: 1, removedLines: 1 },
+      editMeta: {
+        editsAttempted: 1,
+        noopEditsCount: 0,
+        firstChangedLine: 2,
+        lastChangedLine: 2,
+        addedLines: 1,
+        removedLines: 1,
+      },
     });
-    expect(output.content[0].text).toContain("Boundary duplication")
+    expect(output.content[0].text).toContain("Boundary duplication");
     expect(output.content[0].text).toContain("Boundary duplication (leading)");
     expect(output.details.warnings).toEqual(["Boundary duplication (leading)"]);
   });
@@ -113,7 +127,14 @@ describe("buildChanged", () => {
       resultHashes,
       warnings: undefined,
       snapshotId: "snap1",
-      editMeta: { editsAttempted: 1, noopEditsCount: 0, firstChangedLine: 1, lastChangedLine: 2, addedLines: 0, removedLines: 2 },
+      editMeta: {
+        editsAttempted: 1,
+        noopEditsCount: 0,
+        firstChangedLine: 1,
+        lastChangedLine: 2,
+        addedLines: 0,
+        removedLines: 2,
+      },
     });
     expect(output.content[0].text).toBe("File is empty. Use edit to insert content.");
   });
@@ -131,7 +152,14 @@ describe("buildChanged", () => {
       resultHashes,
       warnings: undefined,
       snapshotId: "snap1",
-      editMeta: { editsAttempted: 1, noopEditsCount: 0, firstChangedLine: 2, lastChangedLine: 4, addedLines: 3, removedLines: 2 },
+      editMeta: {
+        editsAttempted: 1,
+        noopEditsCount: 0,
+        firstChangedLine: 2,
+        lastChangedLine: 4,
+        addedLines: 3,
+        removedLines: 2,
+      },
     });
     expect(output.details.metrics!.added_lines).toBe(3);
     expect(output.details.metrics!.removed_lines).toBe(2);
@@ -151,7 +179,14 @@ describe("buildChanged", () => {
       resultHashes,
       warnings: undefined,
       snapshotId: "snap1",
-      editMeta: { editsAttempted: 1, noopEditsCount: 1, firstChangedLine: undefined, lastChangedLine: undefined, addedLines: 0, removedLines: 0 },
+      editMeta: {
+        editsAttempted: 1,
+        noopEditsCount: 1,
+        firstChangedLine: undefined,
+        lastChangedLine: undefined,
+        addedLines: 0,
+        removedLines: 0,
+      },
     });
     expect(output.details.metrics!.added_lines).toBe(0);
     expect(output.details.metrics!.removed_lines).toBe(0);
@@ -170,7 +205,14 @@ describe("buildChanged", () => {
       resultHashes,
       warnings: undefined,
       snapshotId: "snap1",
-      editMeta: { editsAttempted: 1, noopEditsCount: 0, firstChangedLine: 3, lastChangedLine: 3, addedLines: 1, removedLines: 1 },
+      editMeta: {
+        editsAttempted: 1,
+        noopEditsCount: 0,
+        firstChangedLine: 3,
+        lastChangedLine: 3,
+        addedLines: 1,
+        removedLines: 1,
+      },
     });
     const diff = output.details.diff!;
     expect(diff).toContain("│bbb");

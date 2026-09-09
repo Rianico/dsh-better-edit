@@ -27,11 +27,19 @@ describe("mutation coverage agent-a", () => {
     const id1 = await snapshotIdFor(io, fp);
     expect(typeof id1).toBe("string");
     // force io.statVersion to throw -> falls back to fileSnap
-    const badIO: any = { statVersion: async () => { throw new Error("fail"); } };
+    const badIO: any = {
+      statVersion: async () => {
+        throw new Error("fail");
+      },
+    };
     const id2 = await snapshotIdFor(badIO, fp);
     expect(typeof id2).toBe("string");
     // both fail -> undefined
-    const badIO2: any = { statVersion: async () => { throw new Error("fail"); } };
+    const badIO2: any = {
+      statVersion: async () => {
+        throw new Error("fail");
+      },
+    };
     // mock fileSnap to throw by giving non-existent file
     const id3 = await snapshotIdFor(badIO2, join(dir, "nonexistent-" + Math.random()));
     expect(id3).toBeUndefined();
@@ -42,19 +50,31 @@ describe("mutation coverage agent-a", () => {
     const { execPipeline } = await import("../../src/mutation.js");
     const dir = await mkdtemp(join(await getWritableTempRoot(), "mut-exec-"));
     const restoreHome = (() => {
-      const prev = process.env.HOME; const prevD = process.env.DSH_HOME;
-      process.env.HOME = dir; process.env.DSH_HOME = join(dir, ".dsh");
+      const prev = process.env.HOME;
+      const prevD = process.env.DSH_HOME;
+      process.env.HOME = dir;
+      process.env.DSH_HOME = join(dir, ".dsh");
       return () => {
-        if (prev===undefined) delete process.env.HOME; else process.env.HOME = prev;
-        if (prevD===undefined) delete process.env.DSH_HOME; else process.env.DSH_HOME = prevD;
+        if (prev === undefined) delete process.env.HOME;
+        else process.env.HOME = prev;
+        if (prevD === undefined) delete process.env.DSH_HOME;
+        else process.env.DSH_HOME = prevD;
       };
     })();
     try {
       const io = localIO();
       // invalid anchor (non-existent hash) will be caught in resEdit? resEdit warns but not throws; need anchor mismatch via applyOne?
       // Instead test that execPipeline aborts if signal aborted before IO
-      const ctrl = new AbortController(); ctrl.abort();
-      await expect(execPipeline(io, { path: "a.txt", remove_from: "Abc", remove_to: "Xyz", replacement_text: "hi" } as any, dir, { signal: ctrl.signal })).rejects.toThrow();
+      const ctrl = new AbortController();
+      ctrl.abort();
+      await expect(
+        execPipeline(
+          io,
+          { path: "a.txt", remove_from: "Abc", remove_to: "Xyz", replacement_text: "hi" } as any,
+          dir,
+          { signal: ctrl.signal },
+        ),
+      ).rejects.toThrow();
     } finally {
       shutdownHashStore();
       await rm(dir, { recursive: true, force: true });
@@ -65,11 +85,15 @@ describe("mutation coverage agent-a", () => {
   it("execPipeline success path with mocked session-view", async () => {
     const dir = await mkdtemp(join(await getWritableTempRoot(), "mut-ok-"));
     const restoreHome = (() => {
-      const prev = process.env.HOME; const prevD = process.env.DSH_HOME;
-      process.env.HOME = dir; process.env.DSH_HOME = join(dir, ".dsh");
+      const prev = process.env.HOME;
+      const prevD = process.env.DSH_HOME;
+      process.env.HOME = dir;
+      process.env.DSH_HOME = join(dir, ".dsh");
       return () => {
-        if (prev===undefined) delete process.env.HOME; else process.env.HOME = prev;
-        if (prevD===undefined) delete process.env.DSH_HOME; else process.env.DSH_HOME = prevD;
+        if (prev === undefined) delete process.env.HOME;
+        else process.env.HOME = prev;
+        if (prevD === undefined) delete process.env.DSH_HOME;
+        else process.env.DSH_HOME = prevD;
       };
     })();
     try {
@@ -93,7 +117,19 @@ describe("mutation coverage agent-a", () => {
       // We'll attempt to delete line2 by using its hash range – need hash for line2 as well
       const secondLine = preview.text.split("\n")[1]!;
       const hash2 = secondLine.split("│")[0]!;
-      const result = await withWorkspace(dir, () => execPipeline(io, { path: file, remove_from: hash, remove_to: hash2, replacement_text: "replaced\n" } as any, dir, { sessionKey }));
+      const result = await withWorkspace(dir, () =>
+        execPipeline(
+          io,
+          {
+            path: file,
+            remove_from: hash,
+            remove_to: hash2,
+            replacement_text: "replaced\n",
+          } as any,
+          dir,
+          { sessionKey },
+        ),
+      );
       expect(result.absolutePath).toBe(file);
       expect(result.originalHashes.length).toBe(3);
       // result may have warnings
@@ -124,11 +160,15 @@ describe("mutation coverage agent-a", () => {
     const mod = await import("../../src/mutation.js");
     const dir = await mkdtemp(join(await getWritableTempRoot(), "mut-single-"));
     const restoreHome = (() => {
-      const prev = process.env.HOME; const prevD = process.env.DSH_HOME;
-      process.env.HOME = dir; process.env.DSH_HOME = join(dir, ".dsh");
+      const prev = process.env.HOME;
+      const prevD = process.env.DSH_HOME;
+      process.env.HOME = dir;
+      process.env.DSH_HOME = join(dir, ".dsh");
       return () => {
-        if (prev===undefined) delete process.env.HOME; else process.env.HOME = prev;
-        if (prevD===undefined) delete process.env.DSH_HOME; else process.env.DSH_HOME = prevD;
+        if (prev === undefined) delete process.env.HOME;
+        else process.env.HOME = prev;
+        if (prevD === undefined) delete process.env.DSH_HOME;
+        else process.env.DSH_HOME = prevD;
       };
     })();
     try {
@@ -138,10 +178,19 @@ describe("mutation coverage agent-a", () => {
       const { readAndServe } = await import("../../src/read-and-serve.js");
       const { withWorkspace } = await import("../../src/workspace-context.js");
       const sk = "sk-single-" + Math.random();
-      const preview = await withWorkspace(dir, () => readAndServe(io, file, dir, { sessionKey: sk }));
+      const preview = await withWorkspace(dir, () =>
+        readAndServe(io, file, dir, { sessionKey: sk }),
+      );
       const h1 = preview.text.split("\n")[0]!.split("│")[0]!;
       const h2 = preview.text.split("\n")[1]!.split("│")[0]!;
-      const res = await withWorkspace(dir, () => mod.applySingle(io, { path: file, remove_from: h1, remove_to: h2, replacement_text: "x\n" } as any, dir, { sessionKey: sk }));
+      const res = await withWorkspace(dir, () =>
+        mod.applySingle(
+          io,
+          { path: file, remove_from: h1, remove_to: h2, replacement_text: "x\n" } as any,
+          dir,
+          { sessionKey: sk },
+        ),
+      );
       expect(res.result).toBeDefined();
     } finally {
       shutdownHashStore();

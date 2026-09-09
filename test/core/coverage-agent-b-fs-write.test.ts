@@ -1,13 +1,27 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { mkdtemp, writeFile, readFile, rm, stat, mkdir, readdir, symlink, open } from "node:fs/promises";
+import {
+  mkdtemp,
+  writeFile,
+  readFile,
+  rm,
+  stat,
+  mkdir,
+  readdir,
+  symlink,
+  open,
+} from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { writeAtomic } from "../../src/fs-write.js";
 
 describe("writeAtomic coverage", () => {
   let dir: string;
-  beforeEach(async () => { dir = await mkdtemp(join(tmpdir(), "fswrite-")); });
-  afterEach(async () => { await rm(dir, { recursive: true, force: true }); });
+  beforeEach(async () => {
+    dir = await mkdtemp(join(tmpdir(), "fswrite-"));
+  });
+  afterEach(async () => {
+    await rm(dir, { recursive: true, force: true });
+  });
 
   it("writes new file", async () => {
     const p = join(dir, "new.txt");
@@ -54,7 +68,9 @@ describe("writeAtomic coverage", () => {
         // link should also see updated because hardlink (or writeFile path triggers)
         // but we at least check no error
       }
-    } catch { /* ignore on unsupported */ }
+    } catch {
+      /* ignore on unsupported */
+    }
   });
 
   it("sweep cleans stale temps only once per dir", async () => {

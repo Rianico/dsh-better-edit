@@ -17,7 +17,12 @@ describe("coverage-agent-g fs-bridge", () => {
         throw e;
       },
       readBytes: async () => Buffer.from("hello world"),
-      stat: async () => ({ size: 11, mtimeMs: Date.now(), isDirectory: () => false, isFile: () => true }),
+      stat: async () => ({
+        size: 11,
+        mtimeMs: Date.now(),
+        isDirectory: () => false,
+        isFile: () => true,
+      }),
     };
     const ctx: any = { fs: mockFs, get: (k: string) => (k === "fs" ? mockFs : undefined) };
     const io = mod.ctxFsIO(ctx);

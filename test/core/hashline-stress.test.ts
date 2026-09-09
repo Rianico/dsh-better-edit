@@ -140,9 +140,7 @@ describe("hash collision stress tests", () => {
     const oldHashes = lineHashesPure(oldContent);
 
     const newContent = Array.from({ length: 5_000 }, () => "same").join("\n");
-    const removedHashes = new Set(
-      oldHashes.filter((_, i) => i % 2 === 0)
-    );
+    const removedHashes = new Set(oldHashes.filter((_, i) => i % 2 === 0));
 
     const result = await lineHashes(newContent, home.testPath, {
       content: oldContent,

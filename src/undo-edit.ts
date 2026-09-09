@@ -8,32 +8,32 @@
  * @module dsh-better-edit/undo-edit
  */
 
-import type { LineEnding } from './edit-diff.js'
-import { loadHashStore, type UndoRecord } from './hash-store.js'
+import type { LineEnding } from "./edit-diff.js";
+import { loadHashStore, type UndoRecord } from "./hash-store.js";
 
 /** Load the last undo row for a path from the active store, if any. */
 async function readUndo(path: string): Promise<UndoRecord | undefined> {
-	const store = await loadHashStore()
-	return store.getUndo(path)
+  const store = await loadHashStore();
+  return store.getUndo(path);
 }
 
 /** Persist the undo row for a path to the active store. */
 async function writeUndo(path: string, entry: UndoRecord): Promise<void> {
-	const store = await loadHashStore()
-	store.upsertUndo(path, entry)
+  const store = await loadHashStore();
+  store.upsertUndo(path, entry);
 }
 
 /** Drop the undo row for a path from the active store. */
 async function removeUndo(path: string): Promise<void> {
-	const store = await loadHashStore()
-	store.deleteUndo(path)
+  const store = await loadHashStore();
+  store.deleteUndo(path);
 }
 export interface UndoEntry {
-	content: string
-	bom: string
-	originalEnding: LineEnding
-	hashes: string[]
-	resultContent: string
+  content: string;
+  bom: string;
+  originalEnding: LineEnding;
+  hashes: string[];
+  resultContent: string;
 }
 
 /**
@@ -44,68 +44,64 @@ export interface UndoEntry {
  *   undo entry back (used when the mutation itself fails).
  */
 export async function saveUndo(
-	path: string,
-	entry: UndoEntry,
+  path: string,
+  entry: UndoEntry,
 ): Promise<{ persisted: boolean; restore: () => Promise<void> }> {
-	let previous: UndoRecord | undefined
-	try {
-		previous = await readUndo(path)
-		await writeUndo(path, {
-			content: entry.content,
-			bom: entry.bom,
-			ending: entry.originalEnding,
-			hashes: entry.hashes,
-			resultContent: entry.resultContent,
-		})
-	} catch (error) {
-		console.error('Failed to persist undo entry:', error)
-		return { persisted: false, restore: async () => undefined }
-	}
-	return {
-		persisted: true,
-		restore: async () => {
-			try {
-				if (previous) await writeUndo(path, previous)
-				else await removeUndo(path)
-			} catch (error) {
-				console.error('Failed to restore previous undo entry:', error)
-			}
-		},
-	}
+  let previous: UndoRecord | undefined;
+  try {
+    previous = await readUndo(path);
+    await writeUndo(path, {
+      content: entry.content,
+      bom: entry.bom,
+      ending: entry.originalEnding,
+      hashes: entry.hashes,
+      resultContent: entry.resultContent,
+    });
+  } catch (error) {
+    console.error("Failed to persist undo entry:", error);
+    return { persisted: false, restore: async () => undefined };
+  }
+  return {
+    persisted: true,
+    restore: async () => {
+      try {
+        if (previous) await writeUndo(path, previous);
+        else await removeUndo(path);
+      } catch (error) {
+        console.error("Failed to restore previous undo entry:", error);
+      }
+    },
+  };
 }
 
 /** Load the last undo entry for a path, if any. */
 export async function getUndo(path: string): Promise<UndoEntry | undefined> {
-	try {
-		const record = await readUndo(path)
-		if (!record) return undefined
-		const originalEnding = record.ending
-		if (
-			originalEnding !== '\r\n' &&
-			originalEnding !== '\n' &&
-			originalEnding !== '\r'
-		) {
-			await removeUndo(path)
-			return undefined
-		}
-		return {
-			content: record.content,
-			bom: record.bom,
-			originalEnding,
-			hashes: record.hashes,
-			resultContent: record.resultContent,
-		}
-	} catch (error) {
-		console.error('Failed to load undo entry:', error)
-		return undefined
-	}
+  try {
+    const record = await readUndo(path);
+    if (!record) return undefined;
+    const originalEnding = record.ending;
+    if (originalEnding !== "\r\n" && originalEnding !== "\n" && originalEnding !== "\r") {
+      await removeUndo(path);
+      return undefined;
+    }
+    return {
+      content: record.content,
+      bom: record.bom,
+      originalEnding,
+      hashes: record.hashes,
+      resultContent: record.resultContent,
+    };
+  } catch (error) {
+    console.error("Failed to load undo entry:", error);
+    return undefined;
+  }
 }
 
 /** Drop the undo entry for a path (a write or an undone revert clears history). */
 export async function clearUndo(path: string): Promise<void> {
-	try {
-		await removeUndo(path)
-	} catch (error) {
-		console.error('Failed to clear undo entry:', error)
-	}
+  try {
+    await removeUndo(path);
+  } catch (error) {
+    console.error("Failed to clear undo entry:", error);
+  }
 }

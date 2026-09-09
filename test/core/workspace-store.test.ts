@@ -18,176 +18,167 @@ import { lineHashes } from "../../src/hashline/index.js";
 import { initHasher } from "../../src/hashline/hasher.js";
 
 function tempWorkspace(prefix: string): string {
-	return mkdtempSync(join(tmpdir(), prefix));
+  return mkdtempSync(join(tmpdir(), prefix));
 }
 
 describe("workspace context", () => {
-	it("carries the workspace cwd through the async execution", async () => {
-		const cwd = tempWorkspace("dsh-ws-ctx-");
-		try {
-			let seen: string | undefined;
-			await withWorkspace(cwd, async () => {
-				seen = workspaceCwd();
-			});
-			expect(seen).toBe(cwd);
-			// outside the context there is no workspace
-			expect(workspaceCwd()).toBeUndefined();
-		} finally {
-			rmSync(cwd, { recursive: true, force: true });
-		}
-	});
+  it("carries the workspace cwd through the async execution", async () => {
+    const cwd = tempWorkspace("dsh-ws-ctx-");
+    try {
+      let seen: string | undefined;
+      await withWorkspace(cwd, async () => {
+        seen = workspaceCwd();
+      });
+      expect(seen).toBe(cwd);
+      // outside the context there is no workspace
+      expect(workspaceCwd()).toBeUndefined();
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
 
-	async function withEnv(
-		env: Record<string, string | undefined>,
-		fn: () => Promise<void>,
-	): Promise<void> {
-		const prev: Record<string, string | undefined> = {};
-		for (const [k, v] of Object.entries(env)) {
-			prev[k] = process.env[k];
-			if (v === undefined) delete process.env[k];
-			else process.env[k] = v;
-		}
-		try {
-			await fn();
-		} finally {
-			for (const [k, v] of Object.entries(prev)) {
-				if (v === undefined) delete process.env[k];
-				else process.env[k] = v;
-			}
-		}
-	}
+  async function withEnv(
+    env: Record<string, string | undefined>,
+    fn: () => Promise<void>,
+  ): Promise<void> {
+    const prev: Record<string, string | undefined> = {};
+    for (const [k, v] of Object.entries(env)) {
+      prev[k] = process.env[k];
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+    try {
+      await fn();
+    } finally {
+      for (const [k, v] of Object.entries(prev)) {
+        if (v === undefined) delete process.env[k];
+        else process.env[k] = v;
+      }
+    }
+  }
 
-	it("resolves the store file under <workspace>/.dsh_better_edit when storeDir=workspace", async () => {
-		const cwd = tempWorkspace("dsh-ws-path-");
-		await withEnv({ DSH_BETTER_EDIT_STORE_DIR: "workspace" }, async () => {
-			const { _resetConfigCache } = await import("../../src/paths.js");
-			_resetConfigCache();
-			try {
-				expect(hashStorePath(cwd)).toBe(
-					join(cwd, ".dsh_better_edit", "hash-store.sqlite"),
-				);
-				await withWorkspace(cwd, async () => {
-					await loadHashStore();
-				});
-				expect(existsSync(join(cwd, ".dsh_better_edit", "hash-store.sqlite"))).toBe(
-					true,
-				);
-			} finally {
-				const { _resetConfigCache: r } = await import("../../src/paths.js");
-				r();
-				shutdownHashStore();
-				rmSync(cwd, { recursive: true, force: true });
-			}
-		});
-	});
+  it("resolves the store file under <workspace>/.dsh_better_edit when storeDir=workspace", async () => {
+    const cwd = tempWorkspace("dsh-ws-path-");
+    await withEnv({ DSH_BETTER_EDIT_STORE_DIR: "workspace" }, async () => {
+      const { _resetConfigCache } = await import("../../src/paths.js");
+      _resetConfigCache();
+      try {
+        expect(hashStorePath(cwd)).toBe(join(cwd, ".dsh_better_edit", "hash-store.sqlite"));
+        await withWorkspace(cwd, async () => {
+          await loadHashStore();
+        });
+        expect(existsSync(join(cwd, ".dsh_better_edit", "hash-store.sqlite"))).toBe(true);
+      } finally {
+        const { _resetConfigCache: r } = await import("../../src/paths.js");
+        r();
+        shutdownHashStore();
+        rmSync(cwd, { recursive: true, force: true });
+      }
+    });
+  });
 
-	it("resolves the store file under central runtime/<name>-<hash8> by default", async () => {
-		const cwd = tempWorkspace("dsh-ws-path-");
-		const tmpHome = mkdtempSync(join(tmpdir(), "dsh-home-"));
-		await withEnv(
-			{ DSH_BETTER_EDIT_STORE_DIR: undefined, DSH_HOME: tmpHome },
-			async () => {
-				const { _resetConfigCache, hashStorePath: hsp } = await import(
-					"../../src/paths.js"
-				);
-				_resetConfigCache();
-				try {
-					const p = hsp(cwd);
-					expect(p).toContain(join("runtime"));
-					expect(p.endsWith("hash-store.sqlite")).toBe(true);
-					await withWorkspace(cwd, async () => {
-						await loadHashStore();
-					});
-					expect(existsSync(p)).toBe(true);
-				} finally {
-					const { _resetConfigCache: r } = await import("../../src/paths.js");
-					r();
-					shutdownHashStore();
-					rmSync(cwd, { recursive: true, force: true });
-					rmSync(tmpHome, { recursive: true, force: true });
-				}
-			},
-		);
-	});
+  it("resolves the store file under central runtime/<name>-<hash8> by default", async () => {
+    const cwd = tempWorkspace("dsh-ws-path-");
+    const tmpHome = mkdtempSync(join(tmpdir(), "dsh-home-"));
+    await withEnv({ DSH_BETTER_EDIT_STORE_DIR: undefined, DSH_HOME: tmpHome }, async () => {
+      const { _resetConfigCache, hashStorePath: hsp } = await import("../../src/paths.js");
+      _resetConfigCache();
+      try {
+        const p = hsp(cwd);
+        expect(p).toContain(join("runtime"));
+        expect(p.endsWith("hash-store.sqlite")).toBe(true);
+        await withWorkspace(cwd, async () => {
+          await loadHashStore();
+        });
+        expect(existsSync(p)).toBe(true);
+      } finally {
+        const { _resetConfigCache: r } = await import("../../src/paths.js");
+        r();
+        shutdownHashStore();
+        rmSync(cwd, { recursive: true, force: true });
+        rmSync(tmpHome, { recursive: true, force: true });
+      }
+    });
+  });
 });
 
 describe("workspace isolation", () => {
-	it("keeps snapshots in separate stores per workspace", async () => {
-		await initHasher();
-		const a = tempWorkspace("dsh-ws-a-");
-		const b = tempWorkspace("dsh-ws-b-");
-		const content = "one\ntwo\nthree\n";
-		try {
-			// Write a snapshot in workspace A only (lineHashes persists it
-			// keyed by path + real checksum).
-			await withWorkspace(a, async () => {
-				await lineHashes(content, join(a, "f.txt"));
-			});
+  it("keeps snapshots in separate stores per workspace", async () => {
+    await initHasher();
+    const a = tempWorkspace("dsh-ws-a-");
+    const b = tempWorkspace("dsh-ws-b-");
+    const content = "one\ntwo\nthree\n";
+    try {
+      // Write a snapshot in workspace A only (lineHashes persists it
+      // keyed by path + real checksum).
+      await withWorkspace(a, async () => {
+        await lineHashes(content, join(a, "f.txt"));
+      });
 
-			// Workspace B must NOT see A's snapshot (separate store file).
-			await withWorkspace(b, async () => {
-				const store = await loadHashStore();
-				expect(store.getSnapshot(join(a, "f.txt"), content, false)).toBeUndefined();
-			});
+      // Workspace B must NOT see A's snapshot (separate store file).
+      await withWorkspace(b, async () => {
+        const store = await loadHashStore();
+        expect(store.getSnapshot(join(a, "f.txt"), content, false)).toBeUndefined();
+      });
 
-			// Workspace A still sees it.
-			await withWorkspace(a, async () => {
-				const store = await loadHashStore();
-				expect(store.getSnapshot(join(a, "f.txt"), content, false)).toBeDefined();
-			});
-		} finally {
-			shutdownHashStore();
-			rmSync(a, { recursive: true, force: true });
-			rmSync(b, { recursive: true, force: true });
-		}
-	});
+      // Workspace A still sees it.
+      await withWorkspace(a, async () => {
+        const store = await loadHashStore();
+        expect(store.getSnapshot(join(a, "f.txt"), content, false)).toBeDefined();
+      });
+    } finally {
+      shutdownHashStore();
+      rmSync(a, { recursive: true, force: true });
+      rmSync(b, { recursive: true, force: true });
+    }
+  });
 });
 
 describe("stale served tail (regression)", () => {
-	it("truncates the served array to the current line count on a whole-file serve, so a surviving hash never claims two positions", async () => {
-		await initHasher();
-		const ws = tempWorkspace("dsh-ws-tail-");
-		const path = join(ws, "f.txt");
-		const session = "sess-tail";
-		try {
-			// Serve an 8-line file (a full read), then a 2-line file (the
-			// write auto-read). Before the fix the second serve left the stale
-			// positions 2..7 in the array, so the surviving "c" line's hash
-			// appeared at BOTH its old position 2 and its new position 1 —
-			// and any edit targeting it failed E_UNSERVED_RANGE.
-			await withWorkspace(ws, async () => {
-				const big = "a\nb\nc\nd\ne\nf\ng\nh\n";
-				writeFileSync(path, big);
-				const bigHashes = await lineHashes(big, path);
-				await recordServed(
-					session,
-					path,
-					bigHashes.map((h, i) => ({ position: i, hash: h })),
-					bigHashes.length,
-				);
+  it("truncates the served array to the current line count on a whole-file serve, so a surviving hash never claims two positions", async () => {
+    await initHasher();
+    const ws = tempWorkspace("dsh-ws-tail-");
+    const path = join(ws, "f.txt");
+    const session = "sess-tail";
+    try {
+      // Serve an 8-line file (a full read), then a 2-line file (the
+      // write auto-read). Before the fix the second serve left the stale
+      // positions 2..7 in the array, so the surviving "c" line's hash
+      // appeared at BOTH its old position 2 and its new position 1 —
+      // and any edit targeting it failed E_UNSERVED_RANGE.
+      await withWorkspace(ws, async () => {
+        const big = "a\nb\nc\nd\ne\nf\ng\nh\n";
+        writeFileSync(path, big);
+        const bigHashes = await lineHashes(big, path);
+        await recordServed(
+          session,
+          path,
+          bigHashes.map((h, i) => ({ position: i, hash: h })),
+          bigHashes.length,
+        );
 
-				const small = "b\nc\n";
-				writeFileSync(path, small);
-				const smallHashes = await lineHashes(small, path);
-				await recordServed(
-					session,
-					path,
-					smallHashes.map((h, i) => ({ position: i, hash: h })),
-					smallHashes.length,
-				);
+        const small = "b\nc\n";
+        writeFileSync(path, small);
+        const smallHashes = await lineHashes(small, path);
+        await recordServed(
+          session,
+          path,
+          smallHashes.map((h, i) => ({ position: i, hash: h })),
+          smallHashes.length,
+        );
 
-				const served = await loadServed(session, path);
-				expect(served.length).toBe(smallHashes.length);
-				const counts = new Map<string, number>();
-				for (const h of served) {
-					if (h === null) continue;
-					counts.set(h, (counts.get(h) ?? 0) + 1);
-				}
-				expect([...counts.values()].every((c) => c === 1)).toBe(true);
-			});
-		} finally {
-			shutdownHashStore();
-			rmSync(ws, { recursive: true, force: true });
-		}
-	});
+        const served = await loadServed(session, path);
+        expect(served.length).toBe(smallHashes.length);
+        const counts = new Map<string, number>();
+        for (const h of served) {
+          if (h === null) continue;
+          counts.set(h, (counts.get(h) ?? 0) + 1);
+        }
+        expect([...counts.values()].every((c) => c === 1)).toBe(true);
+      });
+    } finally {
+      shutdownHashStore();
+      rmSync(ws, { recursive: true, force: true });
+    }
+  });
 });

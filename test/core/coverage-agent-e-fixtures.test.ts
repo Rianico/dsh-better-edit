@@ -1,10 +1,16 @@
 import { describe, it, expect } from "vitest";
-import { withTempBytes, withTempSubdir, withTempDir, makeTempDir, getWritableTempRoot } from "../support/fixtures.js";
+import {
+  withTempBytes,
+  withTempSubdir,
+  withTempDir,
+  makeTempDir,
+  getWritableTempRoot,
+} from "../support/fixtures.js";
 import { rm } from "node:fs/promises";
 
 describe("coverage-agent-e fixtures", () => {
   it("withTempBytes", async () => {
-    await withTempBytes("b.bin", Buffer.from([1,2,3]), async ({ path }) => {
+    await withTempBytes("b.bin", Buffer.from([1, 2, 3]), async ({ path }) => {
       expect(path.endsWith("b.bin")).toBe(true);
     });
   });

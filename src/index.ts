@@ -28,10 +28,10 @@ import { registerWriteHook } from "./write-hook.js";
 import { createSelfHealWatcher } from "./self-heal.js";
 import { initHasher } from "./hashline/hash-assign.js";
 import {
-	composeSections,
-	ensurePresetGuidance,
-	GUIDANCE_SECTIONS,
-	type SectionOverride,
+  composeSections,
+  ensurePresetGuidance,
+  GUIDANCE_SECTIONS,
+  type SectionOverride,
 } from "./guidance.js";
 import { configDir } from "./store/index.js";
 import { ensureDefaultConfig } from "./store-config.js";
@@ -51,7 +51,7 @@ export const inject = ["tools", "systemPrompt", "fs"];
 
 /** One per-agent registration bundle, disposed with the agent. */
 interface AgentTools {
-	dispose(): void;
+  dispose(): void;
 }
 
 /**
@@ -60,16 +60,16 @@ interface AgentTools {
  * service keeps the compiled defaults and never touches the filesystem here.
  */
 interface AgentPresetsService {
-	composedPreset(agentCtx: Context): string | undefined;
+  composedPreset(agentCtx: Context): string | undefined;
 }
 
 /** The four sections as compiled, byte-identical to the pre-guidance install. */
 function compiledDefaultSections(): SectionOverride[] {
-	return GUIDANCE_SECTIONS.map((section) => ({
-		name: section.name,
-		order: section.defaultOrder,
-		text: section.renderDefault(),
-	}));
+  return GUIDANCE_SECTIONS.map((section) => ({
+    name: section.name,
+    order: section.defaultOrder,
+    text: section.renderDefault(),
+  }));
 }
 
 /**
@@ -79,127 +79,130 @@ function compiledDefaultSections(): SectionOverride[] {
  * resolution failure degrades to compiled defaults so a bad override file can
  * never fail the install.
  */
-async function resolveAgentSections(
-	rootCtx: Context,
-	agent: Agent,
-): Promise<SectionOverride[]> {
-	const agentPresets = rootCtx.get("agentPresets") as
-		| AgentPresetsService
-		| undefined;
-	if (!agentPresets) return compiledDefaultSections();
-	try {
-		const presetId = agentPresets.composedPreset(agent.ctx);
-		const sections = await composeSections(presetId, configDir());
-		// Warn once per agent install (this runs once per agent, under the
-		// WeakSet guard) about any malformed override we had to ignore.
-		for (const section of sections) {
-			if (section.malformed) {
-				rootCtx.logger.warn(
-					`dsh-better-edit: ignoring malformed guidance override ${section.malformed.file}: ${section.malformed.reason}; using compiled default`,
-				);
-			}
-		}
-		return sections;
-	} catch (error) {
-		rootCtx.logger.warn(
-			`dsh-better-edit: guidance resolution failed for agent ${agent.id}, using compiled defaults: ${error instanceof Error ? error.message : String(error)}`,
-		);
-		return compiledDefaultSections();
-	}
+async function resolveAgentSections(rootCtx: Context, agent: Agent): Promise<SectionOverride[]> {
+  const agentPresets = rootCtx.get("agentPresets") as AgentPresetsService | undefined;
+  if (!agentPresets) return compiledDefaultSections();
+  try {
+    const presetId = agentPresets.composedPreset(agent.ctx);
+    const sections = await composeSections(presetId, configDir());
+    // Warn once per agent install (this runs once per agent, under the
+    // WeakSet guard) about any malformed override we had to ignore.
+    for (const section of sections) {
+      if (section.malformed) {
+        rootCtx.logger.warn(
+          `dsh-better-edit: ignoring malformed guidance override ${section.malformed.file}: ${section.malformed.reason}; using compiled default`,
+        );
+      }
+    }
+    return sections;
+  } catch (error) {
+    rootCtx.logger.warn(
+      `dsh-better-edit: guidance resolution failed for agent ${agent.id}, using compiled defaults: ${error instanceof Error ? error.message : String(error)}`,
+    );
+    return compiledDefaultSections();
+  }
 }
 
 function installAgentTools(rootCtx: Context, agent: Agent): void {
-	agent.ctx.effect(async () => {
-		// `fs` is host-plane: use the plugin's own context (covered by
-		// inject) rather than the agent's scoped one, whose fiber chain does
-		// not declare it. Session cwd still reaches the bridge per call via
-		// exec.agent.session.header.cwd.
-		const io = ctxFsIO(rootCtx.fs as FileSystem, rootCtx);
-		const disposers: Array<() => void> = [];
-		const sandbox = new FsSandboxController(rootCtx);
-		// Keep owned definitions by reference for self-heal identity check
-		const hashReadDef = buildReadTool(io);
-		disposers.push(agent.ctx.tools.register(hashReadDef));
-		const hashEditDef = buildEditTool(io, sandbox);
-		disposers.push(agent.ctx.tools.register(hashEditDef));
-		// Governed shadow of the preset's built-in str_replace_editor
-		// (ADR-0015): identical contract, encoding-governed mutations.
-		const hashStrReplaceDef = buildStrReplaceEditorTool(io);
-		disposers.push(agent.ctx.tools.register(hashStrReplaceDef));
-		disposers.push(registerUndoTool(rootCtx, agent.ctx, io, sandbox));
-		disposers.push(registerWriteHook(rootCtx, agent.ctx, io));
+  agent.ctx.effect(async () => {
+    // `fs` is host-plane: use the plugin's own context (covered by
+    // inject) rather than the agent's scoped one, whose fiber chain does
+    // not declare it. Session cwd still reaches the bridge per call via
+    // exec.agent.session.header.cwd.
+    const io = ctxFsIO(rootCtx.fs as FileSystem, rootCtx);
+    const disposers: Array<() => void> = [];
+    const sandbox = new FsSandboxController(rootCtx);
+    // Keep owned definitions by reference for self-heal identity check
+    const hashReadDef = buildReadTool(io);
+    disposers.push(agent.ctx.tools.register(hashReadDef));
+    const hashEditDef = buildEditTool(io, sandbox);
+    disposers.push(agent.ctx.tools.register(hashEditDef));
+    // Governed shadow of the preset's built-in str_replace_editor
+    // (ADR-0015): identical contract, encoding-governed mutations.
+    const hashStrReplaceDef = buildStrReplaceEditorTool(io);
+    disposers.push(agent.ctx.tools.register(hashStrReplaceDef));
+    disposers.push(registerUndoTool(rootCtx, agent.ctx, io, sandbox));
+    disposers.push(registerWriteHook(rootCtx, agent.ctx, io));
 
-		const toolsSvc = rootCtx.get("tools");
-		disposers.push(
-			createSelfHealWatcher({
-				agentId: agent.id,
-				rootCtx,
-				agent,
-				agentCtx: agent.ctx,
-				toolsSvc,
-				hashReadDef,
-				hashEditDef,
-				hashStrReplaceDef,
-			}),
-		);
-		// Shadow the preset's built-in tool guidance with the hashline
-		// contract. Same section names on the agent's own layer win over the
-		// preset's; text and order come from the per-preset resolution.
-		const sections = await resolveAgentSections(rootCtx, agent);
-		for (const section of sections) {
-			disposers.push(agent.ctx.systemPrompt.section(section));
-		}
+    const toolsSvc = rootCtx.get("tools");
+    disposers.push(
+      createSelfHealWatcher({
+        agentId: agent.id,
+        rootCtx,
+        agent,
+        agentCtx: agent.ctx,
+        toolsSvc,
+        hashReadDef,
+        hashEditDef,
+        hashStrReplaceDef,
+      }),
+    );
+    // Shadow the preset's built-in tool guidance with the hashline
+    // contract. Same section names on the agent's own layer win over the
+    // preset's; text and order come from the per-preset resolution.
+    const sections = await resolveAgentSections(rootCtx, agent);
+    for (const section of sections) {
+      disposers.push(agent.ctx.systemPrompt.section(section));
+    }
 
-		return () => {
-			for (const dispose of disposers) dispose();
-		};
-	});
+    return () => {
+      for (const dispose of disposers) dispose();
+    };
+  });
 }
 
 /** Mount the bundle: initialize the store, then install tools per agent. */
 export function apply(rootCtx: Context): void {
-	// Central lifecycle janitor — throttled 24h, never deletes live hash (mtime hot)
-	// Runs once at app start and on each session-start (central mode only)
-	queueMicrotask(() => {
-		onAppStart().catch((e) => rootCtx.logger.warn(`dsh-better-edit: central janitor failed: ${e instanceof Error ? e.message : String(e)}`));
-	});
-	// Warm the hasher once; the per-workspace stores are opened lazily on the
-	// first tool call in each workspace (there is no shared store to prune at
-	// boot anymore).
-	initHasher().catch((error) => {
-		rootCtx.logger.warn(
-			`dsh-better-edit: hasher warm-up failed: ${error instanceof Error ? error.message : String(error)}`,
-		);
-	});
+  // Central lifecycle janitor — throttled 24h, never deletes live hash (mtime hot)
+  // Runs once at app start and on each session-start (central mode only)
+  queueMicrotask(() => {
+    onAppStart().catch((e) =>
+      rootCtx.logger.warn(
+        `dsh-better-edit: central janitor failed: ${e instanceof Error ? e.message : String(e)}`,
+      ),
+    );
+  });
+  // Warm the hasher once; the per-workspace stores are opened lazily on the
+  // first tool call in each workspace (there is no shared store to prune at
+  // boot anymore).
+  initHasher().catch((error) => {
+    rootCtx.logger.warn(
+      `dsh-better-edit: hasher warm-up failed: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  });
 
-	// Seed each shipped preset's guidance directory once, so users have
-	// editable per-preset overrides (idempotent: never rewrites existing
-	// files). A failure must never fail the boot.
-	ensureDefaultConfig().catch((error) => {
-		rootCtx.logger.warn(
-			`dsh-better-edit: default config materialization failed: ${error instanceof Error ? error.message : String(error)}`,
-		);
-	});
-	ensurePresetGuidance(configDir()).catch((error) => {
-		rootCtx.logger.warn(
-			`dsh-better-edit: guidance materialization failed: ${error instanceof Error ? error.message : String(error)}`,
-		);
-	});
+  // Seed each shipped preset's guidance directory once, so users have
+  // editable per-preset overrides (idempotent: never rewrites existing
+  // files). A failure must never fail the boot.
+  ensureDefaultConfig().catch((error) => {
+    rootCtx.logger.warn(
+      `dsh-better-edit: default config materialization failed: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  });
+  ensurePresetGuidance(configDir()).catch((error) => {
+    rootCtx.logger.warn(
+      `dsh-better-edit: guidance materialization failed: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  });
 
-	const registered = new WeakSet<Agent>();
-	rootCtx.on("agent/session-start", ({ agent }) => {
-		// throttled central janitor on session-start (inside same handler to avoid extra listener)
-		onSessionStart().catch((e) => rootCtx.logger.warn(`dsh-better-edit: central janitor failed: ${e instanceof Error ? e.message : String(e)}`));
-		if (registered.has(agent)) return;
-		registered.add(agent);
-		try {
-			installAgentTools(rootCtx, agent);
-		} catch (error) {
-			rootCtx.logger.warn(
-				`dsh-better-edit: failed to install tools for agent ${agent.id}: ${error instanceof Error ? error.message : String(error)}`,
-			);
-		}
-	});
+  const registered = new WeakSet<Agent>();
+  rootCtx.on("agent/session-start", ({ agent }) => {
+    // throttled central janitor on session-start (inside same handler to avoid extra listener)
+    onSessionStart().catch((e) =>
+      rootCtx.logger.warn(
+        `dsh-better-edit: central janitor failed: ${e instanceof Error ? e.message : String(e)}`,
+      ),
+    );
+    if (registered.has(agent)) return;
+    registered.add(agent);
+    try {
+      installAgentTools(rootCtx, agent);
+    } catch (error) {
+      rootCtx.logger.warn(
+        `dsh-better-edit: failed to install tools for agent ${agent.id}: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  });
 }
 
 export type { AgentTools };

@@ -1,23 +1,18 @@
 import { describe, expect, it } from "vitest";
-import {
-  lineHashesPure,
-  applyEdit,
-  lineHashes,
-  resEdit,
-} from "../../src/hashline/index.js";
+import { lineHashesPure, applyEdit, lineHashes, resEdit } from "../../src/hashline/index.js";
 import { firstNonEmpty, lastNonEmpty, splitLines } from "../../src/utils.js";
 import { useTestHome, expectedEditContent } from "../support/fixtures.js";
 
 const home = useTestHome();
 
 function replayFixes(
-	repl: string[],
-	autoFixes: { removedLineIndex: number }[] | undefined,
+  repl: string[],
+  autoFixes: { removedLineIndex: number }[] | undefined,
 ): string[] {
-	if (!autoFixes) return repl;
-	const corrected = [...repl];
-	for (const fix of autoFixes) corrected.splice(fix.removedLineIndex, 1);
-	return corrected;
+  if (!autoFixes) return repl;
+  const corrected = [...repl];
+  for (const fix of autoFixes) corrected.splice(fix.removedLineIndex, 1);
+  return corrected;
 }
 
 function replToContent(repl: string[]): string {
@@ -26,17 +21,7 @@ function replToContent(repl: string[]): string {
   }
   return repl.join("\n");
 }
-const VOCAB = [
-  "",
-  "}",
-  "  foo",
-  "import x",
-  "dup",
-  "dup",
-  "a = 1;",
-  "// c",
-  "  bar",
-];
+const VOCAB = ["", "}", "  foo", "import x", "dup", "dup", "a = 1;", "// c", "  bar"];
 
 function mulberry32(seed: number): () => number {
   let a = seed >>> 0;
@@ -82,19 +67,27 @@ function randSpan(
     if (avoid.some((other) => s <= other.e && other.s <= e)) continue;
     const repl = randReplacement(rnd);
     const span = { s, e, repl };
-    if (avoid.some((other) =>
-      (isEofDeletion(other) && isMidDeletion(span) && span.e === other.s - 1) ||
-      (isEofDeletion(span) && isMidDeletion(other) && other.e === span.s - 1),
-    )) continue;
+    if (
+      avoid.some(
+        (other) =>
+          (isEofDeletion(other) && isMidDeletion(span) && span.e === other.s - 1) ||
+          (isEofDeletion(span) && isMidDeletion(other) && other.e === span.s - 1),
+      )
+    )
+      continue;
     const first = firstNonEmpty(repl);
     const last = lastNonEmpty(repl);
     const prev = s >= 2 ? lines[s - 2] : undefined;
     const next = e < n ? lines[e] : undefined;
     if ((first !== undefined && first === prev) || (last !== undefined && last === next)) continue;
-    if (avoid.some((other) =>
-      (first !== undefined && other.e === s - 1 && lastNonEmpty(other.repl) === first) ||
-      (last !== undefined && other.s === e + 1 && firstNonEmpty(other.repl) === last),
-    )) continue;
+    if (
+      avoid.some(
+        (other) =>
+          (first !== undefined && other.e === s - 1 && lastNonEmpty(other.repl) === first) ||
+          (last !== undefined && other.s === e + 1 && firstNonEmpty(other.repl) === last),
+      )
+    )
+      continue;
     if (repl.length === 0 && s === 1 && e === n) continue;
     return span;
   }
@@ -143,7 +136,9 @@ function assertMappingInvariants(
   for (let j = 0; j < newHashes.length; j++) {
     const oldLine = oldHashToLine.get(newHashes[j]!);
     if (oldLine !== undefined) {
-      expect(newLines[j], `hash ${newHashes[j]} reused at a line with different content`).toBe(oldLine);
+      expect(newLines[j], `hash ${newHashes[j]} reused at a line with different content`).toBe(
+        oldLine,
+      );
     }
   }
 }
@@ -164,7 +159,11 @@ describe("property: single random edit per call", () => {
       });
       const result = applyEdit(content, edit, undefined, hashes, home.testPath);
       const correctedExpected = expectedEditContent(
-        lines, span.s, span.e, replayFixes(span.repl, result.autoFixes), content.endsWith("\n"),
+        lines,
+        span.s,
+        span.e,
+        replayFixes(span.repl, result.autoFixes),
+        content.endsWith("\n"),
       );
       expect(result.content).toBe(correctedExpected);
       const removedHashes = new Set(hashes.slice(span.s - 1, span.e));
@@ -173,13 +172,7 @@ describe("property: single random edit per call", () => {
         hashes,
         removedHashes,
       });
-      assertMappingInvariants(
-        lines,
-        hashes,
-        [span],
-        splitLines(correctedExpected),
-        resultHashes,
-      );
+      assertMappingInvariants(lines, hashes, [span], splitLines(correctedExpected), resultHashes);
     }
   }, 60_000);
 });
@@ -241,13 +234,7 @@ describe("property: sequential random edits", () => {
         hashes,
         removedHashes,
       });
-      assertMappingInvariants(
-        lines,
-        hashes,
-        spans,
-        splitLines(expected),
-        resultHashes,
-      );
+      assertMappingInvariants(lines, hashes, spans, splitLines(expected), resultHashes);
     }
   }, 60_000);
 });
@@ -256,10 +243,7 @@ describe("property: pure hashing uniqueness", () => {
   it("assigns unique anchors for 100 random files up to 200 lines", () => {
     for (let iter = 0; iter < 100; iter++) {
       const rnd = mulberry32(iter * 15485863 + 3);
-      const content = Array.from(
-        { length: randInt(rnd, 0, 200) },
-        () => randLine(rnd),
-      ).join("\n");
+      const content = Array.from({ length: randInt(rnd, 0, 200) }, () => randLine(rnd)).join("\n");
       const hashes = lineHashesPure(content);
       expect(hashes).toHaveLength(splitLines(content).length);
       expect(new Set(hashes).size).toBe(hashes.length);
@@ -292,7 +276,11 @@ describe("property: chained stable mapping at every step", () => {
         }
         if (result.content === content) continue;
         const expected = expectedEditContent(
-          lines, span.s, span.e, replayFixes(span.repl, result.autoFixes), content.endsWith("\n"),
+          lines,
+          span.s,
+          span.e,
+          replayFixes(span.repl, result.autoFixes),
+          content.endsWith("\n"),
         );
         expect(result.content).toBe(expected);
         const removedHashes = new Set(hashes.slice(span.s - 1, span.e));
@@ -302,13 +290,7 @@ describe("property: chained stable mapping at every step", () => {
           removedHashes,
         });
         expect(nextHashes).toHaveLength(splitLines(expected).length);
-        assertMappingInvariants(
-          lines,
-          hashes,
-          [span],
-          splitLines(expected),
-          nextHashes,
-        );
+        assertMappingInvariants(lines, hashes, [span], splitLines(expected), nextHashes);
         content = expected;
         lines = splitLines(expected);
         hashes = nextHashes;

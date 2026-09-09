@@ -14,8 +14,6 @@ describe("abortIf", () => {
   it("throws when signal is already aborted", () => {
     const controller = new AbortController();
     controller.abort();
-    expect(() => abortIf(controller.signal)).toThrow(
-      "Operation aborted",
-    );
+    expect(() => abortIf(controller.signal)).toThrow("Operation aborted");
   });
 });

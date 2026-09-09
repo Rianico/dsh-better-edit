@@ -1,17 +1,8 @@
 import { randomUUID } from "node:crypto";
-import {
-	mkdir,
-	open,
-	readdir,
-	rename,
-	rm,
-	stat,
-	writeFile,
-} from "fs/promises";
+import { mkdir, open, readdir, rename, rm, stat, writeFile } from "fs/promises";
 import { dirname, join } from "node:path";
 import { errCode } from "./utils.js";
 import { resolveTarget } from "./paths.js";
-
 
 const TEMP_PREFIX = ".tmp-";
 const TEMP_UUID_RE = /^\.tmp-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
@@ -55,10 +46,7 @@ async function syncDir(dir: string): Promise<void> {
   }
 }
 
-export async function writeAtomic(
-  path: string,
-  content: string,
-): Promise<void> {
+export async function writeAtomic(path: string, content: string): Promise<void> {
   const targetPath = await resolveTarget(path);
 
   let existingStats: Awaited<ReturnType<typeof stat>> | null = null;

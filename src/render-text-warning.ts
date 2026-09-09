@@ -17,8 +17,8 @@ export type TextBlock = { type: "text"; text: string };
  * plus a second block when `warning` is present.
  */
 export function renderTextWarning(value: TextWarningValue): TextBlock[] {
-	if (typeof value === "string") return [{ type: "text", text: value }];
-	const blocks: TextBlock[] = [{ type: "text", text: value.text }];
-	if (value.warning) blocks.push({ type: "text", text: value.warning });
-	return blocks;
+  if (typeof value === "string") return [{ type: "text", text: value }];
+  const blocks: TextBlock[] = [{ type: "text", text: value.text }];
+  if (value.warning) blocks.push({ type: "text", text: value.warning });
+  return blocks;
 }

@@ -2,16 +2,20 @@ import { describe, it, expect, vi } from "vitest";
 
 describe("coverage-agent-e more", () => {
   it("ctxFsIO isValidUtf8 true branch", async () => {
-    const { ctxFsIO, clearEncodingState, clearAutoGuessFooter } = await import("../../src/fs-bridge.js");
+    const { ctxFsIO, clearEncodingState, clearAutoGuessFooter } =
+      await import("../../src/fs-bridge.js");
     const { _resetConfigCache } = await import("../../src/store-config.js");
     process.env.DSH_BETTER_EDIT_AUTO_GUESS_ENCODING = "true";
     _resetConfigCache();
-    clearEncodingState(); clearAutoGuessFooter();
+    clearEncodingState();
+    clearAutoGuessFooter();
     const validUtf8Bytes = Buffer.from("hello world valid utf8");
     const fakeFs: any = {
       resolve: async (p: string) => ({ targetKey: `tk:${p}`, displayPath: p }),
       processPath: (t: any) => t.displayPath,
-      readText: async () => { throw Object.assign(new Error("not text"), { code: "FS_NOT_TEXT" }); },
+      readText: async () => {
+        throw Object.assign(new Error("not text"), { code: "FS_NOT_TEXT" });
+      },
       readBytes: async () => validUtf8Bytes,
       stat: async () => ({ size: validUtf8Bytes.length, version: "v1" }),
       writeText: async () => ({ version: "v2" }),
@@ -30,16 +34,20 @@ describe("coverage-agent-e more", () => {
       { encoding: "gbk", confidence: 65, sample: "你好", score: 65 },
       { encoding: "big5", confidence: 60, sample: "test", score: 60 },
     ] as any);
-    const { ctxFsIO, clearEncodingState, clearAutoGuessFooter, getAutoGuessFooter } = await import("../../src/fs-bridge.js");
+    const { ctxFsIO, clearEncodingState, clearAutoGuessFooter, getAutoGuessFooter } =
+      await import("../../src/fs-bridge.js");
     const { _resetConfigCache } = await import("../../src/store-config.js");
     process.env.DSH_BETTER_EDIT_AUTO_GUESS_ENCODING = "true";
     _resetConfigCache();
-    clearEncodingState(); clearAutoGuessFooter();
+    clearEncodingState();
+    clearAutoGuessFooter();
     const gbkBytes = (await import("iconv-lite")).default.encode("你好世界 hello", "gbk");
     const fakeFs: any = {
       resolve: async (p: string) => ({ targetKey: `tk:${p}-mid`, displayPath: p }),
       processPath: (t: any) => t.displayPath,
-      readText: async () => { throw Object.assign(new Error("not text"), { code: "FS_NOT_TEXT" }); },
+      readText: async () => {
+        throw Object.assign(new Error("not text"), { code: "FS_NOT_TEXT" });
+      },
       readBytes: async () => gbkBytes,
       stat: async () => ({ size: gbkBytes.length, version: "v1" }),
       writeText: async () => ({ version: "v2" }),
@@ -53,7 +61,8 @@ describe("coverage-agent-e more", () => {
     spy.mockRestore();
     delete process.env.DSH_BETTER_EDIT_AUTO_GUESS_ENCODING;
     _resetConfigCache();
-    clearEncodingState(); clearAutoGuessFooter();
+    clearEncodingState();
+    clearAutoGuessFooter();
   });
 
   it("ctxFsIO writeText with encodingHint", async () => {
@@ -81,7 +90,7 @@ describe("coverage-agent-e more", () => {
     try {
       const p = join(dir, "bom.txt");
       const bom = Buffer.from([0xef, 0xbb, 0xbf]);
-      await writeFile(p, Buffer.concat([bom, Buffer.from("bom content")])); 
+      await writeFile(p, Buffer.concat([bom, Buffer.from("bom content")]));
       const txt = await localIO().readText(p);
       expect(txt).toContain("bom content");
     } finally {

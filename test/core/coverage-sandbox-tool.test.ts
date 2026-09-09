@@ -13,7 +13,11 @@ describe("coverage-sandbox-tool", () => {
     } as any);
     // Try to get policy via internal method if exists
     if (ctrl.getPolicy) {
-      const policy = await ctrl.getPolicy({ sandbox_permissions: "readOnly", justification: "test" }, { agent: { id: "a" }, callId: "c1", signal: new AbortController().signal } as any, "edit");
+      const policy = await ctrl.getPolicy(
+        { sandbox_permissions: "readOnly", justification: "test" },
+        { agent: { id: "a" }, callId: "c1", signal: new AbortController().signal } as any,
+        "edit",
+      );
       expect(policy).toBeDefined();
     } else {
       expect(ctrl).toBeDefined();
@@ -35,8 +39,15 @@ describe("coverage-sandbox-tool", () => {
     const tool: any = buildEditTool(localIO(), sandbox);
     // Try with sandbox_permissions
     try {
-      const res = await tool.execute("edit", { path: "a.txt", edits: [["aB3", "aB3", "hi"]], sandbox_permissions: "readOnly", justification: "test" } as any);
-      expect(typeof res === "string" || typeof (res as any).content?.[0]?.text === "string").toBe(true);
+      const res = await tool.execute("edit", {
+        path: "a.txt",
+        edits: [["aB3", "aB3", "hi"]],
+        sandbox_permissions: "readOnly",
+        justification: "test",
+      } as any);
+      expect(typeof res === "string" || typeof (res as any).content?.[0]?.text === "string").toBe(
+        true,
+      );
     } catch (e: any) {
       expect(String(e.message).length).toBeGreaterThan(0);
     }

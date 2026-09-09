@@ -66,7 +66,12 @@ export function runNoopPolicySync(input: NoopPolicyInput, count: number): NoopPo
 }
 
 export async function runNoopPolicy(input: NoopPolicyInput): Promise<NoopPolicyOutcome> {
-  const payload = noopPayloadKey(input.absolutePath, input.removeFrom, input.removeTo, input.replacementText);
+  const payload = noopPayloadKey(
+    input.absolutePath,
+    input.removeFrom,
+    input.removeTo,
+    input.replacementText,
+  );
   const count = trackNoopPayload(input.absolutePath, payload);
   return runNoopPolicySync(input, count);
 }

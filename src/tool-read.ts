@@ -27,73 +27,73 @@ import { withWorkspace } from "./workspace-context.js";
  * @returns the exact disposer that unregisters the tool.
  */
 export function buildReadTool(io: FileIO) {
-	return defineTool({
-		name: "read",
-		description: READ_DESCRIPTION,
-		parameters: {
-			path: pathSchema,
-			offset: {
-				type: "number",
-				description: "Line number to start reading from (1-indexed)",
-			},
-			limit: {
-				type: "number",
-				description: "Maximum number of lines to read",
-			},
-			encoding: {
-				type: "string",
-				description: "Text encoding for Reopen with Encoding (e.g. gbk, shift_jis, windows-1251). Case-insensitive.",
-			},
-		},
-		output: {
-			schema: { type: "object", properties: { text: { type: "string", required: true }, warning: { type: "string" } }, additionalProperties: false },
-			render: (_args, value) => renderTextWarning(value as { text: string; warning?: string } | string),
-		},
-		async execute(args, exec) {
-			return withWorkspace(execCwd(exec), async () => {
-			const cwd = execCwd(exec);
-			const sessionKey = execSessionKey(exec);
-			const signal = exec.signal;
+  return defineTool({
+    name: "read",
+    description: READ_DESCRIPTION,
+    parameters: {
+      path: pathSchema,
+      offset: {
+        type: "number",
+        description: "Line number to start reading from (1-indexed)",
+      },
+      limit: {
+        type: "number",
+        description: "Maximum number of lines to read",
+      },
+      encoding: {
+        type: "string",
+        description:
+          "Text encoding for Reopen with Encoding (e.g. gbk, shift_jis, windows-1251). Case-insensitive.",
+      },
+    },
+    output: {
+      schema: {
+        type: "object",
+        properties: { text: { type: "string", required: true }, warning: { type: "string" } },
+        additionalProperties: false,
+      },
+      render: (_args, value) =>
+        renderTextWarning(value as { text: string; warning?: string } | string),
+    },
+    async execute(args, exec) {
+      return withWorkspace(execCwd(exec), async () => {
+        const cwd = execCwd(exec);
+        const sessionKey = execSessionKey(exec);
+        const signal = exec.signal;
 
-			const encoding = (args as Record<string, unknown>).encoding as string | undefined;
-			if (encoding !== undefined) {
-				const norm = normalizeEncoding(String(encoding));
-				if (!norm) throw new Error(`[E_BAD_ENCODING] Unknown encoding: ${String(encoding)}. Supported: utf8, gbk, big5, shift_jis, euc-kr, windows-1251, iso-8859-1`);
-			}
-			const canonical = normReq(args);
-			assertReadRequest(canonical);
-			const rawPath = canonical.path;
+        const encoding = (args as Record<string, unknown>).encoding as string | undefined;
+        if (encoding !== undefined) {
+          const norm = normalizeEncoding(String(encoding));
+          if (!norm)
+            throw new Error(
+              `[E_BAD_ENCODING] Unknown encoding: ${String(encoding)}. Supported: utf8, gbk, big5, shift_jis, euc-kr, windows-1251, iso-8859-1`,
+            );
+        }
+        const canonical = normReq(args);
+        assertReadRequest(canonical);
+        const rawPath = canonical.path;
 
-			const { text, absolutePath, warning } = await readAndServe(
-				io,
-				rawPath,
-				cwd,
-				{
-					sessionKey,
-					signal,
-					offset: canonical.offset,
-					limit: canonical.limit,
-					encoding: encoding as string | undefined,
-				},
-			);
-			// Record the present observation with the fs policy gate so later
-			// built-in write/edit calls see this file as observed at the
-			// version the model just read (a no-op when no policy listens).
-			await io.emitObserved(absolutePath, exec, signal);
+        const { text, absolutePath, warning } = await readAndServe(io, rawPath, cwd, {
+          sessionKey,
+          signal,
+          offset: canonical.offset,
+          limit: canonical.limit,
+          encoding: encoding as string | undefined,
+        });
+        // Record the present observation with the fs policy gate so later
+        // built-in write/edit calls see this file as observed at the
+        // version the model just read (a no-op when no policy listens).
+        await io.emitObserved(absolutePath, exec, signal);
 
-			return warning ? { text, warning } : { text };
-			})
-		},
-	});
+        return warning ? { text, warning } : { text };
+      });
+    },
+  });
 }
 
 /**
  * Register the hashline tool on the calling agent’s scope (own layer).
  */
-export function registerReadTool(
-	_rootCtx: Context,
-	agentCtx: Context,
-	io: FileIO,
-): () => void {
-	return agentCtx.tools.register(buildReadTool(io));
+export function registerReadTool(_rootCtx: Context, agentCtx: Context, io: FileIO): () => void {
+  return agentCtx.tools.register(buildReadTool(io));
 }

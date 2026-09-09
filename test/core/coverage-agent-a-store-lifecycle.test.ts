@@ -15,8 +15,10 @@ describe("store-lifecycle coverage agent-a", () => {
     process.env.HOME = dir;
     process.env.DSH_HOME = join(dir, ".dsh");
     restoreHome = () => {
-      if (prevHome === undefined) delete process.env.HOME; else process.env.HOME = prevHome;
-      if (prevDsh === undefined) delete process.env.DSH_HOME; else process.env.DSH_HOME = prevDsh;
+      if (prevHome === undefined) delete process.env.HOME;
+      else process.env.HOME = prevHome;
+      if (prevDsh === undefined) delete process.env.DSH_HOME;
+      else process.env.DSH_HOME = prevDsh;
     };
     // force fresh module state
     const mod = await import("../../src/store-lifecycle.js");
@@ -56,14 +58,19 @@ describe("store-lifecycle coverage agent-a", () => {
     expect(store.pruneMissing).toHaveBeenCalledTimes(1);
 
     // second call throttled within 24h should not call pruneMissing again
-    servedPruneArgs = []; undoPruneArgs = [];
+    servedPruneArgs = [];
+    undoPruneArgs = [];
     await mod.onStoreOpen(storePath, stmts as any, store);
     expect(store.pruneMissing).toHaveBeenCalledTimes(1); // still 1
 
     // different store path should trigger pruneMissing
     const store2 = { pruneMissing: vi.fn(async () => {}) } as any;
     const otherPath = join(dir, "other.sqlite");
-    await mod.onStoreOpen(otherPath, { servedPruneOlderThan: () => {}, undoPruneOlderThan: () => {} } as any, store2);
+    await mod.onStoreOpen(
+      otherPath,
+      { servedPruneOlderThan: () => {}, undoPruneOlderThan: () => {} } as any,
+      store2,
+    );
     expect(store2.pruneMissing).toHaveBeenCalledTimes(1);
   });
 
@@ -73,14 +80,22 @@ describe("store-lifecycle coverage agent-a", () => {
     await mkdir(cfgDir, { recursive: true });
     await writeFile(join(cfgDir, "config.yaml"), "storeDir: central\nundo_ttl_s: -1\n", "utf-8");
     const stmts = {
-      servedPruneOlderThan: () => { throw new Error("served fail"); },
-      undoPruneOlderThan: () => { throw new Error("should not be called"); },
+      servedPruneOlderThan: () => {
+        throw new Error("served fail");
+      },
+      undoPruneOlderThan: () => {
+        throw new Error("should not be called");
+      },
     };
-    const store = { pruneMissing: vi.fn(async () => { throw new Error("prune fail"); }) } as any;
+    const store = {
+      pruneMissing: vi.fn(async () => {
+        throw new Error("prune fail");
+      }),
+    } as any;
     // should not throw despite failures (warns)
     await mod.onStoreOpen(join(dir, "x.sqlite"), stmts as any, store);
     // even though pruneMissing throws, the catch via .catch handles async error, no throw
-    await new Promise(r => setTimeout(r, 10));
+    await new Promise((r) => setTimeout(r, 10));
   });
 
   it("handleGitPollution: autoGitignore creates .gitignore", async () => {
@@ -88,7 +103,11 @@ describe("store-lifecycle coverage agent-a", () => {
     const ws = await mkdtemp(join(await getWritableTempRoot(), "gitpoll-"));
     const cfgDir = join(dir, ".dsh", "plugins", "dsh-better-edit");
     await mkdir(cfgDir, { recursive: true });
-    await writeFile(join(cfgDir, "config.yaml"), "storeDir: workspace\nautoGitignore: true\n", "utf-8");
+    await writeFile(
+      join(cfgDir, "config.yaml"),
+      "storeDir: workspace\nautoGitignore: true\n",
+      "utf-8",
+    );
     await mkdir(join(ws, ".git"), { recursive: true });
     const storePath = join(ws, ".dsh_better_edit", "hash-store.sqlite");
     await mkdir(join(ws, ".dsh_better_edit"), { recursive: true });
@@ -125,7 +144,11 @@ describe("store-lifecycle coverage agent-a", () => {
     const ws = await mkdtemp(join(await getWritableTempRoot(), "gitwarn-"));
     const cfgDir = join(dir, ".dsh", "plugins", "dsh-better-edit");
     await mkdir(cfgDir, { recursive: true });
-    await writeFile(join(cfgDir, "config.yaml"), "storeDir: workspace\nautoGitignore: false\n", "utf-8");
+    await writeFile(
+      join(cfgDir, "config.yaml"),
+      "storeDir: workspace\nautoGitignore: false\n",
+      "utf-8",
+    );
     await mkdir(join(ws, ".git"), { recursive: true });
     const storePath = join(ws, ".dsh_better_edit", "hash-store.sqlite");
     await mkdir(join(ws, ".dsh_better_edit"), { recursive: true });
@@ -141,7 +164,11 @@ describe("store-lifecycle coverage agent-a", () => {
     spy.mockRestore();
 
     // storeDir central skips handling
-    await writeFile(join(cfgDir, "config.yaml"), "storeDir: central\nautoGitignore: true\n", "utf-8");
+    await writeFile(
+      join(cfgDir, "config.yaml"),
+      "storeDir: central\nautoGitignore: true\n",
+      "utf-8",
+    );
     mod._resetLifecycleForTests();
     const spy2 = vi.spyOn(console, "warn").mockImplementation(() => {});
     await mod.onStoreOpen(storePath, stmts, store);
@@ -149,7 +176,11 @@ describe("store-lifecycle coverage agent-a", () => {
     spy2.mockRestore();
 
     // no .git dir skips
-    await writeFile(join(cfgDir, "config.yaml"), "storeDir: workspace\nautoGitignore: false\n", "utf-8");
+    await writeFile(
+      join(cfgDir, "config.yaml"),
+      "storeDir: workspace\nautoGitignore: false\n",
+      "utf-8",
+    );
     mod._resetLifecycleForTests();
     const ws2 = await mkdtemp(join(await getWritableTempRoot(), "gitnowarn-"));
     const storePath2 = join(ws2, ".dsh_better_edit", "hash-store.sqlite");
@@ -175,7 +206,11 @@ describe("store-lifecycle coverage agent-a", () => {
     await mod.runCentralJanitorIfDue();
 
     // central mode with no runtime dir -> ENOENT
-    await writeFile(join(cfgDir, "config.yaml"), "storeDir: central\nstoreMaxAgeS: 0\nstoreMaxTotalBytes: 1000\n", "utf-8");
+    await writeFile(
+      join(cfgDir, "config.yaml"),
+      "storeDir: central\nstoreMaxAgeS: 0\nstoreMaxTotalBytes: 1000\n",
+      "utf-8",
+    );
     mod._resetLifecycleForTests();
     await mod.runCentralJanitorIfDue(); // ENOENT returns
 
@@ -202,15 +237,22 @@ describe("store-lifecycle coverage agent-a", () => {
     // make old dir mtime old by touching via utimes?
     const oldTime = Date.now() - 1000 * 60 * 60 * 24 * 60; // 60 days ago
     const { utimes } = await import("node:fs/promises");
-    await utimes(oldDir, oldTime/1000, oldTime/1000);
+    await utimes(oldDir, oldTime / 1000, oldTime / 1000);
 
     const cfgDir = join(dir, ".dsh", "plugins", "dsh-better-edit");
     await mkdir(cfgDir, { recursive: true });
-    await writeFile(join(cfgDir, "config.yaml"), "storeDir: central\nstoreMaxAgeS: 2592000\nstoreMaxTotalBytes: 10\n", "utf-8");
+    await writeFile(
+      join(cfgDir, "config.yaml"),
+      "storeDir: central\nstoreMaxAgeS: 2592000\nstoreMaxTotalBytes: 10\n",
+      "utf-8",
+    );
     mod._resetLifecycleForTests();
     // set liveDirs via setStoresGetter
     const livePath = join(runtimeDir, "live123", "hash-store.sqlite");
-    mod.setStoresGetter(() => new Map([[livePath, { path: livePath }]]), () => new Map());
+    mod.setStoresGetter(
+      () => new Map([[livePath, { path: livePath }]]),
+      () => new Map(),
+    );
     const liveDir = join(runtimeDir, "live123");
     await mkdir(liveDir, { recursive: true });
     await writeFile(join(liveDir, "hash-store.sqlite"), "live", "utf-8");
@@ -221,7 +263,10 @@ describe("store-lifecycle coverage agent-a", () => {
     expect(existsSync(liveDir)).toBe(true);
     // throttled second call does nothing
     await mod.runCentralJanitorIfDue();
-    mod.setStoresGetter(() => new Map(), () => new Map());
+    mod.setStoresGetter(
+      () => new Map(),
+      () => new Map(),
+    );
 
     await rm(runtimeDir, { recursive: true, force: true });
   });
@@ -239,7 +284,10 @@ describe("store-lifecycle coverage agent-a", () => {
     const mod = await import("../../src/store-lifecycle.js");
     const m1 = new Map([["a", { path: "a" }]]);
     const m2 = new Map([["b", Promise.resolve()]]);
-    mod.setStoresGetter(() => m1 as any, () => m2 as any);
+    mod.setStoresGetter(
+      () => m1 as any,
+      () => m2 as any,
+    );
     // verify janitor respects it by not throwing
     mod._resetLifecycleForTests();
     await mod.runCentralJanitorIfDue();

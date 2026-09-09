@@ -34,11 +34,17 @@ describe("coverage-agent-e fs-bridge", () => {
   it("explicit encodingHint with BOM bytes decodes via hint", async () => {
     await withTempFile("a.txt", "hello", async ({ cwd }) => {
       const p = join(cwd, "hint.txt");
-      const bomBytes = Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), iconv.encode("Привет", "windows-1251")]);
+      const bomBytes = Buffer.concat([
+        Buffer.from([0xef, 0xbb, 0xbf]),
+        iconv.encode("Привет", "windows-1251"),
+      ]);
       await writeFile(p, bomBytes);
       const harness = setupIntegrationTest(cwd);
       // explicit hint should slice BOM and decode with hint
-      const res = await harness.readTool.execute("read", { path: "hint.txt", encoding: "windows-1251" } as any);
+      const res = await harness.readTool.execute("read", {
+        path: "hint.txt",
+        encoding: "windows-1251",
+      } as any);
       const txt = getText(res);
       expect(txt).toContain("Привет");
     });
@@ -47,7 +53,9 @@ describe("coverage-agent-e fs-bridge", () => {
   it("explicit encodingHint bad encoding maps to E_BAD_ENCODING", async () => {
     await withTempFile("a.txt", "hi", async ({ cwd }) => {
       const harness = setupIntegrationTest(cwd);
-      await expect(harness.readTool.execute("read", { path: "a.txt", encoding: "not-an-enc" } as any)).rejects.toThrow(/E_BAD_ENCODING|bad encoding/i);
+      await expect(
+        harness.readTool.execute("read", { path: "a.txt", encoding: "not-an-enc" } as any),
+      ).rejects.toThrow(/E_BAD_ENCODING|bad encoding/i);
     });
   });
 
@@ -76,7 +84,9 @@ describe("coverage-agent-e fs-bridge", () => {
       expect(txt).not.toMatch(/\[E_UNSUPPORTED_FILE\]/);
       expect(txt.length).toBeGreaterThan(5);
       // footer may be present for mid-confidence
-      const footer = getAutoGuessFooter(`tk:${join(cwd, "gbk2.txt")}`) ?? getAutoGuessFooter(join(cwd, "gbk2.txt"));
+      const footer =
+        getAutoGuessFooter(`tk:${join(cwd, "gbk2.txt")}`) ??
+        getAutoGuessFooter(join(cwd, "gbk2.txt"));
       // footer is optional; just ensure no throw
       expect(true).toBe(true);
     });
@@ -117,7 +127,10 @@ describe("coverage-agent-e fs-bridge", () => {
     const dir = await mkdtemp(join(tmpdir(), "e-bridge-local-"));
     try {
       const p = join(dir, "bom-local.txt");
-      const bomBytes = Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), Buffer.from("utf8 bom content", "utf-8")]);
+      const bomBytes = Buffer.concat([
+        Buffer.from([0xef, 0xbb, 0xbf]),
+        Buffer.from("utf8 bom content", "utf-8"),
+      ]);
       await writeFile(p, bomBytes);
       const { localIO } = await import("../../src/fs-bridge.js");
       const io = localIO();
@@ -154,22 +167,32 @@ describe("coverage-agent-e fs-bridge", () => {
       const { ctxFsIO } = await import("../../src/fs-bridge.js");
       // we just verify writeText still works after memo
       const readRes = await harness.readTool.execute("read", { path: "a.txt" } as any);
-      const hash = getText(readRes).split("\n").find(l=>l.includes("│"))?.split("│")[0] ?? "aB3";
-      const res = await harness.editTool.execute("edit", { path: "a.txt", edits: [[hash, hash, "new"]] } as any).catch((e:any)=>String(e));
+      const hash =
+        getText(readRes)
+          .split("\n")
+          .find((l) => l.includes("│"))
+          ?.split("│")[0] ?? "aB3";
+      const res = await harness.editTool
+        .execute("edit", { path: "a.txt", edits: [[hash, hash, "new"]] } as any)
+        .catch((e: any) => String(e));
       expect(typeof (typeof res === "string" ? res : getText(res as any))).toBe("string");
     });
   });
 
   it("ctxFsIO autoGuess disabled surfaces E_UNSUPPORTED_FILE via mocked fs", async () => {
-    const { ctxFsIO, clearEncodingState, clearAutoGuessFooter } = await import("../../src/fs-bridge.js");
+    const { ctxFsIO, clearEncodingState, clearAutoGuessFooter } =
+      await import("../../src/fs-bridge.js");
     const { _resetConfigCache } = await import("../../src/store-config.js");
     delete process.env.DSH_BETTER_EDIT_AUTO_GUESS_ENCODING;
     _resetConfigCache();
-    clearEncodingState(); clearAutoGuessFooter();
+    clearEncodingState();
+    clearAutoGuessFooter();
     const fakeFs: any = {
       resolve: async (p: string) => ({ targetKey: `tk:${p}`, displayPath: p }),
       processPath: (t: any) => t.displayPath,
-      readText: async () => { throw Object.assign(new Error("not text"), { code: "FS_NOT_TEXT" }); },
+      readText: async () => {
+        throw Object.assign(new Error("not text"), { code: "FS_NOT_TEXT" });
+      },
       readBytes: async () => Buffer.from([0xd6, 0xd0, 0xce, 0xc4]), // gbk bytes
       stat: async () => ({ size: 4, version: "v1" }),
       writeText: async () => ({ version: "v2" }),
@@ -180,16 +203,20 @@ describe("coverage-agent-e fs-bridge", () => {
   });
 
   it("ctxFsIO autoGuess true decodes gbk via mocked fs", async () => {
-    const { ctxFsIO, clearEncodingState, clearAutoGuessFooter, getEncodingState } = await import("../../src/fs-bridge.js");
+    const { ctxFsIO, clearEncodingState, clearAutoGuessFooter, getEncodingState } =
+      await import("../../src/fs-bridge.js");
     const { _resetConfigCache } = await import("../../src/store-config.js");
     process.env.DSH_BETTER_EDIT_AUTO_GUESS_ENCODING = "true";
     _resetConfigCache();
-    clearEncodingState(); clearAutoGuessFooter();
+    clearEncodingState();
+    clearAutoGuessFooter();
     const gbkBytes = (await import("iconv-lite")).default.encode("你好世界", "gbk");
     const fakeFs: any = {
       resolve: async (p: string) => ({ targetKey: `tk:${p}`, displayPath: p }),
       processPath: (t: any) => t.displayPath,
-      readText: async () => { throw Object.assign(new Error("not text"), { code: "FS_NOT_TEXT" }); },
+      readText: async () => {
+        throw Object.assign(new Error("not text"), { code: "FS_NOT_TEXT" });
+      },
       readBytes: async () => gbkBytes,
       stat: async () => ({ size: gbkBytes.length, version: "v1" }),
       writeText: async () => ({ version: "v2" }),

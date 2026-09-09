@@ -43,7 +43,11 @@ describe("51 large-file heavy-edit integration (deadlock repro #51)", () => {
     const io = localIO();
 
     for (let off = 1; off <= N; off += 1000) {
-      const res = await readAndServe(io, filePath, tmpDir, { sessionKey, offset: off, limit: 1000 });
+      const res = await readAndServe(io, filePath, tmpDir, {
+        sessionKey,
+        offset: off,
+        limit: 1000,
+      });
       expect(res.served.length).toBeGreaterThan(0);
     }
 
@@ -55,10 +59,18 @@ describe("51 large-file heavy-edit integration (deadlock repro #51)", () => {
       await writeFile(filePath, curLines.join("\n"), "utf-8");
 
       const winOff = Math.max(1, offset - 200);
-      const r = await readAndServe(io, filePath, tmpDir, { sessionKey, offset: winOff, limit: 600 });
+      const r = await readAndServe(io, filePath, tmpDir, {
+        sessionKey,
+        offset: winOff,
+        limit: 600,
+      });
       expect(r.served.length).toBeGreaterThan(0);
       const randOff = 1 + ((edit * 53) % (N - 1000));
-      const r2 = await readAndServe(io, filePath, tmpDir, { sessionKey, offset: randOff, limit: 500 });
+      const r2 = await readAndServe(io, filePath, tmpDir, {
+        sessionKey,
+        offset: randOff,
+        limit: 500,
+      });
       expect(r2.served.length).toBeGreaterThan(0);
     }
 
@@ -106,9 +118,13 @@ describe("51 large-file heavy-edit integration (deadlock repro #51)", () => {
       for (let k = 0; k < 500; k++) curLines[offset + k] = `edit${edit}_line${k}_x`;
       await writeFile(filePath, curLines.join("\n"), "utf-8");
 
-      await expect(readAndServe(io, filePath, tmpDir, { sessionKey, offset: offset + 1, limit: 800 })).resolves.toBeDefined();
+      await expect(
+        readAndServe(io, filePath, tmpDir, { sessionKey, offset: offset + 1, limit: 800 }),
+      ).resolves.toBeDefined();
       const randOff = 1 + ((edit * 73) % (N - 800));
-      await expect(readAndServe(io, filePath, tmpDir, { sessionKey, offset: randOff, limit: 700 })).resolves.toBeDefined();
+      await expect(
+        readAndServe(io, filePath, tmpDir, { sessionKey, offset: randOff, limit: 700 }),
+      ).resolves.toBeDefined();
     }
 
     const store = await loadServedStore();
@@ -119,13 +135,17 @@ describe("51 large-file heavy-edit integration (deadlock repro #51)", () => {
     expect(retired.length).toBeLessThan(80_000);
 
     const finalText = await (await import("node:fs/promises")).readFile(filePath, "utf-8");
-    const finalHashes = await lineHashes(finalText, filePath, { content: initial, hashes: baselineHashes });
+    const finalHashes = await lineHashes(finalText, filePath, {
+      content: initial,
+      hashes: baselineHashes,
+    });
     let kept = 0;
     for (let i = 0; i < N; i++) if (finalHashes[i] === baselineHashes[i]) kept++;
     // After 100 scattered 500-line edits ~50k replacements on 20k file, many lines overwritten; just verify some stable reuse survived (S threading keeps untouched far lines)
     expect(kept).toBeGreaterThan(100);
 
-    for (let off = 1; off <= N; off += 2000) await readAndServe(io, filePath, tmpDir, { sessionKey, offset: off, limit: 2000 });
+    for (let off = 1; off <= N; off += 2000)
+      await readAndServe(io, filePath, tmpDir, { sessionKey, offset: off, limit: 2000 });
     const after = store.getRetiredEntries(sessionKey, filePath);
     expect(after.length).toBeLessThanOrEqual(retired.length);
 

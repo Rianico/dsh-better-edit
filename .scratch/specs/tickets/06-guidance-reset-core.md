@@ -11,7 +11,7 @@ This ticket owns **all code changes**: `src/guidance.ts`, `src/index.ts`, `test/
 Three-way classification of an override file's content (this is the whole model):
 
 1. **Absent / blank** — file missing, zero-byte, whitespace-only body, and **no front-matter fence**. = "I want the default". At render, treat as absent → compiled default; at boot, re-seed the file with the current seeded default.
-2. **Valid fence** — any well-formed leading `---` fence (even keyless `---\n---\n`, even with an empty body). = "I intend this content, including blank". At render, file wins; at boot, never touched. This is the *deliberate blank* case — never reset, never re-seeded.
+2. **Valid fence** — any well-formed leading `---` fence (even keyless `---\n---\n`, even with an empty body). = "I intend this content, including blank". At render, file wins; at boot, never touched. This is the _deliberate blank_ case — never reset, never re-seeded.
 3. **Broken fence** — a leading `---` that does not parse (missing closing `---`, non-integer `order` value, unknown front-matter key). = **fast fail**. The malformed text must NEVER reach the model context. At render, compiled default + a warning naming the file and the parse reason; at boot, the file is left **untouched** (it holds the user's salvageable body/attempt — overwriting is data loss).
 
 ## Acceptance criteria

@@ -16,11 +16,7 @@ import { canon, contentChecksum } from "./hashline/hash-assign.js";
 import { lineHashes } from "./hashline/hash.js";
 import { changedRange } from "./hashline/anchor-pipeline.js";
 import { getUndo, clearUndo } from "./undo-edit.js";
-import {
-	loadAnchorReservations,
-	recordServedTruncated,
-	retireAnchors,
-} from "./session-view.js";
+import { loadAnchorReservations, recordServedTruncated, retireAnchors } from "./session-view.js";
 import { UNDO_DESCRIPTION } from "./prompts.js";
 import type { FileIO } from "./fs-bridge.js";
 import { execCwd, execSessionKey } from "./workspace-context.js";
@@ -35,184 +31,173 @@ import { withWorkspace } from "./workspace-context.js";
  * @returns the exact disposer that unregisters the tool.
  */
 export function buildUndoTool(io: FileIO, sandbox: FsSandboxController) {
-	return defineTool({
-		name: "undo_last_edit",
-		description: UNDO_DESCRIPTION,
-		parameters: {
-			path: {
-				type: "string",
-				required: true,
-				description: "Path to the file to undo",
-			},
-			...(sandbox.escalationModes.length > 0 ? sandbox.schemaFields() : {}),
-		},
-		output: {
-			schema: { type: "string" },
-			render: (_args, value) => [{ type: "text", text: value }],
-		},
-		async execute(args, exec) {
-			return withWorkspace(execCwd(exec), async () => {
-				const cwd = execCwd(exec);
-				const sessionKey = execSessionKey(exec);
-				const signal = exec.signal;
+  return defineTool({
+    name: "undo_last_edit",
+    description: UNDO_DESCRIPTION,
+    parameters: {
+      path: {
+        type: "string",
+        required: true,
+        description: "Path to the file to undo",
+      },
+      ...(sandbox.escalationModes.length > 0 ? sandbox.schemaFields() : {}),
+    },
+    output: {
+      schema: { type: "string" },
+      render: (_args, value) => [{ type: "text", text: value }],
+    },
+    async execute(args, exec) {
+      return withWorkspace(execCwd(exec), async () => {
+        const cwd = execCwd(exec);
+        const sessionKey = execSessionKey(exec);
+        const signal = exec.signal;
 
-				const canonical = normReq(args);
-				assertUndoRequest(canonical);
-				const path = canonical.path;
-				const absolutePath = await io.resolve(path, cwd, signal);
-				// SAFETY: canonical validated by assertUndoRequest; shape is compatible with FsEscalationArgs (path + optional sandbox fields) — narrowing for sandbox.resolvePolicy
-				const sandboxPolicy = await sandbox.resolvePolicy(
-					"undo_last_edit",
-					canonical as unknown as FsEscalationArgs,
-					exec,
-				);
+        const canonical = normReq(args);
+        assertUndoRequest(canonical);
+        const path = canonical.path;
+        const absolutePath = await io.resolve(path, cwd, signal);
+        // SAFETY: canonical validated by assertUndoRequest; shape is compatible with FsEscalationArgs (path + optional sandbox fields) — narrowing for sandbox.resolvePolicy
+        const sandboxPolicy = await sandbox.resolvePolicy(
+          "undo_last_edit",
+          canonical as unknown as FsEscalationArgs,
+          exec,
+        );
 
-				const undo = await getUndo(absolutePath);
-				if (!undo) {
-					return `No undo history for ${path}. There is no previous edit to revert.`;
-				}
+        const undo = await getUndo(absolutePath);
+        if (!undo) {
+          return `No undo history for ${path}. There is no previous edit to revert.`;
+        }
 
-				let currentRaw: string;
-				try {
-					currentRaw = await io.readText(absolutePath, signal);
-				} catch (error) {
-					const message = error instanceof Error ? error.message : String(error);
-					if (codeOf(error) === "E_NOT_FOUND") {
-						await clearUndo(absolutePath);
-						return `[E_UNDO_STALE] cannot undo on ${path}: file no longer exists.`;
-					}
-					throw error;
-				}
-				if (
-					currentRaw !==
-					undo.bom + restoreEndings(undo.resultContent, undo.originalEnding)
-				) {
-					await clearUndo(absolutePath);
-					return `[E_UNDO_STALE] cannot undo on ${path}: file modified after edit — undo would overwrite changes.`;
-				}
+        let currentRaw: string;
+        try {
+          currentRaw = await io.readText(absolutePath, signal);
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          if (codeOf(error) === "E_NOT_FOUND") {
+            await clearUndo(absolutePath);
+            return `[E_UNDO_STALE] cannot undo on ${path}: file no longer exists.`;
+          }
+          throw error;
+        }
+        if (currentRaw !== undo.bom + restoreEndings(undo.resultContent, undo.originalEnding)) {
+          await clearUndo(absolutePath);
+          return `[E_UNDO_STALE] cannot undo on ${path}: file modified after edit — undo would overwrite changes.`;
+        }
 
-				const { text: currentStripped } = stripBOM(currentRaw);
-				const currentNormalized = toLF(currentStripped);
-				// Per-session reservations: retired/ served are per (session, path) per ADR-0013; file snapshots stay global last-writer-wins
-				const reservations = await loadAnchorReservations(sessionKey, absolutePath);
-				const currentHashes = await lineHashes(
-					currentNormalized,
-					absolutePath,
-					undefined,
-					undefined,
-					false,
-					reservations.reservedHashes,
-					reservations.retiredHashes,
-				);
-				const retiredOriginalHashes = new Set(
-					undo.hashes.filter((hash) => reservations.retiredHashes.has(hash)),
-				);
-				const blockedRestoreHashes = new Set(reservations.reservedHashes);
-				for (const hash of currentHashes) blockedRestoreHashes.add(hash);
-				const restoredHashes = await lineHashes(
-					undo.content,
-					absolutePath,
-					{
-						content: undo.content,
-						hashes: undo.hashes,
-						removedHashes: retiredOriginalHashes,
-					},
-					undefined,
-					false,
-					blockedRestoreHashes,
-					reservations.retiredHashes,
-				);
-				const diffResult = genDiff(
-					undo.content,
-					currentNormalized,
-					0,
-					undefined,
-					undo.hashes,
-				);
-				const linesAddedByEdit = cntDiff(diffResult.diff, "+");
-				const linesRemovedByEdit = cntDiff(diffResult.diff, "-");
-				const undoDiffResult = genDiff(
-					currentNormalized,
-					undo.content,
-					1,
-					restoredHashes,
-					currentHashes,
-				);
-				const undoDiff = undoDiffResult.diff;
-				const undoDenseRows: typeof undoDiffResult.servedRows = [];
-				for (let i = 0; i < restoredHashes.length; i++) {
-					undoDenseRows.push({ position: i, hash: restoredHashes[i]! });
-				}
-				const restoredRange = changedRange(currentNormalized, undo.content);
-				const restoredSet = new Set(restoredHashes);
-				await retireAnchors(
-					sessionKey,
-					absolutePath,
-					currentHashes.filter((hash) => !restoredSet.has(hash)),
-				);
+        const { text: currentStripped } = stripBOM(currentRaw);
+        const currentNormalized = toLF(currentStripped);
+        // Per-session reservations: retired/ served are per (session, path) per ADR-0013; file snapshots stay global last-writer-wins
+        const reservations = await loadAnchorReservations(sessionKey, absolutePath);
+        const currentHashes = await lineHashes(
+          currentNormalized,
+          absolutePath,
+          undefined,
+          undefined,
+          false,
+          reservations.reservedHashes,
+          reservations.retiredHashes,
+        );
+        const retiredOriginalHashes = new Set(
+          undo.hashes.filter((hash) => reservations.retiredHashes.has(hash)),
+        );
+        const blockedRestoreHashes = new Set(reservations.reservedHashes);
+        for (const hash of currentHashes) blockedRestoreHashes.add(hash);
+        const restoredHashes = await lineHashes(
+          undo.content,
+          absolutePath,
+          {
+            content: undo.content,
+            hashes: undo.hashes,
+            removedHashes: retiredOriginalHashes,
+          },
+          undefined,
+          false,
+          blockedRestoreHashes,
+          reservations.retiredHashes,
+        );
+        const diffResult = genDiff(undo.content, currentNormalized, 0, undefined, undo.hashes);
+        const linesAddedByEdit = cntDiff(diffResult.diff, "+");
+        const linesRemovedByEdit = cntDiff(diffResult.diff, "-");
+        const undoDiffResult = genDiff(
+          currentNormalized,
+          undo.content,
+          1,
+          restoredHashes,
+          currentHashes,
+        );
+        const undoDiff = undoDiffResult.diff;
+        const undoDenseRows: typeof undoDiffResult.servedRows = [];
+        for (let i = 0; i < restoredHashes.length; i++) {
+          undoDenseRows.push({ position: i, hash: restoredHashes[i]! });
+        }
+        const restoredRange = changedRange(currentNormalized, undo.content);
+        const restoredSet = new Set(restoredHashes);
+        await retireAnchors(
+          sessionKey,
+          absolutePath,
+          currentHashes.filter((hash) => !restoredSet.has(hash)),
+        );
 
-				try {
-					await io.writeText(
-						absolutePath,
-						undo.bom + restoreEndings(undo.content, undo.originalEnding),
-						signal,
-						exec,
-						sandboxPolicy,
-					);
-				} catch (error) {
-					throw sandbox.mapError(error, sandboxPolicy);
-				}
+        try {
+          await io.writeText(
+            absolutePath,
+            undo.bom + restoreEndings(undo.content, undo.originalEnding),
+            signal,
+            exec,
+            sandboxPolicy,
+          );
+        } catch (error) {
+          throw sandbox.mapError(error, sandboxPolicy);
+        }
 
-				try {
-					await upsertSnapshotFor(
-						absolutePath,
-						contentChecksum(undo.content),
-						splitLines(undo.content).length,
-						restoredHashes,
-					);
-				} catch (error) {
-					console.error("Failed to restore hash store snapshot after undo:", error);
-				}
+        try {
+          await upsertSnapshotFor(
+            absolutePath,
+            contentChecksum(undo.content),
+            splitLines(undo.content).length,
+            restoredHashes,
+          );
+        } catch (error) {
+          console.error("Failed to restore hash store snapshot after undo:", error);
+        }
 
-				await clearUndo(absolutePath);
+        await clearUndo(absolutePath);
 
-				const parts: string[] = [`Undone last edit on ${path}.`];
-				if (linesAddedByEdit > 0 || linesRemovedByEdit > 0) {
-					parts.push(
-						`Removed ${linesAddedByEdit} line(s) that were added and restored ${linesRemovedByEdit} line(s) that were removed.`,
-					);
-				}
-				parts.push(
-					"File reverted to previous state. The post-edit diff rows carry the restored file\u2019s fresh anchors for follow-up edits.",
-				);
+        const parts: string[] = [`Undone last edit on ${path}.`];
+        if (linesAddedByEdit > 0 || linesRemovedByEdit > 0) {
+          parts.push(
+            `Removed ${linesAddedByEdit} line(s) that were added and restored ${linesRemovedByEdit} line(s) that were removed.`,
+          );
+        }
+        parts.push(
+          "File reverted to previous state. The post-edit diff rows carry the restored file\u2019s fresh anchors for follow-up edits.",
+        );
 
-				if (undoDenseRows.length > 0) {
-					await recordServedTruncated(
-						sessionKey,
-						absolutePath,
-						undoDenseRows,
-						splitLines(undo.content).length,
-						restoredRange?.firstChangedLine ?? undoDiffResult.firstChangedLine ?? 0,
-						splitLines(undo.content).map((l) => canon(l)),
-					);
-				}
+        if (undoDenseRows.length > 0) {
+          await recordServedTruncated(
+            sessionKey,
+            absolutePath,
+            undoDenseRows,
+            splitLines(undo.content).length,
+            restoredRange?.firstChangedLine ?? undoDiffResult.firstChangedLine ?? 0,
+            splitLines(undo.content).map((l) => canon(l)),
+          );
+        }
 
-				return [parts.join("\n"), "", "Diff of the revert:", "", undoDiff].join(
-					"\n",
-				);
-			});
-		},
-	});
+        return [parts.join("\n"), "", "Diff of the revert:", "", undoDiff].join("\n");
+      });
+    },
+  });
 }
 
 /**
  * Register the hashline tool on the calling agent’s scope (own layer).
  */
 export function registerUndoTool(
-	_rootCtx: Context,
-	agentCtx: Context,
-	io: FileIO,
-	sandbox: FsSandboxController,
+  _rootCtx: Context,
+  agentCtx: Context,
+  io: FileIO,
+  sandbox: FsSandboxController,
 ): () => void {
-	return agentCtx.tools.register(buildUndoTool(io, sandbox));
+  return agentCtx.tools.register(buildUndoTool(io, sandbox));
 }

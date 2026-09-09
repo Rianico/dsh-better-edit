@@ -17,7 +17,11 @@ describe("coverage-agent-g mutation", () => {
     await writeFile(fp, "hello\n", "utf-8");
     const ioOk: any = { statVersion: async () => "v1" };
     expect(await snapshotIdFor(ioOk, fp)).toBe("v1");
-    const ioFail: any = { statVersion: async () => { throw new Error("fail"); } };
+    const ioFail: any = {
+      statVersion: async () => {
+        throw new Error("fail");
+      },
+    };
     const id2 = await snapshotIdFor(ioFail, fp);
     expect(typeof id2).toBe("string");
     const id3 = await snapshotIdFor(ioFail, join(dir, "nope-" + Math.random()));
@@ -31,7 +35,14 @@ describe("coverage-agent-g mutation", () => {
     const io = localIO() as any;
     const ctrl = new AbortController();
     ctrl.abort();
-    await expect(execPipeline(io, { path: "a.txt", remove_from: "abc", remove_to: "def", replacement_text: "hi" } as any, "/tmp", { signal: ctrl.signal })).rejects.toThrow();
+    await expect(
+      execPipeline(
+        io,
+        { path: "a.txt", remove_from: "abc", remove_to: "def", replacement_text: "hi" } as any,
+        "/tmp",
+        { signal: ctrl.signal },
+      ),
+    ).rejects.toThrow();
     expect(true).toBe(true);
   });
 
@@ -47,20 +58,46 @@ describe("coverage-agent-g mutation", () => {
 describe("coverage-agent-g sandbox", () => {
   it("constructor branches", async () => {
     const { FsSandboxController } = await import("../../src/sandbox.js");
-    const ctrl1 = new FsSandboxController({ fs: { sandboxMode: undefined } as any, get: () => undefined } as any);
+    const ctrl1 = new FsSandboxController({
+      fs: { sandboxMode: undefined } as any,
+      get: () => undefined,
+    } as any);
     expect(ctrl1.escalationModes).toEqual([]);
-    expect(() => new FsSandboxController({ fs: { sandboxMode: "workspace-write" } as any, get: () => undefined } as any)).toThrow(/sandboxPolicy is missing/);
-    const ctrl2 = new FsSandboxController({ fs: { sandboxMode: "workspace-write" } as any, get: (k: string) => (k === "sandboxPolicy" ? { resolve: () => ({ mode: "workspace-write" }) } : undefined) } as any);
+    expect(
+      () =>
+        new FsSandboxController({
+          fs: { sandboxMode: "workspace-write" } as any,
+          get: () => undefined,
+        } as any),
+    ).toThrow(/sandboxPolicy is missing/);
+    const ctrl2 = new FsSandboxController({
+      fs: { sandboxMode: "workspace-write" } as any,
+      get: (k: string) =>
+        k === "sandboxPolicy" ? { resolve: () => ({ mode: "workspace-write" }) } : undefined,
+    } as any);
     expect(ctrl2.escalationModes.length).toBeGreaterThan(0);
     expect(ctrl2.schemaFields().sandbox_permissions).toBeDefined();
   });
 
   it("resolvePolicy branches", async () => {
     const { FsSandboxController } = await import("../../src/sandbox.js");
-    const ctrl = new FsSandboxController({ fs: { sandboxMode: undefined } as any, get: () => undefined } as any);
-    const p1 = await ctrl.resolvePolicy("edit", {}, { agent: undefined, callId: "c", signal: undefined } as any);
+    const ctrl = new FsSandboxController({
+      fs: { sandboxMode: undefined } as any,
+      get: () => undefined,
+    } as any);
+    const p1 = await ctrl.resolvePolicy("edit", {}, {
+      agent: undefined,
+      callId: "c",
+      signal: undefined,
+    } as any);
     expect(p1).toBeUndefined();
-    await expect(ctrl.resolvePolicy("edit", { sandbox_permissions: "workspace-write", justification: "need" } as any, { agent: undefined, callId: "c", signal: undefined } as any)).rejects.toThrow(/not available/);
+    await expect(
+      ctrl.resolvePolicy(
+        "edit",
+        { sandbox_permissions: "workspace-write", justification: "need" } as any,
+        { agent: undefined, callId: "c", signal: undefined } as any,
+      ),
+    ).rejects.toThrow(/not available/);
     const other = new Error("other");
     expect(ctrl.mapError(other, undefined)).toBe(other);
     expect(true).toBe(true);
@@ -69,7 +106,10 @@ describe("coverage-agent-g sandbox", () => {
   it("mapError branches", async () => {
     const { FsSandboxController } = await import("../../src/sandbox.js");
     const { FsError } = await import("@deepseek-ai/dsh-fs");
-    const ctrl = new FsSandboxController({ fs: { sandboxMode: undefined } as any, get: () => undefined } as any);
+    const ctrl = new FsSandboxController({
+      fs: { sandboxMode: undefined } as any,
+      get: () => undefined,
+    } as any);
     const other = new Error("other");
     expect(ctrl.mapError(other, undefined)).toBe(other);
     const denied = new FsError("denied", "FS_SANDBOX_DENIED" as any);
@@ -84,7 +124,10 @@ describe("coverage-agent-g tool-edit", () => {
     const { buildEditTool } = await import("../../src/tool-edit.js");
     const { localIO } = await import("../../src/fs-bridge.js");
     const { FsSandboxController } = await import("../../src/sandbox.js");
-    const sandbox = new FsSandboxController({ fs: { sandboxMode: undefined } as any, get: () => undefined } as any);
+    const sandbox = new FsSandboxController({
+      fs: { sandboxMode: undefined } as any,
+      get: () => undefined,
+    } as any);
     const tool = buildEditTool(localIO() as any, sandbox);
     expect(tool.name).toBe("edit");
     expect(true).toBe(true);
@@ -94,7 +137,10 @@ describe("coverage-agent-g tool-edit", () => {
     const { buildEditTool } = await import("../../src/tool-edit.js");
     const { localIO } = await import("../../src/fs-bridge.js");
     const { FsSandboxController } = await import("../../src/sandbox.js");
-    const sandbox = new FsSandboxController({ fs: { sandboxMode: undefined } as any, get: () => undefined } as any);
+    const sandbox = new FsSandboxController({
+      fs: { sandboxMode: undefined } as any,
+      get: () => undefined,
+    } as any);
     const tool = buildEditTool(localIO() as any, sandbox);
     await expect(tool.execute("c", { path: "", edits: [] } as any)).rejects.toThrow();
     await expect(tool.execute("c", { notPath: "x" } as any)).rejects.toThrow();
@@ -107,8 +153,20 @@ describe("coverage-agent-g undo-edit and store-tenancy", () => {
     const dir = await mkdtemp(join(await getWritableTempRoot(), "undo-g-"));
     const p = join(dir, "a.txt");
     await writeFile(p, "orig", "utf-8");
-    const e1 = { content: "c1", bom: "", originalEnding: "\n" as const, hashes: ["h1"], resultContent: "r1" };
-    const e2 = { content: "c2", bom: "", originalEnding: "\n" as const, hashes: ["h2"], resultContent: "r2" };
+    const e1 = {
+      content: "c1",
+      bom: "",
+      originalEnding: "\n" as const,
+      hashes: ["h1"],
+      resultContent: "r1",
+    };
+    const e2 = {
+      content: "c2",
+      bom: "",
+      originalEnding: "\n" as const,
+      hashes: ["h2"],
+      resultContent: "r2",
+    };
     const r1 = await mod.saveUndo(p, e1);
     expect(r1.persisted).toBe(true);
     const r2 = await mod.saveUndo(p, e2);

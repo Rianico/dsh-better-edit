@@ -41,7 +41,7 @@ export const DEFAULT_MAX_BYTES = 50 * 1024;
 export interface TruncationResult {
   content: string;
   truncated: boolean;
-  truncatedBy: 'lines' | 'bytes' | null;
+  truncatedBy: "lines" | "bytes" | null;
   totalLines: number;
   totalBytes: number;
   outputLines: number;
@@ -54,8 +54,8 @@ export interface TruncationResult {
 
 function splitLinesForCounting(content: string): string[] {
   if (content.length === 0) return [];
-  const lines = content.split('\n');
-  if (content.endsWith('\n')) lines.pop();
+  const lines = content.split("\n");
+  if (content.endsWith("\n")) lines.pop();
   return lines;
 }
 
@@ -71,7 +71,7 @@ export function truncateHead(
 ): TruncationResult {
   const maxLines = options.maxLines ?? DEFAULT_MAX_LINES;
   const maxBytes = options.maxBytes ?? DEFAULT_MAX_BYTES;
-  const totalBytes = Buffer.byteLength(content, 'utf-8');
+  const totalBytes = Buffer.byteLength(content, "utf-8");
   const lines = splitLinesForCounting(content);
   const totalLines = lines.length;
   if (totalLines <= maxLines && totalBytes <= maxBytes) {
@@ -89,12 +89,12 @@ export function truncateHead(
       maxBytes,
     };
   }
-  const firstLineBytes = Buffer.byteLength(lines[0] ?? '', 'utf-8');
+  const firstLineBytes = Buffer.byteLength(lines[0] ?? "", "utf-8");
   if (firstLineBytes > maxBytes) {
     return {
-      content: '',
+      content: "",
       truncated: true,
-      truncatedBy: 'bytes',
+      truncatedBy: "bytes",
       totalLines,
       totalBytes,
       outputLines: 0,
@@ -107,22 +107,22 @@ export function truncateHead(
   }
   const outputLinesArr: string[] = [];
   let outputBytesCount = 0;
-  let truncatedBy: 'lines' | 'bytes' = 'lines';
+  let truncatedBy: "lines" | "bytes" = "lines";
   for (let i = 0; i < lines.length && i < maxLines; i++) {
     const line = lines[i]!;
-    const lineBytes = Buffer.byteLength(line, 'utf-8') + (i > 0 ? 1 : 0);
+    const lineBytes = Buffer.byteLength(line, "utf-8") + (i > 0 ? 1 : 0);
     if (outputBytesCount + lineBytes > maxBytes) {
-      truncatedBy = 'bytes';
+      truncatedBy = "bytes";
       break;
     }
     outputLinesArr.push(line);
     outputBytesCount += lineBytes;
   }
   if (outputLinesArr.length >= maxLines && outputBytesCount <= maxBytes) {
-    truncatedBy = 'lines';
+    truncatedBy = "lines";
   }
-  const outputContent = outputLinesArr.join('\n');
-  const finalOutputBytes = Buffer.byteLength(outputContent, 'utf-8');
+  const outputContent = outputLinesArr.join("\n");
+  const finalOutputBytes = Buffer.byteLength(outputContent, "utf-8");
   return {
     content: outputContent,
     truncated: true,
@@ -140,12 +140,7 @@ export function truncateHead(
 
 // --- File kind (from file-kind.ts, private) ---
 
-const IMG_TYPES = new Set<string>([
-  "image/jpeg",
-  "image/png",
-  "image/gif",
-  "image/webp",
-]);
+const IMG_TYPES = new Set<string>(["image/jpeg", "image/png", "image/gif", "image/webp"]);
 
 const TEXT_TYPES = new Set<string>([
   "application/rtf",
@@ -160,14 +155,16 @@ function detectTextBom(sample: Uint8Array): string | undefined {
     sample[1] === 0xfe &&
     sample[2] === 0x00 &&
     sample[3] === 0x00
-  ) return "UTF-32LE";
+  )
+    return "UTF-32LE";
   if (
     sample.length >= 4 &&
     sample[0] === 0x00 &&
     sample[1] === 0x00 &&
     sample[2] === 0xfe &&
     sample[3] === 0xff
-  ) return "UTF-32BE";
+  )
+    return "UTF-32BE";
   if (sample.length >= 2 && sample[0] === 0xff && sample[1] === 0xfe) return "UTF-16LE";
   if (sample.length >= 2 && sample[0] === 0xfe && sample[1] === 0xff) return "UTF-16BE";
   return undefined;
@@ -211,12 +208,7 @@ export async function loadFileKindAndText(
   const fileHandle = await fsOpen(filePath, "r");
   try {
     const buffer = Buffer.alloc(SNIFF_BYTES);
-    const { bytesRead } = await fileHandle.read(
-      buffer,
-      0,
-      SNIFF_BYTES,
-      0,
-    );
+    const { bytesRead } = await fileHandle.read(buffer, 0, SNIFF_BYTES, 0);
     if (bytesRead === 0) {
       return { kind: "text", text: "" };
     }
@@ -229,10 +221,7 @@ export async function loadFileKindAndText(
       };
     }
     const detectedMimeType = (await fileTypeFromBuffer(sample))?.mime;
-    if (
-      detectedMimeType !== undefined &&
-      !isTextType(detectedMimeType)
-    ) {
+    if (detectedMimeType !== undefined && !isTextType(detectedMimeType)) {
       if (IMG_TYPES.has(detectedMimeType)) {
         return { kind: "image", mimeType: detectedMimeType };
       }
@@ -255,7 +244,9 @@ export async function loadFileKindAndText(
           if (decoded.charCodeAt(i) === 10) newlineCount++;
         }
         if (newlineCount > options.maxLines) {
-          throw new Error(eLargeFileMsg(options.displayPath ?? filePath, newlineCount, options.maxLines));
+          throw new Error(
+            eLargeFileMsg(options.displayPath ?? filePath, newlineCount, options.maxLines),
+          );
         }
       }
       return decoded;
@@ -263,12 +254,7 @@ export async function loadFileKindAndText(
     parts.push(decodeChunk(sample, true));
     let position = bytesRead;
     while (true) {
-      const { bytesRead: chunkBytesRead } = await fileHandle.read(
-        buffer,
-        0,
-        SNIFF_BYTES,
-        position,
-      );
+      const { bytesRead: chunkBytesRead } = await fileHandle.read(buffer, 0, SNIFF_BYTES, position);
       if (chunkBytesRead === 0) {
         break;
       }
@@ -312,15 +298,22 @@ export async function valAccess(
   }
 }
 
-export function valKind(file: LFile, path: string): asserts file is { kind: "text"; text: string; hadUtf8DecodeErrors?: true } {
+export function valKind(
+  file: LFile,
+  path: string,
+): asserts file is { kind: "text"; text: string; hadUtf8DecodeErrors?: true } {
   if (file.kind === "directory") {
     throw new Error(`[MODEL] [E_UNSUPPORTED_FILE] Path is a directory: ${path}.`);
   }
   if (file.kind === "binary") {
-    throw new Error(`[MODEL] [E_UNSUPPORTED_FILE] Path is a binary file: ${path} (${file.description}). Hashline edit only supports text files.`);
+    throw new Error(
+      `[MODEL] [E_UNSUPPORTED_FILE] Path is a binary file: ${path} (${file.description}). Hashline edit only supports text files.`,
+    );
   }
   if (file.kind === "image") {
-    throw new Error(`[MODEL] [E_UNSUPPORTED_FILE] Path is an image file: ${path}. Hashline edit only supports text files.`);
+    throw new Error(
+      `[MODEL] [E_UNSUPPORTED_FILE] Path is an image file: ${path}. Hashline edit only supports text files.`,
+    );
   }
 }
 
@@ -453,10 +446,7 @@ export async function readNormFile(
 
 // --- Read render (from read-render.ts, private) ---
 
-function normPosInt(
-  value: number | undefined,
-  name: 'offset' | 'limit',
-): number | undefined {
+function normPosInt(value: number | undefined, name: "offset" | "limit"): number | undefined {
   if (value === undefined) return undefined;
   if (!Number.isInteger(value) || value < 1) {
     throw new Error(
@@ -473,8 +463,7 @@ export function formatPaginationHint(
   nextOffset: number,
   byteLimit?: number,
 ): string {
-  const sizeSuffix =
-    byteLimit !== undefined ? ` (${formatSize(byteLimit)} limit)` : '';
+  const sizeSuffix = byteLimit !== undefined ? ` (${formatSize(byteLimit)} limit)` : "";
   return `[Showing lines ${startLine}-${endLine} of ${totalLines}${sizeSuffix}. Use offset=${nextOffset} to continue.]`;
 }
 
@@ -493,12 +482,11 @@ export async function fmtReadPreview(
 }> {
   const allLines = visLines(text);
   const totalLines = allLines.length;
-  const startLine = normPosInt(options.offset, 'offset') ?? 1;
+  const startLine = normPosInt(options.offset, "offset") ?? 1;
   if (totalLines === 0) {
     if (startLine === 1) {
       const allHashes =
-        precomputedHashes ??
-        (await (path ? lineHashes(text, path) : lineHashes(text)));
+        precomputedHashes ?? (await (path ? lineHashes(text, path) : lineHashes(text)));
       const emptyLineHash = allHashes[0]!;
       return {
         text: `${emptyLineHash}${HASH_SEP}\n[File is empty. Use edit to insert content.]`,
@@ -516,23 +504,16 @@ export async function fmtReadPreview(
       served: [],
     };
   }
-  const limit = normPosInt(options.limit, 'limit');
-  const endIdx = limit
-    ? Math.min(startLine - 1 + limit, totalLines)
-    : totalLines;
+  const limit = normPosInt(options.limit, "limit");
+  const endIdx = limit ? Math.min(startLine - 1 + limit, totalLines) : totalLines;
   const selected = allLines.slice(startLine - 1, endIdx);
-  const allHashes =
-    precomputedHashes ??
-    (await (path ? lineHashes(text, path) : lineHashes(text)));
+  const allHashes = precomputedHashes ?? (await (path ? lineHashes(text, path) : lineHashes(text)));
   const selectedHashes = allHashes.slice(startLine - 1, endIdx);
   const formatted = fmtRegion(selectedHashes, selected);
   const maxBytes = maxLineBytes;
   const rowSizes = selected.map((line, index) => ({
     lineNumber: startLine + index,
-    bytes: Buffer.byteLength(
-      `${selectedHashes[index]}${HASH_SEP}${line}`,
-      'utf-8',
-    ),
+    bytes: Buffer.byteLength(`${selectedHashes[index]}${HASH_SEP}${line}`, "utf-8"),
   }));
   if (rowSizes.some((row) => row.bytes > maxBytes)) {
     const oversized = rowSizes.filter((row) => row.bytes > maxBytes);
@@ -541,29 +522,23 @@ export async function fmtReadPreview(
         ? `[Line ${row.lineNumber} is ${formatSize(row.bytes)}, exceeds ${formatSize(maxBytes)}; content not shown. Use bash: sed -n '${row.lineNumber}p' <path> | head -c ${maxBytes}]`
         : fmtRegion([selectedHashes[index]!], [selected[index]!]),
     );
-    const skippedTruncation = truncateHead(rows.join('\n'), {
+    const skippedTruncation = truncateHead(rows.join("\n"), {
       maxBytes,
       maxLines: maxTruncLines,
     });
     const shownRowCount =
-      skippedTruncation.content === ''
-        ? 0
-        : skippedTruncation.content.split('\n').length;
-    const lastShownLine =
-      shownRowCount > 0 ? startLine + shownRowCount - 1 : startLine - 1;
+      skippedTruncation.content === "" ? 0 : skippedTruncation.content.split("\n").length;
+    const lastShownLine = shownRowCount > 0 ? startLine + shownRowCount - 1 : startLine - 1;
     const lineLabel =
       oversized.length === 1
         ? `Line ${oversized[0]!.lineNumber}`
-        : `Lines ${oversized.map((row) => row.lineNumber).join(', ')}`;
-    const verb = oversized.length === 1 ? 'exceeds' : 'exceed';
-    const addresses = oversized.map((row) => `${row.lineNumber}p`).join(';');
+        : `Lines ${oversized.map((row) => row.lineNumber).join(", ")}`;
+    const verb = oversized.length === 1 ? "exceeds" : "exceed";
+    const addresses = oversized.map((row) => `${row.lineNumber}p`).join(";");
     const warning = `[${lineLabel} ${verb} ${formatSize(maxBytes)}; content not shown because hashline anchors require full lines. Inspect with bash: sed -n '${addresses}' <path> | head -c ${maxBytes}]`;
     let preview = skippedTruncation.content;
     let nextOffset: number | undefined;
-    if (
-      shownRowCount > 0 &&
-      (skippedTruncation.truncated || lastShownLine < totalLines)
-    ) {
+    if (shownRowCount > 0 && (skippedTruncation.truncated || lastShownLine < totalLines)) {
       nextOffset = lastShownLine + 1;
       preview += `\n\n${warning}\n${formatPaginationHint(startLine, lastShownLine, totalLines, nextOffset, skippedTruncation.truncated ? skippedTruncation.maxBytes : undefined)}`;
     } else {
@@ -594,7 +569,7 @@ export async function fmtReadPreview(
   if (truncation.truncated) {
     const endLineDisplay = startLine + truncation.outputLines - 1;
     nextOffset = endLineDisplay + 1;
-    if (truncation.truncatedBy === 'lines') {
+    if (truncation.truncatedBy === "lines") {
       preview += `\n\n${formatPaginationHint(startLine, endLineDisplay, totalLines, nextOffset)}`;
     } else {
       preview += `\n\n${formatPaginationHint(startLine, endLineDisplay, totalLines, nextOffset, truncation.maxBytes)}`;
@@ -669,17 +644,16 @@ export async function readView(
   const { signal } = opts;
   const absolutePath = await io.resolve(path, cwd, signal);
   const rawText = await io.readText(absolutePath, signal, opts.encoding);
-  const { normalized, fileHashes, hadUtf8DecodeErrors, bom, originalEnding } =
-    await normFromText({
-      absolutePath,
-      rawText,
-      displayPath: path,
-      signal,
-      maxLines: MAX_HASH_LINES,
-      reservedHashes: opts.reservedHashes,
-      retiredHashes: opts.retiredHashes,
-      previous: opts.previous,
-    });
+  const { normalized, fileHashes, hadUtf8DecodeErrors, bom, originalEnding } = await normFromText({
+    absolutePath,
+    rawText,
+    displayPath: path,
+    signal,
+    maxLines: MAX_HASH_LINES,
+    reservedHashes: opts.reservedHashes,
+    retiredHashes: opts.retiredHashes,
+    previous: opts.previous,
+  });
   const r = await fmtReadPreview(
     normalized,
     { offset: opts.offset, limit: opts.limit },

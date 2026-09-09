@@ -15,6 +15,6 @@ export { canonicalAsync as resolveTarget } from "./canonical-path.js";
 export { canonicalSync } from "./canonical-path.js";
 
 export function toCwd(filePath: string, cwd: string): string {
-	const expanded = expand(filePath);
-	return isAbsolute(expanded) ? expanded : resolvePath(cwd, expanded);
+  const expanded = expand(filePath);
+  return isAbsolute(expanded) ? expanded : resolvePath(cwd, expanded);
 }

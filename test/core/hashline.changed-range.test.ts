@@ -16,8 +16,8 @@ describe("changedRange", () => {
     expect(result).toEqual({ firstChangedLine: 2, lastChangedLine: 3 });
   });
 
-	it("tracks a multi-line delete in the middle", () => {
-		const result = changedRange("a\nb\nc\nd", "a\nd");
+  it("tracks a multi-line delete in the middle", () => {
+    const result = changedRange("a\nb\nc\nd", "a\nd");
     expect(result).not.toBeNull();
     expect(result!.firstChangedLine).toBeLessThanOrEqual(result!.lastChangedLine);
     expect(result).toEqual({ firstChangedLine: 2, lastChangedLine: 2 });

@@ -17,72 +17,72 @@
 
 ### Bug Fixes
 
-* **hashline:** retired hazard GC and stable reuse for anchor-space deadlock ([#59](https://github.com/Rianico/dsh-better-edit/issues/59)) ([2487c43](https://github.com/Rianico/dsh-better-edit/commit/2487c43e6d0ec8e5af15b42495bc4f8d7e3ca89a)), closes [#51](https://github.com/Rianico/dsh-better-edit/issues/51) [#51](https://github.com/Rianico/dsh-better-edit/issues/51) [#51](https://github.com/Rianico/dsh-better-edit/issues/51)
+- **hashline:** retired hazard GC and stable reuse for anchor-space deadlock ([#59](https://github.com/Rianico/dsh-better-edit/issues/59)) ([2487c43](https://github.com/Rianico/dsh-better-edit/commit/2487c43e6d0ec8e5af15b42495bc4f8d7e3ca89a)), closes [#51](https://github.com/Rianico/dsh-better-edit/issues/51) [#51](https://github.com/Rianico/dsh-better-edit/issues/51) [#51](https://github.com/Rianico/dsh-better-edit/issues/51)
 
 ### Documentation
 
-* **context:** retired anchor replaces tombstone; add hazard card and epoch glossary ([#58](https://github.com/Rianico/dsh-better-edit/issues/58)) ([287b68e](https://github.com/Rianico/dsh-better-edit/commit/287b68efc97bea940fd881a8ca1e8755b2da311a)), closes [#51](https://github.com/Rianico/dsh-better-edit/issues/51)
+- **context:** retired anchor replaces tombstone; add hazard card and epoch glossary ([#58](https://github.com/Rianico/dsh-better-edit/issues/58)) ([287b68e](https://github.com/Rianico/dsh-better-edit/commit/287b68efc97bea940fd881a8ca1e8755b2da311a)), closes [#51](https://github.com/Rianico/dsh-better-edit/issues/51)
 
 ## [0.7.0](https://github.com/Rianico/dsh-better-edit/compare/v0.6.3...v0.7.0) (2026-09-06)
 
 ### Features
 
-* **session-view:** canon-deficit drift instead of hash rotation (Closes [#46](https://github.com/Rianico/dsh-better-edit/issues/46)) ([#50](https://github.com/Rianico/dsh-better-edit/issues/50)) ([44ba1b3](https://github.com/Rianico/dsh-better-edit/commit/44ba1b3ea3c33759c879363a7e18b4d718edd4d9)), closes [#68](https://github.com/Rianico/dsh-better-edit/issues/68)
-* user/model audience split + glossary error codes ([#49](https://github.com/Rianico/dsh-better-edit/issues/49)) ([1559fc5](https://github.com/Rianico/dsh-better-edit/commit/1559fc5d135d006faa86aa656c166a5e3fa3be08)), closes [#48](https://github.com/Rianico/dsh-better-edit/issues/48) [#45](https://github.com/Rianico/dsh-better-edit/issues/45)
+- **session-view:** canon-deficit drift instead of hash rotation (Closes [#46](https://github.com/Rianico/dsh-better-edit/issues/46)) ([#50](https://github.com/Rianico/dsh-better-edit/issues/50)) ([44ba1b3](https://github.com/Rianico/dsh-better-edit/commit/44ba1b3ea3c33759c879363a7e18b4d718edd4d9)), closes [#68](https://github.com/Rianico/dsh-better-edit/issues/68)
+- user/model audience split + glossary error codes ([#49](https://github.com/Rianico/dsh-better-edit/issues/49)) ([1559fc5](https://github.com/Rianico/dsh-better-edit/commit/1559fc5d135d006faa86aa656c166a5e3fa3be08)), closes [#48](https://github.com/Rianico/dsh-better-edit/issues/48) [#45](https://github.com/Rianico/dsh-better-edit/issues/45)
 
 ### Bug Fixes
 
-* **edit:** Gemma-4 tool-call bleed hardening + prompt channel wording (Closes [#47](https://github.com/Rianico/dsh-better-edit/issues/47)) ([#52](https://github.com/Rianico/dsh-better-edit/issues/52)) ([55e8d21](https://github.com/Rianico/dsh-better-edit/commit/55e8d21bcc57e87ee674c4d7484da0cd200e2e03)), closes [#55](https://github.com/Rianico/dsh-better-edit/issues/55)
-* review follow-ups from 1.6.0 absorb (Closes [#55](https://github.com/Rianico/dsh-better-edit/issues/55)) ([#56](https://github.com/Rianico/dsh-better-edit/issues/56)) ([d6a9cbb](https://github.com/Rianico/dsh-better-edit/commit/d6a9cbb5ae071892dd88aefdaa6b9d875aa091e7))
-* **served:** epoch lifecycle belongs to full reads (Closes [#48](https://github.com/Rianico/dsh-better-edit/issues/48)) ([#54](https://github.com/Rianico/dsh-better-edit/issues/54)) ([959f355](https://github.com/Rianico/dsh-better-edit/commit/959f355b0866a6a892dda2a149cc20c6505fc9ad)), closes [#69](https://github.com/Rianico/dsh-better-edit/issues/69)
-* **served:** refresh canons on truncated serve records (Closes [#53](https://github.com/Rianico/dsh-better-edit/issues/53)) ([#57](https://github.com/Rianico/dsh-better-edit/issues/57)) ([1f8601c](https://github.com/Rianico/dsh-better-edit/commit/1f8601cc8b3608bc79acb82130abbe37990aef75))
+- **edit:** Gemma-4 tool-call bleed hardening + prompt channel wording (Closes [#47](https://github.com/Rianico/dsh-better-edit/issues/47)) ([#52](https://github.com/Rianico/dsh-better-edit/issues/52)) ([55e8d21](https://github.com/Rianico/dsh-better-edit/commit/55e8d21bcc57e87ee674c4d7484da0cd200e2e03)), closes [#55](https://github.com/Rianico/dsh-better-edit/issues/55)
+- review follow-ups from 1.6.0 absorb (Closes [#55](https://github.com/Rianico/dsh-better-edit/issues/55)) ([#56](https://github.com/Rianico/dsh-better-edit/issues/56)) ([d6a9cbb](https://github.com/Rianico/dsh-better-edit/commit/d6a9cbb5ae071892dd88aefdaa6b9d875aa091e7))
+- **served:** epoch lifecycle belongs to full reads (Closes [#48](https://github.com/Rianico/dsh-better-edit/issues/48)) ([#54](https://github.com/Rianico/dsh-better-edit/issues/54)) ([959f355](https://github.com/Rianico/dsh-better-edit/commit/959f355b0866a6a892dda2a149cc20c6505fc9ad)), closes [#69](https://github.com/Rianico/dsh-better-edit/issues/69)
+- **served:** refresh canons on truncated serve records (Closes [#53](https://github.com/Rianico/dsh-better-edit/issues/53)) ([#57](https://github.com/Rianico/dsh-better-edit/issues/57)) ([1f8601c](https://github.com/Rianico/dsh-better-edit/commit/1f8601cc8b3608bc79acb82130abbe37990aef75))
 
 ### Documentation
 
-* **absorb:** record v1.6.0 checkpoint 87a17eb after T1-T4 ([8afba98](https://github.com/Rianico/dsh-better-edit/commit/8afba9842628e44a011c266956d8746725295c11))
-* migrate CLAUDE.md to AGENTS.md with symlink ([4706b6e](https://github.com/Rianico/dsh-better-edit/commit/4706b6e15f6a0ca627059087e3f05953b7b2ae6e))
+- **absorb:** record v1.6.0 checkpoint 87a17eb after T1-T4 ([8afba98](https://github.com/Rianico/dsh-better-edit/commit/8afba9842628e44a011c266956d8746725295c11))
+- migrate CLAUDE.md to AGENTS.md with symlink ([4706b6e](https://github.com/Rianico/dsh-better-edit/commit/4706b6e15f6a0ca627059087e3f05953b7b2ae6e))
 
 ## [0.6.3](https://github.com/Rianico/dsh-better-edit/compare/v0.6.2...v0.6.3) (2026-09-05)
 
 ### Bug Fixes
 
-* **self-heal:** restore hash-anchored read/edit after external takeover ([#43](https://github.com/Rianico/dsh-better-edit/issues/43)) ([#44](https://github.com/Rianico/dsh-better-edit/issues/44)) ([b53fc75](https://github.com/Rianico/dsh-better-edit/commit/b53fc753bcd71f1950bde61ad81e1b7b94758273))
+- **self-heal:** restore hash-anchored read/edit after external takeover ([#43](https://github.com/Rianico/dsh-better-edit/issues/43)) ([#44](https://github.com/Rianico/dsh-better-edit/issues/44)) ([b53fc75](https://github.com/Rianico/dsh-better-edit/commit/b53fc753bcd71f1950bde61ad81e1b7b94758273))
 
 ## [0.6.2](https://github.com/Rianico/dsh-better-edit/compare/v0.6.1...v0.6.2) (2026-09-03)
 
 ### Bug Fixes
 
-* **deps:** upgrade dsh dependencies to 0.1.1-rc.2 ([30e6029](https://github.com/Rianico/dsh-better-edit/commit/30e6029888fa517f20c640b7a38523a8a6148ccd))
+- **deps:** upgrade dsh dependencies to 0.1.1-rc.2 ([30e6029](https://github.com/Rianico/dsh-better-edit/commit/30e6029888fa517f20c640b7a38523a8a6148ccd))
 
 ### Documentation
 
-* **readme:** compact rewrite — pos-free hero, round-trips, tokens ([dc468c5](https://github.com/Rianico/dsh-better-edit/commit/dc468c5ce9799ddf9578d92e715905701b2a95a1))
+- **readme:** compact rewrite — pos-free hero, round-trips, tokens ([dc468c5](https://github.com/Rianico/dsh-better-edit/commit/dc468c5ce9799ddf9578d92e715905701b2a95a1))
 
 ## [0.6.1](https://github.com/Rianico/dsh-better-edit/compare/v0.6.0...v0.6.1) (2026-09-01)
 
 ### Bug Fixes
 
-* **hashline:** prevent freed anchor reuse ([#31](https://github.com/Rianico/dsh-better-edit/issues/31)) ([#42](https://github.com/Rianico/dsh-better-edit/issues/42)) ([19724a4](https://github.com/Rianico/dsh-better-edit/commit/19724a4083afcfc104172d5ce71bb6ab198026b7)), closes [GH#41](https://github.com/Rianico/GH/issues/41)
+- **hashline:** prevent freed anchor reuse ([#31](https://github.com/Rianico/dsh-better-edit/issues/31)) ([#42](https://github.com/Rianico/dsh-better-edit/issues/42)) ([19724a4](https://github.com/Rianico/dsh-better-edit/commit/19724a4083afcfc104172d5ce71bb6ab198026b7)), closes [GH#41](https://github.com/Rianico/GH/issues/41)
 
 ## [0.6.0](https://github.com/Rianico/dsh-better-edit/compare/v0.5.1...v0.6.0) (2026-08-31)
 
 ### Features
 
-* **edit:** render diff card after tool calling ([df7712c](https://github.com/Rianico/dsh-better-edit/commit/df7712cef265dfec424feefb60c19f833d380f9f))
-* **hashline:** remove boundaryDups auto-fix (Closes [#38](https://github.com/Rianico/dsh-better-edit/issues/38)) ([54d0bc6](https://github.com/Rianico/dsh-better-edit/commit/54d0bc6c9078fbcffa6f7a531e80e005774156a4))
+- **edit:** render diff card after tool calling ([df7712c](https://github.com/Rianico/dsh-better-edit/commit/df7712cef265dfec424feefb60c19f833d380f9f))
+- **hashline:** remove boundaryDups auto-fix (Closes [#38](https://github.com/Rianico/dsh-better-edit/issues/38)) ([54d0bc6](https://github.com/Rianico/dsh-better-edit/commit/54d0bc6c9078fbcffa6f7a531e80e005774156a4))
 
 ### Bug Fixes
 
-* **ci:** add neural version check to Verify and Release ([7f85b56](https://github.com/Rianico/dsh-better-edit/commit/7f85b5605e228d19bcde802ce2b10affc90fbde7))
+- **ci:** add neural version check to Verify and Release ([7f85b56](https://github.com/Rianico/dsh-better-edit/commit/7f85b5605e228d19bcde802ce2b10affc90fbde7))
 
 ## [0.5.1](https://github.com/Rianico/dsh-better-edit/compare/v0.5.0...v0.5.1) (2026-08-30)
 
 ### Bug Fixes
 
-* **encoding:** support non-UTF-8 text files via VS Code model ([#34](https://github.com/Rianico/dsh-better-edit/issues/34)) ([#35](https://github.com/Rianico/dsh-better-edit/issues/35)) ([dd3e553](https://github.com/Rianico/dsh-better-edit/commit/dd3e553a3877e47b08aa2ba6336115e80b5d96f5))
-* **lint:** address biome blockers for release ([00b9270](https://github.com/Rianico/dsh-better-edit/commit/00b92704ac4093a627754e698bb1968acdc3d4e8))
-* remove unused exitHandlerRegistered ([f6a29f3](https://github.com/Rianico/dsh-better-edit/commit/f6a29f3f1dd694e4bb7c55a98d0eba80bc32a58f))
-* **scripts:** map fix to Fixed for Keep a Changelog ([bcd1850](https://github.com/Rianico/dsh-better-edit/commit/bcd18501e280b10d5075108c034de7352ece6922))
+- **encoding:** support non-UTF-8 text files via VS Code model ([#34](https://github.com/Rianico/dsh-better-edit/issues/34)) ([#35](https://github.com/Rianico/dsh-better-edit/issues/35)) ([dd3e553](https://github.com/Rianico/dsh-better-edit/commit/dd3e553a3877e47b08aa2ba6336115e80b5d96f5))
+- **lint:** address biome blockers for release ([00b9270](https://github.com/Rianico/dsh-better-edit/commit/00b92704ac4093a627754e698bb1968acdc3d4e8))
+- remove unused exitHandlerRegistered ([f6a29f3](https://github.com/Rianico/dsh-better-edit/commit/f6a29f3f1dd694e4bb7c55a98d0eba80bc32a58f))
+- **scripts:** map fix to Fixed for Keep a Changelog ([bcd1850](https://github.com/Rianico/dsh-better-edit/commit/bcd18501e280b10d5075108c034de7352ece6922))
 
 # Changelog
 
@@ -194,16 +194,16 @@ Entries link to the originating spec issue in [pi-hashline-edit-lsz](https://git
 ### Added
 
 - Configurable per-preset tool guidance (issues #7, #8; tickets #9–#13): the four `tool:*` prompt sections resolve from plain-markdown override files keyed by agent preset — `$DSH_HOME/plugins/dsh-better-edit/<preset>/<section>.md` — with an optional `order` front-matter. On first boot the plugin seeds each shipped preset (`standard`, `code`, `minimal`, `cordis`) with its guidance as editable files plus a root README documenting the scheme. Per section the chain is `<preset>/<section>.md` → compiled default; files are read once per agent at session-start, so edits apply to new sessions. Deployments without the `agentPresets` service keep the compiled defaults untouched.
-Default orders sit at 130–133, above the built-in tool-guidance band (100–116 in the shipped
-dsh), so a same-order section merge with unrelated tool guidance cannot occur out of the box; the
-seeded preset files expose that `order` as editable front-matter.
+  Default orders sit at 130–133, above the built-in tool-guidance band (100–116 in the shipped
+  dsh), so a same-order section merge with unrelated tool guidance cannot occur out of the box; the
+  seeded preset files expose that `order` as editable front-matter.
 - Default guidance text simplified per the writing-for-agents principles; the `*_GUIDELINES` constants unified on `*_GUIDANCE`.
 - Thanks to [@R-LEI2536](https://github.com/R-LEI2536) for requesting configurable per-preset prompts and for the design input that shaped this release (issue [#7](https://github.com/Rianico/dsh-better-edit/issues/7)).
 
 ### Changed
 
 - Benchmark extended to a third arm, `@oh-my-pi/hashline`: same corpus, same 12 replacements, two modes (per-edit `seq` with renumbered lines + one-document `batch` fixed to original line numbers). Payloads are built from the package's published grammar and validated before counting (the package is Bun-only, so it cannot run under the Node benchmark). Honest result, reported as such: hashline saves 31% vs `str_replace` on the session (43% on multi-line ranges) and remains the plugin's claim; the compact patch language saves 42% per edit / 53% batched — and this README says so. `npm run benchmark` stays byte-deterministic (verified over repeated runs).
-- READMEs (English and 中文) refined along ponytail-style lines: "How It Compares" gains an `@oh-my-pi/hashline` column plus a same-lineage/different-jobs comparison; the Benchmark section documents all three arms, adds an honest "regenerate, don't trust" reproducibility note, and widens the scope-and-honesty block with what the payload numbers do *not* capture (renumber/tag-chase cost, block ops, Bun-vs-Node, tool-pair vs patcher library).
+- READMEs (English and 中文) refined along ponytail-style lines: "How It Compares" gains an `@oh-my-pi/hashline` column plus a same-lineage/different-jobs comparison; the Benchmark section documents all three arms, adds an honest "regenerate, don't trust" reproducibility note, and widens the scope-and-honesty block with what the payload numbers do _not_ capture (renumber/tag-chase cost, block ops, Bun-vs-Node, tool-pair vs patcher library).
 - `package.json` keywords now include `oh-my-pi` alongside `hashline`.
 - Roadmap gains a first-class decision item: close or justify the gap vs `@oh-my-pi/hashline` (payload-lighter by 42%/53% vs 31%, with block ops / registers / `REM`/`MV` / multi-hunk documents / pluggable fs we do not support — against correctness costs: unverified line numbers, renumber-per-edit, best-effort merge on stale tags, model skill floor). A reference record lives at `../oh-my-pi.md` (workspace-level, outside this repo): the token comparison, the correctness asymmetry, the ability-by-ability status, and the decision rationale.
 

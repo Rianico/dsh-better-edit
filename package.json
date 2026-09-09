@@ -1,16 +1,33 @@
 {
   "name": "dsh-better-edit",
   "version": "0.7.1",
-  "type": "module",
   "description": "Hash-anchored read/edit/undo_last_edit tools for DeepSeek Harness (dsh). Every line gets a unique 3-char hash (A-Za-z0-9) that stays stable across edits; stale or ambiguous anchors are rejected, never fuzzy-matched. Undo persists across restarts.",
-  "main": "lib/index.js",
-  "types": "lib/types/index.d.ts",
-  "exports": {
-    ".": {
-      "types": "./lib/types/index.d.ts",
-      "default": "./lib/index.js"
-    },
-    "./package.json": "./package.json"
+  "keywords": [
+    "anchors",
+    "batch-edit",
+    "coding-agent",
+    "deepseek-harness",
+    "dsh",
+    "dsh-plugin",
+    "edit",
+    "file-editing",
+    "hash",
+    "hash-anchored",
+    "hashline",
+    "oh-my-pi",
+    "read",
+    "stable",
+    "undo"
+  ],
+  "homepage": "https://github.com/Rianico/dsh-better-edit",
+  "bugs": {
+    "url": "https://github.com/Rianico/dsh-better-edit/issues"
+  },
+  "license": "MIT",
+  "author": "dsh-better-edit contributors",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Rianico/dsh-better-edit.git"
   },
   "files": [
     "lib",
@@ -21,47 +38,15 @@
     "assets/",
     "CHANGELOG.md"
   ],
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/Rianico/dsh-better-edit.git"
-  },
-  "homepage": "https://github.com/Rianico/dsh-better-edit",
-  "bugs": {
-    "url": "https://github.com/Rianico/dsh-better-edit/issues"
-  },
-  "author": "dsh-better-edit contributors",
-  "keywords": [
-    "dsh",
-    "dsh-plugin",
-    "deepseek-harness",
-    "coding-agent",
-    "oh-my-pi",
-    "hashline",
-    "hash-anchored",
-    "hash",
-    "anchors",
-    "read",
-    "edit",
-    "batch-edit",
-    "undo",
-    "file-editing",
-    "stable"
-  ],
-  "license": "MIT",
-  "dsh": {
-    "bundle": {
-      "patch": "./cordis.patch.yml"
-    }
-  },
-  "dependencies": {
-    "diff": "^8.0.2",
-    "file-type": "^21.3.0",
-    "iconv-lite": "^0.6.3",
-    "xxhash-wasm": "^1.1.0",
-    "zod": "^3.25.76"
-  },
-  "engines": {
-    "node": ">=24"
+  "type": "module",
+  "main": "lib/index.js",
+  "types": "lib/types/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./lib/types/index.d.ts",
+      "default": "./lib/index.js"
+    },
+    "./package.json": "./package.json"
   },
   "scripts": {
     "prepare": "tsc -p tsconfig.json && husky",
@@ -79,6 +64,13 @@
     "format:check": "oxfmt --check .",
     "test:coverage": "vitest run --coverage",
     "format:fix": "oxfmt ."
+  },
+  "dependencies": {
+    "diff": "^8.0.2",
+    "file-type": "^21.3.0",
+    "iconv-lite": "^0.6.3",
+    "xxhash-wasm": "^1.1.0",
+    "zod": "^3.25.76"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.1.0",
@@ -99,16 +91,24 @@
     "conventional-changelog-conventionalcommits": "^8.0.0",
     "husky": "^9.1.7",
     "js-tiktoken": "1.0.21",
-    "semantic-release": "^25.0.9",
-    "typescript": ">=7",
-    "vitest": "^4.1.8",
-    "oxlint": ">=1",
     "oxfmt": ">=0.15",
+    "oxlint": ">=1",
+    "semantic-release": "^25.0.9",
+    "tsx": ">=4",
+    "typescript": ">=7",
     "vite": ">=8",
-    "tsx": ">=4"
+    "vitest": "^4.1.8"
   },
   "optionalDependencies": {
     "chardet": "2.2.0"
   },
-  "packageManager": "pnpm@12.0.0"
+  "engines": {
+    "node": ">=24"
+  },
+  "packageManager": "pnpm@12.0.0",
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  }
 }

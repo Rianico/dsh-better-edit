@@ -53,7 +53,8 @@ describe("51 epoch strict/resist", () => {
     // We verify that the engine now computes strictPos=true when epoch !== cur.
     // Directly test that strictPos would be true by checking the wiring: runFileEdits should be strict when epoch mismatch.
     // Instead of full integration, verify that the written logic in engine is conservative strict: epoch !== cur -> strict
-    const strictExpected = epochId !== undefined && curSnap.snapshotId !== undefined && epochId !== curSnap.snapshotId;
+    const strictExpected =
+      epochId !== undefined && curSnap.snapshotId !== undefined && epochId !== curSnap.snapshotId;
     expect(strictExpected).toBe(true);
     // Now test that a simple edit with correct positions still works under strict (using fresh read after shift)
     const preview2 = await readAndServe(io, fp, dir, { sessionKey });
@@ -78,7 +79,8 @@ describe("51 epoch strict/resist", () => {
     const { fileSnap } = await import("../src/file-view.js");
     const curSnap = await fileSnap(preview3.absolutePath);
     expect(curSnap.snapshotId).toBe(epochId);
-    const strictExpected = epochId !== undefined && curSnap.snapshotId !== undefined && epochId !== curSnap.snapshotId;
+    const strictExpected =
+      epochId !== undefined && curSnap.snapshotId !== undefined && epochId !== curSnap.snapshotId;
     expect(strictExpected).toBe(false);
     await rm(dir, { recursive: true, force: true });
   });

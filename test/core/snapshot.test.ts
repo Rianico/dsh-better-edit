@@ -61,19 +61,22 @@ describe("fileSnap", () => {
     });
   });
 
-  it.skipIf(process.platform === "win32")("resolves symlinks and returns the canonical path in snapshotId", async () => {
-    await withTempDir(async (dir) => {
-      const realFile = join(dir, "real.ts");
-      const linkPath = join(dir, "link.ts");
-      await writeFile(realFile, "real content\n", "utf-8");
-      await symlink(realFile, linkPath);
+  it.skipIf(process.platform === "win32")(
+    "resolves symlinks and returns the canonical path in snapshotId",
+    async () => {
+      await withTempDir(async (dir) => {
+        const realFile = join(dir, "real.ts");
+        const linkPath = join(dir, "link.ts");
+        await writeFile(realFile, "real content\n", "utf-8");
+        await symlink(realFile, linkPath);
 
-      const snap = await fileSnap(linkPath);
+        const snap = await fileSnap(linkPath);
 
-      expect(snap.snapshotId).toContain("real.ts");
-      expect(snap.size).toBe(13);
-    });
-  });
+        expect(snap.snapshotId).toContain("real.ts");
+        expect(snap.size).toBe(13);
+      });
+    },
+  );
 
   it("throws on non-existent file", async () => {
     await withTempDir(async (dir) => {

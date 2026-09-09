@@ -6,7 +6,7 @@ import { buildUndoTool } from "../../src/tool-undo.js";
 import { FsSandboxController } from "../../src/sandbox.js";
 import { saveUndo, clearUndo, getUndo } from "../../src/undo-edit.js";
 
-function makeExec(cwd: string, sessionKey="test-session") {
+function makeExec(cwd: string, sessionKey = "test-session") {
   return {
     signal: new AbortController().signal,
     agent: { id: sessionKey, session: { id: sessionKey, header: { cwd } } },
@@ -27,7 +27,10 @@ describe("tool-undo coverage", () => {
     await withTempFile("t.txt", "a\nb\nc\n", async ({ cwd, path }) => {
       const harness = setupIntegrationTest(cwd);
       const served = await harness.readTool.execute("read", { path: "t.txt" });
-      const hash = getText(served).split("\n").find(l=>l.includes("│b"))!.split("│")[0]!;
+      const hash = getText(served)
+        .split("\n")
+        .find((l) => l.includes("│b"))!
+        .split("│")[0]!;
       await harness.editTool.execute("edit", { path: "t.txt", edits: [[hash, hash, "B"]] } as any);
       const { rm } = await import("node:fs/promises");
       await rm(path);
@@ -45,7 +48,10 @@ describe("tool-undo coverage", () => {
     await withTempFile("t.txt", "a\nb\nc\n", async ({ cwd, path }) => {
       const harness = setupIntegrationTest(cwd);
       const served = await harness.readTool.execute("read", { path: "t.txt" });
-      const hash = getText(served).split("\n").find(l=>l.includes("│b"))!.split("│")[0]!;
+      const hash = getText(served)
+        .split("\n")
+        .find((l) => l.includes("│b"))!
+        .split("│")[0]!;
       await harness.editTool.execute("edit", { path: "t.txt", edits: [[hash, hash, "B"]] } as any);
       await writeFile(path, "externally modified\n", "utf-8");
       const undo = harness.getTool("undo_last_edit") as any;
@@ -58,7 +64,10 @@ describe("tool-undo coverage", () => {
     await withTempFile("t.txt", "a\nb\nc\n", async ({ cwd, path }) => {
       const harness = setupIntegrationTest(cwd);
       const served = await harness.readTool.execute("read", { path: "t.txt" });
-      const hash = getText(served).split("\n").find(l=>l.includes("│b"))!.split("│")[0]!;
+      const hash = getText(served)
+        .split("\n")
+        .find((l) => l.includes("│b"))!
+        .split("│")[0]!;
       await harness.editTool.execute("edit", { path: "t.txt", edits: [[hash, hash, "BB"]] } as any);
       expect(await readFile(path, "utf-8")).toBe("a\nBB\nc\n");
       const undo = harness.getTool("undo_last_edit") as any;
@@ -73,7 +82,10 @@ describe("tool-undo coverage", () => {
     await withTempFile("t.txt", "a\nb\nc\n", async ({ cwd, path }) => {
       const harness = setupIntegrationTest(cwd);
       const served = await harness.readTool.execute("read", { path: "t.txt" });
-      const hash = getText(served).split("\n").find(l=>l.includes("│a"))!.split("│")[0]!;
+      const hash = getText(served)
+        .split("\n")
+        .find((l) => l.includes("│a"))!
+        .split("│")[0]!;
       await harness.editTool.execute("edit", { path: "t.txt", edits: [[hash, hash, "AA"]] } as any);
       const undo = harness.getTool("undo_last_edit") as any;
       await undo.execute("undo_last_edit", { path: "t.txt" });
@@ -86,7 +98,10 @@ describe("tool-undo coverage", () => {
     try {
       const { Context } = await import("@deepseek-ai/cordis");
       const io = localIO();
-      const sandbox = new FsSandboxController({ fs: { sandboxMode: undefined }, get: ()=>undefined } as never);
+      const sandbox = new FsSandboxController({
+        fs: { sandboxMode: undefined },
+        get: () => undefined,
+      } as never);
       const root = new (Context as any)();
       const agent = new (Context as any)();
       const { registerUndoTool } = await import("../../src/tool-undo.js");
@@ -102,7 +117,13 @@ describe("undo-edit persistence coverage", () => {
     await withTempFile("t.txt", "x\n", async ({ cwd }) => {
       const { join } = await import("node:path");
       const abs = join(cwd, "t.txt");
-      const entry = { content: "old\n", bom: "", originalEnding: "\n" as const, hashes: ["h1"], resultContent: "new\n" };
+      const entry = {
+        content: "old\n",
+        bom: "",
+        originalEnding: "\n" as const,
+        hashes: ["h1"],
+        resultContent: "new\n",
+      };
       const r = await saveUndo(abs, entry);
       expect(typeof r.persisted).toBe("boolean");
       const loaded = await getUndo(abs);
@@ -121,7 +142,13 @@ describe("undo-edit persistence coverage", () => {
       // directly write invalid record via hash-store
       const { loadHashStore } = await import("../../src/hash-store.js");
       const store = await loadHashStore();
-      (store as any).upsertUndo(abs, { content: "a", bom: "", ending: "invalid", hashes: ["h"], resultContent: "b" });
+      (store as any).upsertUndo(abs, {
+        content: "a",
+        bom: "",
+        ending: "invalid",
+        hashes: ["h"],
+        resultContent: "b",
+      });
       const loaded = await getUndo(abs);
       expect(loaded).toBeUndefined();
     });
@@ -136,8 +163,20 @@ describe("undo-edit persistence coverage", () => {
     await withTempFile("t.txt", "x\n", async ({ cwd }) => {
       const { join } = await import("node:path");
       const abs = join(cwd, "t.txt");
-      const e1 = { content: "c1\n", bom: "", originalEnding: "\n" as const, hashes: ["h1"], resultContent: "r1\n" };
-      const e2 = { content: "c2\n", bom: "", originalEnding: "\n" as const, hashes: ["h2"], resultContent: "r2\n" };
+      const e1 = {
+        content: "c1\n",
+        bom: "",
+        originalEnding: "\n" as const,
+        hashes: ["h1"],
+        resultContent: "r1\n",
+      };
+      const e2 = {
+        content: "c2\n",
+        bom: "",
+        originalEnding: "\n" as const,
+        hashes: ["h2"],
+        resultContent: "r2\n",
+      };
       await saveUndo(abs, e1);
       const r = await saveUndo(abs, e2);
       const cur = await getUndo(abs);

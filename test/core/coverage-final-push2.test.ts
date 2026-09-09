@@ -65,7 +65,10 @@ describe("push2 simple coverage", () => {
     const { applyEdit } = await import("../../src/hashline/anchor-pipeline.js");
     const content = "a\nb\nc";
     const hashes = lineHashesPure(content);
-    const edit: any = { hash_bounds: [{ hash: hashes[0]! }, { hash: hashes[0]! }], content_lines: ["new"] };
+    const edit: any = {
+      hash_bounds: [{ hash: hashes[0]! }, { hash: hashes[0]! }],
+      content_lines: ["new"],
+    };
     const r = applyEdit(content, edit, undefined, hashes);
     expect(r.content).toContain("new");
   });

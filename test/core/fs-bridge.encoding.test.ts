@@ -27,7 +27,10 @@ describe("localIO encoding — BOM and autoGuess", () => {
 
   it("decodes UTF-8 BOM via localIO", async () => {
     const path = join(dir, "bom.txt");
-    await writeFile(path, Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), Buffer.from("hello", "utf-8")]));
+    await writeFile(
+      path,
+      Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), Buffer.from("hello", "utf-8")]),
+    );
     const io = localIO();
     const text = await io.readText(path);
     expect(text).toBe("hello"); // localIO strips BOM and decodes
@@ -72,7 +75,9 @@ describe("localIO encoding — BOM and autoGuess", () => {
     const path = join(dir, "any.txt");
     await writeFile(path, Buffer.from("hi"));
     const io = localIO();
-    await expect((io as any).readText(path, undefined, "not-an-enc")).rejects.toThrow(/E_BAD_ENCODING/);
+    await expect((io as any).readText(path, undefined, "not-an-enc")).rejects.toThrow(
+      /E_BAD_ENCODING/,
+    );
   });
 
   it("decodes Shift_JIS via autoGuess", async () => {
@@ -94,7 +99,9 @@ describe("contract and normalizeEncoding", () => {
   });
 
   it("assertReadRequest rejects unknown fields", () => {
-    expect(() => assertReadRequest({ path: "a.txt", unknown: "x" } as any)).toThrow(/E_BAD_PAYLOAD/);
+    expect(() => assertReadRequest({ path: "a.txt", unknown: "x" } as any)).toThrow(
+      /E_BAD_PAYLOAD/,
+    );
   });
 
   it("normalizeEncoding canonicalizes aliases", () => {

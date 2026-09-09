@@ -28,7 +28,9 @@ describe("coverage-agent-g lifecycle", () => {
       autoGuessEncoding: false,
       supportedEncodings: [],
     } as any);
-    const spyWorkspace = vi.spyOn(await import("../../src/workspace-context.js"), "workspaceCwd").mockReturnValue(ws);
+    const spyWorkspace = vi
+      .spyOn(await import("../../src/workspace-context.js"), "workspaceCwd")
+      .mockReturnValue(ws);
     // need to trigger handleGitPollution via onStoreOpen
     const lc = await import("../../src/store-lifecycle.js");
     lc._resetLifecycleForTests();
@@ -76,10 +78,16 @@ describe("coverage-agent-g lifecycle", () => {
 
   it("handleGitPollution: storeDir central skips", async () => {
     const storeCfgMod = await import("../../src/store-config.js");
-    const spyLoad = vi.spyOn(storeCfgMod, "loadConfig").mockReturnValue({ storeDir: "central" } as any);
+    const spyLoad = vi
+      .spyOn(storeCfgMod, "loadConfig")
+      .mockReturnValue({ storeDir: "central" } as any);
     const lc = await import("../../src/store-lifecycle.js");
     lc._resetLifecycleForTests();
-    await lc.onStoreOpen("/tmp/central/store.json", { servedPruneOlderThan: () => {}, undoPruneOlderThan: () => {} } as any, { pruneMissing: () => Promise.resolve() } as any);
+    await lc.onStoreOpen(
+      "/tmp/central/store.json",
+      { servedPruneOlderThan: () => {}, undoPruneOlderThan: () => {} } as any,
+      { pruneMissing: () => Promise.resolve() } as any,
+    );
     spyLoad.mockRestore();
   });
 
@@ -89,10 +97,16 @@ describe("coverage-agent-g lifecycle", () => {
     await mkdir(ws, { recursive: true });
     const storePath = join(ws, ".dsh_better_edit", "hash-store.sqlite");
     const storeCfgMod = await import("../../src/store-config.js");
-    const spyLoad = vi.spyOn(storeCfgMod, "loadConfig").mockReturnValue({ storeDir: "workspace", autoGitignore: true } as any);
+    const spyLoad = vi
+      .spyOn(storeCfgMod, "loadConfig")
+      .mockReturnValue({ storeDir: "workspace", autoGitignore: true } as any);
     const lc = await import("../../src/store-lifecycle.js");
     lc._resetLifecycleForTests();
-    await lc.onStoreOpen(storePath, { servedPruneOlderThan: () => {}, undoPruneOlderThan: () => {} } as any, { pruneMissing: () => Promise.resolve() } as any);
+    await lc.onStoreOpen(
+      storePath,
+      { servedPruneOlderThan: () => {}, undoPruneOlderThan: () => {} } as any,
+      { pruneMissing: () => Promise.resolve() } as any,
+    );
     spyLoad.mockRestore();
     await rm(dir, { recursive: true, force: true });
   });
@@ -104,10 +118,16 @@ describe("coverage-agent-g lifecycle", () => {
     await writeFile(join(ws, ".gitignore"), ".dsh_better_edit/\n", "utf-8");
     const storePath = join(ws, ".dsh_better_edit", "hash-store.sqlite");
     const storeCfgMod = await import("../../src/store-config.js");
-    const spyLoad = vi.spyOn(storeCfgMod, "loadConfig").mockReturnValue({ storeDir: "workspace", autoGitignore: true } as any);
+    const spyLoad = vi
+      .spyOn(storeCfgMod, "loadConfig")
+      .mockReturnValue({ storeDir: "workspace", autoGitignore: true } as any);
     const lc = await import("../../src/store-lifecycle.js");
     lc._resetLifecycleForTests();
-    await lc.onStoreOpen(storePath, { servedPruneOlderThan: () => {}, undoPruneOlderThan: () => {} } as any, { pruneMissing: () => Promise.resolve() } as any);
+    await lc.onStoreOpen(
+      storePath,
+      { servedPruneOlderThan: () => {}, undoPruneOlderThan: () => {} } as any,
+      { pruneMissing: () => Promise.resolve() } as any,
+    );
     spyLoad.mockRestore();
     await rm(dir, { recursive: true, force: true });
   });
@@ -116,11 +136,17 @@ describe("coverage-agent-g lifecycle", () => {
     const lc = await import("../../src/store-lifecycle.js");
     lc._resetLifecycleForTests();
     const storeCfgMod = await import("../../src/store-config.js");
-    const spyLoad = vi.spyOn(storeCfgMod, "loadConfig").mockReturnValue({ storeDir: "central", undo_ttl_s: 10 } as any);
+    const spyLoad = vi
+      .spyOn(storeCfgMod, "loadConfig")
+      .mockReturnValue({ storeDir: "central", undo_ttl_s: 10 } as any);
     const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
     const fakeStmts: any = {
-      servedPruneOlderThan: () => { throw new Error("served fail"); },
-      undoPruneOlderThan: () => { throw new Error("undo fail"); },
+      servedPruneOlderThan: () => {
+        throw new Error("served fail");
+      },
+      undoPruneOlderThan: () => {
+        throw new Error("undo fail");
+      },
     };
     await lc.onStoreOpen("/tmp/p", fakeStmts, { pruneMissing: () => Promise.resolve() } as any);
     expect(warnSpy).toHaveBeenCalled();
@@ -132,7 +158,10 @@ describe("coverage-agent-g lifecycle", () => {
     const lc = await import("../../src/store-lifecycle.js");
     lc._resetLifecycleForTests();
     const storeCfgMod = await import("../../src/store-config.js");
-    vi.spyOn(storeCfgMod, "loadConfig").mockReturnValue({ storeDir: "central", undo_ttl_s: -1 } as any);
+    vi.spyOn(storeCfgMod, "loadConfig").mockReturnValue({
+      storeDir: "central",
+      undo_ttl_s: -1,
+    } as any);
     const pruneMock = vi.fn(() => Promise.resolve());
     const stmts: any = { servedPruneOlderThan: () => {}, undoPruneOlderThan: () => {} };
     await lc.onStoreOpen("/tmp/p1", stmts, { pruneMissing: pruneMock } as any);
@@ -167,13 +196,27 @@ describe("coverage-agent-g lifecycle", () => {
     await mkdir(join(runtimeDir, "old2"), { recursive: true });
     await writeFile(join(runtimeDir, "old1", "hash-store.sqlite"), "x");
     await writeFile(join(runtimeDir, "old2", "hash-store.sqlite"), "y");
-    lc.setStoresGetter(() => new Map([[join(runtimeDir, "old1", "hash-store.sqlite"), { path: join(runtimeDir, "old1", "hash-store.sqlite") }]]), () => new Map());
+    lc.setStoresGetter(
+      () =>
+        new Map([
+          [
+            join(runtimeDir, "old1", "hash-store.sqlite"),
+            { path: join(runtimeDir, "old1", "hash-store.sqlite") },
+          ],
+        ]),
+      () => new Map(),
+    );
     await lc.runCentralJanitorIfDue().catch(() => {});
-    lc.setStoresGetter(() => new Map(), () => new Map());
+    lc.setStoresGetter(
+      () => new Map(),
+      () => new Map(),
+    );
     lc._resetLifecycleForTests();
     vi.restoreAllMocks();
-    if (prevHome === undefined) delete process.env.HOME; else process.env.HOME = prevHome;
-    if (prevDsh === undefined) delete process.env.DSH_HOME; else process.env.DSH_HOME = prevDsh;
+    if (prevHome === undefined) delete process.env.HOME;
+    else process.env.HOME = prevHome;
+    if (prevDsh === undefined) delete process.env.DSH_HOME;
+    else process.env.DSH_HOME = prevDsh;
     await rm(fakeHome, { recursive: true, force: true });
   });
 

@@ -26,7 +26,7 @@ swapReversed → stripBare → stripDiff → valEdit → verifyServed → resToS
 
 - **Keep all four (status quo):** preserves diff-block paste ergonomic, but keeps 1-line `}` loss and violates `anchor philosophy: rejected, never fuzzy-matched`. Rejected.
 - **Raise threshold to ≥2 consecutive lines:** fixes `#38` single-`}` case but `}\n}` (2-line run per `1d71c29`) still silently loses, still guesses intent. Rejected — still violates `model owns intent`.
-- **Fail-closed `E_BOUNDARY_DUP` on three-in-a-row (`last == remove_to == endLine+1`):** converts silent loss to loud reject-and-serve, consistent with `E_RANGE_*`. Viable but punishes legitimate intentional duplicate (`a\nb` where model *did* want `b` twice) and adds a new code models have never seen. Deferred.
+- **Fail-closed `E_BOUNDARY_DUP` on three-in-a-row (`last == remove_to == endLine+1`):** converts silent loss to loud reject-and-serve, consistent with `E_RANGE_*`. Viable but punishes legitimate intentional duplicate (`a\nb` where model _did_ want `b` twice) and adds a new code models have never seen. Deferred.
 - **Symmetric extend (also delete `fileLines[endLine+k]`):** keeps file length consistent (`1b4d7e6` gap) but changes `hash_bounds` meaning behind model's back (`remove 1` deletes `2`). Rejected — same surprise, worse contract.
 - **Delete all four (chosen):** removes surprise, keeps `model–tool boundary` pure, makes file result predictable (`a\nb` over `a` → `3` lines, `case` → `10`). Loud duplicate is visible in post-edit diff (`details` per ADR-0006) and fixable next turn. Hard to reverse silently (fork must re-add seam), but that's the point — surprising without context.
 
@@ -37,4 +37,3 @@ swapReversed → stripBare → stripDiff → valEdit → verifyServed → resToS
 - Tests — `hashline-apply-internals`, `hashline-fuzz-autofix` drop run-semantics; expectations become `no dedup` (`a\nb` → `3`). No new `E_BOUNDARY_DUP` code.
 - Prompt stays `replacement_text is bare content without HASH│`; no guidance change.
 - Breaking: one major bump (`feat(hashline)!`); downstream forks re-adding the seam must own the surprise.
-

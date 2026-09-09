@@ -13,10 +13,16 @@ describe("extra store-lifecycle", () => {
     const storePath = join(ws, ".dsh_better_edit", "hash-store.sqlite");
     await mkdir(join(ws, ".dsh_better_edit"), { recursive: true });
     const sc: any = await import("../../src/store-config.js");
-    const spy = vi.spyOn(sc, "loadConfig").mockReturnValue({ storeDir: "workspace", autoGitignore: true } as any);
+    const spy = vi
+      .spyOn(sc, "loadConfig")
+      .mockReturnValue({ storeDir: "workspace", autoGitignore: true } as any);
     const lc: any = await import("../../src/store-lifecycle.js");
     lc._resetLifecycleForTests();
-    await lc.onStoreOpen(storePath, { servedPruneOlderThan: () => {}, undoPruneOlderThan: () => {} } as any, { pruneMissing: async () => {} } as any);
+    await lc.onStoreOpen(
+      storePath,
+      { servedPruneOlderThan: () => {}, undoPruneOlderThan: () => {} } as any,
+      { pruneMissing: async () => {} } as any,
+    );
     expect(true).toBe(true);
     spy.mockRestore();
     await rm(dir, { recursive: true, force: true });
@@ -27,12 +33,21 @@ describe("extra sandbox", () => {
   it("covers mapError and resolvePolicy", async () => {
     const { FsSandboxController } = await import("../../src/sandbox.js");
     const { FsError } = await import("@deepseek-ai/dsh-fs");
-    const ctrl = new FsSandboxController({ fs: { sandboxMode: undefined } as any, get: () => undefined } as any);
+    const ctrl = new FsSandboxController({
+      fs: { sandboxMode: undefined } as any,
+      get: () => undefined,
+    } as any);
     expect(ctrl.mapError(new Error("x"), undefined)).toBeInstanceOf(Error);
     const denied = new FsError("d", "FS_SANDBOX_DENIED" as any);
     expect(ctrl.mapError(denied, { mode: "a" } as any)).toBeInstanceOf(FsError);
     // resolvePolicy with no backend and escalation should throw
-    await expect(ctrl.resolvePolicy("edit", { sandbox_permissions: "a", justification: "b" } as any, {} as any)).rejects.toThrow();
+    await expect(
+      ctrl.resolvePolicy(
+        "edit",
+        { sandbox_permissions: "a", justification: "b" } as any,
+        {} as any,
+      ),
+    ).rejects.toThrow();
   });
 });
 
@@ -41,9 +56,16 @@ describe("extra tool-edit", () => {
     const { buildEditTool } = await import("../../src/tool-edit.js");
     const { localIO } = await import("../../src/fs-bridge.js");
     const { FsSandboxController } = await import("../../src/sandbox.js");
-    const sandbox = new FsSandboxController({ fs: { sandboxMode: undefined } as any, get: () => undefined } as any);
+    const sandbox = new FsSandboxController({
+      fs: { sandboxMode: undefined } as any,
+      get: () => undefined,
+    } as any);
     const tool: any = buildEditTool(localIO() as any, sandbox);
-    const exec: any = { agent: { id: "a", session: { id: "a", header: { cwd: "/tmp" } } }, callId: "c", signal: undefined };
+    const exec: any = {
+      agent: { id: "a", session: { id: "a", header: { cwd: "/tmp" } } },
+      callId: "c",
+      signal: undefined,
+    };
     await expect(tool.execute({ path: "", edits: [] }, exec)).rejects.toThrow();
     try {
       const res = await tool.execute({ path: "a.txt", edits: [["abc", "def", "hi"]] }, exec);
@@ -60,7 +82,13 @@ describe("extra undo-edit", () => {
     const dir = await mkdtemp(join(await getWritableTempRoot(), "extra-undo-"));
     const p = join(dir, "a.txt");
     await writeFile(p, "hi", "utf-8");
-    const e = { content: "c", bom: "", originalEnding: "\n" as const, hashes: ["h"], resultContent: "r" };
+    const e = {
+      content: "c",
+      bom: "",
+      originalEnding: "\n" as const,
+      hashes: ["h"],
+      resultContent: "r",
+    };
     const r = await mod.saveUndo(p, e);
     expect(typeof r.persisted).toBe("boolean");
     const loaded = await mod.getUndo(p).catch(() => undefined);

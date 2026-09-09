@@ -1,5 +1,5 @@
 export function isRec(value: unknown): value is Record<string, unknown> {
-	return typeof value === "object" && value !== null && !Array.isArray(value);
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 export function normalizeFilePath(record: Record<string, unknown>): void {
@@ -21,7 +21,6 @@ export function visLines(text: string): string[] {
   return text.endsWith("\n") ? lines.slice(0, -1) : lines;
 }
 
-
 export function rejectUnknownFields(
   obj: Record<string, unknown>,
   allowed: Set<string>,
@@ -41,10 +40,7 @@ export function cntDiff(diff: string, marker: "+" | "-"): number {
   if (!diff) return 0;
   let count = 0;
   for (const line of diff.split("\n")) {
-    if (
-      line.startsWith(marker) &&
-      !line.startsWith(`${marker}${marker}${marker}`)
-    ) {
+    if (line.startsWith(marker) && !line.startsWith(`${marker}${marker}${marker}`)) {
       count += 1;
     }
   }
@@ -56,59 +52,59 @@ export function abortIf(signal?: AbortSignal): void {
 }
 
 export function errCode(error: unknown): string | undefined {
-	if (error instanceof Error) {
-		return (error as NodeJS.ErrnoException).code;
-	}
-	return undefined;
+  if (error instanceof Error) {
+    return (error as NodeJS.ErrnoException).code;
+  }
+  return undefined;
 }
 
 export function lastNonEmptyIndex(lines: string[]): number {
-	for (let i = lines.length - 1; i >= 0; i--) {
-		if (lines[i]!.length > 0) return i;
-	}
-	return -1;
+  for (let i = lines.length - 1; i >= 0; i--) {
+    if (lines[i]!.length > 0) return i;
+  }
+  return -1;
 }
 
 export function firstNonEmptyIndex(lines: string[]): number {
-	for (let i = 0; i < lines.length; i++) {
-		if (lines[i]!.length > 0) return i;
-	}
-	return -1;
+  for (let i = 0; i < lines.length; i++) {
+    if (lines[i]!.length > 0) return i;
+  }
+  return -1;
 }
 
 export function lastNonEmpty(lines: string[]): string | undefined {
-	const idx = lastNonEmptyIndex(lines);
-	return idx >= 0 ? lines[idx] : undefined;
+  const idx = lastNonEmptyIndex(lines);
+  return idx >= 0 ? lines[idx] : undefined;
 }
 
 export function firstNonEmpty(lines: string[]): string | undefined {
-	const idx = firstNonEmptyIndex(lines);
-	return idx >= 0 ? lines[idx] : undefined;
+  const idx = firstNonEmptyIndex(lines);
+  return idx >= 0 ? lines[idx] : undefined;
 }
 
 export function clipLine(line: string, maxLen = 200): string {
-	const flat = line.replace(/\n/g, "\\n");
-	return flat.length > maxLen ? `${flat.slice(0, maxLen)}...` : flat;
+  const flat = line.replace(/\n/g, "\\n");
+  return flat.length > maxLen ? `${flat.slice(0, maxLen)}...` : flat;
 }
 
 /** Machine-readable error-code carrier — bare `E_*` code alongside the human message. */
 export class CodedError extends Error {
-	readonly code: string;
-	constructor(code: string, message: string) {
-		super(message);
-		this.name = "CodedError";
-		this.code = code;
-	}
+  readonly code: string;
+  constructor(code: string, message: string) {
+    super(message);
+    this.name = "CodedError";
+    this.code = code;
+  }
 }
 
 const CODED_RE = /\[(E_[A-Z_]+)\]/;
 
 /** Structured bare-code read for any tool error: carrier first, `[E_*]` message convention as fallback. */
 export function codeOf(error: unknown): string | undefined {
-	if (error instanceof CodedError) return error.code;
-	if (error instanceof Error) {
-		const m = error.message.match(CODED_RE);
-		if (m) return m[1]!;
-	}
-	return undefined;
+  if (error instanceof CodedError) return error.code;
+  if (error instanceof Error) {
+    const m = error.message.match(CODED_RE);
+    if (m) return m[1]!;
+  }
+  return undefined;
 }
