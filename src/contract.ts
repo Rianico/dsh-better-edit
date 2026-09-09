@@ -4,8 +4,8 @@
  * declared once here; every tool validates through these asserts, and the
  * [E_BAD_PAYLOAD] vocabulary is shared instead of re-implemented per tool.
  *
- * Contract now mirrors upstream ADR-0007: {path: string|null, edits: [[remove_from,remove_to,replacement_text],...]} tuple payload,
- * single-file, atomic. batch_edit is removed.
+ * Contract now mirrors upstream ADR-0007: {path: string|null, edits: [[remove_from,remove_to,replacement_text],...]} tuple payload
+ * (plus object-form {remove_from, remove_to, replacement_text} per #64), single-file, atomic. batch_edit is removed.
  * @module dsh-better-edit/contract
  */
 
@@ -74,6 +74,24 @@ export function itemFromTuple(value: unknown): EditItem | undefined {
   return { remove_from, remove_to, replacement_text };
 }
 
+/**
+ * Accept both the tuple form (["a", "b", "c"]) and the object form
+ * ({ remove_from, remove_to, replacement_text }) per edits entry (#64).
+ * Missing/mistyped fields and unknown fields still return undefined so the
+ * caller rejects with E_BAD_PAYLOAD.
+ */
+export function itemFromEntry(value: unknown): EditItem | undefined {
+  if (Array.isArray(value)) return itemFromTuple(value);
+  if (isRec(value)) {
+    const rec = value as Record<string, unknown>;
+    const { remove_from, remove_to, replacement_text } = rec;
+    if (typeof remove_from !== "string" || typeof remove_to !== "string" || typeof replacement_text !== "string") return undefined;
+    if (Object.keys(rec).some((k) => !EDIT_ITEM_KS.has(k))) return undefined;
+    return { remove_from, remove_to, replacement_text };
+  }
+  return undefined;
+}
+
 export function editRequestFrom(input: unknown): NormalizedEditRequest | undefined {
   if (!isRec(input) || !("path" in input) || !("edits" in input)) return undefined;
   const rec = input as Record<string, unknown>;
@@ -95,7 +113,7 @@ export function editRequestFrom(input: unknown): NormalizedEditRequest | undefin
   if (!Array.isArray(edits) || edits.length === 0) return undefined;
   const items: EditItem[] = [];
   for (const item of edits) {
-    const normalized = itemFromTuple(item);
+    const normalized = itemFromEntry(item);
     if (!normalized) return undefined;
     items.push(normalized);
   }
@@ -150,8 +168,10 @@ export function sanitizePath(value: unknown): string | null {
 export const EDIT_TUPLE_HINT =
   "Edit must be called with exactly one payload. Use the canonical payload " +
   '{"path": path, "edits": [[remove_from, remove_to, replacement_text], ...]}: ' +
-  "path is a non-empty string (or null to infer from anchors), each item is a " +
-  "fixed 3-position array of two inclusive bare-3-char anchors and the full " +
+  "path is a non-empty string (or null to infer from anchors), each item is " +
+  "either a fixed 3-position array [remove_from, remove_to, replacement_text] " +
+  "or an object {remove_from, remove_to, replacement_text} (mixed batches allowed) " +
+  "of two inclusive bare-3-char anchors and the full " +
   "replacement (an empty string deletes the range).";
 
 function describeReceived(input: unknown): string {
@@ -167,6 +187,7 @@ function describeReceived(input: unknown): string {
 
 const EDIT_KS = new Set(["path", "edits", "sandbox_permissions", "justification"]);
 const READ_KS = new Set(["path", "offset", "limit", "encoding"]);
+const EDIT_ITEM_KS = new Set(["remove_from", "remove_to", "replacement_text"]);
 
 // ---- normalization -----------------------------------------------------------
 
@@ -209,7 +230,7 @@ export function prepareEditArguments(args: unknown): Record<string, unknown> {
 
 export function assertEditRequest(request: unknown): asserts request is NormalizedEditRequest {
   if (!isNormalizedEdit(request)) {
-    throw new CodedError("E_BAD_PAYLOAD", "[MODEL] [E_BAD_PAYLOAD] Edit request must be exactly { path, edits: [[remove_from, remove_to, replacement_text], ...] }.");
+    throw new CodedError("E_BAD_PAYLOAD", "[MODEL] [E_BAD_PAYLOAD] Edit request must be exactly { path, edits: [[remove_from, remove_to, replacement_text], ...] } or { path, edits: [{remove_from, remove_to, replacement_text}, ...] } (mixed batches allowed).");
   }
   rejectUnknownFields(request as Record<string, unknown>, EDIT_KS, "Edit request");
   const req = request as NormalizedEditRequest;
@@ -225,7 +246,7 @@ export function assertEditRequest(request: unknown): asserts request is Normaliz
   for (let index = 0; index < req.edits.length; index++) {
     const item = req.edits[index]!;
     if (typeof item.remove_from !== "string" || typeof item.remove_to !== "string" || typeof item.replacement_text !== "string") {
-      throw new CodedError("E_BAD_PAYLOAD",`[MODEL] [E_BAD_PAYLOAD] Edit request edits[${index}] must be a three-position array [remove_from, remove_to, replacement_text].`);
+      throw new CodedError("E_BAD_PAYLOAD",`[MODEL] [E_BAD_PAYLOAD] Edit request edits[${index}] must be a three-position array [remove_from, remove_to, replacement_text] or an object {remove_from, remove_to, replacement_text}.`);
     }
   }
 }
@@ -288,6 +309,23 @@ export const editTupleSchema = {
   description: "[remove_from, remove_to, replacement_text]",
 } as const
 
+export const editObjectSchema = {
+  type: 'object',
+  additionalProperties: false,
+  required: ["remove_from", "remove_to", "replacement_text"] as const,
+  properties: {
+    remove_from: removeFromSchema,
+    remove_to: removeToSchema,
+    replacement_text: replacementTextSchema,
+  },
+  description: "{remove_from, remove_to, replacement_text}",
+} as const
+
+export const editItemSchema = {
+  anyOf: [editTupleSchema, editObjectSchema],
+  description: "Edit entry — either tuple or object form (mixed batches allowed)",
+} as const
+
 export const editToolSchema = {
   type: 'object',
   additionalProperties: false,
@@ -296,10 +334,10 @@ export const editToolSchema = {
     path: editPathSchema,
     edits: {
       type: 'array',
-      description: "Ordered list of edit tuples",
+      description: "Ordered list of edit entries — each entry is either a tuple [remove_from, remove_to, replacement_text] or an object {remove_from, remove_to, replacement_text} (mixed batches allowed)",
       minItems: 1,
       maxItems: EDITS_MAX_ITEMS,
-      items: editTupleSchema,
+      items: editItemSchema,
     },
   },
 } as const
