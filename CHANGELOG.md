@@ -2,11 +2,11 @@
 
 ### Features
 
-- **edit:** accept object-form edits entries, closes #64
+- **str-replace:** add governed editor shadow
+- **edit:** accept object-form edits entries ({remove_from, remove_to, replacement_text}), closes #64 (#66)
 
 ### Fixed
 
-- **edit:** advertise object-form edits in hint, schema and guidance, polish itemFromEntry
 - **script:** correct repo inference and headless dispatch for gh-release
 
 ### Documentation

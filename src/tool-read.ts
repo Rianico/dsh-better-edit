@@ -15,6 +15,7 @@ import { READ_DESCRIPTION } from "./prompts.js";
 import { normalizeEncoding } from "./encoding.js";
 
 import type { FileIO } from "./fs-bridge.js";
+import { renderTextWarning } from "./render-text-warning.js";
 import { execCwd, execSessionKey } from "./workspace-context.js";
 import { withWorkspace } from "./workspace-context.js";
 
@@ -46,13 +47,7 @@ export function buildReadTool(io: FileIO) {
 		},
 		output: {
 			schema: { type: "object", properties: { text: { type: "string", required: true }, warning: { type: "string" } }, additionalProperties: false },
-			render: (_args, value) => {
-				const v = value as { text: string; warning?: string } | string;
-				if (typeof v === "string") return [{ type: "text", text: v }];
-				const blocks: Array<{ type: "text"; text: string }> = [{ type: "text", text: v.text }];
-				if (v.warning) blocks.push({ type: "text", text: v.warning });
-				return blocks;
-			},
+			render: (_args, value) => renderTextWarning(value as { text: string; warning?: string } | string),
 		},
 		async execute(args, exec) {
 			return withWorkspace(execCwd(exec), async () => {

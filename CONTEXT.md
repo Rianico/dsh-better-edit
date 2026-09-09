@@ -76,6 +76,18 @@ _Avoid_: manual migration
 The status-bar-equivalent escape hatch: `read({encoding})` re-interprets bytes on disk (`Reopen with Encoding`) and `write({encoding})` transcodes the buffer on save (`Save with Encoding`). The agent-facing surface for correcting a `detection error` without corrupting disk.
 _Avoid_: force encoding
 
+**encoding governance**:
+The invariant that every agent-issued file mutation passes through `file encoding state` (recorded at open, inverted at save): BOM sniff → strict UTF-8 → `autoGuessEncoding` gate → Top-3 always surfaced. A mutation without prior observation fails loud instead of guessing bytes.
+_Avoid_: encoding handling (implies best-effort, not a gate)
+
+**governed edit path**:
+Any tool path that enforces `encoding governance`: `read`/`edit`/`undo_last_edit` and the `str_replace_editor` shadow (`view` → `str_replace`/`insert`/`create`). The `str_replace_editor` shadow records `file encoding state` but never `served state` — it can feed `write` round-trips but cannot authorize hashline `edit` anchors.
+_Avoid_: native edit path (implies the built-in tools own the semantics; here the plugin does)
+
+**ungoverned edit path**:
+A file mutation that bypasses `encoding governance` — the built-in `write`/`edit`/`str_replace_editor` on layers the plugin does not shadow, or any shell redirection. Ungoverned writes can silently normalize or mojibake non-UTF-8 bytes; the plugin heals by discarding stale `file encoding state` on version drift and re-running deterministic detection.
+_Avoid_: native edit path
+
 **reject-and-serve**:
 The staleness policy: reject the edit and return the current range as fresh `HASH│content` rows, which themselves count as serves, so the retry needs no read.
 _Avoid_: reject-then-reread (the retry must not require a read)

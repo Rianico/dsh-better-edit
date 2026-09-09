@@ -22,6 +22,7 @@ import { ctxFsIO } from "./fs-bridge.js";
 import { FsSandboxController } from "./sandbox.js";
 import { buildReadTool } from "./tool-read.js";
 import { buildEditTool } from "./tool-edit.js";
+import { buildStrReplaceEditorTool } from "./tool-str-replace-editor.js";
 import { registerUndoTool } from "./tool-undo.js";
 import { registerWriteHook } from "./write-hook.js";
 import { createSelfHealWatcher } from "./self-heal.js";
@@ -121,6 +122,10 @@ function installAgentTools(rootCtx: Context, agent: Agent): void {
 		disposers.push(agent.ctx.tools.register(hashReadDef));
 		const hashEditDef = buildEditTool(io, sandbox);
 		disposers.push(agent.ctx.tools.register(hashEditDef));
+		// Governed shadow of the preset's built-in str_replace_editor
+		// (ADR-0015): identical contract, encoding-governed mutations.
+		const hashStrReplaceDef = buildStrReplaceEditorTool(io);
+		disposers.push(agent.ctx.tools.register(hashStrReplaceDef));
 		disposers.push(registerUndoTool(rootCtx, agent.ctx, io, sandbox));
 		disposers.push(registerWriteHook(rootCtx, agent.ctx, io));
 
@@ -134,6 +139,7 @@ function installAgentTools(rootCtx: Context, agent: Agent): void {
 				toolsSvc,
 				hashReadDef,
 				hashEditDef,
+				hashStrReplaceDef,
 			}),
 		);
 		// Shadow the preset's built-in tool guidance with the hashline
