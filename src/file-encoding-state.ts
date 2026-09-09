@@ -17,7 +17,7 @@
 
 import { detectBom, isValidUtf8, decodeBytes, normalizeEncoding, top3Candidates, chardetTop3Candidates } from "./encoding.js";
 import type { CandidatePreview } from "./encoding.js";
-import { detectEnding, type LineEnding } from "./edit-diff.js";
+import { detectEnding, restoreEndings, toLF, type LineEnding } from "./edit-diff.js";
 
 // ---------------------------------------------------------------------------
 // State — per-targetKey, session-TTL, version-invalidated
@@ -302,6 +302,10 @@ export interface EncodeForSaveOptions {
   currentVersion?: string | undefined;
 }
 
+/** Shared UTF-8 BOM marker — single source for the BOM round-trip seam.
+ * Prefer `prepareForSave` / `stripBOM` over re-implementing this check. */
+export const UTF8_BOM = "\uFEFF";
+
 /**
  * Decide what bytes (as text, since provider expects string) to write and
  * what new state to record. BOM and lineEnding are restored here when a
@@ -332,6 +336,16 @@ export function prepareForSave(
     return { textToWrite: content };
   }
 
-  // Default: UTF-8 without BOM, preserve lineEnding if known
-  return { textToWrite: content };
+  // Default: restore recorded BOM + lineEnding via the shared seam so
+  // governed writers (e.g. the str_replace_editor shadow) don't re-implement
+  // the round-trip locally and diverge on future utf16le/lineEnding evolution.
+  // Only add, never strip: a missing memo means UTF-8 without BOM + LF.
+  let textToWrite = content;
+  if (existingState?.lineEnding) {
+    textToWrite = restoreEndings(toLF(textToWrite), existingState.lineEnding);
+  }
+  if (existingState?.hasBOM && !textToWrite.startsWith(UTF8_BOM)) {
+    textToWrite = `${UTF8_BOM}${textToWrite}`;
+  }
+  return { textToWrite };
 }
