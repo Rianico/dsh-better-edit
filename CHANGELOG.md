@@ -1,3 +1,9 @@
+## [Unreleased]
+
+### Documentation
+
+- add PR template and document PR requirements via git scaffolding
+
 ## [0.8.0](https://github.com/Rianico/dsh-better-edit/compare/v0.7.1...v0.8.0) (2026-09-09)
 
 ### Features
