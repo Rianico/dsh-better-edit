@@ -1,27 +1,28 @@
 ## [Unreleased]
 
-### Bug Fixes
+### Fixed
 
-- **str-replace:** record real fs version on ctxFsIO reads so view/read authorizes str_replace/insert, closes [#69](https://github.com/Rianico/dsh-better-edit/issues/69)
+- **str-replace:** record real fs version on ctxFsIO reads, closes #69
 
 ### Documentation
 
-- add PR template and document PR requirements via git scaffolding
+- **changelog:** note #69 read-first gate version fix
+- add PR template and document PR requirements via git scaffolding (#68)
 
 ## [0.8.0](https://github.com/Rianico/dsh-better-edit/compare/v0.7.1...v0.8.0) (2026-09-09)
 
 ### Features
 
-* **edit:** accept object-form edits entries ({remove_from, remove_to, replacement_text}), closes [#64](https://github.com/Rianico/dsh-better-edit/issues/64) ([#66](https://github.com/Rianico/dsh-better-edit/issues/66)) ([a14ef4c](https://github.com/Rianico/dsh-better-edit/commit/a14ef4cee1c4d8126f40516624b6811d57041bf8))
-* **str-replace:** add governed editor shadow ([#67](https://github.com/Rianico/dsh-better-edit/issues/67)) ([a015629](https://github.com/Rianico/dsh-better-edit/commit/a0156296ce615069f10acf60e3d96c4dc3fa9e14))
+- **edit:** accept object-form edits entries ({remove_from, remove_to, replacement_text}), closes [#64](https://github.com/Rianico/dsh-better-edit/issues/64) ([#66](https://github.com/Rianico/dsh-better-edit/issues/66)) ([a14ef4c](https://github.com/Rianico/dsh-better-edit/commit/a14ef4cee1c4d8126f40516624b6811d57041bf8))
+- **str-replace:** add governed editor shadow ([#67](https://github.com/Rianico/dsh-better-edit/issues/67)) ([a015629](https://github.com/Rianico/dsh-better-edit/commit/a0156296ce615069f10acf60e3d96c4dc3fa9e14))
 
 ### Bug Fixes
 
-* **script:** correct repo inference and headless dispatch for gh-release ([b517646](https://github.com/Rianico/dsh-better-edit/commit/b5176465f8363ff80bb48e96cdfa86e6254f2ebf)), closes [#51](https://github.com/Rianico/dsh-better-edit/issues/51)
+- **script:** correct repo inference and headless dispatch for gh-release ([b517646](https://github.com/Rianico/dsh-better-edit/commit/b5176465f8363ff80bb48e96cdfa86e6254f2ebf)), closes [#51](https://github.com/Rianico/dsh-better-edit/issues/51)
 
 ### Documentation
 
-* **agents:** sync AGENTS.md — remove tag-first releasing, fix git guide and upstream cursor ([d1088d1](https://github.com/Rianico/dsh-better-edit/commit/d1088d1f43f151f80f204fc5189268a5945066f8))
+- **agents:** sync AGENTS.md — remove tag-first releasing, fix git guide and upstream cursor ([d1088d1](https://github.com/Rianico/dsh-better-edit/commit/d1088d1f43f151f80f204fc5189268a5945066f8))
 
 ## [0.7.1](https://github.com/Rianico/dsh-better-edit/compare/v0.7.0...v0.7.1) (2026-09-06)
 
