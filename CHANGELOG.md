@@ -1,5 +1,9 @@
 ## [Unreleased]
 
+### Bug Fixes
+
+- **str-replace:** record real fs version on ctxFsIO reads so view/read authorizes str_replace/insert, closes [#69](https://github.com/Rianico/dsh-better-edit/issues/69)
+
 ### Documentation
 
 - add PR template and document PR requirements via git scaffolding
