@@ -159,12 +159,18 @@ async function restoreStrippedUtf8Bom(
   target: FsTarget,
   text: string,
   signal?: AbortSignal,
-): Promise<string> {
-  if (text.startsWith(UTF8_BOM)) return text;
+): Promise<{ text: string; version: string | undefined }> {
+  // BOM already preserved: one metadata stat for the read-first gate version
+  // (issue #69). No byte probe here — readBytes stays forbidden in this branch.
+  if (text.startsWith(UTF8_BOM)) {
+    const info = await fs.stat(target, signal).catch(() => undefined);
+    return { text, version: info?.version as string | undefined };
+  }
 
   const info = await fs.stat(target, signal);
+  const version = info?.version as string | undefined;
   if (info?.size === undefined || info.size !== Buffer.byteLength(text, "utf-8") + UTF8_BOM_LEN) {
-    return text;
+    return { text, version };
   }
 
   const bytes = await fs.readBytes(target, signal, info.size);
@@ -175,12 +181,12 @@ async function restoreStrippedUtf8Bom(
     bytes[1] !== UTF8_BOM_BYTES[1] ||
     bytes[2] !== UTF8_BOM_BYTES[2]
   ) {
-    return text;
+    return { text, version };
   }
   for (let i = 0; i < encodedText.length; i += 1) {
-    if (bytes[i + UTF8_BOM_LEN] !== encodedText[i]) return text;
+    if (bytes[i + UTF8_BOM_LEN] !== encodedText[i]) return { text, version };
   }
-  return `${UTF8_BOM}${text}`;
+  return { text: `${UTF8_BOM}${text}`, version };
 }
 
 /** FileIO over the deployment's `ctx.fs` service. */
@@ -217,7 +223,21 @@ export function ctxFsIO(fs: FileSystem, ctx: Context): FileIO {
           decoded.hasBOM,
           info?.version as string | undefined,
         );
-        if (decoded.footer) recordFooter(targetKey, decoded.footer);
+        // Gate looks up by resolved absolutePath; targetKey may differ
+        // (symlink/case) — mirror under both keys (issue #69 note).
+        if (targetKey !== absolutePath) {
+          recordOpenState(
+            absolutePath,
+            decoded.text,
+            decoded.encoding,
+            decoded.hasBOM,
+            info?.version as string | undefined,
+          );
+        }
+        if (decoded.footer) {
+          recordFooter(targetKey, decoded.footer);
+          if (targetKey !== absolutePath) recordFooter(absolutePath, decoded.footer);
+        }
         return decoded.text;
       }
 
@@ -226,21 +246,25 @@ export function ctxFsIO(fs: FileSystem, ctx: Context): FileIO {
           ...(signal === undefined ? {} : { signal }),
         });
         const text = await fs.readText(target, signal);
-        const restored = await restoreStrippedUtf8Bom(fs, target, text, signal);
+        // Thread the restore path's stat version into the encoding memo so the
+        // read-first gate validates against the real version (issue #69 fix 2).
+        // The BOM-preserved branch stats for version only — no byte probe.
+        const { text: restored, version } = await restoreStrippedUtf8Bom(fs, target, text, signal);
         // record file encoding state for round-trip (BOM + lineEnding)
-        // Do not probe fs.stat when BOM is already preserved — keep the no-probe guarantee
-        // tested in fs-bridge.policy.test.ts (keeps a BOM already preserved without probing)
         try {
           const targetKey = String(
             (target as unknown as { targetKey?: string }).targetKey ?? absolutePath,
           );
           const hasBOM = restored.startsWith(UTF8_BOM);
           const clean = hasBOM ? restored.slice(1) : restored;
-          // use seam to record with correct lineEnding detection; version left undefined
-          // to avoid extra stat (the success path must stay probe-free when BOM preserved)
-          recordOpenState(targetKey, clean, hasBOM ? "utf8bom" : "utf8", hasBOM, undefined);
+          // use seam to record with correct lineEnding detection
+          recordOpenState(targetKey, clean, hasBOM ? "utf8bom" : "utf8", hasBOM, version);
+          if (targetKey !== absolutePath) {
+            recordOpenState(absolutePath, clean, hasBOM ? "utf8bom" : "utf8", hasBOM, version);
+          }
           // clear any stale autoGuess footer on clean UTF-8 read
           _clearAutoGuessFooter(targetKey);
+          if (targetKey !== absolutePath) _clearAutoGuessFooter(absolutePath);
         } catch {
           // best-effort
         }
@@ -269,7 +293,19 @@ export function ctxFsIO(fs: FileSystem, ctx: Context): FileIO {
             decoded.hasBOM,
             info?.version as string | undefined,
           );
-          if (decoded.footer) recordFooter(targetKey, decoded.footer);
+          if (targetKey !== absolutePath) {
+            recordOpenState(
+              absolutePath,
+              decoded.text,
+              decoded.encoding,
+              decoded.hasBOM,
+              info?.version as string | undefined,
+            );
+          }
+          if (decoded.footer) {
+            recordFooter(targetKey, decoded.footer);
+            if (targetKey !== absolutePath) recordFooter(absolutePath, decoded.footer);
+          }
           return decoded.text;
         }
         return mapFsError(error, absolutePath);
@@ -286,6 +322,8 @@ export function ctxFsIO(fs: FileSystem, ctx: Context): FileIO {
         );
         const info = await fs.stat(targetTmp, signal).catch(() => undefined);
         invalidateIfStale(key, info?.version as string | undefined);
+        if (key !== absolutePath)
+          invalidateIfStale(absolutePath, info?.version as string | undefined);
       } catch {} // biome-ignore: best-effort
 
       try {

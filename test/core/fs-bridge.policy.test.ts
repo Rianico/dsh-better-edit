@@ -7,9 +7,13 @@
  * @module dsh-better-edit/fs-bridge.policy.test
  */
 
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi, beforeEach } from "vitest";
 import type { Context } from "@deepseek-ai/cordis";
-import { ctxFsIO, type FileIO } from "../../src/fs-bridge.js";
+import { ctxFsIO, type FileIO, getEncodingState, clearEncodingState } from "../../src/fs-bridge.js";
+
+beforeEach(() => {
+  clearEncodingState();
+});
 
 /** A mock `ctx.fs` recording every call and returning scripted results. */
 function makeFs(overrides: Partial<Record<string, unknown>> = {}) {
@@ -169,15 +173,18 @@ describe("ctxFsIO readText", () => {
     await expect(io.readText("/abs/file.txt")).rejects.toBe(error);
   });
 
-  it("keeps a BOM already preserved by the backend without probing metadata", async () => {
+  it("keeps a BOM already preserved by the backend without probing bytes (version stat allowed)", async () => {
     const text = "\uFEFFhello\n";
     const { fs } = makeFs({ readText: vi.fn(async () => text) });
     const { ctx } = makeCtx();
     const io: FileIO = ctxFsIO(fs as never, ctx);
 
     await expect(io.readText("/abs/file.txt")).resolves.toBe(text);
-    expect(fs.stat).not.toHaveBeenCalled();
+    // No byte probe: BOM restoration must not read raw bytes when already preserved.
     expect(fs.readBytes).not.toHaveBeenCalled();
+    // A version-only stat is required so the read-first gate records the real
+    // version instead of undefined (issue #69 fix 2) — drift stays detectable.
+    expect(getEncodingState("tk-1")?.version).toBe("v1");
   });
 });
 
