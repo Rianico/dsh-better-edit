@@ -119,7 +119,7 @@ function installAgentTools(rootCtx: Context, agent: Agent): void {
     disposers.push(agent.ctx.tools.register(hashEditDef));
     // Governed shadow of the preset's built-in str_replace_editor
     // (ADR-0015): identical contract, encoding-governed mutations.
-    const hashStrReplaceDef = buildStrReplaceEditorTool(io);
+    const hashStrReplaceDef = buildStrReplaceEditorTool(io, sandbox);
     disposers.push(agent.ctx.tools.register(hashStrReplaceDef));
     disposers.push(registerUndoTool(rootCtx, agent.ctx, io, sandbox));
     disposers.push(registerWriteHook(rootCtx, agent.ctx, io));

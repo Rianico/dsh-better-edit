@@ -4,6 +4,11 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { localIO, clearEncodingState, clearAutoGuessFooter } from "../../src/fs-bridge.js";
 import { buildStrReplaceEditorTool } from "../../src/tool-str-replace-editor.js";
+import { FsSandboxController } from "../../src/sandbox.js";
+
+/** No confining backend: no escalation fields, `resolvePolicy` → undefined. */
+const noSandbox = () =>
+  new FsSandboxController({ fs: { sandboxMode: undefined }, get: () => undefined } as never);
 
 function fakeExec(cwd: string, session = "sre-contract") {
   return {
@@ -21,7 +26,7 @@ describe("str_replace_editor contract parity", () => {
     return p;
   }
   it("tool name is str_replace_editor with built-in command params and no encoding param", () => {
-    const tool = buildStrReplaceEditorTool(localIO()) as unknown as {
+    const tool = buildStrReplaceEditorTool(localIO(), noSandbox()) as unknown as {
       name: string;
       parameters: Record<string, unknown>;
     };
@@ -48,7 +53,7 @@ describe("str_replace_editor contract parity", () => {
       clearAutoGuessFooter();
       const p = join(dir, "f.txt");
       await writeFile(p, "l1\nl2\nl3\nl4\n", "utf-8");
-      const tool = buildStrReplaceEditorTool(localIO());
+      const tool = buildStrReplaceEditorTool(localIO(), noSandbox());
       const exec = fakeExec(dir);
       const res = (await tool.execute(
         { command: "view", path: p, view_range: [2, 3] },
@@ -69,7 +74,7 @@ describe("str_replace_editor contract parity", () => {
       clearEncodingState();
       clearAutoGuessFooter();
       const io = localIO();
-      const tool = buildStrReplaceEditorTool(io);
+      const tool = buildStrReplaceEditorTool(io, noSandbox());
       const exec = fakeExec(dir);
       const created = join(dir, "new.txt");
       const c = (await tool.execute(
@@ -98,7 +103,7 @@ describe("str_replace_editor contract parity", () => {
   });
 
   it("unknown command rejected", async () => {
-    const tool = buildStrReplaceEditorTool(localIO());
+    const tool = buildStrReplaceEditorTool(localIO(), noSandbox());
     await expect(
       tool.execute({ command: "delete", path: "x" }, fakeExec(tmpdir())),
     ).rejects.toThrow(/E_BAD_COMMAND|unknown command/i);

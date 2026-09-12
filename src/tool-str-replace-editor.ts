@@ -13,11 +13,18 @@
  * - `create` defaults to UTF-8 without BOM.
  * - `undo_edit` is out of scope → `E_UNSUPPORTED` (use `undo_last_edit`).
  *
+ * - `create` / `str_replace` / `insert` stamp the per-call sandbox policy from
+ *   `FsSandboxController` (the calling session's workspace root plus any
+ *   approved one-shot escalation), matching the built-in and the hashline
+ *   `edit` / `undo_last_edit` paths; unconfined deployments stamp `undefined`.
+ *
  * See ADR-0015.
  * @module dsh-better-edit/tool-str-replace-editor
  */
 
 import { defineTool } from "@deepseek-ai/dsh-tools";
+import type { ToolExecution } from "@deepseek-ai/dsh-tools";
+import type { FsEscalationArgs, FsSandboxController } from "./sandbox.js";
 import type { FileIO } from "./fs-bridge.js";
 import { getAutoGuessFooter } from "./fs-bridge.js";
 import {
@@ -103,6 +110,34 @@ async function requireObserved(
   }
 }
 
+/**
+ * Governed save: resolve the per-call sandbox policy — the session's standing
+ * mode stamped with the calling session's workspace root, or an approved
+ * one-shot escalation grant — and hand it to the provider write; a sandbox
+ * denial is remapped to the shared `[sandbox: …]` marker plus the escalation
+ * hint so the caller can retry once.
+ *
+ * Without it the confined backend falls back to the deployment default root,
+ * so a write inside the session workspace is denied under `workspace-write`
+ * even though the built-in `str_replace_editor` (which carries the policy)
+ * succeeds there. Mirrors the hashline `edit` / `undo_last_edit` path.
+ */
+async function writeGoverned(
+  io: FileIO,
+  sandbox: FsSandboxController,
+  absolutePath: string,
+  content: string,
+  args: FsEscalationArgs,
+  exec: ToolExecution,
+): Promise<void> {
+  const policy = await sandbox.resolvePolicy("str_replace_editor", args, exec);
+  try {
+    await io.writeText(absolutePath, content, exec.signal, exec, policy);
+  } catch (error) {
+    throw sandbox.mapError(error, policy);
+  }
+}
+
 function countOccurrences(haystack: string, needle: string): number {
   if (needle.length === 0) return 0;
   let count = 0;
@@ -131,7 +166,7 @@ function autoGuessWarning(absolutePath: string, rawPath: string): string | undef
   );
 }
 
-export function buildStrReplaceEditorTool(io: FileIO) {
+export function buildStrReplaceEditorTool(io: FileIO, sandbox: FsSandboxController) {
   return defineTool({
     name: "str_replace_editor",
     description: STR_REPLACE_EDITOR_DESCRIPTION,
@@ -166,6 +201,7 @@ export function buildStrReplaceEditorTool(io: FileIO) {
         type: "string",
         description: "Full content for create",
       },
+      ...(sandbox.escalationModes.length > 0 ? sandbox.schemaFields() : {}),
     },
     output: {
       schema: {
@@ -242,7 +278,7 @@ export function buildStrReplaceEditorTool(io: FileIO) {
             );
           }
           // Governed default: UTF-8 without BOM (no memo → no BOM).
-          await io.writeText(absolutePath, fileText, signal, exec);
+          await writeGoverned(io, sandbox, absolutePath, fileText, rec as FsEscalationArgs, exec);
           try {
             const version = await io.statVersion(absolutePath, signal);
             recordOpenState(absolutePath, fileText, "utf8", false, version);
@@ -287,7 +323,7 @@ export function buildStrReplaceEditorTool(io: FileIO) {
             );
           }
           const next = restoreForSave(current.replace(oldStr, newStr), absolutePath);
-          await io.writeText(absolutePath, next, signal, exec);
+          await writeGoverned(io, sandbox, absolutePath, next, rec as FsEscalationArgs, exec);
           return { text: `Replaced 1 occurrence in ${rawPath}.` };
         }
 
@@ -322,7 +358,7 @@ export function buildStrReplaceEditorTool(io: FileIO) {
         let out2 = lines.join("\n");
         if (endsWithNL && out2.length > 0) out2 += "\n";
         const next = restoreForSave(out2, absolutePath);
-        await io.writeText(absolutePath, next, signal, exec);
+        await writeGoverned(io, sandbox, absolutePath, next, rec as FsEscalationArgs, exec);
         return { text: `Inserted ${added.length} line(s) at line ${insertAt} in ${rawPath}.` };
       });
     },
@@ -333,6 +369,7 @@ export function buildStrReplaceEditorTool(io: FileIO) {
 export function registerStrReplaceEditorTool(
   agentCtx: { tools: { register(def: unknown): () => void } },
   io: FileIO,
+  sandbox: FsSandboxController,
 ): () => void {
-  return agentCtx.tools.register(buildStrReplaceEditorTool(io));
+  return agentCtx.tools.register(buildStrReplaceEditorTool(io, sandbox));
 }

@@ -209,7 +209,7 @@ function wrapTool(
  * A sandbox controller for tests: no confining backend, so no escalation
  * fields are advertised and `resolvePolicy` returns undefined (unconfined).
  */
-function makeTestSandbox() {
+export function makeTestSandbox() {
   return new FsSandboxController({
     fs: { sandboxMode: undefined },
     get: () => undefined,
