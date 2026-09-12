@@ -6,6 +6,11 @@ import iconv from "iconv-lite";
 import { localIO, clearEncodingState, clearAutoGuessFooter } from "../src/fs-bridge.js";
 import { _resetConfigCache } from "../src/store-config.js";
 import { buildStrReplaceEditorTool } from "../src/tool-str-replace-editor.js";
+import { FsSandboxController } from "../src/sandbox.js";
+
+/** No confining backend: no escalation fields, `resolvePolicy` → undefined. */
+const noSandbox = () =>
+  new FsSandboxController({ fs: { sandboxMode: undefined }, get: () => undefined } as never);
 
 function fakeExec(cwd: string, session = "sre-test") {
   return {
@@ -40,7 +45,7 @@ describe("str_replace_editor shadow tool (TDD red)", () => {
       Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), Buffer.from("hello\nworld\n", "utf-8")]),
     );
     const io = localIO();
-    const tool = buildStrReplaceEditorTool(io);
+    const tool = buildStrReplaceEditorTool(io, noSandbox());
     const exec = fakeExec(dir);
     await tool.execute({ command: "view", path: p }, exec);
     const res = (await tool.execute(
@@ -65,7 +70,7 @@ describe("str_replace_editor shadow tool (TDD red)", () => {
     process.env.DSH_BETTER_EDIT_AUTO_GUESS_ENCODING = "true";
     _resetConfigCache();
     const io = localIO();
-    const tool = buildStrReplaceEditorTool(io);
+    const tool = buildStrReplaceEditorTool(io, noSandbox());
     const res = (await tool.execute({ command: "view", path: p }, fakeExec(dir))) as unknown as {
       text: string;
       warning?: string;
@@ -80,7 +85,7 @@ describe("str_replace_editor shadow tool (TDD red)", () => {
     await writeFile(p, iconv.encode("你好世界", "gbk"));
     process.env.DSH_BETTER_EDIT_AUTO_GUESS_ENCODING = "true";
     _resetConfigCache();
-    const tool = buildStrReplaceEditorTool(localIO());
+    const tool = buildStrReplaceEditorTool(localIO(), noSandbox());
     const res = (await tool.execute({ command: "view", path: p }, fakeExec(dir))) as unknown as {
       text: string;
       warning?: string;
@@ -104,7 +109,7 @@ describe("str_replace_editor shadow tool (TDD red)", () => {
         );
       },
     } as unknown as ReturnType<typeof localIO>;
-    const tool = buildStrReplaceEditorTool(throwingIO);
+    const tool = buildStrReplaceEditorTool(throwingIO, noSandbox());
     await expect(
       tool.execute({ command: "view", path: join(dir, "x.bin") }, fakeExec(dir)),
     ).rejects.toThrow(/E_UNSUPPORTED_FILE/);
@@ -114,7 +119,7 @@ describe("str_replace_editor shadow tool (TDD red)", () => {
     const p = join(dir, "blind.txt");
     await writeFile(p, "alpha\nbeta\n", "utf-8");
     const io = localIO();
-    const tool = buildStrReplaceEditorTool(io);
+    const tool = buildStrReplaceEditorTool(io, noSandbox());
     await expect(
       tool.execute(
         { command: "str_replace", path: p, old_str: "beta", new_str: "BETA" },
@@ -127,7 +132,7 @@ describe("str_replace_editor shadow tool (TDD red)", () => {
   it("blind insert without prior view -> E_BLIND_REPLACE", async () => {
     const p = join(dir, "blind2.txt");
     await writeFile(p, "a\nb\n", "utf-8");
-    const tool = buildStrReplaceEditorTool(localIO());
+    const tool = buildStrReplaceEditorTool(localIO(), noSandbox());
     await expect(
       tool.execute({ command: "insert", path: p, insert_line: 1, new_str: "x" }, fakeExec(dir)),
     ).rejects.toThrow(/E_BLIND_REPLACE/);
@@ -136,7 +141,7 @@ describe("str_replace_editor shadow tool (TDD red)", () => {
   it("old_str must match exactly once", async () => {
     const p = join(dir, "dup.txt");
     await writeFile(p, "same\nsame\n", "utf-8");
-    const tool = buildStrReplaceEditorTool(localIO());
+    const tool = buildStrReplaceEditorTool(localIO(), noSandbox());
     const exec = fakeExec(dir);
     await tool.execute({ command: "view", path: p }, exec);
     await expect(

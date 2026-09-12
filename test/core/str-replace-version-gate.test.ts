@@ -13,6 +13,7 @@ import type { Context } from "@deepseek-ai/cordis";
 import { ctxFsIO, type FileIO } from "../../src/fs-bridge.js";
 import { clearEncodingState, clearAutoGuessFooter } from "../../src/fs-bridge.js";
 import { buildStrReplaceEditorTool } from "../../src/tool-str-replace-editor.js";
+import { makeTestSandbox } from "../support/fixtures.js";
 
 function fakeExec(cwd: string, session = "sre-vgate") {
   return {
@@ -101,7 +102,7 @@ describe("issue #69: ctxFsIO version semantics authorize shadow writes", () => {
       ]),
     );
     const io: FileIO = ctxFsIO(fake.fs as never, makeCtx());
-    const tool = buildStrReplaceEditorTool(io);
+    const tool = buildStrReplaceEditorTool(io, makeTestSandbox());
     const exec = fakeExec("/abs");
     await tool.execute({ command: "view", path: p }, exec);
     const res = (await tool.execute(
@@ -122,7 +123,7 @@ describe("issue #69: ctxFsIO version semantics authorize shadow writes", () => {
     const p = "/abs/nobom.txt";
     fake.seed(p, Buffer.from("alpha\r\nbravo\r\ncharlie\r\n", "utf-8"));
     const io: FileIO = ctxFsIO(fake.fs as never, makeCtx());
-    const tool = buildStrReplaceEditorTool(io);
+    const tool = buildStrReplaceEditorTool(io, makeTestSandbox());
     const exec = fakeExec("/abs");
     await tool.execute({ command: "view", path: p }, exec);
     const res = (await tool.execute(
@@ -138,7 +139,7 @@ describe("issue #69: ctxFsIO version semantics authorize shadow writes", () => {
     const p = "/abs/hash.txt";
     fake.seed(p, Buffer.from("alpha\r\nbravo\r\ncharlie\r\n", "utf-8"));
     const io: FileIO = ctxFsIO(fake.fs as never, makeCtx());
-    const tool = buildStrReplaceEditorTool(io);
+    const tool = buildStrReplaceEditorTool(io, makeTestSandbox());
     const exec = fakeExec("/abs");
     // hashline read observation path: same io.readText seam the read tool uses
     await io.readText(p);
@@ -154,7 +155,7 @@ describe("issue #69: ctxFsIO version semantics authorize shadow writes", () => {
     const p = "/abs/drift.txt";
     fake.seed(p, Buffer.from("alpha\r\nbravo\r\ncharlie\r\n", "utf-8"));
     const io: FileIO = ctxFsIO(fake.fs as never, makeCtx());
-    const tool = buildStrReplaceEditorTool(io);
+    const tool = buildStrReplaceEditorTool(io, makeTestSandbox());
     const exec = fakeExec("/abs");
     await tool.execute({ command: "view", path: p }, exec);
     fake.externalWrite(p, Buffer.from("alpha\r\nCHANGED\r\ncharlie\r\n", "utf-8"));

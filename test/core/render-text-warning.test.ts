@@ -3,6 +3,7 @@ import { renderTextWarning } from "../../src/render-text-warning.js";
 import { buildReadTool } from "../../src/tool-read.js";
 import { buildStrReplaceEditorTool } from "../../src/tool-str-replace-editor.js";
 import { localIO } from "../../src/fs-bridge.js";
+import { makeTestSandbox } from "../support/fixtures.js";
 
 describe("renderTextWarning shared render (report #7)", () => {
   it("renders a bare string as one block", () => {
@@ -22,7 +23,7 @@ describe("renderTextWarning shared render (report #7)", () => {
     const read = buildReadTool(io) as unknown as {
       output: { render: (a: unknown, v: unknown) => unknown };
     };
-    const editor = buildStrReplaceEditorTool(io) as unknown as {
+    const editor = buildStrReplaceEditorTool(io, makeTestSandbox()) as unknown as {
       output: { render: (a: unknown, v: unknown) => unknown };
     };
     for (const value of ["bare", { text: "body" }, { text: "body", warning: "warn" }] as const) {
