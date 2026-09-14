@@ -91,7 +91,7 @@
     "conventional-changelog-conventionalcommits": "^8.0.0",
     "husky": "^9.1.7",
     "js-tiktoken": "1.0.21",
-    "oxfmt": ">=0.15",
+    "oxfmt": "0.67.0",
     "oxlint": ">=1",
     "semantic-release": "^25.0.9",
     "tsx": ">=4",
