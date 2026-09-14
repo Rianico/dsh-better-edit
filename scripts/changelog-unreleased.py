@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # /// script
-# requires-python = ">=3.12"
+# requires-python = ">=3.14"
 # dependencies = []
 # ///
 """Manage ## [Unreleased] section in CHANGELOG.md.
@@ -27,7 +27,7 @@ UNRELEASED_HEADING = "## [Unreleased]"
 # Mirrors .releaserc.json presetConfig.types
 TYPE_SECTIONS: dict[str, tuple[str, bool]] = {
     "feat": ("Features", False),
-    "fix": ("Fixed", False),
+    "fix": ("Bug Fixes", False),
     "perf": ("Performance Improvements", False),
     "revert": ("Reverts", False),
     "docs": ("Documentation", False),
@@ -50,6 +50,33 @@ VERSION_HEADING_RE = re.compile(r"^## \[[^\]]+\].*", re.MULTILINE)
 def run(cmd: list[str]) -> str:
     result = subprocess.run(cmd, capture_output=True, text=True, check=False)
     return result.stdout.strip() if result.returncode == 0 else ""
+
+
+VISIBLE_SYNC_TYPES = frozenset({"feat", "fix", "perf", "revert", "docs"})
+
+
+def warn_if_visible_sync_head(commits: list[tuple[str, str]]) -> None:
+    """Warn when HEAD looks like a visible-type changelog sync commit.
+
+    A sync committed as `docs:` (or any visible type) re-triggers the guard:
+    the next `update` lists the sync commit itself, demanding another sync.
+    Sync commits must use a hidden type (e.g. `chore: sync changelog unreleased section`).
+    Stderr only; never changes file bytes.
+    """
+    if not commits:
+        return
+    subject = commits[0][0]
+    m = CONVENTIONAL_RE.match(subject)
+    if not m:
+        return
+    if m.group("type") in VISIBLE_SYNC_TYPES and "sync changelog" in subject.lower():
+        print(
+            "WARNING: HEAD looks like a visible-type changelog sync commit: "
+            f"{subject!r} — commit the sync as a hidden type "
+            "(e.g. `chore: sync changelog unreleased section`); "
+            "a visible type re-triggers the guard and loops forever.",
+            file=sys.stderr,
+        )
 
 
 def _is_ancestor(tag: str) -> bool:
@@ -124,10 +151,12 @@ def commits_to_sections(commits: list[tuple[str, str]]) -> dict[str, list[str]]:
             if ctype in ("perf",) and breaking:
                 section = "Performance Improvements"
 
-        entry = f"- {m.group('subject').strip()}"
+        # `*` matches @semantic-release/changelog's notes body. Staying consistent keeps
+        # pi-lens's markdown fixer from normalising the generated section on every touch.
+        entry = f"* {m.group('subject').strip()}"
         scope = m.group("scope")
         if scope:
-            entry = f"- **{scope}:** {m.group('subject').strip()}"
+            entry = f"* **{scope}:** {m.group('subject').strip()}"
         if breaking:
             # annotate breaking
             entry += " (BREAKING CHANGE)"
@@ -163,6 +192,7 @@ def render_unreleased(sections: dict[str, list[str]]) -> str:
 def update_changelog(changelog: Path) -> bool:
     tag = get_last_tag()
     commits = get_commits_since(tag)
+    warn_if_visible_sync_head(commits)
     sections = commits_to_sections(commits)
     new_block = render_unreleased(sections)
 
@@ -227,7 +257,10 @@ def clear_changelog(changelog: Path) -> bool:
     before, rest = content.split(UNRELEASED_HEADING, 1)
     m = VERSION_HEADING_RE.search(rest)
     after = rest[m.start() :] if m else ""
-    new_content = before.rstrip() + "\n\n" + after.lstrip()
+    # Keep the heading: @semantic-release/changelog anchors its insertion point on it, and
+    # prepends the new version above the file title (and stranded the title at the end) when it
+    # is missing - which is exactly what the v2.0.0 release did.
+    new_content = before.rstrip() + "\n\n" + UNRELEASED_HEADING + "\n\n" + after.lstrip()
     new_content = re.sub(r"\n{3,}", "\n\n", new_content).strip() + "\n"
     if new_content == content:
         return False

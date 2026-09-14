@@ -1,0 +1,75 @@
+name: "🐛 Bug report"
+description: Concise, paste-complete repro — summary, environment, steps, expected vs actual
+title: "[bug] "
+labels: ["bug"]
+body:
+  - type: checkboxes
+    id: searched
+    attributes:
+      label: Is there an existing issue for this?
+      description: Please search to see if an issue already exists for the bug you encountered.
+      options:
+        - label: I have searched the existing issues
+          required: true
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: One line — what broke and how it fails, not what you think the fix is
+      placeholder: "<version> — <what you did> → <what happened instead>"
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Version, the module or file involved, and the exact command you ran
+      placeholder: |
+        - Version:
+        - Module:
+        - Command:
+      value: |
+        - Version:
+        - Module:
+        - Command:
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to Reproduce
+      description: Minimal complete input plus the exact args/payload — paste-complete text beats screenshots
+      placeholder: |
+        1. Minimal input (the smallest one that still fails), pasted verbatim:
+        2. Args / payload, pasted verbatim:
+        3. Run: exact command
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+      description: What you expected instead — quote the file, diff, or output
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+      description: What actually happened — quote the diff, log, or error verbatim
+    validations:
+      required: true
+  - type: textarea
+    id: impact
+    attributes:
+      label: Impact & Trigger Conditions
+      description: When it fires, how often, and what it blocks
+    validations:
+      required: false
+  - type: textarea
+    id: root-cause
+    attributes:
+      label: Root Cause / Suggested Fixes (optional)
+      description: Hypothesis plus alternatives, each with its tradeoff
+    validations:
+      required: false

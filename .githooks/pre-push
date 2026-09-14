@@ -1,6 +1,15 @@
 #!/usr/bin/env bash
 set -e
-# pre-push hook: warn if CHANGELOG.md Unreleased stale
+# skip in CI / when uv and python3 missing — semantic-release push must not fail on hook
+if [ "${HUSKY:-}" = "0" ]; then exit 0; fi
+if ! command -v uv >/dev/null 2>&1 && ! command -v python3 >/dev/null 2>&1; then exit 0; fi
+# disable auto-fix with PREPUSH_AUTOFIX=0
+if [ "${PREPUSH_AUTOFIX:-1}" = "0" ]; then
+  _AUTOFIX=0
+else
+  _AUTOFIX=1
+fi
+# pre-push hook: ensure CHANGELOG.md Unreleased is up-to-date — auto-fixes with amend when stale
 while read -r local_ref local_sha remote_ref remote_sha; do
   [ "$local_sha" = "0000000000000000000000000000000000000000" ] && continue
   range="$remote_sha..$local_sha"
@@ -12,21 +21,44 @@ while read -r local_ref local_sha remote_ref remote_sha; do
   fi
   tmp=$(mktemp)
   cp CHANGELOG.md "$tmp" 2>/dev/null || touch "$tmp"
-  uv run python scripts/changelog-unreleased.py update >/dev/null
+  if command -v uv >/dev/null 2>&1; then
+    uv run python scripts/changelog-unreleased.py update >/dev/null 2>&1 || python3 scripts/changelog-unreleased.py update >/dev/null 2>&1 || true
+  else
+    python3 scripts/changelog-unreleased.py update >/dev/null 2>&1 || true
+  fi
   if ! diff -q CHANGELOG.md "$tmp" >/dev/null; then
+    if [ "$_AUTOFIX" = "1" ]; then
+      echo "[pre-push] CHANGELOG.md [Unreleased] stale — auto-fixing..." >&2
+      git add CHANGELOG.md
+      if git rev-parse --verify HEAD >/dev/null 2>&1; then
+        if git commit --amend --no-edit --no-verify >/dev/null 2>&1; then
+          echo "[pre-push] amended HEAD $(git rev-parse --short HEAD) with updated CHANGELOG.md [Unreleased] — auto-pushing..." >&2
+          rm -f "$tmp"
+          # Schedule auto-retry after this hook aborts the current push.
+          # Use background job so the outer `git push` can exit cleanly (code 1) before retry.
+          # Retry re-enters this hook once (now Unreleased is clean) and succeeds.
+          echo "[pre-push] push aborted — auto-retrying in background..." >&2
+          ( sleep 0.5; git push </dev/null >&2 || git push --set-upstream origin HEAD </dev/null >&2 ) &
+          exit 1
+        fi
+      fi
+      echo "[pre-push] auto-fix failed — restoring original and blocking push" >&2
+    fi
     cat >&2 <<'EOF'
 > [!warning] CHANGELOG.md [Unreleased] stale
 Visible conventional commit in push range but Unreleased not updated.
 Fix:
   uv run python scripts/changelog-unreleased.py update
   git add CHANGELOG.md
-  git commit --amend --no-edit   # feature branch ok
-  git push --force-with-lease
-Bypass (human): git push --no-verify
+  git commit -m 'chore: sync changelog unreleased section'  # hidden type required
+  # visible feat/fix/perf/revert/docs re-triggers the guard and loops forever
+  # or amend on a feature branch: git commit --amend --no-edit --no-verify && git push --force-with-lease
+  git push
+Bypass (human): git push --no-verify  or  PREPUSH_AUTOFIX=0 git push
 EOF
     cp "$tmp" CHANGELOG.md
-    rm "$tmp"
+    rm -f "$tmp"
     exit 1
   fi
-  rm "$tmp"
+  rm -f "$tmp"
 done

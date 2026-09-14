@@ -47,3 +47,8 @@ The five canonical triage labels: `needs-triage`, `needs-info`, `ready-for-agent
 ### Domain docs
 
 Single-context — one `CONTEXT.md` plus `docs/adr/` at the repo root. See `docs/agents/domain.md`.
+
+### Contribution
+
+Conventional commits & changelog: see CONTRIBUTING.md
+Git hooks: `git config core.hooksPath .githooks` (or `npm install` with husky → `.husky` delegates to `.githooks`) so pre-push CHANGELOG guard is live on fresh clone/worktree.

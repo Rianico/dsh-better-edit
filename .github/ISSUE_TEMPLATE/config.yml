@@ -1,0 +1,7 @@
+blank_issues_enabled: false
+# Point contact_links at *this* repo — a URL from the scaffolding skill's own project would
+# leak another repo's Discussions/exemplars into every generated project.
+# contact_links:
+#   - name: Ask a question — Discussions
+#     url: https://github.com/<owner>/<repo>/discussions
+#     about: For questions or support, use Discussions instead of an issue

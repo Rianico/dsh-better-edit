@@ -14,13 +14,13 @@ jobs:
       contents: read
       pull-requests: write
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
           fetch-depth: 0
-      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
-          python-version: "3.12"
+          python-version: "3.14"
       - name: Check Unreleased is up to date
         run: |
           # save committed version
@@ -38,7 +38,9 @@ jobs:
           echo ""
           echo "Fix locally:"
           echo "  uv run python scripts/changelog-unreleased.py update"
-          echo "  git add CHANGELOG.md && git commit --amend --no-edit --no-verify && git push --force-with-lease"
+          echo "  git add CHANGELOG.md && git commit -m 'chore: sync changelog unreleased section' --no-verify && git push"
+          echo "  # or amend on a feature branch: git add CHANGELOG.md && git commit --amend --no-edit --no-verify && git push --force-with-lease"
+          echo "  Sync commit must use a hidden type (chore:/style:/refactor:/test:/build:/ci:); a visible type (feat/fix/perf/revert/docs) re-triggers the guard and loops forever."
           echo ""
           echo "Hidden types (style/chore/refactor/test/build/ci) without BREAKING CHANGE don't need Unreleased."
           # restore committed file so subsequent steps see original
@@ -46,7 +48,7 @@ jobs:
           exit 1
       - name: Comment on failure
         if: failure()
-        uses: actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea # v7
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         with:
           script: |
             const body = `> [!warning] CHANGELOG.md Unreleased stale
@@ -55,10 +57,12 @@ jobs:
             Fix:
             \`\`\`bash
             uv run python scripts/changelog-unreleased.py update
-            git add CHANGELOG.md && git commit --amend --no-edit
-            git push --force-with-lease
+            git add CHANGELOG.md && git commit -m 'chore: sync changelog unreleased section'
+            git push
+            # or amend on a feature branch: git commit --amend --no-edit && git push --force-with-lease
             \`\`\`
-            Hidden types \`style|chore|refactor|test|build|ci\` only need update when breaking.`;
+            Sync commit must use a hidden type (\`chore:\` etc.); a visible type (\`feat|fix|perf|revert|docs\`) re-triggers the guard and loops forever.
+            Hidden types \`style|chore|refactor|test|build|ci\` only need update when breaking.
             // avoid duplicate comments
             const {data: comments} = await github.rest.issues.listComments({
               owner: context.repo.owner, repo: context.repo.repo, issue_number: context.issue.number

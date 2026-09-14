@@ -1,0 +1,43 @@
+name: "✨ Feature request"
+description: Suggest an idea — problem, proposal, alternatives
+title: "[feat] "
+labels: ["enhancement"]
+body:
+  - type: checkboxes
+    id: searched
+    attributes:
+      label: Is there an existing issue for this?
+      description: Please search to see if an issue already exists.
+      options:
+        - label: I have searched the existing issues
+          required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem — is your request related to a problem?
+      description: What problem does this solve? Who is affected?
+      placeholder: "When doing X, I need Y but currently Z happens..."
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposal — describe the solution you'd like
+      description: Concise proposal, API/UX sketch if applicable
+      placeholder: "Add `...` / change `...` so that ..."
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Other approaches you considered and why not
+    validations:
+      required: false
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional context
+      description: Examples, prior art, links (e.g. similar issues, RFC)
+    validations:
+      required: false

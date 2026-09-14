@@ -9,14 +9,13 @@
 
 ## What Changed
 
-<!-- Grouped by system/feature, not file list. Flag migrations / API / payload-contract changes. -->
-<!-- Example: - hashline: ... -->
+<!-- Grouped by system/feature, not a file list. Flag migrations, contract, or payload changes. -->
 
 -
 
 ## Architecture
 
-<!-- Mermaid before/after only when structural seams, layering, or data-flow changes; delete section otherwise. -->
+<!-- Mermaid before/after only when structural seams, layering, or data-flow changes; delete the section otherwise. -->
 
 ```mermaid
 graph LR
@@ -25,7 +24,7 @@ graph LR
 
 ## Checklist
 
-- [ ] `pnpm run lint && pnpm run format && pnpm run typecheck && pnpm test` green
+- [ ] Formatter, linter, typecheck, and tests green (exact commands in `CONTRIBUTING.md`)
 - [ ] Conventional Commits (`commitlint` + `husky`) — `npx commitlint --from=origin/main --to=HEAD`
 - [ ] `CHANGELOG.md` `## [Unreleased]` updated (if user-facing)
 - [ ] Docs / `docs/adr/` updated when seams or contracts change

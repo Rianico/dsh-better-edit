@@ -4,6 +4,7 @@
 # Usage: wt config create --project && merge this template into .config/wt.toml
 
 [post-start]
+setup-hooks = "git config core.hooksPath .githooks"
 # Copy gitignored artifacts (node_modules, target, .cache) between worktrees — avoids cold start.
 copy = "wt step copy-ignored"
 
