@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { getWritableTempRoot } from "../support/fixtures.js";
 import { shutdownHashStore } from "../../src/hash-store.js";
 import { localIO } from "../../src/fs-bridge.js";
@@ -13,7 +13,7 @@ describe("mutation coverage agent-a", () => {
 
   it("resolveDisplayPath delegates to toCwd", async () => {
     const { resolveDisplayPath } = await import("../../src/mutation.js");
-    expect(resolveDisplayPath("a/b.txt", "/cwd")).toBe(join("/cwd", "a/b.txt"));
+    expect(resolveDisplayPath("a/b.txt", "/cwd")).toBe(resolve("/cwd", "a/b.txt"));
     expect(resolveDisplayPath("/abs/path.txt", "/cwd")).toBe("/abs/path.txt");
   });
 

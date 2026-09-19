@@ -114,7 +114,7 @@ kQm│}
 
 ### 配置
 
-租约与提示词指引都只需声明一次，在 `agent/session-start` 时读取，无需改代码。
+租约与提示词指引都只需声明一次，在 `agent/created` 时读取，无需改代码。
 
 #### 存储租约 — 默认 central
 
@@ -300,14 +300,14 @@ token 基准测试衡量的是模型发出的负载——它假设模型每次�
 dsh 的工具注册表按作用域解析：agent 看到的是 `agent → preset → global`，且**自身**层总是优先。内置的 `read`/`edit` 位于 agent-preset 层，因此普通的全局注册无法替换它们。本插件：
 
 1. 通过其 `cordis.patch.yml` bundle 补丁作为宿主层 Cordis 插件挂载。
-2. 在 `agent/session-start` 时，将 hashline 工具**以及** `tool:read` / `tool:edit` 提示词片段注册到 agent 自身的作用域层——从而为该 agent 遮蔽 preset 的内置工具，并在 agent 销毁时自动解除。
+2. 在 `agent/created` 时，将 hashline 工具**以及** `tool:read` / `tool:edit` 提示词片段注册到 agent 自身的作用域层——从而为该 agent 遮蔽 preset 的内置工具，并在 agent 销毁时自动解除。
 3. 保留内置的 `write`，通过作用域内的 `tools/pre-execute` 监听器在执行前拒绝精确的同会话/同路径/同行锚点回显，并由 `tools/post-execute` 在成功结果后附加 hashline 自动读取。
 
 ## 存储
 
 哈希快照、已提供状态行与撤销历史存放在一个 SQLite 库中——**默认 central**（`$DSH_HOME/plugins/dsh-better-edit/runtime/<name>-<hash8>/hash-store.sqlite`，可通过 `ls` 查看，带 `.wsPath` 旁路文件）。旧的同址 `<workspace>/.dsh_better_edit/` 仍可通过 `config.yaml` 中 `storeDir: workspace` 启用，并在首次以 central 打开时一次性拷贝。不同工作区的并行会话各自持有独立的库（会话 cwd 会随每次工具调用传递），因此一个项目的锚点与撤销历史不会泄漏到另一个项目。在工具调用之外（测试、预览）会回退到共享的 DeepSeek Harness 主目录（`$DSH_HOME/plugins/dsh-better-edit/hash-store.sqlite`）。
 
-7 天 TTL 清理已提供的行；`undo_ttl_s`（默认 7 天，`-1` 永久）清理撤销副本；缺失文件的快照在受控的 `openStore` 中清理；损坏的库会被隔离并自动重建。 central 的 janitor（`apply` + `agent/session-start` 受控节流 >24h）会先清理 `mtime>storeMaxAgeS`（默认 2592000 秒 = 30 天），再按 LRU 至 `count<100 && sum<500MB`，永不删除存活的 `hash(workspaceCwd)`，并在关闭时执行 `wal_checkpoint(TRUNCATE)`。DB 文件为可丢弃缓存——可安全删除，下次 `read` 时重建。
+7 天 TTL 清理已提供的行；`undo_ttl_s`（默认 7 天，`-1` 永久）清理撤销副本；缺失文件的快照在受控的 `openStore` 中清理；损坏的库会被隔离并自动重建。 central 的 janitor（`apply` + `agent/created` 受控节流 >24h）会先清理 `mtime>storeMaxAgeS`（默认 2592000 秒 = 30 天），再按 LRU 至 `count<100 && sum<500MB`，永不删除存活的 `hash(workspaceCwd)`，并在关闭时执行 `wal_checkpoint(TRUNCATE)`。DB 文件为可丢弃缓存——可安全删除，下次 `read` 时重建。
 
 ## 项目结构
 
