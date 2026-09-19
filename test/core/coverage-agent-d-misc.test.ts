@@ -192,9 +192,12 @@ describe("coverage-agent-d store-config", () => {
     vi.unstubAllEnvs();
   });
   it("expand", () => {
-    const home = process.env.HOME || "/tmp";
+    const home = join(process.cwd(), "expand-home");
+    vi.stubEnv("HOME", home);
+    _resetConfigCache();
     expect(expand("~")).toBe(home);
-    expect(expand("~/foo")).toBe(home + "/foo");
+    expect(expand(`${home}/foo`)).toBe(home + "/foo");
+    expect(expand(`${home}\\bar`)).toBe(home + "\\bar");
     expect(expand("/abs")).toBe("/abs");
     expect(expand("relative")).toBe("relative");
   });

@@ -135,7 +135,7 @@ One fails → none write (`[E_BATCH_ABORT]`).
 
 ### Configuration
 
-Tenancy and prompt guidance declare once, read at `agent/session-start`, no code change.
+Tenancy and prompt guidance declare once, read at `agent/created`, no code change.
 
 **Store** central by default `$DSH_HOME/plugins/dsh-better-edit/runtime/<name>-<hash8>/` (`ls`-readable + `.wsPath` sidecar). DBs are disposable caches — `rm -rf runtime/<name>-<hash8>/` is safe, rebuilt on next `read`.
 
@@ -233,7 +233,7 @@ Full list in `src/` — every rejection echoes fresh rows, no `read` needed.
 
 ## How It Replaces Built-ins
 
-dsh resolves `agent → preset → global`; built-ins live on preset. Plugin via `cordis.patch.yml`: at `agent/session-start` registers `read/edit` on agent layer (shadows, auto-unwinds); `write` stays with `pre-execute` guard + `post-execute` auto-read.
+dsh resolves `agent → preset → global`; built-ins live on preset. Plugin via `cordis.patch.yml`: at `agent/created` registers `read/edit` on agent layer (shadows, auto-unwinds); `write` stays with `pre-execute` guard + `post-execute` auto-read.
 
 ## Project Structure
 

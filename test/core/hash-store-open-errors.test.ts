@@ -71,6 +71,7 @@ let tmpHome: string;
 beforeAll(async () => {
   tmpHome = await mkdtemp(join(process.cwd(), ".tmp", "hash-store-open-errors-"));
   vi.stubEnv("HOME", tmpHome);
+  vi.stubEnv("DSH_HOME", join(tmpHome, ".dsh"));
   vi.stubEnv("XDG_CONFIG_HOME", "");
   const { initHasher } = await import("../../src/hashline/hasher");
   await initHasher();
