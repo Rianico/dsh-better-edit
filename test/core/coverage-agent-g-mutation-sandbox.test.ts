@@ -38,7 +38,7 @@ describe("coverage-agent-g mutation", () => {
     await expect(
       execPipeline(
         io,
-        { path: "a.txt", remove_from: "abc", remove_to: "def", replacement_text: "hi" } as any,
+        { file: "a.txt", anchor_from: "abc", anchor_to: "def", replace_with: "hi" } as any,
         "/tmp",
         { signal: ctrl.signal },
       ),

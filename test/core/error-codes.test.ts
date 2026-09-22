@@ -37,7 +37,7 @@ describe("structured error codes (#55 S1)", () => {
   it("anchor-syntax throws carry E_MALFORMED_ANCHOR", () => {
     expect(
       codeOfThrow(() =>
-        resEdit({ remove_from: "MQX│x", remove_to: "MQX", replacement_text: "y" } as any),
+        resEdit({ anchor_from: "MQX│x", anchor_to: "MQX", replace_with: "y" } as any),
       ),
     ).toBe("E_MALFORMED_ANCHOR");
   });

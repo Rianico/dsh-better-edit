@@ -98,6 +98,7 @@ import {
   type ServedRow,
 } from "../hashline/anchor-pipeline.js";
 import { DomainError, formatError, formatWarning } from "../domain-errors.js";
+import type { RangeCause } from "../domain-errors.js";
 import type { EditMode } from "../contract.js";
 import { findSnapshotPathsByHashes } from "../hash-store.js";
 import { clearNoopLoop, noopPayloadKey, trackNoopPayload } from "../noop-guard.js";
@@ -109,12 +110,12 @@ import { abortIf, splitLines } from "../utils.js";
 
 export interface PreparedItem {
   index: number;
-  path: string;
+  file: string;
   absolutePath: string;
-  remove_from: string;
-  remove_to: string;
-  replacement_text: string;
-  pathWarning?: string;
+  anchor_from: string;
+  anchor_to: string;
+  replace_with: string;
+  fileWarning?: string;
   /** Request-level edit mode ("general" default, "literal" bypasses served-echo). */
   mode?: EditMode;
 }
@@ -150,8 +151,8 @@ export async function resolveMissingPath(
   request: Record<string, unknown>,
 ): Promise<{ path: string; warning: string } | undefined> {
   if (typeof request.path === "string") return undefined;
-  const from = request.remove_from;
-  const to = request.remove_to;
+  const from = request.anchor_from;
+  const to = request.anchor_to;
   if (typeof from !== "string" || typeof to !== "string") return undefined;
   const hashes: string[] = [];
   for (const ref of [from, to]) {
@@ -227,9 +228,9 @@ export interface ApplyOneInput {
   content: string;
   hashes: string[];
   served: (string | null)[];
-  removeFrom: string;
-  removeTo: string;
-  replacementText: string;
+  anchorFrom: string;
+  anchorTo: string;
+  replaceWith: string;
   absolutePath: string;
   displayPath: string;
   signal?: AbortSignal;
@@ -292,9 +293,9 @@ export async function applyOne(
     try {
       edit = resEdit(
         {
-          remove_from: input.removeFrom,
-          remove_to: input.removeTo,
-          replacement_text: input.replacementText,
+          anchor_from: input.anchorFrom,
+          anchor_to: input.anchorTo,
+          replace_with: input.replaceWith,
         },
         input.warnings,
       );
@@ -402,9 +403,9 @@ export async function applyOne(
 
 export interface NoopLoopOptions {
   absolutePath: string;
-  removeFrom: string;
-  removeTo: string;
-  replacementText: string;
+  anchorFrom: string;
+  anchorTo: string;
+  replaceWith: string;
   displayPath: string;
   /** Batch item index; undefined = single-edit flavor. */
   index?: number;
@@ -427,8 +428,8 @@ export interface NoopLoopOptions {
 export async function enforceNoopLoop(opts: NoopLoopOptions): Promise<string | undefined> {
   const {
     absolutePath,
-    removeFrom,
-    removeTo,
+    anchorFrom,
+    anchorTo,
     displayPath,
     index,
     count,
@@ -443,8 +444,8 @@ export async function enforceNoopLoop(opts: NoopLoopOptions): Promise<string | u
       await recordEchoServes(sessionKey, absolutePath, echoRows, "live", originalHashes.length);
       throw new DomainError("E_NOOP_LOOP", {
         ref: displayPath,
-        removeFrom,
-        removeTo,
+        anchorFrom,
+        anchorTo,
         count,
         batch: false,
         servedBlock: echo,
@@ -455,8 +456,8 @@ export async function enforceNoopLoop(opts: NoopLoopOptions): Promise<string | u
       // Channel rule: applied-tier notices are human-observable → USER audience via the registry.
       return formatWarning("W_NOOP", {
         ref: displayPath,
-        removeFrom,
-        removeTo,
+        anchorFrom,
+        anchorTo,
         batch: false,
         count,
         path: displayPath,
@@ -473,8 +474,8 @@ export async function enforceNoopLoop(opts: NoopLoopOptions): Promise<string | u
     }
     throw new DomainError("E_NOOP_LOOP", {
       ref: `edits[${index}] (${displayPath})`,
-      removeFrom,
-      removeTo,
+      anchorFrom,
+      anchorTo,
       count,
       batch: true,
       // F5: pass raw rows — the registry owns the `Current on-disk range:` heading.
@@ -484,8 +485,8 @@ export async function enforceNoopLoop(opts: NoopLoopOptions): Promise<string | u
   if (count === 2) {
     return formatWarning("W_NOOP", {
       ref: `edits[${index}] (${displayPath})`,
-      removeFrom,
-      removeTo,
+      anchorFrom,
+      anchorTo,
       batch: true,
       count,
     });
@@ -503,6 +504,98 @@ function echoRowsForItem(edit: HEdit, originalHashes: string[]): ServedRow[] | u
   const e = originalHashes.indexOf(endHash);
   if (s < 0 || e < 0) return undefined;
   return buildRangeEcho(Math.min(s, e) + 1, Math.max(s, e) + 1, originalHashes);
+}
+
+/** One failing item's share of an E_BATCH_ABORT envelope (C). */
+type AbortPart = {
+  index: number;
+  /** The item's full failure message (already header-bearing, own `[E_*]` inline). */
+  inner: string;
+  echoRows: ServedRow[] | undefined;
+  /** Message fragment: ranged block or the read fallback (single envelopes). */
+  echoBlock: string;
+  /** Structural rows rendered without heading (unions into servedBlock). */
+  fmtBlock: string;
+  cause: RangeCause | undefined;
+};
+
+/**
+ * Shared echo resolution for batch rejections: prefer the failure's own
+ * rows, else the resolved edit's rows; record the same reject-and-serve
+ * leases the sequential path records so a pre-pass rejection leaves
+ * identical retry state.
+ */
+async function collectAbortPart(opts: {
+  sessionKey: string;
+  absolutePath: string;
+  error: DomainError;
+  edit: HEdit | undefined;
+  index: number;
+  originalNormalized: string;
+  originalHashes: string[];
+}): Promise<AbortPart> {
+  const echoRows =
+    opts.error.servedRows.length > 0
+      ? opts.error.servedRows
+      : opts.edit
+        ? echoRowsForItem(opts.edit, opts.originalHashes)
+        : undefined;
+  if (echoRows) {
+    await recordEchoServes(
+      opts.sessionKey,
+      opts.absolutePath,
+      echoRows,
+      "live",
+      opts.originalHashes.length,
+    );
+  }
+  const originalLines = splitLines(opts.originalNormalized);
+  const fmtBlock = echoRows ? fmtServedRows(echoRows, originalLines) : "";
+  const echoBlock = echoRows
+    ? ` Current on-disk range for edits[${opts.index}] (unchanged — nothing was written):\n${fmtBlock}`
+    : " Call read() to get fresh anchors.";
+  return {
+    index: opts.index,
+    inner: opts.error.message,
+    echoRows,
+    echoBlock,
+    fmtBlock,
+    cause: opts.error.cause,
+  };
+}
+
+/**
+ * One aggregated E_BATCH_ABORT for every failing item (C). A single part
+ * renders byte-identically to the legacy single-failure envelope; several
+ * parts name every failing item in order with the plural fix sentence.
+ * `code` routes the typed path via the first item; servedRows unions every
+ * part's rows; servedBlock joins every part's block; cause/details ride
+ * only on unanimous diagnosis (DomainError builds details from cause).
+ */
+function buildBatchAbort(file: string, parts: AbortPart[]): DomainError<"E_BATCH_ABORT"> {
+  const first = parts[0]!;
+  const rows: ServedRow[] = [];
+  const blocks: string[] = [];
+  for (const part of parts) {
+    if (part.echoRows) rows.push(...part.echoRows);
+    if (part.fmtBlock) blocks.push(part.fmtBlock);
+  }
+  const base = {
+    index: first.index,
+    path: file,
+    inner: first.inner,
+    echoBlock: first.echoBlock,
+    servedRows: rows,
+    servedBlock: blocks.join("\n"),
+  };
+  if (parts.length === 1) return new DomainError("E_BATCH_ABORT", base);
+  const firstCause = parts[0]!.cause;
+  const unanimous = firstCause !== undefined && parts.every((part) => part.cause === firstCause);
+  return new DomainError("E_BATCH_ABORT", {
+    ...base,
+    failures: parts.map((part) => ({ index: part.index, inner: part.inner })),
+    ...(unanimous ? { cause: firstCause } : {}),
+  });
 }
 
 /**
@@ -531,7 +624,7 @@ export async function runFileEdits(
   } = await normFromText({
     absolutePath,
     rawText,
-    displayPath: first.path,
+    displayPath: first.file,
     signal: opts.signal,
     maxLines: MAX_HASH_LINES,
     reservedHashes,
@@ -564,6 +657,53 @@ export async function runFileEdits(
   let lastApplied: { content: string; hashes: string[]; removedHashes: Set<string> } | undefined;
   const newlyRetired = new Set<string>();
 
+  // C: pure pre-pass over all items on the pre-batch snapshot — parse each
+  // item (resEdit) and resolve its span (applyEdit) with no mutation
+  // (warnings go to a throwaway array; noop tracking untouched). Anchor and
+  // served failures collect for one aggregated rejection; a non-domain
+  // throw is unexpected and aborts immediately. The loop below still owns
+  // state-dependent (mid-loop) failures via onReject.
+  const preParts: AbortPart[] = [];
+  for (const item of items) {
+    abortIf(opts.signal);
+    let edit: HEdit | undefined;
+    try {
+      edit = resEdit({
+        anchor_from: item.anchor_from,
+        anchor_to: item.anchor_to,
+        replace_with: item.replace_with,
+      });
+      applyEdit(
+        originalNormalized,
+        edit,
+        opts.signal,
+        originalHashes,
+        item.file,
+        served,
+        servedCanons,
+        perSessionRetired,
+        epochSnapshotId,
+        curSnapshotId,
+        strictPos,
+        item.mode,
+      );
+    } catch (error) {
+      if (!(error instanceof DomainError)) throw error;
+      preParts.push(
+        await collectAbortPart({
+          sessionKey: opts.sessionKey,
+          absolutePath,
+          error,
+          edit,
+          index: item.index,
+          originalNormalized,
+          originalHashes,
+        }),
+      );
+    }
+  }
+  if (preParts.length > 0) throw buildBatchAbort(first.file, preParts);
+
   for (const item of items) {
     abortIf(opts.signal);
     const applied = await applyOne(
@@ -571,11 +711,11 @@ export async function runFileEdits(
         content: currentContent,
         hashes: currentHashes,
         served,
-        removeFrom: item.remove_from,
-        removeTo: item.remove_to,
-        replacementText: item.replacement_text,
+        anchorFrom: item.anchor_from,
+        anchorTo: item.anchor_to,
+        replaceWith: item.replace_with,
         absolutePath,
-        displayPath: item.path,
+        displayPath: item.file,
         signal: opts.signal,
         warnings,
         countHashes: originalHashes,
@@ -589,40 +729,30 @@ export async function runFileEdits(
         mode: item.mode,
       },
       async (error, edit) => {
+        // In-loop (state-dependent) failures keep single-failure envelopes.
         if (error instanceof AnchorMismatchError || error instanceof ServedRejectionError) {
-          const originalLines = splitLines(originalNormalized);
-          const echoRows =
-            error.servedRows.length > 0
-              ? error.servedRows
-              : edit
-                ? echoRowsForItem(edit, originalHashes)
-                : undefined;
-          if (echoRows) {
-            await recordEchoServes(
-              opts.sessionKey,
-              absolutePath,
-              echoRows,
-              "live",
-              originalHashes.length,
-            );
-          }
-          const echoBlock = echoRows
-            ? ` Current on-disk range for edits[${item.index}] (unchanged — nothing was written):\n${fmtServedRows(echoRows, originalLines)}`
-            : " Call read() to get fresh anchors.";
-          throw new DomainError("E_BATCH_ABORT", {
+          const part = await collectAbortPart({
+            sessionKey: opts.sessionKey,
+            absolutePath,
+            error,
+            edit,
             index: item.index,
-            path: item.path,
-            inner: error.message,
-            echoBlock,
+            originalNormalized,
+            originalHashes,
           });
+          throw buildBatchAbort(item.file, [part]);
         }
         const message = error instanceof Error ? error.message : String(error);
-        throw new DomainError("E_BATCH_ABORT", {
-          index: item.index,
-          path: item.path,
-          inner: message,
-          echoBlock: "",
-        });
+        throw buildBatchAbort(item.file, [
+          {
+            index: item.index,
+            inner: message,
+            echoRows: undefined,
+            echoBlock: "",
+            fmtBlock: "",
+            cause: undefined,
+          },
+        ]);
       },
     );
 
@@ -640,17 +770,17 @@ export async function runFileEdits(
       noopCount += 1;
       const payload = noopPayloadKey(
         absolutePath,
-        item.remove_from,
-        item.remove_to,
-        item.replacement_text,
+        item.anchor_from,
+        item.anchor_to,
+        item.replace_with,
       );
       const count = trackNoopPayload(absolutePath, payload);
       const notice = await enforceNoopLoop({
         absolutePath,
-        removeFrom: item.remove_from,
-        removeTo: item.remove_to,
-        replacementText: item.replacement_text,
-        displayPath: item.path,
+        anchorFrom: item.anchor_from,
+        anchorTo: item.anchor_to,
+        replaceWith: item.replace_with,
+        displayPath: item.file,
         index: item.index,
         count,
         sessionKey: opts.sessionKey,
@@ -660,7 +790,7 @@ export async function runFileEdits(
       });
       if (notice) warnings.push(notice);
       warnings.push(
-        `edits[${item.index}] (${item.path}) was a noop: the range already contains the replacement text.`,
+        `edits[${item.index}] (${item.file}) was a noop: the range already contains the replacement text.`,
       );
       if (applied.anchorWarnings?.length) warnings.push(...applied.anchorWarnings);
       continue;
@@ -732,7 +862,7 @@ export async function runFileEdits(
   if (hadUtf8DecodeErrors) {
     warnings.push("Non-UTF-8 bytes were shown as U+FFFD; this edit rewrote the file as UTF-8.");
   }
-  if (first.pathWarning) warnings.unshift(first.pathWarning);
+  if (first.fileWarning) warnings.unshift(first.fileWarning);
 
   let driftNotice: string | undefined;
   if (appliedCount > 0 && unionStartLine !== Infinity) {
@@ -759,7 +889,7 @@ export async function runFileEdits(
   }
 
   return {
-    displayPath: first.path,
+    displayPath: first.file,
     absolutePath,
     originalNormalized,
     result,

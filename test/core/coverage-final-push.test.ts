@@ -191,9 +191,9 @@ describe("final-push store-lifecycle and mutation branches", () => {
     const { runNoopPolicySync } = await import("../../src/noop-guard.js");
     const base = {
       absolutePath: "/tmp/a.txt",
-      removeFrom: "abc",
-      removeTo: "def",
-      replacementText: "hi",
+      anchorFrom: "abc",
+      anchorTo: "def",
+      replaceWith: "hi",
       ref: "abc→def",
       batch: false,
       range: { startLine: 1, endLine: 2 },

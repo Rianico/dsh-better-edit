@@ -153,9 +153,9 @@ describe("property: single random edit per call", () => {
       const span = randSpan(rnd, lines, [], !content.endsWith("\n"));
       if (!span) continue;
       const edit = resEdit({
-        remove_from: hashes[span.s - 1]!,
-        remove_to: hashes[span.e - 1]!,
-        replacement_text: replToContent(span.repl),
+        anchor_from: hashes[span.s - 1]!,
+        anchor_to: hashes[span.e - 1]!,
+        replace_with: replToContent(span.repl),
       });
       const result = applyEdit(content, edit, undefined, hashes, home.testPath);
       const correctedExpected = expectedEditContent(
@@ -195,9 +195,9 @@ describe("property: sequential random edits", () => {
       for (const span of [...spans].sort((a, b) => b.s - a.s)) {
         const currentHashes = await lineHashes(current, home.testPath);
         const edit = resEdit({
-          remove_from: currentHashes[span.s - 1]!,
-          remove_to: currentHashes[span.e - 1]!,
-          replacement_text: replToContent(span.repl),
+          anchor_from: currentHashes[span.s - 1]!,
+          anchor_to: currentHashes[span.e - 1]!,
+          replace_with: replToContent(span.repl),
         });
         const result = applyEdit(current, edit, undefined, currentHashes, home.testPath);
         applied.push({ s: span.s, e: span.e, repl: replayFixes(span.repl, result.autoFixes) });
@@ -264,9 +264,9 @@ describe("property: chained stable mapping at every step", () => {
         const span = randSpan(rnd, lines, [], !content.endsWith("\n"));
         if (!span) break;
         const edit = resEdit({
-          remove_from: hashes[span.s - 1]!,
-          remove_to: hashes[span.e - 1]!,
-          replacement_text: replToContent(span.repl),
+          anchor_from: hashes[span.s - 1]!,
+          anchor_to: hashes[span.e - 1]!,
+          replace_with: replToContent(span.repl),
         });
         let result;
         try {

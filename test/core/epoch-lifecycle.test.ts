@@ -97,9 +97,9 @@ describe("epoch lifecycle belongs to full reads (#69)", () => {
           localIO(),
           {
             path: "nope.txt",
-            remove_from: "MQX│const x = 1;",
-            remove_to: "MQX",
-            replacement_text: "y",
+            anchor_from: "MQX│const x = 1;",
+            anchor_to: "MQX",
+            replace_with: "y",
           } as any,
           home,
           { sessionKey },

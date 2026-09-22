@@ -10,15 +10,15 @@ import {
   assertUndoRequest,
   isNormalizedEdit,
   normalizedEdit,
-  EDIT_TUPLE_HINT,
+  EDIT_PAYLOAD_HINT,
 } from "../../src/contract.js";
 
 describe("coverage: contract.ts", () => {
   it("itemFromTuple valid and invalid", () => {
     expect(itemFromTuple(["a", "b", "c"])).toEqual({
-      remove_from: "a",
-      remove_to: "b",
-      replacement_text: "c",
+      anchor_from: "a",
+      anchor_to: "b",
+      replace_with: "c",
     });
     expect(itemFromTuple(["a", "b"])).toBeUndefined();
     expect(itemFromTuple(["a", "b", "c", "d"])).toBeUndefined();
@@ -55,8 +55,8 @@ describe("coverage: contract.ts", () => {
       justification: "test",
     };
     const norm = normalizeRequest(rec) as any;
-    expect(norm.path).toBe("a.txt");
-    expect(norm.edits[0].remove_from).toBe("h1");
+    expect(norm.file).toBe("a.txt");
+    expect(norm.edits[0].anchor_from).toBe("h1");
     expect(norm[normalizedEdit]).toBe(true);
     // F9: sandbox fields survive normalization unchanged and the
     // normalized record is accepted by the contract gate (refutable:
@@ -76,7 +76,7 @@ describe("coverage: contract.ts", () => {
       path: "b.txt",
       edits: [["h1", "h2", "x"]],
     } as any) as any;
-    expect(normAlias.path).toBe("b.txt");
+    expect(normAlias.file).toBe("b.txt");
     // invalid shape returns record unchanged
     const invalid = normalizeRequest({ path: "a", edits: [] } as any) as any;
     expect(invalid.path).toBe("a");
@@ -94,19 +94,19 @@ describe("coverage: contract.ts", () => {
     expect(sandbox.escalationModes.length).toBeGreaterThan(0);
     const tool = buildEditTool(localIO() as any, sandbox);
     const params = tool.parameters as any;
-    const item = { remove_from: "a", remove_to: "a", replacement_text: "b" };
+    const item = { anchor_from: "a", anchor_to: "a", replace_with: "b" };
     // F1: the declared mode enum admits literal on object and tuple payloads
     // (refutable: removing mode from parameters fails admission here).
     expect(
-      validateJsonSchemaValue(params, { path: "f.ts", edits: [item], mode: "literal" }),
+      validateJsonSchemaValue(params, { file: "f.ts", edits: [item], mode: "literal" }),
     ).toEqual([]);
     expect(
-      validateJsonSchemaValue(params, { path: "f.ts", edits: [["a", "a", "b"]], mode: "literal" }),
+      validateJsonSchemaValue(params, { file: "f.ts", edits: [["a", "a", "b"]], mode: "literal" }),
     ).toEqual([]);
     // F9: sandbox fields pass admission under an escalating backend.
     expect(
       validateJsonSchemaValue(params, {
-        path: "f.ts",
+        file: "f.ts",
         edits: [["a", "a", "b"]],
         sandbox_permissions: sandbox.escalationModes[0],
         justification: "need wider access for this exact file operation",
@@ -117,7 +117,7 @@ describe("coverage: contract.ts", () => {
     // refutable half (removing `mode` from parameters fails here).
     expect((tool.parameters as any).properties?.mode?.enum).toEqual(["general", "literal"]);
     expect(() =>
-      assertEditRequest({ path: "f.ts", edits: [item], mode: "verbatim" } as any),
+      assertEditRequest({ file: "f.ts", edits: [item], mode: "verbatim" } as any),
     ).toThrow(/E_BAD_PAYLOAD/);
   });
   it("normalizeRequest handles edits already normalized (object form via editRequestFrom)", () => {
@@ -152,7 +152,7 @@ describe("coverage: contract.ts", () => {
     expect(() =>
       assertEditRequest({
         path: "a",
-        edits: [{ remove_from: "a", remove_to: "b", replacement_text: "c" }],
+        edits: [{ anchor_from: "a", anchor_to: "b", replace_with: "c" }],
       } as any),
     ).toThrow(/E_BAD_PAYLOAD/);
 
@@ -164,24 +164,24 @@ describe("coverage: contract.ts", () => {
 
     // empty path
     const emptyPath: any = {
-      path: "",
-      edits: [{ remove_from: "a", remove_to: "b", replacement_text: "c" }],
+      file: "",
+      edits: [{ anchor_from: "a", anchor_to: "b", replace_with: "c" }],
     };
     Object.defineProperty(emptyPath, normalizedEdit, { value: true, enumerable: false });
-    expect(() => assertEditRequest(emptyPath)).toThrow(/path must be a non-empty string/);
+    expect(() => assertEditRequest(emptyPath)).toThrow(/file must be a non-empty string/);
 
     // empty edits
-    const emptyEdits: any = { path: "a", edits: [] };
+    const emptyEdits: any = { file: "a", edits: [] };
     Object.defineProperty(emptyEdits, normalizedEdit, { value: true, enumerable: false });
     expect(() => assertEditRequest(emptyEdits)).toThrow(/non-empty/);
 
     // too many edits
     const many: any = {
-      path: "a",
+      file: "a",
       edits: Array.from({ length: 33 }, () => ({
-        remove_from: "a",
-        remove_to: "b",
-        replacement_text: "c",
+        anchor_from: "a",
+        anchor_to: "b",
+        replace_with: "c",
       })),
     };
     Object.defineProperty(many, normalizedEdit, { value: true, enumerable: false });
@@ -189,8 +189,8 @@ describe("coverage: contract.ts", () => {
 
     // bad edit item type
     const badItem: any = {
-      path: "a",
-      edits: [{ remove_from: 123 as any, remove_to: "b", replacement_text: "c" }],
+      file: "a",
+      edits: [{ anchor_from: 123 as any, anchor_to: "b", replace_with: "c" }],
     };
     Object.defineProperty(badItem, normalizedEdit, { value: true, enumerable: false });
     expect(() => assertEditRequest(badItem)).toThrow(/edits\[0\]/);
@@ -222,32 +222,32 @@ describe("object-form edits entries (#64)", () => {
   it("accepts object entries", () => {
     const req = editRequestFrom({
       path: "file.txt",
-      edits: [{ remove_from: "a", remove_to: "b", replacement_text: "c" }],
+      edits: [{ anchor_from: "a", anchor_to: "b", replace_with: "c" }],
     });
-    expect(req?.edits).toEqual([{ remove_from: "a", remove_to: "b", replacement_text: "c" }]);
+    expect(req?.edits).toEqual([{ anchor_from: "a", anchor_to: "b", replace_with: "c" }]);
   });
 
   it("accepts mixed tuple/object batches", () => {
     const req = editRequestFrom({
       path: "file.txt",
-      edits: [["a", "a", "x"], { remove_from: "b", remove_to: "b", replacement_text: "y" }],
+      edits: [["a", "a", "x"], { anchor_from: "b", anchor_to: "b", replace_with: "y" }],
     });
     expect(req?.edits).toHaveLength(2);
-    expect(req?.edits[1]).toEqual({ remove_from: "b", remove_to: "b", replacement_text: "y" });
+    expect(req?.edits[1]).toEqual({ anchor_from: "b", anchor_to: "b", replace_with: "y" });
   });
 
   it("still rejects invalid objects (missing/unknown fields)", () => {
-    expect(editRequestFrom({ path: "file.txt", edits: [{ remove_from: "a" }] })).toBeUndefined();
+    expect(editRequestFrom({ path: "file.txt", edits: [{ anchor_from: "a" }] })).toBeUndefined();
     expect(
       editRequestFrom({
         path: "file.txt",
-        edits: [{ remove_from: "a", remove_to: "b", replacement_text: "c", path: "z" }],
+        edits: [{ anchor_from: "a", anchor_to: "b", replace_with: "c", path: "z" }],
       }),
     ).toBeUndefined();
     expect(
       editRequestFrom({
         path: "file.txt",
-        edits: [{ remove_from: 1 as unknown as string, remove_to: "b", replacement_text: "c" }],
+        edits: [{ anchor_from: 1 as unknown as string, anchor_to: "b", replace_with: "c" }],
       }),
     ).toBeUndefined();
     expect(

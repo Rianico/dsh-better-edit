@@ -34,7 +34,7 @@ import {
 import { recordServed, servedPositionsOf } from "../session-view.js";
 import { SERVED_ECHO_CAP } from "../constants.js";
 import { NEW_CONTENT_NOT_STRING_MSG, NEW_CONTENT_BODY } from "../constants.js";
-import { DomainError, formatWarning } from "../domain-errors.js";
+import { DomainError, formatWarning, numericAnchorNote } from "../domain-errors.js";
 import type { ErrorPayloadMap, ServedRow, DomainErrorCode } from "../domain-errors.js";
 import type { EditMode } from "../contract.js";
 export type Anchor = { hash: string };
@@ -65,14 +65,14 @@ function diagRef(ref: string): { rawAnchor: string; reason: string } {
     const preview = first.slice(0, 60);
     return {
       rawAnchor: trimmed,
-      reason: `remove_from must be a single bare 3-char hash (e.g. "wUp"), not a block with HASH│. Received ${lines.length} lines starting "${preview}…" — use only the first hash "${firstHash}" as remove_from and "${lastHash}" as remove_to, and put the new content (without HASH│) in replacement_text.`,
+      reason: `anchor_from must be a single bare 3-char hash (e.g. "wUp"), not a block with HASH│. Received ${lines.length} lines starting "${preview}…" — use only the first hash "${firstHash}" as anchor_from and "${lastHash}" as anchor_to, and put the new content (without HASH│) in replace_with.`,
     };
   }
   if (trimmed.includes("│")) {
     return {
       rawAnchor: trimmed,
       reason:
-        'remove_from and remove_to must contain the 3-char hash only — remove everything from "│" onward.',
+        'anchor_from and anchor_to must contain the 3-char hash only — remove everything from "│" onward.',
     };
   }
 
@@ -129,9 +129,9 @@ export interface NEdit {
 }
 
 export type HTEdit = {
-  replacement_text: string;
-  remove_from: string;
-  remove_to: string;
+  replace_with: string;
+  anchor_from: string;
+  anchor_to: string;
 };
 
 function resAnchorFromMap(ref: Anchor, hashIndex: Map<string, number[]>): RAnchor | HMismatch {
@@ -180,7 +180,10 @@ function fmtMismatchWithServes(
   const refList = notFound.map((m) => `"${m.ref.hash}"`).join(", ");
   if (notFound.length > 0) {
     headlines.push(
-      `${notFound.length} stale anchor${notFound.length > 1 ? "s" : ""}${filePath ? ` in ${filePath}` : ""}: ${refList}. Re-read for fresh anchors.`,
+      // B: a well-formed all-digit anchor that does not resolve lands here;
+      // the numeric note steers away from line numbers. E_UNKNOWN_ANCHOR
+      // keeps the same note; T4 moves production there when it gains a producer.
+      `${notFound.length} stale anchor${notFound.length > 1 ? "s" : ""}${filePath ? ` in ${filePath}` : ""}: ${refList}. Re-read for fresh anchors.${numericAnchorNote(notFound.map((m) => m.ref.hash))}`,
     );
     for (const m of notFound) {
       const ctx = m.context;
@@ -219,37 +222,37 @@ function fmtMismatchWithServes(
   }
   return { headline: headlines.join("\n\n"), servedBlock: blocks.join("\n\n"), servedRows };
 }
-const ITEM_KS = new Set(["replacement_text", "remove_from", "remove_to"]);
+const ITEM_KS = new Set(["replace_with", "anchor_from", "anchor_to"]);
 
 function assertItem(edit: Record<string, unknown>): void {
   rejectUnknownFields(
     edit,
     ITEM_KS,
     "Edit",
-    "The edit takes only { replacement_text, remove_from, remove_to }.",
+    "The edit takes only { replace_with, anchor_from, anchor_to }.",
   );
 
-  if ("remove_from" in edit && typeof edit.remove_from !== "string") {
+  if ("anchor_from" in edit && typeof edit.anchor_from !== "string") {
     throw new DomainError("E_BAD_PAYLOAD", {
-      message: `Field "remove_from" must be an anchor string (3-char hash).`,
+      message: `Field "anchor_from" must be an anchor string (3-char hash).`,
     });
   }
-  if ("remove_to" in edit && typeof edit.remove_to !== "string") {
+  if ("anchor_to" in edit && typeof edit.anchor_to !== "string") {
     throw new DomainError("E_BAD_PAYLOAD", {
-      message: `Field "remove_to" must be an anchor string (3-char hash).`,
+      message: `Field "anchor_to" must be an anchor string (3-char hash).`,
     });
   }
-  if (!("replacement_text" in edit)) {
+  if (!("replace_with" in edit)) {
     throw new DomainError("E_BAD_PAYLOAD", {
-      message: `The edit requires a "replacement_text" field. Provide the replacement text (use "" to delete).`,
+      message: `The edit requires a "replace_with" field. Provide the replacement text (use "" to delete).`,
     });
   }
-  if (typeof edit.replacement_text !== "string") {
+  if (typeof edit.replace_with !== "string") {
     throw new DomainError("E_BAD_PAYLOAD", { message: NEW_CONTENT_BODY });
   }
-  if (typeof edit.remove_from !== "string" || typeof edit.remove_to !== "string") {
+  if (typeof edit.anchor_from !== "string" || typeof edit.anchor_to !== "string") {
     throw new DomainError("E_BAD_PAYLOAD", {
-      message: `The edit requires "remove_from" and "remove_to" anchor strings (3-char hashes from read output).`,
+      message: `The edit requires "anchor_from" and "anchor_to" anchor strings (3-char hashes from read output).`,
     });
   }
 }
@@ -268,8 +271,8 @@ function firstHashFromBlock(block: string): string | undefined {
 export function resEdit(edit: HTEdit, _warnings?: string[]): HEdit {
   assertItem(edit as Record<string, unknown>);
 
-  const editLines = parseText(edit.replacement_text);
-  const bounds = [edit.remove_from, edit.remove_to].map((ref) => {
+  const editLines = parseText(edit.replace_with);
+  const bounds = [edit.anchor_from, edit.anchor_to].map((ref) => {
     const trimmed = ref.trim();
     if (trimmed.includes("\n")) {
       const hash = firstHashFromBlock(trimmed);
@@ -285,11 +288,11 @@ export function resEdit(edit: HTEdit, _warnings?: string[]): HEdit {
     if (match) {
       let reason: string;
       if (match[1] === "+") {
-        reason = `stripped diff-preview marker from remove_from/remove_to — pass the bare anchor.`;
+        reason = `stripped diff-preview marker from anchor_from/anchor_to — pass the bare anchor.`;
       } else if (match[1] === "-") {
-        reason = `stripped leading "-" marker from remove_from/remove_to — pass the bare anchor.`;
+        reason = `stripped leading "-" marker from anchor_from/anchor_to — pass the bare anchor.`;
       } else {
-        reason = `stripped "HASH│" prefix from remove_from/remove_to — pass the bare anchor.`;
+        reason = `stripped "HASH│" prefix from anchor_from/anchor_to — pass the bare anchor.`;
       }
       // Channel rule: the model must retry with the bare anchor → MODEL audience via the registry.
       throw new DomainError("E_MALFORMED_ANCHOR", { rawAnchor: trimmed, reason });
@@ -320,7 +323,7 @@ function stripBarePrefixes(edit: HEdit, fileHashes: string[], _warnings: string[
     return line.slice(match[0].length);
   });
   if (stripped.length === 0) return edit;
-  const locations = stripped.map((s) => `replacement_text line ${s.lineIndex + 1}`).join(", ");
+  const locations = stripped.map((s) => `replace_with line ${s.lineIndex + 1}`).join(", ");
   const matchedCount = stripped.filter((s) => s.matched).length;
   const evidence =
     matchedCount === 0
@@ -356,7 +359,7 @@ function stripDiffPrefixes(edit: HEdit, _warnings: string[]): HEdit {
     return line;
   });
   if (stripped.length === 0) return edit;
-  const locations = stripped.map((i) => `replacement_text line ${i + 1}`).join(", ");
+  const locations = stripped.map((i) => `replace_with line ${i + 1}`).join(", ");
   throw new BadAnchorError(locations, `stripped diff-preview marker from ${locations}.`, {
     ...edit,
     content_lines: contentLines,
@@ -510,7 +513,7 @@ export class AnchorMismatchError extends DomainError<DomainErrorCode> {
     this.name = "AnchorMismatchError";
   }
 }
-/** Thrown when replacement_text carries anchor-syntax garbage (HASH│/diff-preview prefixes).
+/** Thrown when replace_with carries anchor-syntax garbage (HASH│/diff-preview prefixes).
  * Carries the stripped edit so applyEdit can distinguish served-echo (→ E_SUSPICIOUS_TEXT
  * denial downstream) from garbage (→ E_MALFORMED_ANCHOR stands). */
 export class BadAnchorError extends DomainError<"E_MALFORMED_ANCHOR"> {
@@ -776,16 +779,16 @@ export function verifyServedRange(args: {
     } else {
       const problems: string[] = [];
       if (startPositions.length === 0) {
-        problems.push(`remove_from "${startHash}" has no served position`);
+        problems.push(`anchor_from "${startHash}" has no served position`);
       } else if (startPositions.length > 1) {
         problems.push(
-          `remove_from "${startHash}" was served at ${startPositions.length} positions`,
+          `anchor_from "${startHash}" was served at ${startPositions.length} positions`,
         );
       }
       if (endPositions.length === 0) {
-        problems.push(`remove_to "${endHash}" has no served position`);
+        problems.push(`anchor_to "${endHash}" has no served position`);
       } else if (endPositions.length > 1) {
-        problems.push(`remove_to "${endHash}" was served at ${endPositions.length} positions`);
+        problems.push(`anchor_to "${endHash}" was served at ${endPositions.length} positions`);
       }
       throw new ServedRejectionError({
         code: "E_UNSERVED_RANGE",

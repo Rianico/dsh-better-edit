@@ -164,7 +164,7 @@ describe("coverage-f: anchor-pipeline no boundary dups (removed)", () => {
   });
   it("covers resEdit unknown fields", () => {
     expect(() =>
-      resEdit({ remove_from: "abc", remove_to: "abc", replacement_text: "x", extra: 1 } as any),
+      resEdit({ anchor_from: "abc", anchor_to: "abc", replace_with: "x", extra: 1 } as any),
     ).toThrow();
   });
   it("covers assertAligned via fmtMismatch", async () => {

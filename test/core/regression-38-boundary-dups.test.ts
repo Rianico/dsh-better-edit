@@ -14,7 +14,7 @@ describe("regression #38 — boundaryDups removed (no auto-fix)", () => {
     const content = "a\nb\n";
     const hashes = lineHashesPure(content);
     const edit = resEdit(
-      { remove_from: hashes[0]!, remove_to: hashes[0]!, replacement_text: "a\nb" },
+      { anchor_from: hashes[0]!, anchor_to: hashes[0]!, replace_with: "a\nb" },
       [],
     );
     const res = applyEdit(content, edit, undefined, hashes, "test.txt", [...hashes]);
@@ -27,7 +27,7 @@ describe("regression #38 — boundaryDups removed (no auto-fix)", () => {
     const content = "a\nb\n";
     const hashes = lineHashesPure(content);
     const edit = resEdit(
-      { remove_from: hashes[0]!, remove_to: hashes[0]!, replacement_text: "a\nb\n" },
+      { anchor_from: hashes[0]!, anchor_to: hashes[0]!, replace_with: "a\nb\n" },
       [],
     );
     const res = applyEdit(content, edit, undefined, hashes, "test.txt", [...hashes]);
@@ -44,9 +44,9 @@ describe("regression #38 — boundaryDups removed (no auto-fix)", () => {
     const idxClose = lines.indexOf("\t}", idxA + 1); // first } after case
     const edit = resEdit(
       {
-        remove_from: hashes[idxA]!,
-        remove_to: hashes[idxClose]!,
-        replacement_text: "\tcase A:\n\tcase B:\n\t{\n\t\tbody;\n\t}",
+        anchor_from: hashes[idxA]!,
+        anchor_to: hashes[idxClose]!,
+        replace_with: "\tcase A:\n\tcase B:\n\t{\n\t\tbody;\n\t}",
       },
       [],
     );
@@ -62,7 +62,7 @@ describe("regression #38 — boundaryDups removed (no auto-fix)", () => {
     const content = "x\ny\nz\n";
     const hashes = lineHashesPure(content);
     const edit = resEdit(
-      { remove_from: hashes[1]!, remove_to: hashes[1]!, replacement_text: "x\ny2" },
+      { anchor_from: hashes[1]!, anchor_to: hashes[1]!, replace_with: "x\ny2" },
       [],
     );
     const res = applyEdit(content, edit, undefined, hashes, "test.txt", [...hashes]);

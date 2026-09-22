@@ -10,11 +10,11 @@ const noopLoopTracker = new Map<string, NoopLoopEntry>();
 
 export function noopPayloadKey(
   absolutePath: string,
-  removeFrom: string,
-  removeTo: string,
-  replacementText: string,
+  anchorFrom: string,
+  anchorTo: string,
+  replaceWith: string,
 ): string {
-  return JSON.stringify([absolutePath, removeFrom, removeTo, replacementText]);
+  return JSON.stringify([absolutePath, anchorFrom, anchorTo, replaceWith]);
 }
 
 export function trackNoopPayload(absolutePath: string, payload: string): number {
@@ -34,9 +34,9 @@ export { NOOP_LOOP_THRESHOLD };
 // Keeps trackNoopPayload as primitive but exposes warn/reject decisions.
 export interface NoopPolicyInput {
   absolutePath: string;
-  removeFrom: string;
-  removeTo: string;
-  replacementText: string;
+  anchorFrom: string;
+  anchorTo: string;
+  replaceWith: string;
   ref: string;
   batch: boolean;
   range: { startLine: number; endLine: number };
@@ -54,8 +54,8 @@ export function runNoopPolicySync(input: NoopPolicyInput, count: number): NoopPo
   if (count >= NOOP_LOOP_THRESHOLD) {
     const message = formatError("E_NOOP_LOOP", {
       ref: input.ref,
-      removeFrom: input.removeFrom,
-      removeTo: input.removeTo,
+      anchorFrom: input.anchorFrom,
+      anchorTo: input.anchorTo,
       count,
       batch: input.batch,
       servedBlock: "",
@@ -66,8 +66,8 @@ export function runNoopPolicySync(input: NoopPolicyInput, count: number): NoopPo
     // Channel rule: applied-tier notices are human-observable → USER audience via the registry.
     const notice = formatWarning("W_NOOP", {
       ref: input.ref,
-      removeFrom: input.removeFrom,
-      removeTo: input.removeTo,
+      anchorFrom: input.anchorFrom,
+      anchorTo: input.anchorTo,
       batch: input.batch,
       count,
     });
@@ -79,9 +79,9 @@ export function runNoopPolicySync(input: NoopPolicyInput, count: number): NoopPo
 export async function runNoopPolicy(input: NoopPolicyInput): Promise<NoopPolicyOutcome> {
   const payload = noopPayloadKey(
     input.absolutePath,
-    input.removeFrom,
-    input.removeTo,
-    input.replacementText,
+    input.anchorFrom,
+    input.anchorTo,
+    input.replaceWith,
   );
   const count = trackNoopPayload(input.absolutePath, payload);
   return runNoopPolicySync(input, count);

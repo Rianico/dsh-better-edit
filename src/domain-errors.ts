@@ -186,9 +186,10 @@ export interface ErrorPayloadMap {
     count?: number;
   };
   E_BATCH_ABORT: {
+    /** First failing item: routes the typed path and keeps the single-failure envelope byte-identical. */
     index: number;
     path: string;
-    /** The inner failure message (already header-bearing). */
+    /** The first failing item's inner failure message (already header-bearing). */
     inner: string;
     /**
      * Range context for the failed item: either the current on-disk range
@@ -196,11 +197,23 @@ export interface ErrorPayloadMap {
      * exists (non-anchor failures) — the merge hint is omitted with it.
      */
     echoBlock: string;
+    /**
+     * Every failing item in order; present only when more than one failed
+     * (C: one resubmission fixes every failure). Each item keeps its own
+     * `[E_*]` inline in `inner`.
+     */
+    failures?: Array<{ index: number; inner: string }>;
+    /** Union of every failing item's rows, in item order. */
+    servedRows: ServedRow[];
+    /** Every failing item's block joined in item order ("" when none). */
+    servedBlock: string;
+    /** Carried only when every failing item agrees on one diagnosis. */
+    cause?: RangeCause;
   };
   E_NOOP_LOOP: {
     ref: string;
-    removeFrom: string;
-    removeTo: string;
+    anchorFrom: string;
+    anchorTo: string;
     count: number;
     batch: boolean;
     servedBlock: string;
@@ -411,15 +424,33 @@ function unservedRangeFormat(payload: ErrorPayloadMap["E_UNSERVED_RANGE"]): stri
   return `${payload.headline}\nCurrent range:\n${payload.servedBlock}\n${RETRY_HINT}`;
 }
 
+// WHY: an all-digit anchor is shape evidence pinned to the anchor string itself
+// (upstream ADR-0021 decision 4) — not a guess about path versus session — so the note
+// states the shape fact in declarative terms. No imperative, no remedy field.
+const NUMERIC_ANCHOR_RE = /^\d+$/;
+
+export function numericAnchorNote(anchors: string[]): string {
+  const numeric = anchors.filter((anchor) => NUMERIC_ANCHOR_RE.test(anchor));
+  if (numeric.length === 0) return "";
+  const quoted = numeric.map((anchor) => `"${anchor}"`).join(", ");
+  const noun = numeric.length === 1 ? `anchor ${quoted}` : `anchors ${quoted}`;
+  const verb = numeric.length === 1 ? "consists" : "consist";
+  const resemblance = numeric.length === 1 ? "resembles a line number" : "resemble line numbers";
+  return (
+    ` Note: ${noun} ${verb} only of digits and ${resemblance}. ` +
+    `Edit anchors are 3-character alphanumeric content hashes (e.g. "aB3") served by the read tool, not line numbers.`
+  );
+}
+
 function unknownAnchorFormat(payload: ErrorPayloadMap["E_UNKNOWN_ANCHOR"]): string {
   const anchors = payload.anchors;
   if (anchors.length === 1) {
-    return `${payload.path} has not served the anchor "${anchors[0]}"; nothing was written.`;
+    return `${payload.path} has not served the anchor "${anchors[0]}"; nothing was written.${numericAnchorNote(anchors)}`;
   }
   if (anchors.length === 0) {
     return `${payload.path} has not served an anchor; nothing was written.`;
   }
-  return `${payload.path} has not served the anchors ${anchors.map((a) => `"${a}"`).join(", ")}; nothing was written.`;
+  return `${payload.path} has not served the anchors ${anchors.map((a) => `"${a}"`).join(", ")}; nothing was written.${numericAnchorNote(anchors)}`;
 }
 
 function foreignHomesDisplay(homes: string[]): string {
@@ -441,10 +472,24 @@ function foreignAnchorFormat(payload: ErrorPayloadMap["E_FOREIGN_ANCHOR"]): stri
   return `${noun} ${verb} inconsistent with ${payload.path}; served for ${homes}; nothing was written.`;
 }
 
+const BATCH_ATOMICITY_TRAILER =
+  "The whole batch was rejected and NOTHING was written — no file changed and earlier items in the batch were NOT applied.";
+
 function batchAbortFormat(payload: ErrorPayloadMap["E_BATCH_ABORT"]): string {
+  // C: several failures name every failing item in order (one resubmission
+  // fixes them all); each item keeps its own `[E_*]` inline in `inner`.
+  if (payload.failures !== undefined && payload.failures.length > 1) {
+    const parts = payload.failures.map(
+      (f) => `edits[${f.index}] (${payload.path}) failed: ${f.inner}`,
+    );
+    return (
+      `${parts.join("; ")}\n${BATCH_ATOMICITY_TRAILER} ` +
+      "Fix the failing edits (and any later edits that depend on them), then resubmit the batch."
+    );
+  }
   const base =
     `edits[${payload.index}] (${payload.path}) failed: ${payload.inner}${payload.echoBlock}\n` +
-    `The whole batch was rejected and NOTHING was written — no file changed and earlier items in the batch were NOT applied.`;
+    BATCH_ATOMICITY_TRAILER;
   // WHY: echoBlock is empty exactly when no range context exists (non-anchor
   // WHY: failures carry no echo), and only a ranged failure can name the edit
   // WHY: to fix — so the merge hint rides on the same condition.
@@ -458,19 +503,19 @@ function noopLoopFormat(payload: ErrorPayloadMap["E_NOOP_LOOP"]): string {
   // engine supplies one; the path arm is the engine single-edit flavor.
   if (payload.batch) {
     return (
-      `${payload.ref}: identical edit (${payload.removeFrom} → ${payload.removeTo}) submitted ${payload.count}×, no changes each time. ` +
+      `${payload.ref}: identical edit (${payload.anchorFrom} → ${payload.anchorTo}) submitted ${payload.count}×, no changes each time. ` +
       `Range already contains this text; resend will reject the batch.` +
       (payload.servedBlock ? ` Current on-disk range:\n${payload.servedBlock}` : "")
     );
   }
   if (payload.path !== undefined) {
     return (
-      `identical edit (${payload.removeFrom} → ${payload.removeTo} in ${payload.path}) submitted ${payload.count}×, no changes each time. ` +
+      `identical edit (${payload.anchorFrom} → ${payload.anchorTo} in ${payload.path}) submitted ${payload.count}×, no changes each time. ` +
       `Range already contains this text; resend will reject. Current range:\n${payload.servedBlock}`
     );
   }
   return (
-    `identical edit (${payload.removeFrom} → ${payload.removeTo} ${payload.ref}) submitted ${payload.count}×, no changes each time. ` +
+    `identical edit (${payload.anchorFrom} → ${payload.anchorTo} ${payload.ref}) submitted ${payload.count}×, no changes each time. ` +
     `Range already contains this text; resend will reject.`
   );
 }
@@ -640,8 +685,8 @@ export interface WarningPayloadMap {
   W_LITERAL_BYPASS: Record<string, never>;
   W_NOOP: {
     ref: string;
-    removeFrom: string;
-    removeTo: string;
+    anchorFrom: string;
+    anchorTo: string;
     batch: boolean;
     count: number;
     /** Present on engine single warns: the display path ("in <path>" flavor). */
@@ -681,12 +726,12 @@ function noopWarnFormat(payload: WarningPayloadMap["W_NOOP"]): string {
   }
   if (payload.path !== undefined) {
     return (
-      `Notice: identical edit (${payload.removeFrom} → ${payload.removeTo} in ${payload.path}) ` +
+      `Notice: identical edit (${payload.anchorFrom} → ${payload.anchorTo} in ${payload.path}) ` +
       "no-op'd twice; range already has this text. Resend will reject."
     );
   }
   return (
-    `Notice: identical edit (${payload.removeFrom} → ${payload.removeTo} ${payload.ref}) ` +
+    `Notice: identical edit (${payload.anchorFrom} → ${payload.anchorTo} ${payload.ref}) ` +
     "no-op'd twice; range already has this text. Resend will reject."
   );
 }

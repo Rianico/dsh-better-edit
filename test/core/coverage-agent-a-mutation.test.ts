@@ -70,7 +70,7 @@ describe("mutation coverage agent-a", () => {
       await expect(
         execPipeline(
           io,
-          { path: "a.txt", remove_from: "Abc", remove_to: "Xyz", replacement_text: "hi" } as any,
+          { file: "a.txt", anchor_from: "Abc", anchor_to: "Xyz", replace_with: "hi" } as any,
           dir,
           { signal: ctrl.signal },
         ),
@@ -121,10 +121,10 @@ describe("mutation coverage agent-a", () => {
         execPipeline(
           io,
           {
-            path: file,
-            remove_from: hash,
-            remove_to: hash2,
-            replacement_text: "replaced\n",
+            file: file,
+            anchor_from: hash,
+            anchor_to: hash2,
+            replace_with: "replaced\n",
           } as any,
           dir,
           { sessionKey },
@@ -186,7 +186,7 @@ describe("mutation coverage agent-a", () => {
       const res = await withWorkspace(dir, () =>
         mod.applySingle(
           io,
-          { path: file, remove_from: h1, remove_to: h2, replacement_text: "x\n" } as any,
+          { file: file, anchor_from: h1, anchor_to: h2, replace_with: "x\n" } as any,
           dir,
           { sessionKey: sk },
         ),

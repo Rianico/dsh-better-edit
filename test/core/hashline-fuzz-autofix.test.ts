@@ -118,9 +118,9 @@ async function runStep(
   const { fixed, fixes } = applyAutoFix(repl, lines, s, e);
   const expected = expectedEditContent(lines, s, e, fixed, content.endsWith("\n"));
   const edit = resEdit({
-    remove_from: hashes[s - 1]!,
-    remove_to: hashes[e - 1]!,
-    replacement_text: replToContent(repl),
+    anchor_from: hashes[s - 1]!,
+    anchor_to: hashes[e - 1]!,
+    replace_with: replToContent(repl),
   });
   let result;
   try {

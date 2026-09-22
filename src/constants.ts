@@ -14,9 +14,9 @@ export const SERVED_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 export const SERVED_ECHO_CAP = 150;
 export const NOOP_LOOP_THRESHOLD = 3;
 export const NEW_CONTENT_BODY =
-  `"replacement_text" must be a string with \\n line separators, not an array.` +
+  `"replace_with" must be a string with \\n line separators, not an array.` +
   ` Do not pass an array of lines — pass the replacement text as one string: "line1\\nline2". Use "" to delete a range.`;
-/** Model-facing header for a non-string replacement_text, composed once by the registry. */
+/** Model-facing header for a non-string replace_with, composed once by the registry. */
 export const NEW_CONTENT_NOT_STRING_MSG = formatError("E_BAD_PAYLOAD", {
   message: NEW_CONTENT_BODY,
 });

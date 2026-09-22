@@ -11,13 +11,13 @@ describe("coverage-agent-e fixtures2", () => {
         .split("\n")
         .find((l: string) => l.includes("│"))!
         .split("│")[0]!;
-      // old shape: remove_from etc directly - may succeed or fail depending on hash state, just ensure no unhandled throw
+      // old shape: anchor_from etc directly - may succeed or fail depending on hash state, just ensure no unhandled throw
       try {
         const oldRes = await harness.editTool.execute("edit", {
           path: "a.txt",
-          remove_from: hash,
-          remove_to: hash,
-          replacement_text: "hi-old",
+          anchor_from: hash,
+          anchor_to: hash,
+          replace_with: "hi-old",
         } as any);
         expect(typeof getText(oldRes)).toBe("string");
       } catch (e: any) {

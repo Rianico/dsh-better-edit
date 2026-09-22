@@ -11,9 +11,9 @@ describe("parseHashRef", () => {
     expect(() => parseHashRef("aB3:const x = 1;")).toThrow(/Expected a 3-char alphanumeric anchor/);
   });
 
-  it("rejects a full HASH│content line copied into remove_from/remove_to", () => {
+  it("rejects a full HASH│content line copied into anchor_from/anchor_to", () => {
     expect(() => parseHashRef("aB3│const x = 1;")).toThrow(
-      /remove_from and remove_to must contain the 3-char hash only/,
+      /anchor_from and anchor_to must contain the 3-char hash only/,
     );
   });
   it("rejects leading >>> markers (strict mode: no marker stripping)", () => {

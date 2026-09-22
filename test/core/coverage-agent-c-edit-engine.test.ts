@@ -70,9 +70,9 @@ describe("coverage: edit-engine resolveMissingPath", () => {
   it("returns undefined when path present", async () => {
     expect(await resolveMissingPath({ path: "a.txt" } as any)).toBeUndefined();
   });
-  it("returns undefined when missing remove_from/to types", async () => {
+  it("returns undefined when missing anchor_from/to types", async () => {
     expect(
-      await resolveMissingPath({ path: null, remove_from: 123 as any, remove_to: "abc" } as any),
+      await resolveMissingPath({ path: null, anchor_from: 123 as any, anchor_to: "abc" } as any),
     ).toBeUndefined();
     expect(await resolveMissingPath({ path: null } as any)).toBeUndefined();
   });
@@ -80,8 +80,8 @@ describe("coverage: edit-engine resolveMissingPath", () => {
     expect(
       await resolveMissingPath({
         path: null,
-        remove_from: "not-a-hash!!!",
-        remove_to: "also-bad",
+        anchor_from: "not-a-hash!!!",
+        anchor_to: "also-bad",
       } as any),
     ).toBeUndefined();
   });
@@ -92,7 +92,7 @@ describe("coverage: edit-engine resolveMissingPath", () => {
     // need valid hashes (3-char alphanumeric)
     const hashes = lineHashesPure("a\nb\nc");
     await expect(
-      resolveMissingPath({ path: null, remove_from: hashes[0]!, remove_to: hashes[1]! } as any),
+      resolveMissingPath({ path: null, anchor_from: hashes[0]!, anchor_to: hashes[1]! } as any),
     ).resolves.toBeUndefined();
     spy.mockRestore();
   });
@@ -103,8 +103,8 @@ describe("coverage: edit-engine resolveMissingPath", () => {
     const hashes = lineHashesPure("a\nb");
     const res = await resolveMissingPath({
       path: null,
-      remove_from: hashes[0]!,
-      remove_to: hashes[1]!,
+      anchor_from: hashes[0]!,
+      anchor_to: hashes[1]!,
     } as any);
     expect(res?.path).toBe("/tmp/file.txt");
     expect(res?.warning).toMatch(/Autocorrected/);
@@ -114,7 +114,7 @@ describe("coverage: edit-engine resolveMissingPath", () => {
     const spy = vi.spyOn(hashStore, "findSnapshotPathsByHashes").mockResolvedValue(["a", "b"]);
     const hashes = lineHashesPure("a\nb");
     await expect(
-      resolveMissingPath({ path: null, remove_from: hashes[0]!, remove_to: hashes[1]! } as any),
+      resolveMissingPath({ path: null, anchor_from: hashes[0]!, anchor_to: hashes[1]! } as any),
     ).rejects.toThrow(/multiple known files/);
     spy.mockRestore();
   });
@@ -124,8 +124,8 @@ describe("coverage: edit-engine resolveMissingPath", () => {
     expect(
       await resolveMissingPath({
         path: null,
-        remove_from: hashes[0]!,
-        remove_to: hashes[1]!,
+        anchor_from: hashes[0]!,
+        anchor_to: hashes[1]!,
       } as any),
     ).toBeUndefined();
     spy.mockRestore();
@@ -146,9 +146,9 @@ describe("coverage: edit-engine applyOne", () => {
         content,
         hashes,
         served: [hashes[0]!, hashes[1]!, hashes[2]!],
-        removeFrom: hashes[0]!,
-        removeTo: hashes[0]!,
-        replacementText: "A",
+        anchorFrom: hashes[0]!,
+        anchorTo: hashes[0]!,
+        replaceWith: "A",
         absolutePath: "/tmp/a.txt",
         displayPath: "a.txt",
         warnings: [],
@@ -172,9 +172,9 @@ describe("coverage: edit-engine applyOne", () => {
         content,
         hashes,
         served: hashes as any,
-        removeFrom: "bad hash with spaces",
-        removeTo: "also bad",
-        replacementText: "x",
+        anchorFrom: "bad hash with spaces",
+        anchorTo: "also bad",
+        replaceWith: "x",
         absolutePath: "/tmp/a.txt",
         displayPath: "a.txt",
         warnings: [],
@@ -198,9 +198,9 @@ describe("coverage: edit-engine applyOne", () => {
         content,
         hashes,
         served: hashes as any,
-        removeFrom: "zzz",
-        removeTo: "zzz",
-        replacementText: "x",
+        anchorFrom: "zzz",
+        anchorTo: "zzz",
+        replaceWith: "x",
         absolutePath: "/tmp/a.txt",
         displayPath: "a.txt",
         warnings: [],
@@ -222,9 +222,9 @@ describe("coverage: edit-engine applyOne", () => {
         content,
         hashes,
         served: hashes as any,
-        removeFrom: hashes[0]!,
-        removeTo: hashes[0]!,
-        replacementText: "a",
+        anchorFrom: hashes[0]!,
+        anchorTo: hashes[0]!,
+        replaceWith: "a",
         absolutePath: "/tmp/a.txt",
         displayPath: "a.txt",
         warnings: [],
@@ -246,9 +246,9 @@ describe("coverage: edit-engine enforceNoopLoop", () => {
     await expect(
       enforceNoopLoop({
         absolutePath: "/tmp/a.txt",
-        removeFrom: "aaa",
-        removeTo: "aaa",
-        replacementText: "x",
+        anchorFrom: "aaa",
+        anchorTo: "aaa",
+        replaceWith: "x",
         displayPath: "a.txt",
         count: NOOP_LOOP_THRESHOLD,
         sessionKey: "test",
@@ -261,9 +261,9 @@ describe("coverage: edit-engine enforceNoopLoop", () => {
   it("single-edit: notice at count 2", async () => {
     const notice = await enforceNoopLoop({
       absolutePath: "/tmp/a.txt",
-      removeFrom: "aaa",
-      removeTo: "aaa",
-      replacementText: "x",
+      anchorFrom: "aaa",
+      anchorTo: "aaa",
+      replaceWith: "x",
       displayPath: "a.txt",
       count: 2,
       sessionKey: "test",
@@ -276,9 +276,9 @@ describe("coverage: edit-engine enforceNoopLoop", () => {
   it("single-edit: undefined when count 1", async () => {
     const notice = await enforceNoopLoop({
       absolutePath: "/tmp/a.txt",
-      removeFrom: "aaa",
-      removeTo: "aaa",
-      replacementText: "x",
+      anchorFrom: "aaa",
+      anchorTo: "aaa",
+      replaceWith: "x",
       displayPath: "a.txt",
       count: 1,
       sessionKey: "test",
@@ -293,9 +293,9 @@ describe("coverage: edit-engine enforceNoopLoop", () => {
     await expect(
       enforceNoopLoop({
         absolutePath: "/tmp/a.txt",
-        removeFrom: "aaa",
-        removeTo: "aaa",
-        replacementText: "x",
+        anchorFrom: "aaa",
+        anchorTo: "aaa",
+        replaceWith: "x",
         displayPath: "a.txt",
         index: 0,
         count: NOOP_LOOP_THRESHOLD,
@@ -308,9 +308,9 @@ describe("coverage: edit-engine enforceNoopLoop", () => {
 
     const notice = await enforceNoopLoop({
       absolutePath: "/tmp/a.txt",
-      removeFrom: "aaa",
-      removeTo: "aaa",
-      replacementText: "x",
+      anchorFrom: "aaa",
+      anchorTo: "aaa",
+      replaceWith: "x",
       displayPath: "a.txt",
       index: 0,
       count: 2,
@@ -322,9 +322,9 @@ describe("coverage: edit-engine enforceNoopLoop", () => {
 
     const none = await enforceNoopLoop({
       absolutePath: "/tmp/a.txt",
-      removeFrom: "aaa",
-      removeTo: "aaa",
-      replacementText: "x",
+      anchorFrom: "aaa",
+      anchorTo: "aaa",
+      replaceWith: "x",
       displayPath: "a.txt",
       index: 0,
       count: 1,
@@ -343,9 +343,9 @@ describe("coverage: edit-engine enforceNoopLoop", () => {
     try {
       await enforceNoopLoop({
         absolutePath: "/tmp/a.txt",
-        removeFrom: "aaa",
-        removeTo: "aaa",
-        replacementText: "x",
+        anchorFrom: "aaa",
+        anchorTo: "aaa",
+        replaceWith: "x",
         displayPath: "a.txt",
         index: 0,
         count: NOOP_LOOP_THRESHOLD,
@@ -370,9 +370,9 @@ describe("coverage: edit-engine enforceNoopLoop", () => {
     await expect(
       enforceNoopLoop({
         absolutePath: "/tmp/a.txt",
-        removeFrom: "aaa",
-        removeTo: "aaa",
-        replacementText: "x",
+        anchorFrom: "aaa",
+        anchorTo: "aaa",
+        replaceWith: "x",
         displayPath: "a.txt",
         index: 1,
         count: NOOP_LOOP_THRESHOLD,

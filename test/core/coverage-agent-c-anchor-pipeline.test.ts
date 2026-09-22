@@ -24,7 +24,7 @@ describe("coverage: anchor-pipeline parseHashRef / diagRef branches", () => {
   });
   it("rejects multiline block with pipes", () => {
     const block = "abc│line one\ndef│line two";
-    expect(() => parseHashRef(block)).toThrow(/remove_from must be a single bare 3-char hash/);
+    expect(() => parseHashRef(block)).toThrow(/anchor_from must be a single bare 3-char hash/);
   });
   it("parses valid 3-char alphanumeric", () => {
     // generate a valid hash via hasher
@@ -36,12 +36,12 @@ describe("coverage: anchor-pipeline parseHashRef / diagRef branches", () => {
 });
 
 describe("coverage: anchor-pipeline resEdit warnings", () => {
-  it("rejects HASH│ prefix in remove_from/to with E_MALFORMED_ANCHOR", () => {
+  it("rejects HASH│ prefix in anchor_from/to with E_MALFORMED_ANCHOR", () => {
     const warnings: string[] = [];
     const edit: any = {
-      remove_from: "abc│content",
-      remove_to: "def│content",
-      replacement_text: "new",
+      anchor_from: "abc│content",
+      anchor_to: "def│content",
+      replace_with: "new",
     };
     expect(() => resEdit(edit, warnings)).toThrow(/\[E_MALFORMED_ANCHOR\]/);
     expect(warnings).toEqual([]);
@@ -49,37 +49,37 @@ describe("coverage: anchor-pipeline resEdit warnings", () => {
   it("rejects diff markers +/- in anchors with E_MALFORMED_ANCHOR", () => {
     const w1: string[] = [];
     expect(() =>
-      resEdit({ remove_from: "+abc│x", remove_to: "abc", replacement_text: "y" } as any, w1),
+      resEdit({ anchor_from: "+abc│x", anchor_to: "abc", replace_with: "y" } as any, w1),
     ).toThrow(/\[E_MALFORMED_ANCHOR\]/);
     expect(() =>
-      resEdit({ remove_from: "+abc│x", remove_to: "abc", replacement_text: "y" } as any, w1),
+      resEdit({ anchor_from: "+abc│x", anchor_to: "abc", replace_with: "y" } as any, w1),
     ).toThrow(/diff-preview/);
     const w2: string[] = [];
     expect(() =>
-      resEdit({ remove_from: "-abc│x", remove_to: "abc", replacement_text: "y" } as any, w2),
+      resEdit({ anchor_from: "-abc│x", anchor_to: "abc", replace_with: "y" } as any, w2),
     ).toThrow(/\[E_MALFORMED_ANCHOR\]/);
     expect(() =>
-      resEdit({ remove_from: "-abc│x", remove_to: "abc", replacement_text: "y" } as any, w2),
+      resEdit({ anchor_from: "-abc│x", anchor_to: "abc", replace_with: "y" } as any, w2),
     ).toThrow(/leading "-"/);
   });
   it("rejects multiline anchor block with E_MALFORMED_ANCHOR", () => {
     const warnings: string[] = [];
     const block = "abc│first\nother line\ndef│second";
-    const edit: any = { remove_from: block, remove_to: "def", replacement_text: "new" };
+    const edit: any = { anchor_from: block, anchor_to: "def", replace_with: "new" };
     expect(() => resEdit(edit, warnings)).toThrow(/\[E_MALFORMED_ANCHOR\]/);
     expect(() => resEdit(edit, warnings)).toThrow(/extracted first hash/);
   });
   it("rejects missing fields", () => {
-    // remove_from must be string
+    // anchor_from must be string
     expect(() =>
-      resEdit({ remove_from: 123 as any, remove_to: "abc", replacement_text: "x" } as any),
+      resEdit({ anchor_from: 123 as any, anchor_to: "abc", replace_with: "x" } as any),
     ).toThrow();
     expect(() =>
-      resEdit({ remove_from: "abc", remove_to: "abc", replacement_text: 123 as any } as any),
+      resEdit({ anchor_from: "abc", anchor_to: "abc", replace_with: 123 as any } as any),
     ).toThrow();
-    expect(() => resEdit({ remove_from: "abc", remove_to: "abc" } as any)).toThrow();
-    expect(() => resEdit({ remove_from: "abc" } as any, [] as any)).toThrow();
-    expect(() => resEdit({ replacement_text: "x" } as any)).toThrow();
+    expect(() => resEdit({ anchor_from: "abc", anchor_to: "abc" } as any)).toThrow();
+    expect(() => resEdit({ anchor_from: "abc" } as any, [] as any)).toThrow();
+    expect(() => resEdit({ replace_with: "x" } as any)).toThrow();
   });
   it("parseText handles various inputs", () => {
     expect(parseText("")).toEqual([]);
@@ -116,7 +116,7 @@ describe("coverage: anchor-pipeline applyEdit", () => {
   it("swaps reversed anchors", () => {
     const content = "a\nb\nc\nd";
     const hashes = lineHashesPure(content);
-    // reversed: remove_from is line 3, remove_to is line 1
+    // reversed: anchor_from is line 3, anchor_to is line 1
     const edit: any = {
       hash_bounds: [{ hash: hashes[2]! }, { hash: hashes[0]! }],
       content_lines: ["X"],

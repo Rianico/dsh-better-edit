@@ -69,7 +69,7 @@ import { computeDrift } from "./session-view.js";
 import { trackNoopPayload, clearNoopLoop, noopPayloadKey } from "./noop-guard.js";
 
 export interface PipelineResult {
-  path: string;
+  file: string;
   absolutePath: string;
   originalNormalized: string;
   result: string;
@@ -101,16 +101,16 @@ export async function execPipeline(
   cwd: string,
   options?: ExecPipelineOptions,
 ): Promise<PipelineResult> {
-  const path = params.path;
+  const file = params.file;
 
   const editWarnings: string[] = [];
   // Resolve the edit up front (before IO) so malformed anchors fail before
   // any filesystem work, exactly as the tool always did.
   const edit = resEdit(
     {
-      remove_from: params.remove_from,
-      remove_to: params.remove_to,
-      replacement_text: params.replacement_text,
+      anchor_from: params.anchor_from,
+      anchor_to: params.anchor_to,
+      replace_with: params.replace_with,
     },
     editWarnings,
   );
@@ -119,7 +119,7 @@ export async function execPipeline(
   const signal = options?.signal;
 
   abortIf(signal);
-  const absolutePath = await io.resolve(path, cwd, signal);
+  const absolutePath = await io.resolve(file, cwd, signal);
   const sessionKeyEarly = options?.sessionKey ?? sessionKeyFor(undefined);
   const perSessionRetiredForNorm = await loadRetiredAnchors(sessionKeyEarly, absolutePath);
   const rawText = await io.readText(absolutePath, signal);
@@ -132,7 +132,7 @@ export async function execPipeline(
   } = await normFromText({
     absolutePath,
     rawText,
-    displayPath: path,
+    displayPath: file,
     signal,
     maxLines: MAX_HASH_LINES,
     store: hashStore,
@@ -161,11 +161,11 @@ export async function execPipeline(
       content: originalNormalized,
       hashes: originalHashes,
       served,
-      removeFrom: params.remove_from,
-      removeTo: params.remove_to,
-      replacementText: params.replacement_text,
+      anchorFrom: params.anchor_from,
+      anchorTo: params.anchor_to,
+      replaceWith: params.replace_with,
       absolutePath,
-      displayPath: path,
+      displayPath: file,
       signal,
       warnings: editWarnings,
       store: hashStore,
@@ -213,7 +213,7 @@ export async function execPipeline(
   }
 
   return {
-    path,
+    file,
     absolutePath,
     originalNormalized,
     result,

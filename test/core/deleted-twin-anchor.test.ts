@@ -51,9 +51,9 @@ describe("deleted twin anchor (strictPos lock)", () => {
       try {
         await editTool.execute("stale-twin", {
           path: "twins.ts",
-          remove_from: firstAnchor,
-          remove_to: firstAnchor,
-          replacement_text: "  return changed;",
+          anchor_from: firstAnchor,
+          anchor_to: firstAnchor,
+          replace_with: "  return changed;",
         });
       } catch (e) {
         error = e;

@@ -23,9 +23,9 @@ describe("noop warning tier (W_NOOP vs E_NOOP_LOOP)", () => {
 
       const noop = {
         path: "noop-tier.txt",
-        remove_from: anchor,
-        remove_to: anchor,
-        replacement_text: "one",
+        anchor_from: anchor,
+        anchor_to: anchor,
+        replace_with: "one",
       };
 
       const first = await editTool.execute("noop-1", noop);
