@@ -128,6 +128,10 @@ describe("edit payload fold (named-object + legacy)", () => {
     expect(validateJsonSchemaValue(params, tuple)).toEqual([]);
     // Structurally strict: the object branch forbids undeclared keys.
     expect(params.properties.edits.items.oneOf[0].additionalProperties).toBe(false);
+    // N1: the null file branch stays admissible but undescribed — ADR-0015
+    // keeps the legacy null path undocumented. Re-adding a description here
+    // must turn this red.
+    expect(params.properties.file.oneOf[1]).toEqual({ type: "null" });
     // Mixed-key items die at admission (strict object branch forbids them)
     // and in the fold with E_BAD_PAYLOAD for direct contract callers.
     expect(

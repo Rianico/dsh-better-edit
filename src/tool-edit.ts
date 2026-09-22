@@ -74,7 +74,9 @@ export function buildEditTool(io: FileIO, sandbox: FsSandboxController) {
       file: {
         oneOf: [
           { type: "string", description: "Text file to edit (a file, never a directory)" },
-          { type: "null", description: "null infers the file from anchors" },
+          // N1: no description — ADR-0015 keeps the legacy null path admissible
+          // but undocumented, so the schema admits without teaching.
+          { type: "null" },
         ],
       } as unknown as import("@deepseek-ai/dsh-tools").ValueSchemaSpec & { required?: true },
       edits: {
