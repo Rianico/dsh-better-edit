@@ -167,7 +167,7 @@ export async function decodeForOpen(
 ): Promise<DecodeForOpenResult> {
   const hint = opts.encodingHint ? normalizeEncoding(opts.encodingHint) : undefined;
   if (opts.encodingHint && !hint) {
-    throw new Error(`[E_BAD_ENCODING] Unknown encoding: ${opts.encodingHint}`);
+    throw new DomainError("E_BAD_PAYLOAD", { message: `Unknown encoding: ${opts.encodingHint}` });
   }
 
   // 1) Explicit hint (Reopen with Encoding) — caller already chose, no autoGuess
@@ -191,7 +191,11 @@ export async function decodeForOpen(
       // already handled; for explicit hint we decode slice with hint.
       decoded = decodeBytes(slice, hint);
       if (decoded === undefined)
-        throw new Error(`[E_DECODE_FAILED] Cannot decode bytes as ${hint}`);
+        throw new DomainError("E_UNSUPPORTED_FILE", {
+          path: opts.displayPath ?? "(unknown path)",
+          kind: "binary",
+          description: `cannot decode bytes as ${hint}`,
+        });
       return {
         text: decoded,
         encoding: hint,
@@ -201,7 +205,12 @@ export async function decodeForOpen(
       };
     }
     decoded = decodeBytes(slice, hint);
-    if (decoded === undefined) throw new Error(`[E_DECODE_FAILED] Cannot decode bytes as ${hint}`);
+    if (decoded === undefined)
+      throw new DomainError("E_UNSUPPORTED_FILE", {
+        path: opts.displayPath ?? "(unknown path)",
+        kind: "binary",
+        description: `cannot decode bytes as ${hint}`,
+      });
     return {
       text: decoded,
       encoding: hint,
@@ -380,7 +389,8 @@ export function prepareForSave(
 ): { textToWrite: string; newState?: FileEncodingState } {
   if (opts.encodingHint) {
     const norm = normalizeEncoding(opts.encodingHint);
-    if (!norm) throw new Error(`[E_BAD_ENCODING] Unknown encoding: ${opts.encodingHint}`);
+    if (!norm)
+      throw new DomainError("E_BAD_PAYLOAD", { message: `Unknown encoding: ${opts.encodingHint}` });
     const hasBOM = norm === "utf8bom";
     const lineEnding: LineEnding = existingState?.lineEnding ?? detectEnding(content);
     // Caller will write `content` as UTF-8 string; record new state for next read.

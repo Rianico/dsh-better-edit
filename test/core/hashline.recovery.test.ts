@@ -45,9 +45,16 @@ describe("applyEdit — recovery scenarios", () => {
       caught = error as Error;
     }
     expect(caught).toBeDefined();
-    expect(caught!.message).toMatch(/E_STALE_ANCHOR/);
-    expect(caught!.message).toMatch(/Current context around resolved anchor/);
-    expect(caught!.message).toContain(` 3: ${hashes[2]}│c`);
+    // F6 pin: headline + context block, no `Current range:` heading, no retry hint.
+    expect(caught!.message).toBe(
+      `[MODEL] [E_STALE_ANCHOR] 1 stale anchor: "ZZZ". Re-read for fresh anchors.\n\n` +
+        `  Current context around resolved anchor "${hashes[2]}" (line 3):\n` +
+        `    2: ${hashes[1]}│b\n` +
+        `    3: ${hashes[2]}│c\n` +
+        `    4: ${hashes[3]}│d`,
+    );
+    expect(caught!.message).not.toContain("Current range:");
+    expect(caught!.message).not.toContain("Retry with these anchors");
   });
 
   it("shows context anchored on the start when only the end is stale", async () => {

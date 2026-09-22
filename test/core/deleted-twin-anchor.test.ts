@@ -62,6 +62,12 @@ describe("deleted twin anchor (strictPos lock)", () => {
       expect(error).toBeDefined();
       // … with E_STALE_RANGE (surfaced inside the batch wrapper) …
       expect(String((error as Error).message)).toMatch(/E_STALE_RANGE/);
+      // F7 pin: read-required shape — "Re-read." headline, a non-empty
+      // `Current range:` section, and no retry hint.
+      const message = String((error as Error).message);
+      expect(message).toContain("Re-read.");
+      expect(message).toContain("Current range:");
+      expect(message).not.toContain("Retry with these anchors");
       // … and the file on disk is byte-identical to the externally-written
       // content: the edit never re-bound onto the surviving twin.
       expect(await readFile(path, "utf-8")).toBe(external);

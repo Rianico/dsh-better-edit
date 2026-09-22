@@ -335,6 +335,36 @@ describe("coverage: edit-engine enforceNoopLoop", () => {
     expect(none).toBeUndefined();
   });
 
+  // F5 pin: the registry owns the single `Current on-disk range:` heading —
+  // the engine passes raw rows, so the heading renders exactly once.
+  it("batch reject renders the on-disk heading exactly once", async () => {
+    const { NOOP_LOOP_THRESHOLD } = await import("../../src/constants.js");
+    let caught: Error | undefined;
+    try {
+      await enforceNoopLoop({
+        absolutePath: "/tmp/a.txt",
+        removeFrom: "aaa",
+        removeTo: "aaa",
+        replacementText: "x",
+        displayPath: "a.txt",
+        index: 0,
+        count: NOOP_LOOP_THRESHOLD,
+        sessionKey: "test",
+        originalHashes: hashes,
+        originalNormalized: "a\nb\nc",
+        echoRows: [{ position: 0, hash: "h1" }],
+      });
+    } catch (error) {
+      caught = error as Error;
+    }
+    expect(caught).toBeDefined();
+    expect(caught!.message).toBe(
+      "[MODEL] [E_NOOP_LOOP] edits[0] (a.txt): identical edit (aaa → aaa) submitted 3×, no changes each time. " +
+        "Range already contains this text; resend will reject the batch. Current on-disk range:\nh1│a",
+    );
+    expect(caught!.message.match(/Current on-disk range:/g)).toHaveLength(1);
+  });
+
   it("batch without echoRows still throws", async () => {
     const { NOOP_LOOP_THRESHOLD } = await import("../../src/constants.js");
     await expect(

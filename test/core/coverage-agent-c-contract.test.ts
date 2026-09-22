@@ -58,6 +58,12 @@ describe("coverage: contract.ts", () => {
     expect(norm.path).toBe("a.txt");
     expect(norm.edits[0].remove_from).toBe("h1");
     expect(norm[normalizedEdit]).toBe(true);
+    // F9: sandbox fields survive normalization unchanged and the
+    // normalized record is accepted by the contract gate (refutable:
+    // deleting the preservation loop in normalizeRequest goes red here).
+    expect(norm.sandbox_permissions).toBe("rw");
+    expect(norm.justification).toBe("test");
+    expect(() => assertEditRequest(norm)).not.toThrow();
     // file_path alias
     const withAlias = {
       file_path: "b.txt",
@@ -76,6 +82,44 @@ describe("coverage: contract.ts", () => {
     expect(invalid.path).toBe("a");
   });
 
+  it("declared schema admits mode and sandbox fields; contract rejects unknown mode (F1/F9)", async () => {
+    const { buildEditTool } = await import("../../src/tool-edit.js");
+    const { localIO } = await import("../../src/fs-bridge.js");
+    const { FsSandboxController } = await import("../../src/sandbox.js");
+    const { validateJsonSchemaValue } = await import("@deepseek-ai/dsh-tools");
+    const sandbox = new FsSandboxController({
+      fs: { sandboxMode: "readOnly" },
+      get: (key: string) => (key === "sandboxPolicy" ? { allowExec: true } : undefined),
+    } as any);
+    expect(sandbox.escalationModes.length).toBeGreaterThan(0);
+    const tool = buildEditTool(localIO() as any, sandbox);
+    const params = tool.parameters as any;
+    const item = { remove_from: "a", remove_to: "a", replacement_text: "b" };
+    // F1: the declared mode enum admits literal on object and tuple payloads
+    // (refutable: removing mode from parameters fails admission here).
+    expect(
+      validateJsonSchemaValue(params, { path: "f.ts", edits: [item], mode: "literal" }),
+    ).toEqual([]);
+    expect(
+      validateJsonSchemaValue(params, { path: "f.ts", edits: [["a", "a", "b"]], mode: "literal" }),
+    ).toEqual([]);
+    // F9: sandbox fields pass admission under an escalating backend.
+    expect(
+      validateJsonSchemaValue(params, {
+        path: "f.ts",
+        edits: [["a", "a", "b"]],
+        sandbox_permissions: sandbox.escalationModes[0],
+        justification: "need wider access for this exact file operation",
+      }),
+    ).toEqual([]);
+    // Discoverability: the schema must DECLARE the enum — the open root
+    // admits undeclared fields, so this structural assertion is the
+    // refutable half (removing `mode` from parameters fails here).
+    expect((tool.parameters as any).properties?.mode?.enum).toEqual(["general", "literal"]);
+    expect(() =>
+      assertEditRequest({ path: "f.ts", edits: [item], mode: "verbatim" } as any),
+    ).toThrow(/E_BAD_PAYLOAD/);
+  });
   it("normalizeRequest handles edits already normalized (object form via editRequestFrom)", () => {
     const rec = { path: null, edits: [["a", "b", "c"]] } as any;
     const result = normalizeRequest(rec) as any;

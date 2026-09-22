@@ -2,7 +2,7 @@
  * One module owns the request shapes for the hashline tools — edit,
  * read, undo_last_edit — plus their validation. Field sets are
  * declared once here; every tool validates through these asserts, and the
- * [E_BAD_PAYLOAD] vocabulary is shared instead of re-implemented per tool.
+ * E_BAD_PAYLOAD vocabulary is shared instead of re-implemented per tool.
  *
  * Contract now mirrors upstream ADR-0007: {path: string|null, edits: [[remove_from,remove_to,replacement_text],...]} tuple payload
  * (plus object-form {remove_from, remove_to, replacement_text} per #64), single-file, atomic. batch_edit is removed.
@@ -254,7 +254,8 @@ export const normReq = normalizeRequest;
 export function prepareEditArguments(args: unknown): Record<string, unknown> {
   const valid = editRequestFrom(args as unknown);
   if (valid) {
-    return { path: valid.path, edits: (args as Record<string, unknown>).edits };
+    // F10.1: preserve mode like normalizeRequest — the two normalizers agree.
+    return { path: valid.path, edits: (args as Record<string, unknown>).edits, mode: valid.mode };
   }
   throw new DomainError("E_BAD_PAYLOAD", {
     message: `${EDIT_TUPLE_HINT} ${describeReceived(args)}`,

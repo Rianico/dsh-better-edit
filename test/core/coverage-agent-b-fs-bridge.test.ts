@@ -53,19 +53,33 @@ describe("mapFsError", () => {
   });
   it("maps FS_BAD_ENCODING", () => {
     const err = Object.assign(new Error("x"), { code: "FS_BAD_ENCODING" });
-    expect(() => mapFsError(err, "a.txt")).toThrow(/E_BAD_ENCODING/);
+    expect(() => mapFsError(err, "a.txt")).toThrow(/E_BAD_PAYLOAD.*Unknown encoding/);
   });
   it("maps FS_DECODE_FAILED", () => {
     const err = Object.assign(new Error("x"), { code: "FS_DECODE_FAILED" });
-    expect(() => mapFsError(err, "a.txt")).toThrow(/E_DECODE_FAILED/);
+    expect(() => mapFsError(err, "a.txt")).toThrow(/E_UNSUPPORTED_FILE.*cannot be decoded/);
   });
-  it("maps FS_STALE_VERSION", () => {
+  // F7 pin: row-less and read-required — headline alone, no `Current
+  // range:` section, no retry hint.
+  it("maps FS_STALE_VERSION to a row-less E_STALE_RANGE", () => {
     const err = Object.assign(new Error("x"), { code: "FS_STALE_VERSION" });
-    expect(() => mapFsError(err, "a.txt")).toThrow(/E_STALE_RANGE/);
+    let caught: Error | undefined;
+    try {
+      mapFsError(err, "a.txt");
+    } catch (error) {
+      caught = error as Error;
+    }
+    expect(caught).toBeDefined();
+    expect(caught!.message).toBe(
+      "[MODEL] [E_STALE_RANGE] The file changed on disk since it was read (version guard rejected the write). " +
+        "Call read() to get fresh anchors, then retry.",
+    );
+    expect(caught!.message).not.toContain("Current range:");
+    expect(caught!.message).not.toContain("Retry with these anchors");
   });
   it("maps FS_NOT_OBSERVED", () => {
     const err = Object.assign(new Error("x"), { code: "FS_NOT_OBSERVED" });
-    expect(() => mapFsError(err, "a.txt")).toThrow(/E_NOT_OBSERVED/);
+    expect(() => mapFsError(err, "a.txt")).toThrow(/E_BLIND_REPLACE.*has not been observed/);
   });
   it("maps FS_ABORTED", () => {
     const err = Object.assign(new Error("x"), { code: "FS_ABORTED" });
@@ -153,7 +167,7 @@ describe("ctxFsIO", () => {
     const ctx: any = makeCtx();
     const io = ctxFsIO(fs, ctx);
     await expect(io.readText("/abs/file.txt", undefined, "not-an-enc")).rejects.toThrow(
-      /E_BAD_ENCODING|bad encoding/i,
+      /E_BAD_PAYLOAD.*Unknown encoding/i,
     );
   });
 
@@ -322,7 +336,7 @@ describe("localIO", () => {
     await writeFile(p, "hi");
     const io = localIO();
     await expect((io as any).readText(p, undefined, "not-an-enc")).rejects.toThrow(
-      /E_BAD_ENCODING/,
+      /E_BAD_PAYLOAD.*Unknown encoding/,
     );
   });
 

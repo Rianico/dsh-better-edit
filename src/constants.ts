@@ -29,9 +29,3 @@ export function eLargeFileMsg(displayPath: string, lineCount: number, maxLines: 
     limitKind: "lines",
   });
 }
-/**
- * Legacy export kept for compat. The anchor-space event is a hard capacity
- * refusal routed through formatError("E_LARGE_FILE", { limitKind: "hash-space" });
- * the soft promotion notice is a plain non-header string built at the call site.
- */
-export const E_ANCHOR_SPACE_EXHAUSTED_WARNING = "Anchor space exhausted";

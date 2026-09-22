@@ -13,6 +13,7 @@ import { normalizeRequest as normReq, assertReadRequest, pathSchema } from "./co
 import { readAndServe } from "./read-and-serve.js";
 import { READ_DESCRIPTION } from "./prompts.js";
 import { normalizeEncoding } from "./encoding.js";
+import { DomainError } from "./domain-errors.js";
 
 import type { FileIO } from "./fs-bridge.js";
 import { renderTextWarning } from "./render-text-warning.js";
@@ -65,9 +66,9 @@ export function buildReadTool(io: FileIO) {
         if (encoding !== undefined) {
           const norm = normalizeEncoding(String(encoding));
           if (!norm)
-            throw new Error(
-              `[E_BAD_ENCODING] Unknown encoding: ${String(encoding)}. Supported: utf8, gbk, big5, shift_jis, euc-kr, windows-1251, iso-8859-1`,
-            );
+            throw new DomainError("E_BAD_PAYLOAD", {
+              message: `Unknown encoding: ${String(encoding)}. Supported: utf8, gbk, big5, shift_jis, euc-kr, windows-1251, iso-8859-1`,
+            });
         }
         const canonical = normReq(args);
         assertReadRequest(canonical);

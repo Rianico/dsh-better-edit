@@ -15,6 +15,13 @@
  * test/arch/domain-error-registry.test.ts. This is what makes the registry a
  * contract instead of a list.
  *
+ * COUNT DEVIATION (F4, ratified): this registry carries 26 E_* members, not
+ * upstream's 19. Upstream has no str_replace_editor shadow; the six shadow
+ * codes (E_BLIND_REPLACE, E_UNSUPPORTED, E_BAD_COMMAND, E_FILE_EXISTS,
+ * E_NO_MATCH, E_AMBIGUOUS_MATCH) are live model-facing contract per accepted
+ * ADR-0015, plus E_UNSERVED_RANGE which a later ticket retires. A closed
+ * vocabulary that omits live codes is not closed — it just pushes them
+ * outside the contract.
  * WHY payloads carry facts, not pre-baked strings: the producer already holds
  * the evidence (line numbers, hashes, paths, counts), so the registry owns the
  * neutral sentence and the producer passes values. The one deliberate
@@ -88,13 +95,25 @@ export type DomainErrorCode =
   | "E_LARGE_FILE"
   // RETIRING: E_UNSERVED_RANGE is still produced by the served-verification
   // seam; the range-family ticket retires it (never-served → E_UNVERIFIED_RANGE).
-  | "E_UNSERVED_RANGE";
+  | "E_UNSERVED_RANGE"
+  // SHADOW (F4): the str_replace_editor shadow's live model-facing contract
+  // (accepted ADR-0015) — blind observation, unimplemented op, bad command,
+  // existing file, unmatched/ambiguous old_str. Upstream has no shadow, so
+  // upstream's 19 do not cover them; a closed vocabulary that omits live
+  // codes is not closed.
+  | "E_BLIND_REPLACE"
+  | "E_UNSUPPORTED"
+  | "E_BAD_COMMAND"
+  | "E_FILE_EXISTS"
+  | "E_NO_MATCH"
+  | "E_AMBIGUOUS_MATCH";
 
 /**
  * Applied-tier warning codes. A `[W_*]` line reports an applied mutation;
  * `[E_*]` reports a rejection. `formatWarning` is the sole producer of
- * `[W_*]` headers: no raw `[W_*]` header literal may exist outside this
- * module (asserted in test/arch/domain-error-registry.test.ts).
+ * `[W_*]` headers and `formatError` the sole composer of `[E_*]` headers:
+ * no raw `[E_*]`/`[W_*]` header literal may exist outside this module
+ * (asserted in test/arch/domain-error-registry.test.ts).
  */
 export type DomainWarningCode =
   | "W_NEVER_SERVED_SHAPE"
@@ -230,6 +249,29 @@ export interface ErrorPayloadMap {
     firstOffendingLine?: number;
     cause?: RangeCause;
   };
+  E_BLIND_REPLACE: {
+    path: string;
+    /** The tool whose observation gate fired: the shadow or the write policy. */
+    command: string;
+  };
+  E_UNSUPPORTED: {
+    /** The known-but-unimplemented command (undo_edit). */
+    command: string;
+  };
+  E_BAD_COMMAND: {
+    /** The unknown command value (any JSON value the caller sent). */
+    command: unknown;
+  };
+  E_FILE_EXISTS: {
+    path: string;
+  };
+  E_NO_MATCH: {
+    path: string;
+  };
+  E_AMBIGUOUS_MATCH: {
+    path: string;
+    matches: number;
+  };
 }
 
 export interface CodeSpec<P> {
@@ -263,7 +305,9 @@ function suspiciousFormat(payload: ErrorPayloadMap["E_SUSPICIOUS_TEXT"]): string
       `Refused write to ${payload.path}: line ${payload.line} begins with ` +
       `the exact ${payload.hash}│ anchor served for this session, path, and line ${payload.servedLine}. ` +
       `HASH│ anchors are tool output, not file content. ` +
-      `Retry with file content only (remove the entire copied anchor chain), or declare intent with mode: "literal". ` +
+      // F2: the built-in write tool takes no mode flag, so the write arm
+      // must not promise a literal retry — file content only.
+      `Retry with file content only (remove the entire copied anchor chain). ` +
       `Re-read the file for fresh anchors if needed.` +
       suspiciousSubmission(payload.count)
     );
@@ -331,16 +375,39 @@ function largeFileFormat(payload: ErrorPayloadMap["E_LARGE_FILE"]): string {
 }
 
 function staleAnchorFormat(payload: ErrorPayloadMap["E_STALE_ANCHOR"]): string {
+  // F6: stale anchors carry their context block directly — no `Current
+  // range:` heading and no retry hint. The headline already says "Re-read
+  // for fresh anchors"; appending "Retry with these anchors" would
+  // contradict it in the same breath.
   if (!payload.servedBlock) return payload.headline;
-  return `${payload.headline}\nCurrent range:\n${payload.servedBlock}\n${RETRY_HINT}`;
+  return `${payload.headline}\n\n${payload.servedBlock}`;
 }
 
 function staleRangeFormat(payload: ErrorPayloadMap["E_STALE_RANGE"]): string {
+  // F7: the `Current range:` heading exists only when there are rows to
+  // show; a row-less rejection (e.g. the version-guard arm) renders the
+  // headline alone, and `reread: true` still suppresses the retry hint.
+  if (!payload.servedBlock) return payload.headline;
   const base = `${payload.headline}\nCurrent range:\n${payload.servedBlock}`;
   return payload.reread === true ? base : `${base}\n${RETRY_HINT}`;
 }
 
+function blindReplaceFormat(payload: ErrorPayloadMap["E_BLIND_REPLACE"]): string {
+  if (payload.command === "str_replace_editor") {
+    return (
+      `str_replace_editor: ${payload.path} has not been viewed in this session ` +
+      `(no file encoding state at the current version). Call view first, then retry. Nothing was written.`
+    );
+  }
+  return (
+    `${payload.path} has not been observed in this session (read-before-write policy). ` +
+    `Call read() first, then retry the edit.`
+  );
+}
+
 function unservedRangeFormat(payload: ErrorPayloadMap["E_UNSERVED_RANGE"]): string {
+  // F7: heading only when rows exist (all current producers carry a block).
+  if (!payload.servedBlock) return payload.headline;
   return `${payload.headline}\nCurrent range:\n${payload.servedBlock}\n${RETRY_HINT}`;
 }
 
@@ -461,8 +528,9 @@ export const ERROR_REGISTRY: { [K in DomainErrorCode]: CodeSpec<ErrorPayloadMap[
     audience: "MODEL",
     format: suspiciousFormat,
     // WHY remedy: the replacement reproduces a served hash echo for this session, path and line — target, hash and servedLine pin the row.
-    remedy:
-      'Omit the copied anchors from replace_with and retry with the same anchors, or declare intent with mode: "literal".',
+    // F2/F10.4: no mode:"literal" promise here — the built-in write tool
+    // takes no mode flag, so the declared remedy stays truthful for both targets.
+    remedy: "Omit the copied anchors and retry with the same anchors.",
   },
   E_BATCH_ABORT: {
     audience: "MODEL",
@@ -523,6 +591,33 @@ export const ERROR_REGISTRY: { [K in DomainErrorCode]: CodeSpec<ErrorPayloadMap[
   E_UNSERVED_RANGE: {
     audience: "MODEL",
     format: unservedRangeFormat,
+  },
+  E_BLIND_REPLACE: {
+    audience: "MODEL",
+    format: blindReplaceFormat,
+  },
+  E_UNSUPPORTED: {
+    audience: "MODEL",
+    format: ({ command }) =>
+      `str_replace_editor ${command} is not implemented — use undo_last_edit.`,
+  },
+  E_BAD_COMMAND: {
+    audience: "MODEL",
+    format: ({ command }) =>
+      `str_replace_editor: unknown command ${JSON.stringify(command)} — expected one of view, str_replace, insert, create, undo_edit.`,
+  },
+  E_FILE_EXISTS: {
+    audience: "MODEL",
+    format: ({ path }) => `str_replace_editor: cannot create ${path} — file already exists.`,
+  },
+  E_NO_MATCH: {
+    audience: "MODEL",
+    format: ({ path }) => `str_replace_editor: old_str not found in ${path}. Nothing was written.`,
+  },
+  E_AMBIGUOUS_MATCH: {
+    audience: "MODEL",
+    format: ({ path, matches }) =>
+      `str_replace_editor: old_str has multiple matches (${matches}) in ${path} — must match exactly once. Narrow old_str with more context. Nothing was written.`,
   },
 };
 

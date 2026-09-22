@@ -99,9 +99,9 @@ export function registerWriteHook(rootCtx: Context, agentCtx: Context, io: FileI
       const rawPath = args?.file_path ?? args?.path;
       const content = args?.content;
       if (typeof rawPath !== "string" || typeof content !== "string") return next();
-      // Declared literal content bypasses the served-echo guard (edit-path
-      // W_LITERAL_BYPASS producer lives in anchor-pipeline applyEdit).
-      if (args?.mode === "literal") return next();
+      // F2: no mode escape here — the built-in write tool takes file_path /
+      // content only, so a mode branch would be dead and the refusal below
+      // must not promise it.
 
       const cwd = execCwd(exec);
       return withWorkspace(cwd, async () => {

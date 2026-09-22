@@ -86,6 +86,12 @@ export function buildEditTool(io: FileIO, sandbox: FsSandboxController) {
           description: "[remove_from, remove_to, replacement_text]",
         } as unknown as import("@deepseek-ai/dsh-tools").ValueSchemaSpec,
       } as unknown as import("@deepseek-ai/dsh-tools").ValueSchemaSpec & { required?: true },
+      mode: {
+        type: "string",
+        enum: ["general", "literal"],
+        description:
+          'How to treat bytes reproducing served rows: "general" refuses them, "literal" declares them as intended file content',
+      } as unknown as import("@deepseek-ai/dsh-tools").ValueSchemaSpec,
       ...(sandbox.escalationModes.length > 0 ? sandbox.schemaFields() : {}),
     },
     output: {

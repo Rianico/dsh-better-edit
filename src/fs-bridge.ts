@@ -115,14 +115,16 @@ export function mapFsError(error: unknown, displayPath: string): never {
       });
     }
     if (code === "FS_BAD_ENCODING") {
-      throw new Error(
-        `[E_BAD_ENCODING] Unknown encoding for ${displayPath}. Supported: utf8, gbk, big5, shift_jis, euc-kr, windows-1251, iso-8859-1`,
-      );
+      throw new DomainError("E_BAD_PAYLOAD", {
+        message: `Unknown encoding for ${displayPath}. Supported: utf8, gbk, big5, shift_jis, euc-kr, windows-1251, iso-8859-1`,
+      });
     }
     if (code === "FS_DECODE_FAILED") {
-      throw new Error(
-        `[E_DECODE_FAILED] Bytes in ${displayPath} cannot be decoded with requested encoding.`,
-      );
+      throw new DomainError("E_UNSUPPORTED_FILE", {
+        path: displayPath,
+        kind: "binary",
+        description: "bytes cannot be decoded with requested encoding",
+      });
     }
     if (code === "FS_STALE_VERSION") {
       throw new DomainError("E_STALE_RANGE", {
@@ -130,12 +132,12 @@ export function mapFsError(error: unknown, displayPath: string): never {
           "The file changed on disk since it was read (version guard rejected the write). Call read() to get fresh anchors, then retry.",
         servedRows: [],
         servedBlock: "",
+        // F7: row-less and read-required — no `Current range:` section, no retry hint.
+        reread: true,
       });
     }
     if (code === "FS_NOT_OBSERVED") {
-      throw new Error(
-        `[E_NOT_OBSERVED] The file has not been observed in this session (read-before-write policy). Call read() first, then retry the edit.`,
-      );
+      throw new DomainError("E_BLIND_REPLACE", { path: displayPath, command: "write" });
     }
     if (code === "FS_ABORTED") {
       throw new Error("Operation aborted");

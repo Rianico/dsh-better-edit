@@ -58,16 +58,11 @@ const KNOWN_COMMANDS: ReadonlySet<string> = new Set([
 ]);
 
 /**
- * Sole header composer for this tool's request-shape refusals. Every
- * precondition failure here (unknown command, unimplemented op, unviewed
- * file, existing file, unmatched/ambiguous old_str, bad fields) is a
- * request-shape violation surfaced as E_BAD_PAYLOAD with the fact in the
- * message — the registry owns the header, so no second message-building
- * site exists in this tool. The E_UNSUPPORTED (undo_edit) and
- * E_BLIND_REPLACE (unviewed file) conditions fold to E_BAD_PAYLOAD: an
- * operation the tool does not implement names an unsupported operation, and
- * a missing prior view is a caller-precondition failure with no served rows
- * to fill E_STALE_ANCHOR. No new codes are invented and no raw header remains.
+ * Sole header composer for this tool's true request-shape refusals (bad
+ * fields). The six live contract codes (F4) route directly through
+ * DomainError with fact payloads — E_BLIND_REPLACE, E_UNSUPPORTED,
+ * E_BAD_COMMAND, E_FILE_EXISTS, E_NO_MATCH, E_AMBIGUOUS_MATCH — so the
+ * registry owns every header and no second message-building site exists here.
  */
 function argError(message: string): DomainError<"E_BAD_PAYLOAD"> {
   return new DomainError("E_BAD_PAYLOAD", { message });
@@ -114,9 +109,7 @@ async function requireObserved(
   const version = await io.statVersion(absolutePath, signal);
   invalidateIfStale(absolutePath, version);
   if (!getEncodingState(absolutePath)) {
-    throw argError(
-      `str_replace_editor: ${displayPath} has not been viewed in this session (no file encoding state at the current version). Call view first, then retry. Nothing was written.`,
-    );
+    throw new DomainError("E_BLIND_REPLACE", { path: displayPath, command: "str_replace_editor" });
   }
 }
 
@@ -229,13 +222,11 @@ export function buildStrReplaceEditorTool(io: FileIO, sandbox: FsSandboxControll
         const rec = (args ?? {}) as Record<string, unknown>;
         const command = rec["command"];
         if (typeof command !== "string" || !KNOWN_COMMANDS.has(command)) {
-          throw argError(
-            `str_replace_editor: unknown command ${JSON.stringify(command)} — expected one of view, str_replace, insert, create, undo_edit.`,
-          );
+          throw new DomainError("E_BAD_COMMAND", { command });
         }
         const cmd = command as StrReplaceCommand;
         if (cmd === "undo_edit") {
-          throw argError("str_replace_editor undo_edit is not implemented — use undo_last_edit.");
+          throw new DomainError("E_UNSUPPORTED", { command: "undo_edit" });
         }
         const rawPath = requireString(rec, "path");
         abortIf(signal);
@@ -279,7 +270,7 @@ export function buildStrReplaceEditorTool(io: FileIO, sandbox: FsSandboxControll
           const ver = await io.statVersion(absolutePath, signal);
           const exists = ver !== undefined;
           if (exists) {
-            throw argError(`str_replace_editor: cannot create ${rawPath} — file already exists.`);
+            throw new DomainError("E_FILE_EXISTS", { path: rawPath });
           }
           // Governed default: UTF-8 without BOM (no memo → no BOM).
           await writeGoverned(io, sandbox, absolutePath, fileText, rec as FsEscalationArgs, exec);
@@ -312,14 +303,10 @@ export function buildStrReplaceEditorTool(io: FileIO, sandbox: FsSandboxControll
           const newStr = rec["new_str"] as string;
           const matches = countOccurrences(current, oldStr);
           if (matches === 0) {
-            throw argError(
-              `str_replace_editor: old_str not found in ${rawPath}. Nothing was written.`,
-            );
+            throw new DomainError("E_NO_MATCH", { path: rawPath });
           }
           if (matches > 1) {
-            throw argError(
-              `str_replace_editor: old_str has multiple matches (${matches}) in ${rawPath} — must match exactly once. Narrow old_str with more context. Nothing was written.`,
-            );
+            throw new DomainError("E_AMBIGUOUS_MATCH", { path: rawPath, matches });
           }
           const next = restoreForSave(current.replace(oldStr, newStr), absolutePath);
           await writeGoverned(io, sandbox, absolutePath, next, rec as FsEscalationArgs, exec);

@@ -6,8 +6,8 @@
  * content, the noop-loop guard, and the persist-undo → write → restore
  * Transaction (persist-undo → write → restore) is owned by Mutation, not this engine.
  *
- * The model-facing contract lives here unchanged: [E_BATCH_ABORT],
- * [E_NOOP_LOOP], [E_UNDO_UNAVAILABLE] carry byte-identical messages, and
+ * The model-facing contract lives here unchanged: E_BATCH_ABORT,
+ * E_NOOP_LOOP, E_UNDO_UNAVAILABLE carry byte-identical messages, and
  * reject-and-serve records the same echo serves.
  * @module dsh-better-edit/mutation/engine
  */
@@ -279,7 +279,7 @@ export interface ApplyOneResult {
  * `onReject` owns the reject-and-serve policy: it receives resolve/verify
  * failures (and the edit that failed, when resolved) and MUST throw. The
  * single path rethrows the original anchor error after recording echo serves;
- * the batch path wraps with [E_BATCH_ABORT] plus the current-range echo.
+ * the batch path wraps with E_BATCH_ABORT plus the current-range echo.
  */
 export async function applyOne(
   input: ApplyOneInput,
@@ -420,7 +420,7 @@ export interface NoopLoopOptions {
 
 /**
  * The shared noop-loop guard. Returns the "twice in a row" notice for the
- * caller to append to warnings, or throws [E_NOOP_LOOP] (after recording the
+ * caller to append to warnings, or throws E_NOOP_LOOP (after recording the
  * echo serves) once the payload has been submitted NOOP_LOOP_THRESHOLD times
  * with no change. Messages are byte-identical to the pre-engine tools.
  */
@@ -477,9 +477,8 @@ export async function enforceNoopLoop(opts: NoopLoopOptions): Promise<string | u
       removeTo,
       count,
       batch: true,
-      servedBlock: echoRows
-        ? `Current on-disk range:\n${fmtServedRows(echoRows, originalLines)}`
-        : "",
+      // F5: pass raw rows — the registry owns the `Current on-disk range:` heading.
+      servedBlock: echoRows ? fmtServedRows(echoRows, originalLines) : "",
     });
   }
   if (count === 2) {

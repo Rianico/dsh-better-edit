@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { assertEditRequest } from "../../src/contract.js";
-import { CodedError, codeOf } from "../../src/utils.js";
-import { DomainError } from "../../src/domain-errors.js";
+import { codeOf } from "../../src/utils.js";
+import { DomainError, formatError } from "../../src/domain-errors.js";
 import {
   resEdit,
   verifyServedRange,
@@ -149,5 +149,48 @@ describe("batch drift note retired (#55 S2)", () => {
     const text = finalizeResult({ diff: "d", warnings: ["Batch drift note: x", "other"] });
     expect(text).toContain("Batch drift note: x");
     expect(text).toContain("other");
+  });
+});
+
+describe("registry range-shape rules (F7)", () => {
+  const rows = [{ position: 0, hash: "abc" }];
+  it("E_STALE_RANGE with rows and no reread flag carries the heading and hint", () => {
+    const message = formatError("E_STALE_RANGE", {
+      headline: "line 1 differs from what was served.",
+      servedRows: rows,
+      servedBlock: "abc│one",
+    });
+    expect(message).toContain("Current range:\nabc│one");
+    expect(message).toContain("Retry with these anchors (no read needed).");
+  });
+  it("E_STALE_RANGE with reread:true keeps the heading but drops the hint", () => {
+    const message = formatError("E_STALE_RANGE", {
+      headline:
+        "anchor was served at line 1 but now resolves to line 5 (pos-restricted concurrency). Re-read.",
+      servedRows: rows,
+      servedBlock: "abc│one",
+      reread: true,
+    });
+    expect(message).toContain("Current range:\nabc│one");
+    expect(message).not.toContain("Retry with these anchors");
+  });
+  it("E_STALE_RANGE without rows renders the headline alone", () => {
+    const message = formatError("E_STALE_RANGE", {
+      headline: "The file changed on disk since it was read.",
+      servedRows: [],
+      servedBlock: "",
+      reread: true,
+    });
+    expect(message).toBe("[MODEL] [E_STALE_RANGE] The file changed on disk since it was read.");
+  });
+  it("E_STALE_ANCHOR renders headline plus block, never a heading or hint", () => {
+    const message = formatError("E_STALE_ANCHOR", {
+      headline: '1 stale anchor: "ZZZ". Re-read for fresh anchors.',
+      servedRows: rows,
+      servedBlock: "  Current context around resolved anchor.",
+    });
+    expect(message).not.toContain("Current range:");
+    expect(message).not.toContain("Retry with these anchors");
+    expect(message).toContain("  Current context around resolved anchor.");
   });
 });

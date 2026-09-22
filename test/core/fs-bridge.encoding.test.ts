@@ -71,12 +71,12 @@ describe("localIO encoding — BOM and autoGuess", () => {
     expect(text).toBe("Привет");
   });
 
-  it("explicit unknown encoding throws E_BAD_ENCODING", async () => {
+  it("explicit unknown encoding throws E_BAD_PAYLOAD for an unknown encoding", async () => {
     const path = join(dir, "any.txt");
     await writeFile(path, Buffer.from("hi"));
     const io = localIO();
     await expect((io as any).readText(path, undefined, "not-an-enc")).rejects.toThrow(
-      /E_BAD_ENCODING/,
+      /E_BAD_PAYLOAD.*Unknown encoding/,
     );
   });
 

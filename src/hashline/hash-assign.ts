@@ -69,7 +69,9 @@ export const HASH_PROBE_STRIDE = ALPH.length ** 2 + ALPH.length + 1;
 export class AnchorSpaceExhaustedError extends DomainError<"E_LARGE_FILE"> {
   readonly retiredCount: number;
   readonly servedCount: number;
-  constructor(retiredCount: number, servedCount: number, _reservedCount: number) {
+  // F10.3: reserved count removed — the registry payload carries the limit,
+  // not the probe state.
+  constructor(retiredCount: number, servedCount: number) {
     // Channel rule: hard capacity refusal the model must route around → MODEL via the registry.
     super("E_LARGE_FILE", { limitKind: "hash-space", limit: HASH_SPACE });
     this.name = "AnchorSpaceExhaustedError";
@@ -182,8 +184,7 @@ export function lineHashesPure(
     if (msg.includes("probing failed over") || msg.includes("Cannot allocate")) {
       const rc = retiredCount ?? reservedHashes.size;
       const sc = servedCount ?? 0;
-      const reserved = reservedHashes.size;
-      throw new AnchorSpaceExhaustedError(rc, sc, reserved);
+      throw new AnchorSpaceExhaustedError(rc, sc);
     }
     throw e;
   }
@@ -301,7 +302,7 @@ export function mapStableHashes(
     if (msg.includes("probing failed over") || msg.includes("Cannot allocate")) {
       const rc = retiredCount ?? reservedHashes.size;
       const sc = servedCount ?? 0;
-      throw new AnchorSpaceExhaustedError(rc, sc, reservedHashes.size);
+      throw new AnchorSpaceExhaustedError(rc, sc);
     }
     throw e;
   }

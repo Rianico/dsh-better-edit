@@ -95,7 +95,7 @@ describe("str_replace_editor contract parity", () => {
       };
       expect(v.text.split("\n")[0]).toContain("top");
       await expect(tool.execute({ command: "undo_edit", path: created }, exec)).rejects.toThrow(
-        /E_BAD_PAYLOAD.*undo_edit is not implemented/,
+        /E_UNSUPPORTED.*undo_edit is not implemented/,
       );
     } finally {
       await rm(dir, { recursive: true, force: true });

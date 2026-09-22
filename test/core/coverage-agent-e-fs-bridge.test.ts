@@ -50,12 +50,12 @@ describe("coverage-agent-e fs-bridge", () => {
     });
   });
 
-  it("explicit encodingHint bad encoding maps to E_BAD_ENCODING", async () => {
+  it("explicit encodingHint bad encoding maps to E_BAD_PAYLOAD", async () => {
     await withTempFile("a.txt", "hi", async ({ cwd }) => {
       const harness = setupIntegrationTest(cwd);
       await expect(
         harness.readTool.execute("read", { path: "a.txt", encoding: "not-an-enc" } as any),
-      ).rejects.toThrow(/E_BAD_ENCODING|bad encoding/i);
+      ).rejects.toThrow(/E_BAD_PAYLOAD.*Unknown encoding/i);
     });
   });
 

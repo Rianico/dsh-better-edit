@@ -91,8 +91,15 @@ function producedCodes(files: string[]): Set<string> {
   return found;
 }
 
-const RAW_HEADER_RE = /\[(MODEL|USER)\]\s*\[(E_|W_)[A-Z_]+\]/;
+// F3 (strengthened): ANY [E_*]/[W_*] header literal is forbidden — audience
+// or not. Comments/docblocks are stripped before scanning (prose may name
+// codes), and src/utils.ts's CODED_RE is allowlisted by name: it is the
+// legacy header *reader* (message-convention fallback), not a producer.
+const RAW_HEADER_RE = /\[(E|W)_[A-Z_]+\]/;
 
+function stripComments(text: string): string {
+  return text.replace(/\/\/[^\n]*/g, "").replace(/\/\*[\s\S]*?\*\//g, "");
+}
 describe("arch: domain-error registry", () => {
   const files = listSources(SRC_ROOT);
   const registrySource = readFileSync(REGISTRY_FILE, "utf-8");
@@ -127,11 +134,17 @@ describe("arch: domain-error registry", () => {
     }
   });
 
-  it("header uniqueness: no raw [AUDIENCE] [CODE] literal outside domain-errors.ts", () => {
+  it("header uniqueness: no raw [E_*]/[W_*] literal outside domain-errors.ts", () => {
     const offenders: string[] = [];
     for (const file of files) {
       if (file === REGISTRY_FILE) continue;
-      if (RAW_HEADER_RE.test(readFileSync(file, "utf-8"))) offenders.push(file);
+      const lines = stripComments(readFileSync(file, "utf-8")).split("\n");
+      lines.forEach((line, index) => {
+        if (!RAW_HEADER_RE.test(line)) return;
+        // Allowlist by name: CODED_RE is the legacy header reader, not a producer.
+        if (file.endsWith("src/utils.ts") && line.includes("CODED_RE")) return;
+        offenders.push(`${file}:${index + 1}:${line.trim().slice(0, 80)}`);
+      });
     }
     expect(offenders, `raw headers in: ${offenders.join(", ")}`).toEqual([]);
   });

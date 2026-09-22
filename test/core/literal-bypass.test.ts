@@ -51,7 +51,11 @@ describe("literal mode bypass (W_LITERAL_BYPASS)", () => {
     });
   });
 
-  it("rejects an unknown mode with E_BAD_PAYLOAD", async () => {
+  // F1: an undeclared mode dies at admission (the declared enum), before
+  // the contract gate — the E_BAD_PAYLOAD contract rejection for unknown
+  // modes is pinned at the assertEditRequest level in
+  // coverage-agent-c-contract.test.ts.
+  it("rejects an unknown mode at admission and writes nothing", async () => {
     const initial = "alpha\nbeta\n";
     await withTempFile("literal-badmode.txt", initial, async ({ cwd, path }) => {
       const { readTool, editTool } = setupIntegrationTest(cwd);
@@ -68,7 +72,7 @@ describe("literal mode bypass (W_LITERAL_BYPASS)", () => {
           edits: [[anchor, anchor, "ALPHA"]],
           mode: "verbatim",
         }),
-      ).rejects.toThrow(/E_BAD_PAYLOAD/);
+      ).rejects.toThrow();
       expect(await readFile(path, "utf-8")).toBe(initial);
     });
   });

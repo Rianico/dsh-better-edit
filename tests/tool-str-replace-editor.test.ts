@@ -115,7 +115,7 @@ describe("str_replace_editor shadow tool (TDD red)", () => {
     ).rejects.toThrow(/E_UNSUPPORTED_FILE/);
   });
 
-  it("blind str_replace without prior view -> E_BAD_PAYLOAD, no disk write", async () => {
+  it("blind str_replace without prior view -> E_BLIND_REPLACE, no disk write", async () => {
     const p = join(dir, "blind.txt");
     await writeFile(p, "alpha\nbeta\n", "utf-8");
     const io = localIO();
@@ -125,17 +125,17 @@ describe("str_replace_editor shadow tool (TDD red)", () => {
         { command: "str_replace", path: p, old_str: "beta", new_str: "BETA" },
         fakeExec(dir),
       ),
-    ).rejects.toThrow(/E_BAD_PAYLOAD.*has not been viewed/);
+    ).rejects.toThrow(/E_BLIND_REPLACE.*has not been viewed/);
     expect(await readFile(p, "utf-8")).toBe("alpha\nbeta\n");
   });
 
-  it("blind insert without prior view -> E_BAD_PAYLOAD", async () => {
+  it("blind insert without prior view -> E_BLIND_REPLACE", async () => {
     const p = join(dir, "blind2.txt");
     await writeFile(p, "a\nb\n", "utf-8");
     const tool = buildStrReplaceEditorTool(localIO(), noSandbox());
     await expect(
       tool.execute({ command: "insert", path: p, insert_line: 1, new_str: "x" }, fakeExec(dir)),
-    ).rejects.toThrow(/E_BAD_PAYLOAD.*has not been viewed/);
+    ).rejects.toThrow(/E_BLIND_REPLACE.*has not been viewed/);
   });
 
   it("old_str must match exactly once", async () => {
