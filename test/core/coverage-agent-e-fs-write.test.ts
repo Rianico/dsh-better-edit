@@ -138,7 +138,7 @@ describe("coverage-agent-e fs-write", () => {
     }
   });
 
-  it("writeAtomic handles chmod preserving mode", async () => {
+  it.skipIf(process.platform === "win32")("writeAtomic handles chmod preserving mode", async () => {
     const dir = await mkdtemp(join(tmpdir(), "e-fs-chmod-"));
     try {
       const p = join(dir, "mode.txt");

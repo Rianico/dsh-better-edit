@@ -19,6 +19,7 @@ beforeAll(async () => {
 async function withTempHome(run: (home: string) => Promise<void>): Promise<void> {
   tmpHome = await mkdtemp(join(await getWritableTempRoot(), "pi-hashline-hashstore-test-"));
   vi.stubEnv("HOME", tmpHome);
+  vi.stubEnv("DSH_HOME", join(tmpHome, ".dsh"));
   vi.stubEnv("XDG_CONFIG_HOME", "");
   try {
     await run(tmpHome);

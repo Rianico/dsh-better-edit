@@ -3,7 +3,7 @@
  * DeepSeek Harness, a dsh port of pi-hashline-edit-lsz.
  *
  * Cordis host-plane plugin (mounted by the bundle's cordis.patch.yml). On
- * `agent/session-start` it registers the hashline tools and prompt sections on
+ * `agent/created` it registers the hashline tools and prompt sections on
  * the AGENT's own scope layer, so they shadow the preset's built-in `read` /
  * `edit` for that agent (nearest layer wins in dsh's tool registry) and unwind
  * automatically when the agent is disposed. The built-in `write` stays in
@@ -186,7 +186,7 @@ export function apply(rootCtx: Context): void {
   });
 
   const registered = new WeakSet<Agent>();
-  rootCtx.on("agent/session-start", ({ agent }) => {
+  rootCtx.on("agent/created", ({ agent }) => {
     // throttled central janitor on session-start (inside same handler to avoid extra listener)
     onSessionStart().catch((e) =>
       rootCtx.logger.warn(

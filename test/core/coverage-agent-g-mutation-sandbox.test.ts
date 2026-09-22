@@ -1,12 +1,12 @@
 import { describe, it, expect, vi } from "vitest";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { getWritableTempRoot } from "../support/fixtures.js";
 
 describe("coverage-agent-g mutation", () => {
   it("resolveDisplayPath", async () => {
     const { resolveDisplayPath } = await import("../../src/mutation.js");
-    expect(resolveDisplayPath("a/b.txt", "/cwd")).toBe(join("/cwd", "a/b.txt"));
+    expect(resolveDisplayPath("a/b.txt", "/cwd")).toBe(resolve("/cwd", "a/b.txt"));
     expect(resolveDisplayPath("/abs/x", "/cwd")).toBe("/abs/x");
   });
 

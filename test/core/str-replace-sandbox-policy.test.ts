@@ -102,12 +102,12 @@ function makeConfinedFs() {
 }
 
 /** A confining composition: `ctx.fs.sandboxMode` set + `sandboxPolicy` service. */
-function makeConfinedCtx() {
+function makeConfinedCtx(approvalOutcome = "allowed-once") {
   const policyResolve = vi.fn((request?: { session?: { header?: { cwd?: string } } }) => ({
     mode: "workspace-write",
     workspaceRoot: request?.session?.header?.cwd ?? WS_ROOT,
   }));
-  const approvalRequest = vi.fn(async () => "allowed-once");
+  const approvalRequest = vi.fn(async () => approvalOutcome);
   const ctx = {
     fs: { sandboxMode: "workspace-write" },
     get: (service: string) =>
@@ -140,9 +140,9 @@ function paramsOf(tool: unknown): Record<string, unknown> {
   return p;
 }
 
-function confinedTool() {
+function confinedTool(approvalOutcome = "allowed-once") {
   const fake = makeConfinedFs();
-  const composition = makeConfinedCtx();
+  const composition = makeConfinedCtx(approvalOutcome);
   const io: FileIO = ctxFsIO(fake.fs as never, makeIoCtx());
   const tool = buildStrReplaceEditorTool(io, new FsSandboxController(composition.ctx as never));
   return { fake, tool, ...composition };
@@ -247,9 +247,35 @@ describe("shadow str_replace_editor stamps the sandbox policy", () => {
     expect(fake.readText(p)).toContain("BRAVO");
   });
 
-  it("a non-widening escalation is rejected before any write", async () => {
+  it("repeating the standing mode grants without approval", async () => {
     const { fake, tool, approvalRequest } = confinedTool();
     const p = `${WS_ROOT}/narrow.txt`;
+    fake.seed(p, "alpha\nbravo\n");
+    const exec = fakeExec(WS_ROOT);
+
+    await tool.execute({ command: "view", path: p }, exec);
+    const res = (await tool.execute(
+      {
+        command: "str_replace",
+        path: p,
+        old_str: "bravo",
+        new_str: "BRAVO",
+        sandbox_permissions: "workspace-write",
+        justification: "same mode as the standing policy",
+      },
+      exec,
+    )) as unknown as { text: string };
+
+    expect(res.text).toMatch(/Replaced 1 occurrence/);
+    expect(approvalRequest).not.toHaveBeenCalled();
+    expect(fake.readText(p)).toContain("BRAVO");
+  });
+
+  it("a rejected approval (approval policy never) fails the escalation closed before any write", async () => {
+    // ApprovalService with policy 'never' resolves every ask 'rejected'
+    // before any answerer sees it — exactly this mock.
+    const { fake, tool, approvalRequest } = confinedTool("rejected");
+    const p = `${OUTSIDE}/never.txt`;
     fake.seed(p, "alpha\nbravo\n");
     const exec = fakeExec(WS_ROOT);
 
@@ -261,15 +287,17 @@ describe("shadow str_replace_editor stamps the sandbox policy", () => {
           path: p,
           old_str: "bravo",
           new_str: "BRAVO",
-          sandbox_permissions: "workspace-write",
-          justification: "same mode as the standing policy",
+          sandbox_permissions: "danger-full-access",
+          justification: "the target file lives outside the session workspace",
         },
         exec,
       )
       .catch((e: unknown) => e)) as Error;
 
-    expect(error.message).toMatch(/not strictly wider/);
-    expect(approvalRequest).not.toHaveBeenCalled();
+    expect(error.message).toContain(
+      'the user rejected escalating this operation to "danger-full-access"',
+    );
+    expect(approvalRequest).toHaveBeenCalledTimes(1);
     expect(fake.readText(p)).toContain("bravo");
   });
 
