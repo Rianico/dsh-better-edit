@@ -66,13 +66,21 @@ describe("literal mode bypass (W_LITERAL_BYPASS)", () => {
           .find((line) => line.endsWith("│alpha"))!,
       );
 
-      await expect(
-        editTool.execute("bad-mode", {
+      // N1: pin the admission channel, not just any rejection — an
+      // undeclared mode dies at dsh admission (ToolArgsError/INVALID_ARGS)
+      // before the registry is ever reached.
+      const error = await editTool
+        .execute("bad-mode", {
           path: "literal-badmode.txt",
           edits: [[anchor, anchor, "ALPHA"]],
           mode: "verbatim",
-        }),
-      ).rejects.toThrow();
+        })
+        .then(
+          () => undefined,
+          (e: unknown) => e,
+        );
+      expect(error).toBeDefined();
+      expect(String(error)).toMatch(/mode|invalid arguments|INVALID_ARGS/);
       expect(await readFile(path, "utf-8")).toBe(initial);
     });
   });

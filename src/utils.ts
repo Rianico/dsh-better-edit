@@ -90,27 +90,15 @@ export function clipLine(line: string, maxLen = 200): string {
   return flat.length > maxLen ? `${flat.slice(0, maxLen)}...` : flat;
 }
 
-/** Machine-readable error-code carrier — bare `E_*` code alongside the human message. */
-export class CodedError extends Error {
-  readonly code: string;
-  constructor(code: string, message: string) {
-    super(message);
-    this.name = "CodedError";
-    this.code = code;
-  }
-}
-
 const CODED_RE = /\[(E_[A-Z_]+)\]/;
 
 /**
  * Structured bare-code read for any tool error: DomainError carrier first,
- * then CodedError, then the `[E_*]` message convention as a legacy fallback
- * (errno-style and third-party errors must not be misclassified — only
+ * then the `[E_*]` message convention as a legacy fallback
  * registry members route the typed path; the regex is last resort).
  */
 export function codeOf(error: unknown): string | undefined {
   if (error instanceof DomainError) return error.code;
-  if (error instanceof CodedError) return error.code;
   if (error instanceof Error) {
     const m = error.message.match(CODED_RE);
     if (m) return m[1]!;

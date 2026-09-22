@@ -97,8 +97,65 @@ function producedCodes(files: string[]): Set<string> {
 // legacy header *reader* (message-convention fallback), not a producer.
 const RAW_HEADER_RE = /\[(E|W)_[A-Z_]+\]/;
 
+// N2: string-literal-aware comment stripper. The naive regex version
+// treated a `/*` (or `//`) inside a string literal — e.g. a glob like
+// "src/**/*.ts" — as a comment opener and silently deleted real source
+// from the scan. This scanner tracks ', ", ` (with backslash escapes) and
+// only strips // and /* … */ outside a string. Newlines inside block
+// comments are preserved so reported line numbers stay stable.
 function stripComments(text: string): string {
-  return text.replace(/\/\/[^\n]*/g, "").replace(/\/\*[\s\S]*?\*\//g, "");
+  let out = "";
+  let i = 0;
+  let quote: string | undefined;
+  while (i < text.length) {
+    const ch = text[i]!;
+    if (quote !== undefined) {
+      out += ch;
+      if (ch === "\\") {
+        if (i + 1 < text.length) out += text[i + 1];
+        i += 2;
+        continue;
+      }
+      if (ch === quote) quote = undefined;
+      i += 1;
+      continue;
+    }
+    if (ch === "'" || ch === '"' || ch === "`") {
+      quote = ch;
+      out += ch;
+      i += 1;
+      continue;
+    }
+    if (ch === "/" && text[i + 1] === "/") {
+      while (i < text.length && text[i] !== "\n") i += 1;
+      continue;
+    }
+    if (ch === "/" && text[i + 1] === "*") {
+      i += 2;
+      while (i < text.length && !(text[i] === "*" && text[i + 1] === "/")) {
+        if (text[i] === "\n") out += "\n";
+        i += 1;
+      }
+      i += 2;
+      continue;
+    }
+    out += ch;
+    i += 1;
+  }
+  return out;
+}
+
+/** Per-file raw-header scan; factored for the N2 self-check below. */
+function findRawHeaders(file: string, text: string): string[] {
+  const hits: string[] = [];
+  const lines = stripComments(text).split("\n");
+  lines.forEach((line, index) => {
+    if (!RAW_HEADER_RE.test(line)) return;
+    // Allowlist by name: CODED_RE is the legacy header reader, not a producer.
+    if (file.endsWith("src/utils.ts") && line.includes("CODED_RE")) return;
+    hits.push(`${file}:${index + 1}:${line.trim().slice(0, 80)}`);
+  });
+  return hits;
 }
 describe("arch: domain-error registry", () => {
   const files = listSources(SRC_ROOT);
@@ -138,13 +195,8 @@ describe("arch: domain-error registry", () => {
     const offenders: string[] = [];
     for (const file of files) {
       if (file === REGISTRY_FILE) continue;
-      const lines = stripComments(readFileSync(file, "utf-8")).split("\n");
-      lines.forEach((line, index) => {
-        if (!RAW_HEADER_RE.test(line)) return;
-        // Allowlist by name: CODED_RE is the legacy header reader, not a producer.
-        if (file.endsWith("src/utils.ts") && line.includes("CODED_RE")) return;
-        offenders.push(`${file}:${index + 1}:${line.trim().slice(0, 80)}`);
-      });
+      const lines = findRawHeaders(file, readFileSync(file, "utf-8"));
+      offenders.push(...lines);
     }
     expect(offenders, `raw headers in: ${offenders.join(", ")}`).toEqual([]);
   });
@@ -176,5 +228,20 @@ describe("arch: domain-error registry", () => {
     for (const code of ["W_NEVER_SERVED_SHAPE", "W_SERVED_PREFIX_MISMATCH"] as const) {
       expect(WARNING_REGISTRY[code].audience).toBe("MODEL");
     }
+  });
+  // N2 self-check (planted evidence): a `/*` inside a string literal must
+  // not swallow the real header on the next line. With the naive regex
+  // stripper this reported [] (blind); the string-aware scanner reports line 2.
+  it("scanner stays sighted when a string holds comment syntax (N2)", () => {
+    const planted =
+      'const glob = "src/**/*.ts /* not a comment";\nconst x = "[MODEL] [E_PLANTED] boom";\n/* real comment */\n';
+    const hits = findRawHeaders("src/fake.ts", planted);
+    expect(hits).toHaveLength(1);
+    expect(hits[0]).toContain(":2:");
+    expect(hits[0]).toContain("[E_PLANTED]");
+    // And a real // comment holding a header stays stripped (prose is free).
+    expect(findRawHeaders("src/fake.ts", "// [MODEL] [E_PLANTED] prose\nconst ok = 1;\n")).toEqual(
+      [],
+    );
   });
 });

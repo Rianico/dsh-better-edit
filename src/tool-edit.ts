@@ -12,7 +12,7 @@ import { normalizeRequest as normReq, assertEditRequest } from "./contract.js";
 import { abortIf } from "./utils.js";
 import { execute } from "./mutation.js";
 import { EDIT_DESCRIPTION } from "./prompts.js";
-import { codeOf, CodedError } from "./utils.js";
+import { codeOf } from "./utils.js";
 import { DomainError, formatError } from "./domain-errors.js";
 import type { EditMode } from "./contract.js";
 import type { FileIO } from "./fs-bridge.js";
@@ -54,11 +54,11 @@ async function resolveNullPath(
 
 /**
  * E_UNKNOWN producer: the edit tool boundary is where raw unexpected errors
- * surface. Registry members (DomainError/CodedError) and aborts pass through
- * untouched; anything else becomes a typed E_UNKNOWN with its name + first line.
+ * surface. DomainError members and aborts pass through untouched; anything else
+ * becomes a typed E_UNKNOWN with its name + first line.
  */
 function wrapUnexpected(error: unknown, signal: AbortSignal | undefined): never {
-  if (error instanceof DomainError || error instanceof CodedError) throw error;
+  if (error instanceof DomainError) throw error;
   if (signal?.aborted) throw error;
   if (error instanceof Error && error.message === "Operation aborted") throw error;
   const errorName = error instanceof Error ? error.name : typeof error;
