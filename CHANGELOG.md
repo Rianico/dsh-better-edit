@@ -9,6 +9,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [Unreleased]
+
+### Bug Fixes
+
+* 对齐 DSH 0.1.6-alpha.2 并修复本地测试
+
 ## [0.8.2](https://github.com/Rianico/dsh-better-edit/compare/v0.8.1...v0.8.2) (2026-09-14)
 
 ### Bug Fixes
