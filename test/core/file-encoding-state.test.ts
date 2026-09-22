@@ -61,9 +61,9 @@ describe("file-encoding-state — deterministic admission (pure, no filesystem)"
   it("E_UNSUPPORTED_FILE + Top-3 always pushed when autoGuess off and not UTF-8", async () => {
     const gbkBytes = iconv.encode("你好世界你好", "gbk");
     await expect(decodeForOpen(gbkBytes, cfgOff, { displayPath: "/abs/gbk.txt" })).rejects.toThrow(
-      /E_UNSUPPORTED_FILE.*Top-3 guesses/,
+      /E_UNSUPPORTED_FILE.*top guesses/,
     );
-    await expect(decodeForOpen(gbkBytes, cfgOff)).rejects.toThrow(/Top-3 guesses/);
+    await expect(decodeForOpen(gbkBytes, cfgOff)).rejects.toThrow(/top guesses/);
   });
 
   it("autoGuess on: decodes GBK and returns footer + candidates", async () => {
@@ -110,8 +110,9 @@ describe("file-encoding-state — deterministic admission (pure, no filesystem)"
       { encoding: "gbk", sample: "你好世界", score: 12 },
       { encoding: "big5", sample: "xxx", score: 3 },
     ]);
-    expect(msg).toMatch(/Top-3 guesses: gbk/);
-    expect(msg).toMatch(/Try read\({encoding/);
+    expect(msg).toMatch(/top guesses: gbk/);
+    expect(msg).toMatch(/try read\({encoding/);
+    expect(msg).toMatch(/^\[MODEL\] \[E_UNSUPPORTED_FILE\]/);
   });
 
   it("E_DECODE_FAILED when hint bytes cannot be decoded", async () => {

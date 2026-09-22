@@ -9,9 +9,9 @@
  *   and never records served state (so it can feed `write` round-trips but
  *   cannot authorize hashline `edit` anchors).
  * - `str_replace` / `insert` without a prior `view`/`read` fail loud with
- *   `E_BLIND_REPLACE` — no disk write.
+ *   `E_BAD_PAYLOAD` (unviewed file) — no disk write.
  * - `create` defaults to UTF-8 without BOM.
- * - `undo_edit` is out of scope → `E_UNSUPPORTED` (use `undo_last_edit`).
+ * - `undo_edit` is out of scope → `E_BAD_PAYLOAD` (use `undo_last_edit`).
  *
  * - `create` / `str_replace` / `insert` stamp the per-call sandbox policy from
  *   `FsSandboxController` (the calling session's workspace root plus any
@@ -37,14 +37,14 @@ import { stripBOM } from "./edit-diff.js";
 import { renderTextWarning } from "./render-text-warning.js";
 import { execCwd, withWorkspace } from "./workspace-context.js";
 import { abortIf, splitLines } from "./utils.js";
-
+import { DomainError } from "./domain-errors.js";
 export const STR_REPLACE_EDITOR_DESCRIPTION =
   "View, create, and edit text files by exact string match. Commands: " +
   "`view` {path, view_range?} shows 1-indexed lines; `str_replace` {path, old_str, new_str} " +
   "replaces the unique occurrence of old_str; `insert` {path, insert_line, new_str} inserts " +
   "new line(s) before insert_line (1-indexed, lines+1 appends); `create` {path, file_text} " +
   "creates a new file (fails if it exists). str_replace/insert require a prior view of the " +
-  "file in this session (E_BLIND_REPLACE otherwise). Encoding is governed: non-UTF-8 files " +
+  "file in this session (E_BAD_PAYLOAD otherwise). Encoding is governed: non-UTF-8 files " +
   "decode via auto-guess when enabled, otherwise fail loud with Top-3 candidates.";
 
 type StrReplaceCommand = "view" | "str_replace" | "insert" | "create" | "undo_edit";
@@ -57,14 +57,26 @@ const KNOWN_COMMANDS: ReadonlySet<string> = new Set([
   "undo_edit",
 ]);
 
-function argError(code: string, message: string): Error {
-  return new Error(`[MODEL] [${code}] ${message}`);
+/**
+ * Sole header composer for this tool's request-shape refusals. Every
+ * precondition failure here (unknown command, unimplemented op, unviewed
+ * file, existing file, unmatched/ambiguous old_str, bad fields) is a
+ * request-shape violation surfaced as E_BAD_PAYLOAD with the fact in the
+ * message — the registry owns the header, so no second message-building
+ * site exists in this tool. The E_UNSUPPORTED (undo_edit) and
+ * E_BLIND_REPLACE (unviewed file) conditions fold to E_BAD_PAYLOAD: an
+ * operation the tool does not implement names an unsupported operation, and
+ * a missing prior view is a caller-precondition failure with no served rows
+ * to fill E_STALE_ANCHOR. No new codes are invented and no raw header remains.
+ */
+function argError(message: string): DomainError<"E_BAD_PAYLOAD"> {
+  return new DomainError("E_BAD_PAYLOAD", { message });
 }
 
 function requireString(args: Record<string, unknown>, name: string): string {
   const value = args[name];
   if (typeof value !== "string" || value.length === 0) {
-    throw argError("E_BAD_PAYLOAD", `str_replace_editor: "${name}" must be a non-empty string.`);
+    throw argError(`str_replace_editor: "${name}" must be a non-empty string.`);
   }
   return value;
 }
@@ -82,7 +94,6 @@ function requireViewRange(args: Record<string, unknown>): [number, number] | und
     (value[0] as number) > (value[1] as number)
   ) {
     throw argError(
-      "E_BAD_PAYLOAD",
       'str_replace_editor: "view_range" must be [start, end] with 1-indexed positive integers and start <= end.',
     );
   }
@@ -104,7 +115,6 @@ async function requireObserved(
   invalidateIfStale(absolutePath, version);
   if (!getEncodingState(absolutePath)) {
     throw argError(
-      "E_BLIND_REPLACE",
       `str_replace_editor: ${displayPath} has not been viewed in this session (no file encoding state at the current version). Call view first, then retry. Nothing was written.`,
     );
   }
@@ -220,15 +230,12 @@ export function buildStrReplaceEditorTool(io: FileIO, sandbox: FsSandboxControll
         const command = rec["command"];
         if (typeof command !== "string" || !KNOWN_COMMANDS.has(command)) {
           throw argError(
-            "E_BAD_COMMAND",
             `str_replace_editor: unknown command ${JSON.stringify(command)} — expected one of view, str_replace, insert, create, undo_edit.`,
           );
         }
         const cmd = command as StrReplaceCommand;
         if (cmd === "undo_edit") {
-          throw new Error(
-            "[MODEL] [E_UNSUPPORTED] str_replace_editor undo_edit is not implemented — use undo_last_edit.",
-          );
+          throw argError("str_replace_editor undo_edit is not implemented — use undo_last_edit.");
         }
         const rawPath = requireString(rec, "path");
         abortIf(signal);
@@ -272,10 +279,7 @@ export function buildStrReplaceEditorTool(io: FileIO, sandbox: FsSandboxControll
           const ver = await io.statVersion(absolutePath, signal);
           const exists = ver !== undefined;
           if (exists) {
-            throw argError(
-              "E_FILE_EXISTS",
-              `str_replace_editor: cannot create ${rawPath} — file already exists.`,
-            );
+            throw argError(`str_replace_editor: cannot create ${rawPath} — file already exists.`);
           }
           // Governed default: UTF-8 without BOM (no memo → no BOM).
           await writeGoverned(io, sandbox, absolutePath, fileText, rec as FsEscalationArgs, exec);
@@ -291,7 +295,7 @@ export function buildStrReplaceEditorTool(io: FileIO, sandbox: FsSandboxControll
         // str_replace / insert — strict read-first gate, no disk write on failure.
         // NOTE (report #9): requireObserved's statVersion + the readText below
         // cost two RPCs by design — the stat invalidates stale encoding memos
-        // BEFORE the read so a drifted file fails loud with E_BLIND_REPLACE
+        // BEFORE the read so a drifted file fails loud with E_BAD_PAYLOAD
         // without paying for the read, and collapsing them (Promise.all or
         // skipping the stat) reintroduces TOCTOU: a stale memo could authorize
         // an edit on drifted bytes. Returning the version from readText would
@@ -303,22 +307,17 @@ export function buildStrReplaceEditorTool(io: FileIO, sandbox: FsSandboxControll
         if (cmd === "str_replace") {
           const oldStr = requireString(rec, "old_str");
           if (!("new_str" in rec) || typeof rec["new_str"] !== "string") {
-            throw argError(
-              "E_BAD_PAYLOAD",
-              'str_replace_editor: "new_str" must be a string for str_replace.',
-            );
+            throw argError('str_replace_editor: "new_str" must be a string for str_replace.');
           }
           const newStr = rec["new_str"] as string;
           const matches = countOccurrences(current, oldStr);
           if (matches === 0) {
             throw argError(
-              "E_NO_MATCH",
               `str_replace_editor: old_str not found in ${rawPath}. Nothing was written.`,
             );
           }
           if (matches > 1) {
             throw argError(
-              "E_AMBIGUOUS_MATCH",
               `str_replace_editor: old_str has multiple matches (${matches}) in ${rawPath} — must match exactly once. Narrow old_str with more context. Nothing was written.`,
             );
           }
@@ -331,15 +330,11 @@ export function buildStrReplaceEditorTool(io: FileIO, sandbox: FsSandboxControll
         const line = rec["insert_line"];
         if (!Number.isInteger(line) || (line as number) < 1) {
           throw argError(
-            "E_BAD_PAYLOAD",
             'str_replace_editor: "insert_line" must be a positive integer for insert.',
           );
         }
         if (!("new_str" in rec) || typeof rec["new_str"] !== "string") {
-          throw argError(
-            "E_BAD_PAYLOAD",
-            'str_replace_editor: "new_str" must be a string for insert.',
-          );
+          throw argError('str_replace_editor: "new_str" must be a string for insert.');
         }
         const insertText = rec["new_str"] as string;
         const insertAt = line as number;
@@ -349,7 +344,6 @@ export function buildStrReplaceEditorTool(io: FileIO, sandbox: FsSandboxControll
         const lines = stripped.length === 0 ? [] : body.split("\n");
         if (insertAt > lines.length + 1) {
           throw argError(
-            "E_BAD_PAYLOAD",
             `str_replace_editor: insert_line ${insertAt} is beyond end of file (${lines.length} lines). Nothing was written.`,
           );
         }

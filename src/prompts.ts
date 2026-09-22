@@ -30,7 +30,7 @@ export const EDIT_GUIDANCE: ToolGuidance = {
     "`edit`: `edits` entries accept either tuple `[remove_from, remove_to, replacement_text]` or object `{remove_from, remove_to, replacement_text}` \u2014 mixed batches allowed, each entry normalizes independently; unknown fields (e.g. stray `path`) are rejected.",
     "`edit`: after a successful edit the returned diff shows fresh anchors (`HASH\u2502content`) \u2014 copy new `HASH` values from there for the next edit; no need to re-read.",
     "`edit`: `remove_from`/`remove_to` are inclusive; batch multiple edits to the same file only when independent \u2014 they apply atomically (fail \u2192 nothing written).",
-    "`edit`: `[MODEL]` errors (e.g. `E_STALE_*`, `E_UNSERVED_*`, `E_BAD_PAYLOAD`, `E_SERVED_ECHO`) need a retry \u2014 `[USER]` warnings/`drift:` notices are human-only.",
+    "`edit`: `[MODEL]` errors (e.g. `E_STALE_*`, `E_UNSERVED_*`, `E_BAD_PAYLOAD`, `E_SUSPICIOUS_TEXT`) need a retry \u2014 `[USER]` warnings/`drift:` notices are human-only.",
     "`edit`: on `E_STALE_RANGE`/`E_UNSERVED_RANGE` retry from the echoed fresh anchors (no re-read needed); on `E_STALE_ANCHOR` re-read.",
   ],
 };

@@ -12,7 +12,9 @@ import { normalizeRequest as normReq, assertEditRequest } from "./contract.js";
 import { abortIf } from "./utils.js";
 import { execute } from "./mutation.js";
 import { EDIT_DESCRIPTION } from "./prompts.js";
-import { codeOf } from "./utils.js";
+import { codeOf, CodedError } from "./utils.js";
+import { DomainError, formatError } from "./domain-errors.js";
+import type { EditMode } from "./contract.js";
 import type { FileIO } from "./fs-bridge.js";
 import { execCwd, execSessionKey } from "./workspace-context.js";
 import type { FsSandboxController, FsEscalationArgs } from "./sandbox.js";
@@ -33,19 +35,35 @@ async function resolveNullPath(
     if (matches.length === 1) {
       return {
         path: matches[0]!,
-        warning: `[MODEL] [E_BAD_PAYLOAD] Autocorrected: missing "path" resolved to ${matches[0]} — the only file whose stored hashes contain both anchors.`,
+        warning: formatError("E_BAD_PAYLOAD", {
+          message: `Autocorrected: missing "path" resolved to ${matches[0]} — the only file whose stored hashes contain both anchors.`,
+        }),
       };
     }
     if (matches.length > 1) {
-      throw new Error(
-        `[MODEL] [E_BAD_PAYLOAD] Edit request requires a non-empty "path" string; the anchors match multiple known files: ${matches.join(", ")}. Include the intended path.`,
-      );
+      throw new DomainError("E_BAD_PAYLOAD", {
+        message: `Edit request requires a non-empty "path" string; the anchors match multiple known files: ${matches.join(", ")}. Include the intended path.`,
+      });
     }
   } catch (e) {
     if (codeOf(e) === "E_BAD_PAYLOAD") throw e;
     return undefined;
   }
   return undefined;
+}
+
+/**
+ * E_UNKNOWN producer: the edit tool boundary is where raw unexpected errors
+ * surface. Registry members (DomainError/CodedError) and aborts pass through
+ * untouched; anything else becomes a typed E_UNKNOWN with its name + first line.
+ */
+function wrapUnexpected(error: unknown, signal: AbortSignal | undefined): never {
+  if (error instanceof DomainError || error instanceof CodedError) throw error;
+  if (signal?.aborted) throw error;
+  if (error instanceof Error && error.message === "Operation aborted") throw error;
+  const errorName = error instanceof Error ? error.name : typeof error;
+  const message = error instanceof Error ? error.message : String(error);
+  throw new DomainError("E_UNKNOWN", { errorName, message });
 }
 
 export function buildEditTool(io: FileIO, sandbox: FsSandboxController) {
@@ -76,54 +94,61 @@ export function buildEditTool(io: FileIO, sandbox: FsSandboxController) {
     },
     async execute(args, exec) {
       return withWorkspace(execCwd(exec), async () => {
-        const cwd = execCwd(exec);
-        const sessionKey = execSessionKey(exec);
-        const signal = exec.signal;
+        try {
+          const cwd = execCwd(exec);
+          const sessionKey = execSessionKey(exec);
+          const signal = exec.signal;
 
-        const canonical = normReq(args);
-        assertEditRequest(canonical);
-        const req = canonical as unknown as {
-          path: string | null;
-          edits: Array<{ remove_from: string; remove_to: string; replacement_text: string }> & {
-            [key: symbol]: unknown;
+          const canonical = normReq(args);
+          assertEditRequest(canonical);
+          const req = canonical as unknown as {
+            path: string | null;
+            mode?: EditMode;
+            edits: Array<{ remove_from: string; remove_to: string; replacement_text: string }> & {
+              [key: symbol]: unknown;
+            };
           };
-        };
-        let resolvedPath = req.path;
-        let pathWarning: string | undefined;
-        if (resolvedPath === null) {
-          const resolved = await resolveNullPath(req.edits);
-          if (resolved) {
-            resolvedPath = resolved.path;
-            pathWarning = resolved.warning;
-          } else {
-            throw new Error(
-              "[MODEL] [E_BAD_PAYLOAD] Edit request path is null and could not be inferred from anchors — anchors match no known file. Include the intended path.",
-            );
+          let resolvedPath = req.path;
+          let pathWarning: string | undefined;
+          if (resolvedPath === null) {
+            const resolved = await resolveNullPath(req.edits);
+            if (resolved) {
+              resolvedPath = resolved.path;
+              pathWarning = resolved.warning;
+            } else {
+              throw new DomainError("E_BAD_PAYLOAD", {
+                message:
+                  "Edit request path is null and could not be inferred from anchors — anchors match no known file. Include the intended path.",
+              });
+            }
           }
-        }
-        const sandboxPolicy = await sandbox.resolvePolicy(
-          "edit",
-          { path: resolvedPath, edits: req.edits } as unknown as FsEscalationArgs,
-          exec,
-        );
+          const sandboxPolicy = await sandbox.resolvePolicy(
+            "edit",
+            { path: resolvedPath, edits: req.edits } as unknown as FsEscalationArgs,
+            exec,
+          );
 
-        abortIf(signal);
-        const items: PreparedItem[] = [];
-        for (let index = 0; index < req.edits.length; index++) {
-          const e = req.edits[index]!;
-          items.push({
-            index,
-            path: resolvedPath!,
-            absolutePath: await io.resolve(resolvedPath!, cwd, signal),
-            remove_from: e.remove_from,
-            remove_to: e.remove_to,
-            replacement_text: e.replacement_text,
-            pathWarning: index === 0 ? pathWarning : undefined,
-          });
-        }
+          abortIf(signal);
+          const items: PreparedItem[] = [];
+          for (let index = 0; index < req.edits.length; index++) {
+            const e = req.edits[index]!;
+            items.push({
+              index,
+              path: resolvedPath!,
+              absolutePath: await io.resolve(resolvedPath!, cwd, signal),
+              remove_from: e.remove_from,
+              remove_to: e.remove_to,
+              replacement_text: e.replacement_text,
+              pathWarning: index === 0 ? pathWarning : undefined,
+              ...(req.mode !== undefined ? { mode: req.mode } : {}),
+            });
+          }
 
-        // Deep seam: one interface, all lifecycle branching concentrates in Mutation
-        return execute({ io, items, sessionKey, signal, exec, sandbox, sandboxPolicy });
+          // Deep seam: one interface, all lifecycle branching concentrates in Mutation
+          return execute({ io, items, sessionKey, signal, exec, sandbox, sandboxPolicy });
+        } catch (error: unknown) {
+          throw wrapUnexpected(error, exec.signal);
+        }
       });
     },
   });

@@ -15,6 +15,7 @@
  */
 import xxhash from "xxhash-wasm";
 import { splitLines } from "../utils.js";
+import { DomainError } from "../domain-errors.js";
 
 // --- hasher (private to this seam) ---
 export type Hasher = {
@@ -61,18 +62,16 @@ export const HASH_SEP = "│";
 export const HASH_SPACE = ALPH.length ** HASH_LEN;
 // MAX_HASH_LINES is the anchor-space size (62³), not a line-count limit.
 // File line-count limits use maxLines (e.g. 200k) and report E_LARGE_FILE;
-// anchor-space exhaustion reports E_ANCHOR_SPACE_EXHAUSTED — see nextZeroBit.
+// anchor-space exhaustion reports E_LARGE_FILE with limitKind "hash-space" — see nextZeroBit.
 export const MAX_HASH_LINES = HASH_SPACE;
 export const HASH_PROBE_STRIDE = ALPH.length ** 2 + ALPH.length + 1;
 
-export class AnchorSpaceExhaustedError extends Error {
-  readonly code = "E_ANCHOR_SPACE_EXHAUSTED";
+export class AnchorSpaceExhaustedError extends DomainError<"E_LARGE_FILE"> {
   readonly retiredCount: number;
   readonly servedCount: number;
-  constructor(retiredCount: number, servedCount: number, reservedCount: number) {
-    super(
-      `[MODEL] [E_ANCHOR_SPACE_EXHAUSTED] Anchor space exhausted (retired ${retiredCount} + served ${servedCount} = ${reservedCount} of ${HASH_SPACE}); promotion will clear retired — re-read recommended, stale-anchor checks degraded until next full read.`,
-    );
+  constructor(retiredCount: number, servedCount: number, _reservedCount: number) {
+    // Channel rule: hard capacity refusal the model must route around → MODEL via the registry.
+    super("E_LARGE_FILE", { limitKind: "hash-space", limit: HASH_SPACE });
     this.name = "AnchorSpaceExhaustedError";
     this.retiredCount = retiredCount;
     this.servedCount = servedCount;
@@ -142,7 +141,7 @@ function nextZeroBit(bits: Uint32Array, start: number): number {
     if (idx >= totalBits) idx -= totalBits;
   }
   throw new Error(
-    `[MODEL] [E_ANCHOR_SPACE_EXHAUSTED] Anchor space exhausted — probing failed over ${HASH_SPACE} slots (reserved full).`,
+    `Anchor space exhausted — probing failed over ${HASH_SPACE} slots (reserved full).`,
   );
 }
 function assignHash(used: Uint32Array, baseIdx: number, hint: { value: number }): string {
@@ -179,7 +178,8 @@ export function lineHashesPure(
     }
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e);
-    if (msg.includes("E_ANCHOR_SPACE_EXHAUSTED") || msg.includes("Cannot allocate")) {
+    if (e instanceof AnchorSpaceExhaustedError) throw e;
+    if (msg.includes("probing failed over") || msg.includes("Cannot allocate")) {
       const rc = retiredCount ?? reservedHashes.size;
       const sc = servedCount ?? 0;
       const reserved = reservedHashes.size;
@@ -297,7 +297,8 @@ export function mapStableHashes(
     }
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e);
-    if (msg.includes("E_ANCHOR_SPACE_EXHAUSTED")) {
+    if (e instanceof AnchorSpaceExhaustedError) throw e;
+    if (msg.includes("probing failed over") || msg.includes("Cannot allocate")) {
       const rc = retiredCount ?? reservedHashes.size;
       const sc = servedCount ?? 0;
       throw new AnchorSpaceExhaustedError(rc, sc, reservedHashes.size);

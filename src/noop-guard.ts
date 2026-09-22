@@ -1,3 +1,4 @@
+import { formatError, formatWarning } from "./domain-errors.js";
 import { NOOP_LOOP_THRESHOLD } from "./constants.js";
 
 type NoopLoopEntry = {
@@ -51,15 +52,25 @@ export type NoopPolicyOutcome =
 
 export function runNoopPolicySync(input: NoopPolicyInput, count: number): NoopPolicyOutcome {
   if (count >= NOOP_LOOP_THRESHOLD) {
-    const message = input.batch
-      ? `[E_NOOP_LOOP] ${input.ref}: identical edit (${input.removeFrom} → ${input.removeTo}) submitted ${count}×, no changes each time. Range already contains this text; resend will reject the batch.`
-      : `[E_NOOP_LOOP] identical edit (${input.removeFrom} → ${input.removeTo} ${input.ref}) submitted ${count}×, no changes each time. Range already contains this text; resend will reject.`;
+    const message = formatError("E_NOOP_LOOP", {
+      ref: input.ref,
+      removeFrom: input.removeFrom,
+      removeTo: input.removeTo,
+      count,
+      batch: input.batch,
+      servedBlock: "",
+    });
     return { action: "reject", count, message };
   }
   if (count === 2) {
-    const notice = input.batch
-      ? `[E_NOOP_LOOP] Notice: ${input.ref} — identical edit no-op'd twice; range already has this text. Resend will reject the batch.`
-      : `[E_NOOP_LOOP] Notice: identical edit (${input.removeFrom} → ${input.removeTo} ${input.ref}) no-op'd twice; range already has this text. Resend will reject.`;
+    // Channel rule: applied-tier notices are human-observable → USER audience via the registry.
+    const notice = formatWarning("W_NOOP", {
+      ref: input.ref,
+      removeFrom: input.removeFrom,
+      removeTo: input.removeTo,
+      batch: input.batch,
+      count,
+    });
     return { action: "warn", count, notice };
   }
   return { action: "proceed", count };

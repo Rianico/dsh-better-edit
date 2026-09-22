@@ -40,12 +40,14 @@ import { AnchorSpaceExhaustedError, HASH_SPACE } from "../hashline/hash-assign.j
 function isAnchorSpaceExhausted(e: unknown): boolean {
   return (
     e instanceof AnchorSpaceExhaustedError ||
-    (e instanceof Error && e.message.includes("E_ANCHOR_SPACE_EXHAUSTED"))
+    (e instanceof Error && e.message.includes("probing failed over"))
   );
 }
 
 function promotionWarning(retiredSize: number, servedLen: number): string {
-  return `[E_ANCHOR_SPACE_EXHAUSTED] Anchor space exhausted (retired ${retiredSize} + served ${servedLen} of ${HASH_SPACE}); promotion cleared retired — re-read recommended, stale-anchor checks degraded until next full read.`;
+  // Soft promotion notice: plain non-header text (no [E_] code, no audience).
+  // The hard capacity refusal routes through E_LARGE_FILE (hash-space).
+  return `Anchor space exhausted (retired ${retiredSize} + served ${servedLen} of ${HASH_SPACE}); promotion cleared retired — re-read recommended, stale-anchor checks degraded until next full read.`;
 }
 
 async function clearRetiredForPromotion(
@@ -80,9 +82,7 @@ async function retryLineHashesWithPromotion(
     return await fn(recomputed, new Set<string>());
   } catch (e2: unknown) {
     if (isAnchorSpaceExhausted(e2))
-      throw new Error(
-        `[MODEL] [E_ANCHOR_SPACE_EXHAUSTED] Anchor space exhausted even after promotion (served ${servedLen} of ${HASH_SPACE}); file too large for hashline — use write.`,
-      );
+      throw new DomainError("E_LARGE_FILE", { limitKind: "hash-space", limit: HASH_SPACE });
     throw e2;
   }
 }
@@ -97,6 +97,8 @@ import {
   type ServeRecordPolicy,
   type ServedRow,
 } from "../hashline/anchor-pipeline.js";
+import { DomainError, formatError, formatWarning } from "../domain-errors.js";
+import type { EditMode } from "../contract.js";
 import { findSnapshotPathsByHashes } from "../hash-store.js";
 import { clearNoopLoop, noopPayloadKey, trackNoopPayload } from "../noop-guard.js";
 import { NOOP_LOOP_THRESHOLD } from "../constants.js";
@@ -113,6 +115,8 @@ export interface PreparedItem {
   remove_to: string;
   replacement_text: string;
   pathWarning?: string;
+  /** Request-level edit mode ("general" default, "literal" bypasses served-echo). */
+  mode?: EditMode;
 }
 
 export interface FileEditResult {
@@ -166,13 +170,15 @@ export async function resolveMissingPath(
   if (matches.length === 1) {
     return {
       path: matches[0]!,
-      warning: `[MODEL] [E_BAD_PAYLOAD] Autocorrected: missing "path" resolved to ${matches[0]} — the only file whose stored hashes contain both anchors.`,
+      warning: formatError("E_BAD_PAYLOAD", {
+        message: `Autocorrected: missing "path" resolved to ${matches[0]} — the only file whose stored hashes contain both anchors.`,
+      }),
     };
   }
   if (matches.length > 1) {
-    throw new Error(
-      `[MODEL] [E_BAD_PAYLOAD] Edit request requires a non-empty "path" string; the anchors match multiple known files: ${matches.join(", ")}. Include the intended path.`,
-    );
+    throw new DomainError("E_BAD_PAYLOAD", {
+      message: `Edit request requires a non-empty "path" string; the anchors match multiple known files: ${matches.join(", ")}. Include the intended path.`,
+    });
   }
   return undefined;
 }
@@ -243,6 +249,8 @@ export interface ApplyOneInput {
   epochSnapshotId?: string;
   curSnapshotId?: string;
   strictPos?: boolean;
+  /** Request-level edit mode ("general" default, "literal" bypasses served-echo). */
+  mode?: EditMode;
   sessionKey?: string;
   /** Pre-resolved edit (single path keeps resEdit before IO for error order). */
   edit?: HEdit;
@@ -310,6 +318,7 @@ export async function applyOne(
       input.epochSnapshotId,
       input.curSnapshotId,
       input.strictPos,
+      input.mode,
     );
   } catch (error) {
     if (error instanceof AnchorMismatchError || error instanceof ServedRejectionError) {
@@ -432,12 +441,26 @@ export async function enforceNoopLoop(opts: NoopLoopOptions): Promise<string | u
       const echoRows = buildRangeEcho(opts.range!.startLine, opts.range!.endLine, originalHashes);
       const echo = fmtServedRows(echoRows, splitLines(opts.originalNormalized));
       await recordEchoServes(sessionKey, absolutePath, echoRows, "live", originalHashes.length);
-      throw new Error(
-        `[E_NOOP_LOOP] identical edit (${removeFrom} → ${removeTo} in ${displayPath}) submitted ${count}×, no changes each time. Range already contains this text; resend will reject. Current range:\n${echo}`,
-      );
+      throw new DomainError("E_NOOP_LOOP", {
+        ref: displayPath,
+        removeFrom,
+        removeTo,
+        count,
+        batch: false,
+        servedBlock: echo,
+        path: displayPath,
+      });
     }
     if (count === 2) {
-      return `[E_NOOP_LOOP] Notice: identical edit (${removeFrom} → ${removeTo} in ${displayPath}) no-op'd twice; range already has this text. Resend will reject.`;
+      // Channel rule: applied-tier notices are human-observable → USER audience via the registry.
+      return formatWarning("W_NOOP", {
+        ref: displayPath,
+        removeFrom,
+        removeTo,
+        batch: false,
+        count,
+        path: displayPath,
+      });
     }
     return undefined;
   }
@@ -448,13 +471,25 @@ export async function enforceNoopLoop(opts: NoopLoopOptions): Promise<string | u
     if (echoRows) {
       await recordEchoServes(sessionKey, absolutePath, echoRows, "live", originalHashes.length);
     }
-    throw new Error(
-      `[E_NOOP_LOOP] edits[${index}] (${displayPath}): identical edit (${removeFrom} → ${removeTo}) submitted ${count}×, no changes each time. Range already has this text; resend will reject the batch.` +
-        (echoRows ? ` Current on-disk range:\n${fmtServedRows(echoRows, originalLines)}` : ""),
-    );
+    throw new DomainError("E_NOOP_LOOP", {
+      ref: `edits[${index}] (${displayPath})`,
+      removeFrom,
+      removeTo,
+      count,
+      batch: true,
+      servedBlock: echoRows
+        ? `Current on-disk range:\n${fmtServedRows(echoRows, originalLines)}`
+        : "",
+    });
   }
   if (count === 2) {
-    return `[E_NOOP_LOOP] Notice: edits[${index}] (${displayPath}) — identical edit no-op'd twice; range already has this text. Resend will reject the batch.`;
+    return formatWarning("W_NOOP", {
+      ref: `edits[${index}] (${displayPath})`,
+      removeFrom,
+      removeTo,
+      batch: true,
+      count,
+    });
   }
   return undefined;
 }
@@ -552,6 +587,7 @@ export async function runFileEdits(
         epochSnapshotId,
         curSnapshotId,
         strictPos,
+        mode: item.mode,
       },
       async (error, edit) => {
         if (error instanceof AnchorMismatchError || error instanceof ServedRejectionError) {
@@ -574,16 +610,20 @@ export async function runFileEdits(
           const echoBlock = echoRows
             ? ` Current on-disk range for edits[${item.index}] (unchanged — nothing was written):\n${fmtServedRows(echoRows, originalLines)}`
             : " Call read() to get fresh anchors.";
-          throw new Error(
-            `[E_BATCH_ABORT] edits[${item.index}] (${item.path}) failed: ${error.message}${echoBlock}\n` +
-              "The whole batch was rejected and NOTHING was written — no file changed and earlier items in the batch were NOT applied. Fix the failing edit (and any later edit that depends on it), then resubmit the batch.",
-          );
+          throw new DomainError("E_BATCH_ABORT", {
+            index: item.index,
+            path: item.path,
+            inner: error.message,
+            echoBlock,
+          });
         }
         const message = error instanceof Error ? error.message : String(error);
-        throw new Error(
-          `[E_BATCH_ABORT] edits[${item.index}] (${item.path}) failed: ${message}\n` +
-            "The whole batch was rejected and NOTHING was written — no file changed and earlier items in the batch were NOT applied.",
-        );
+        throw new DomainError("E_BATCH_ABORT", {
+          index: item.index,
+          path: item.path,
+          inner: message,
+          echoBlock: "",
+        });
       },
     );
 

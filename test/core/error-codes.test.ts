@@ -1,10 +1,13 @@
 import { describe, expect, it } from "vitest";
 import { assertEditRequest } from "../../src/contract.js";
 import { CodedError, codeOf } from "../../src/utils.js";
+import { DomainError } from "../../src/domain-errors.js";
 import {
   resEdit,
   verifyServedRange,
   AnchorMismatchError,
+  EditHashEchoError,
+  isAnchorMismatch,
   ServedRejectionError,
   lineHashesPure,
 } from "../../src/hashline/index.js";
@@ -25,18 +28,18 @@ describe("structured error codes (#55 S1)", () => {
       assertEditRequest({ path: 123, edits: [] });
       expect.unreachable();
     } catch (error) {
-      expect(error).toBeInstanceOf(CodedError);
-      expect((error as CodedError).code).toBe("E_BAD_PAYLOAD");
+      expect(error).toBeInstanceOf(DomainError);
+      expect((error as DomainError<"E_BAD_PAYLOAD">).code).toBe("E_BAD_PAYLOAD");
       expect(codeOf(error)).toBe("E_BAD_PAYLOAD");
     }
   });
 
-  it("anchor-syntax throws carry bare E_BAD_ANCHOR", () => {
+  it("anchor-syntax throws carry E_MALFORMED_ANCHOR", () => {
     expect(
       codeOfThrow(() =>
         resEdit({ remove_from: "MQX│x", remove_to: "MQX", replacement_text: "y" } as any),
       ),
-    ).toBe("E_BAD_ANCHOR");
+    ).toBe("E_MALFORMED_ANCHOR");
   });
 
   it("retired anchor with changed canon carries E_STALE_RANGE", () => {
@@ -102,9 +105,31 @@ describe("structured error codes (#55 S1)", () => {
   });
 
   it("anchor mismatch carries E_STALE_ANCHOR", () => {
-    const error = new AnchorMismatchError("m", []);
+    const error = new AnchorMismatchError("E_STALE_ANCHOR", { headline: "m", servedRows: [] });
+    expect(error).toBeInstanceOf(DomainError);
     expect(error.code).toBe("E_STALE_ANCHOR");
+    expect(error.message).toBe("[MODEL] [E_STALE_ANCHOR] m");
     expect(codeOf(error)).toBe("E_STALE_ANCHOR");
+  });
+
+  it("echo refusal is E_SUSPICIOUS_TEXT on every channel (not E_STALE_ANCHOR)", () => {
+    const error = new EditHashEchoError({
+      target: "edit",
+      path: "p",
+      line: 2,
+      hash: "abc",
+      servedLine: 2,
+    });
+    // Structured code, message header and audience agree …
+    expect(error).toBeInstanceOf(DomainError);
+    expect(error.code).toBe("E_SUSPICIOUS_TEXT");
+    expect(error.message.startsWith("[MODEL] [E_SUSPICIOUS_TEXT] ")).toBe(true);
+    expect(error.audience).toBe("MODEL");
+    // … while the existing reject-and-serve branches still recognise it.
+    expect(error).toBeInstanceOf(AnchorMismatchError);
+    expect(isAnchorMismatch(error)).toBe(true);
+    expect(error).not.toBeInstanceOf(ServedRejectionError);
+    expect(codeOf(error)).toBe("E_SUSPICIOUS_TEXT");
   });
 
   it("codeOf falls back to message convention, else undefined", () => {

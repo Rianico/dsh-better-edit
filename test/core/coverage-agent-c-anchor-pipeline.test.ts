@@ -14,7 +14,7 @@ import { initHasher } from "../../src/hashline/hash-assign.js";
 
 describe("coverage: anchor-pipeline parseHashRef / diagRef branches", () => {
   it("rejects empty and numeric anchors", () => {
-    expect(() => parseHashRef("")).toThrow(/E_BAD_ANCHOR.*Invalid anchor/);
+    expect(() => parseHashRef("")).toThrow(/E_MALFORMED_ANCHOR.*Invalid anchor/);
     expect(() => parseHashRef("123abc")).toThrow(/no line numbers/);
     expect(() => parseHashRef("ab")).toThrow(/Expected a 3-char/);
     expect(() => parseHashRef("toolong!")).toThrow(/Expected a 3-char/);
@@ -24,7 +24,7 @@ describe("coverage: anchor-pipeline parseHashRef / diagRef branches", () => {
   });
   it("rejects multiline block with pipes", () => {
     const block = "abc│line one\ndef│line two";
-    expect(() => parseHashRef(block)).toThrow(/Invalid anchor — remove_from must be a single bare/);
+    expect(() => parseHashRef(block)).toThrow(/remove_from must be a single bare 3-char hash/);
   });
   it("parses valid 3-char alphanumeric", () => {
     // generate a valid hash via hasher
@@ -36,37 +36,37 @@ describe("coverage: anchor-pipeline parseHashRef / diagRef branches", () => {
 });
 
 describe("coverage: anchor-pipeline resEdit warnings", () => {
-  it("rejects HASH│ prefix in remove_from/to with E_BAD_ANCHOR", () => {
+  it("rejects HASH│ prefix in remove_from/to with E_MALFORMED_ANCHOR", () => {
     const warnings: string[] = [];
     const edit: any = {
       remove_from: "abc│content",
       remove_to: "def│content",
       replacement_text: "new",
     };
-    expect(() => resEdit(edit, warnings)).toThrow(/\[E_BAD_ANCHOR\]/);
+    expect(() => resEdit(edit, warnings)).toThrow(/\[E_MALFORMED_ANCHOR\]/);
     expect(warnings).toEqual([]);
   });
-  it("rejects diff markers +/- in anchors with E_BAD_ANCHOR", () => {
+  it("rejects diff markers +/- in anchors with E_MALFORMED_ANCHOR", () => {
     const w1: string[] = [];
     expect(() =>
       resEdit({ remove_from: "+abc│x", remove_to: "abc", replacement_text: "y" } as any, w1),
-    ).toThrow(/\[E_BAD_ANCHOR\]/);
+    ).toThrow(/\[E_MALFORMED_ANCHOR\]/);
     expect(() =>
       resEdit({ remove_from: "+abc│x", remove_to: "abc", replacement_text: "y" } as any, w1),
     ).toThrow(/diff-preview/);
     const w2: string[] = [];
     expect(() =>
       resEdit({ remove_from: "-abc│x", remove_to: "abc", replacement_text: "y" } as any, w2),
-    ).toThrow(/\[E_BAD_ANCHOR\]/);
+    ).toThrow(/\[E_MALFORMED_ANCHOR\]/);
     expect(() =>
       resEdit({ remove_from: "-abc│x", remove_to: "abc", replacement_text: "y" } as any, w2),
     ).toThrow(/leading "-"/);
   });
-  it("rejects multiline anchor block with E_BAD_ANCHOR", () => {
+  it("rejects multiline anchor block with E_MALFORMED_ANCHOR", () => {
     const warnings: string[] = [];
     const block = "abc│first\nother line\ndef│second";
     const edit: any = { remove_from: block, remove_to: "def", replacement_text: "new" };
-    expect(() => resEdit(edit, warnings)).toThrow(/\[E_BAD_ANCHOR\]/);
+    expect(() => resEdit(edit, warnings)).toThrow(/\[E_MALFORMED_ANCHOR\]/);
     expect(() => resEdit(edit, warnings)).toThrow(/extracted first hash/);
   });
   it("rejects missing fields", () => {
@@ -92,14 +92,14 @@ describe("coverage: anchor-pipeline resEdit warnings", () => {
 });
 
 describe("coverage: anchor-pipeline applyEdit", () => {
-  it("rejects bare HASH│ prefixes in content lines with E_BAD_ANCHOR", () => {
+  it("rejects bare HASH│ prefixes in content lines with E_MALFORMED_ANCHOR", () => {
     const content = "a\nb\nc";
     const hashes = lineHashesPure(content);
     const edit: any = {
       hash_bounds: [{ hash: hashes[0]! }, { hash: hashes[0]! }],
       content_lines: [`${hashes[1]!}│b`, "new line"],
     };
-    expect(() => applyEdit(content, edit, undefined, hashes)).toThrow(/\[E_BAD_ANCHOR\]/);
+    expect(() => applyEdit(content, edit, undefined, hashes)).toThrow(/\[E_MALFORMED_ANCHOR\]/);
     expect(() => applyEdit(content, edit, undefined, hashes)).toThrow(/HASH│/);
   });
 
@@ -177,7 +177,7 @@ describe("coverage: anchor-pipeline applyEdit", () => {
       content_lines: [`${hashes[0]!}│a`, "new"],
     };
     expect(() => applyEdit(content, edit, undefined, hashes, "file.txt", served as any)).toThrow(
-      /E_SERVED_ECHO/,
+      /E_SUSPICIOUS_TEXT/,
     );
   });
 

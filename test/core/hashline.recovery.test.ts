@@ -13,7 +13,9 @@ describe("applyEdit — recovery scenarios", () => {
       resEdit({ remove_from: hashes[3]!, remove_to: hashes[1]!, replacement_text: "X" }),
     );
     expect(result.content).toBe("a\nX\ne");
-    expect(result.warnings?.[0]).toMatch(/reversed remove_from\/remove_to/);
+    expect(result.warnings?.[0]).toBe(
+      `[USER] [W_REVERSED_ANCHORS] anchor_from/anchor_to were reversed (${hashes[3]} after ${hashes[1]}); healed and applied with the range swapped.`,
+    );
   });
 
   it("rejects stale anchor", async () => {
@@ -136,7 +138,7 @@ describe("applyEdit — recovery scenarios", () => {
     expect(() => resEdit(edit)).toThrow(/Invalid anchor/);
   });
 
-  it("rejects bare hash prefix in content_lines with E_BAD_ANCHOR", async () => {
+  it("rejects bare hash prefix in content_lines with E_MALFORMED_ANCHOR", async () => {
     const content = "a\nb\nc\nd\ne";
     const hashes = await lineHashes(content, home.testPath);
     expect(() =>
@@ -148,7 +150,7 @@ describe("applyEdit — recovery scenarios", () => {
           replacement_text: `${hashes[1]!}│b\nX`,
         }),
       ),
-    ).toThrow(/\[E_BAD_ANCHOR\]/);
+    ).toThrow(/\[E_MALFORMED_ANCHOR\]/);
     expect(() =>
       applyEdit(
         content,
@@ -161,7 +163,7 @@ describe("applyEdit — recovery scenarios", () => {
     ).toThrow(/stripped "HASH│" prefix/);
   });
 
-  it("rejects diff preview rows in content_lines with E_BAD_ANCHOR", async () => {
+  it("rejects diff preview rows in content_lines with E_MALFORMED_ANCHOR", async () => {
     const content = "a\nb\nc";
     const hashes = await lineHashes(content, home.testPath);
     expect(() =>
@@ -173,7 +175,7 @@ describe("applyEdit — recovery scenarios", () => {
           replacement_text: `+${hashes[1]!}│B`,
         }),
       ),
-    ).toThrow(/\[E_BAD_ANCHOR\]/);
+    ).toThrow(/\[E_MALFORMED_ANCHOR\]/);
     expect(() =>
       applyEdit(
         content,

@@ -32,6 +32,7 @@ import type { ToolExecution } from "@deepseek-ai/dsh-tools";
 import type { SandboxExecutionPolicy } from "@deepseek-ai/dsh-sandbox";
 import type { FsSandboxController } from "./sandbox.js";
 
+import { formatError } from "./domain-errors.js";
 import { loadConfig } from "./store-config.js";
 import { canon } from "./hashline/hash-assign.js";
 import { normFromText, fileSnap } from "./file-reader.js";
@@ -176,6 +177,7 @@ export async function execPipeline(
       curSnapshotId,
       strictPos,
       edit,
+      mode: params.mode,
     },
     async (error) => {
       if (error instanceof AnchorMismatchError || error instanceof ServedRejectionError) {
@@ -456,7 +458,7 @@ export async function execute(opts: {
       sandboxPolicy,
       signal,
       undoUnavailableMessage: (displayPath) =>
-        `[E_UNDO_UNAVAILABLE] Cannot persist undo history to the hash store; the edit was NOT applied and ${displayPath} is unchanged. Retry the edit, or use write if the store cannot be recovered.`,
+        formatError("E_UNDO_UNAVAILABLE", { path: displayPath }),
     });
     const built = buildBatchResult([toSection()]);
     await recordIfNeeded(built);
@@ -483,8 +485,8 @@ export async function execute(opts: {
       sandbox,
       sandboxPolicy,
       signal,
-      undoUnavailableMessage: () =>
-        "[E_UNDO_UNAVAILABLE] Cannot persist undo history to the hash store; the batch was NOT applied and no file was written. Retry the batch, or use write if the store cannot be recovered.",
+      undoUnavailableMessage: (displayPath) =>
+        formatError("E_UNDO_UNAVAILABLE", { path: displayPath, batch: true }),
     });
   }
 

@@ -6,6 +6,7 @@ import {
   HASH_SPACE,
   lineHashesPure,
   mapStableHashes,
+  AnchorSpaceExhaustedError,
   idxToHash,
 } from "../src/hashline/hash-assign.js";
 import { shutdownHashStore } from "../src/hash-store.js";
@@ -89,10 +90,12 @@ describe("51 hazard GC", () => {
     expect(new Set(newHashes).size).toBe(10);
   });
 
-  it("anchor space exhaustion throws E_ANCHOR_SPACE_EXHAUSTED distinct from E_LARGE_FILE", async () => {
+  it("anchor space exhaustion throws E_LARGE_FILE (hash-space) via AnchorSpaceExhaustedError", async () => {
     const content = Array.from({ length: HASH_SPACE + 1 }, () => "x").join("\n");
-    expect(() => lineHashesPure(content)).toThrow("E_ANCHOR_SPACE_EXHAUSTED");
-    expect(() => lineHashesPure(content)).not.toThrow("E_LARGE_FILE");
+    expect(() => lineHashesPure(content)).toThrow(
+      "[MODEL] [E_LARGE_FILE] Cannot allocate a unique hash anchor",
+    );
+    expect(() => lineHashesPure(content)).toThrowError(AnchorSpaceExhaustedError);
     const { normFromText } = await import("../src/file-view.js");
     const longContent = Array.from({ length: 300000 }, () => "y").join("\n");
     await expect(

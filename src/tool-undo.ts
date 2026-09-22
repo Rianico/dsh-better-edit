@@ -9,6 +9,7 @@ import type { Context } from "@deepseek-ai/cordis";
 import { defineTool } from "@deepseek-ai/dsh-tools";
 import { toLF, stripBOM, genDiff, restoreEndings } from "./edit-diff.js";
 import { cntDiff, splitLines, codeOf } from "./utils.js";
+import { formatError } from "./domain-errors.js";
 import { assertUndoRequest } from "./contract.js";
 import { normalizeRequest as normReq } from "./contract.js";
 import { upsertSnapshotFor } from "./hash-store.js";
@@ -75,13 +76,13 @@ export function buildUndoTool(io: FileIO, sandbox: FsSandboxController) {
           const message = error instanceof Error ? error.message : String(error);
           if (codeOf(error) === "E_NOT_FOUND") {
             await clearUndo(absolutePath);
-            return `[E_UNDO_STALE] cannot undo on ${path}: file no longer exists.`;
+            return formatError("E_UNDO_STALE", { path, reason: "deleted" });
           }
           throw error;
         }
         if (currentRaw !== undo.bom + restoreEndings(undo.resultContent, undo.originalEnding)) {
           await clearUndo(absolutePath);
-          return `[E_UNDO_STALE] cannot undo on ${path}: file modified after edit — undo would overwrite changes.`;
+          return formatError("E_UNDO_STALE", { path, reason: "modified" });
         }
 
         const { text: currentStripped } = stripBOM(currentRaw);

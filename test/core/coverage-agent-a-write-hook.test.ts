@@ -122,7 +122,7 @@ describe("write-hook coverage agent-a", () => {
         const denial = await withWorkspace(cwd, () =>
           servedHashEchoDenial(io, file, preview.text, cwd, sessionKey),
         );
-        expect(denial).toContain("E_SERVED_ECHO");
+        expect(denial).toContain("E_SUSPICIOUS_TEXT");
         expect(denial).toContain(file);
       } finally {
         shutdownHashStore();
@@ -265,7 +265,7 @@ describe("write-hook coverage agent-a", () => {
           nextPre3,
         );
         expect(dec3.kind).toBe("deny");
-        expect((dec3 as any).reason).toContain("E_SERVED_ECHO");
+        expect((dec3 as any).reason).toContain("E_SUSPICIOUS_TEXT");
         expect(nextPre3).not.toHaveBeenCalled();
 
         // missing path/content -> next

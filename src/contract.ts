@@ -10,9 +10,12 @@
  */
 
 import { EDITS_MAX_ITEMS } from "./constants.js";
-import { isRec, normalizeFilePath, rejectUnknownFields, CodedError } from "./utils.js";
+import { isRec, normalizeFilePath, rejectUnknownFields } from "./utils.js";
+import { DomainError } from "./domain-errors.js";
 
 // ---- request shapes --------------------------------------------------------
+
+export type EditMode = "general" | "literal";
 
 export type EditItem = {
   remove_from: string;
@@ -23,6 +26,11 @@ export type EditItem = {
 export type EditRequest = {
   path: string | null;
   edits: EditItem[];
+  /**
+   * "general" (default) refuses bytes reproducing served rows;
+   * "literal" declares them as intended file content (W_LITERAL_BYPASS).
+   */
+  mode?: EditMode;
 };
 
 // legacy single-edit shape retained for mutation.ts internal API
@@ -31,6 +39,8 @@ export interface EditParams {
   remove_from: string;
   remove_to: string;
   replacement_text: string;
+  /** Legacy single-edit path: literal bypasses the served-echo guard. */
+  mode?: EditMode;
 }
 
 export interface ReadParams {
@@ -110,7 +120,7 @@ export function editRequestFrom(input: unknown): NormalizedEditRequest | undefin
     // alias will be normalized by normalizeFilePath before editRequestFrom in normReq path,
     // but handle here for direct calls
   }
-  const { path, edits } = rec as { path?: unknown; edits?: unknown };
+  const { path, edits, mode } = rec as { path?: unknown; edits?: unknown; mode?: unknown };
   // Gemma-4 tool-call bleed (#55): the model may wrap the path in <|>, │, |,
   // quotes, or backticks after seeing │ separators. Strip wrappers iteratively.
   let effectivePath = path;
@@ -131,7 +141,12 @@ export function editRequestFrom(input: unknown): NormalizedEditRequest | undefin
     if (!normalized) return undefined;
     items.push(normalized);
   }
-  return { path: effectivePath as string | null, edits: items };
+  let effectiveMode: EditMode = "general";
+  if (mode !== undefined) {
+    if (mode !== "general" && mode !== "literal") return undefined;
+    effectiveMode = mode;
+  }
+  return { path: effectivePath as string | null, edits: items, mode: effectiveMode };
 }
 
 /**
@@ -199,7 +214,7 @@ function describeReceived(input: unknown): string {
 
 // ---- filed sets (declared once) ---------------------------------------------
 
-const EDIT_KS = new Set(["path", "edits", "sandbox_permissions", "justification"]);
+const EDIT_KS = new Set(["path", "edits", "mode", "sandbox_permissions", "justification"]);
 const READ_KS = new Set(["path", "offset", "limit", "encoding"]);
 const EDIT_ITEM_KS = new Set(["remove_from", "remove_to", "replacement_text"]);
 
@@ -220,7 +235,11 @@ export function normalizeRequest(input: unknown): unknown {
   }
   const valid = editRequestFrom(record);
   if (!valid) return record;
-  const normalized: Record<string, unknown> = { path: valid.path, edits: valid.edits };
+  const normalized: Record<string, unknown> = {
+    path: valid.path,
+    edits: valid.edits,
+    mode: valid.mode,
+  };
   // preserve non-standard fields like sandbox_permissions/justification for later reject check? but we strip to valid fields and re-add them?
   for (const k of ["sandbox_permissions", "justification"]) {
     if (k in record) (normalized as Record<string, unknown>)[k] = record[k];
@@ -237,40 +256,42 @@ export function prepareEditArguments(args: unknown): Record<string, unknown> {
   if (valid) {
     return { path: valid.path, edits: (args as Record<string, unknown>).edits };
   }
-  throw new CodedError(
-    "E_BAD_PAYLOAD",
-    `[MODEL] [E_BAD_PAYLOAD] ${EDIT_TUPLE_HINT} ${describeReceived(args)}`,
-  );
+  throw new DomainError("E_BAD_PAYLOAD", {
+    message: `${EDIT_TUPLE_HINT} ${describeReceived(args)}`,
+  });
 }
 
 // ---- assertions ---------------------------------------------------------------
 
 export function assertEditRequest(request: unknown): asserts request is NormalizedEditRequest {
   if (!isNormalizedEdit(request)) {
-    throw new CodedError(
-      "E_BAD_PAYLOAD",
-      "[MODEL] [E_BAD_PAYLOAD] Edit request must be exactly { path, edits: [[remove_from, remove_to, replacement_text], ...] } or { path, edits: [{remove_from, remove_to, replacement_text}, ...] } (mixed batches allowed).",
-    );
+    throw new DomainError("E_BAD_PAYLOAD", {
+      message:
+        "Edit request must be exactly { path, edits: [[remove_from, remove_to, replacement_text], ...] } or { path, edits: [{remove_from, remove_to, replacement_text}, ...] } (mixed batches allowed).",
+    });
   }
   rejectUnknownFields(request as Record<string, unknown>, EDIT_KS, "Edit request");
   const req = request as NormalizedEditRequest;
   if (req.path !== null && (typeof req.path !== "string" || req.path.length === 0)) {
-    throw new CodedError(
-      "E_BAD_PAYLOAD",
-      "[MODEL] [E_BAD_PAYLOAD] Edit request path must be a non-empty string or null.",
-    );
+    throw new DomainError("E_BAD_PAYLOAD", {
+      message: "Edit request path must be a non-empty string or null.",
+    });
+  }
+  if (req.mode !== undefined && req.mode !== "general" && req.mode !== "literal") {
+    throw new DomainError("E_BAD_PAYLOAD", {
+      message:
+        'Edit request "mode" must be "general" or "literal" (absent means "general"). Reproduced served rows are refused unless mode is "literal".',
+    });
   }
   if (!Array.isArray(req.edits) || req.edits.length === 0) {
-    throw new CodedError(
-      "E_BAD_PAYLOAD",
-      '[MODEL] [E_BAD_PAYLOAD] Edit request requires a non-empty "edits" array.',
-    );
+    throw new DomainError("E_BAD_PAYLOAD", {
+      message: 'Edit request requires a non-empty "edits" array.',
+    });
   }
   if (req.edits.length > EDITS_MAX_ITEMS) {
-    throw new CodedError(
-      "E_BAD_PAYLOAD",
-      `[MODEL] [E_BAD_PAYLOAD] edit accepts at most ${EDITS_MAX_ITEMS} edits; got ${req.edits.length}. Split the batch.`,
-    );
+    throw new DomainError("E_BAD_PAYLOAD", {
+      message: `edit accepts at most ${EDITS_MAX_ITEMS} edits; got ${req.edits.length}. Split the batch.`,
+    });
   }
   for (let index = 0; index < req.edits.length; index++) {
     const item = req.edits[index]!;
@@ -279,49 +300,42 @@ export function assertEditRequest(request: unknown): asserts request is Normaliz
       typeof item.remove_to !== "string" ||
       typeof item.replacement_text !== "string"
     ) {
-      throw new CodedError(
-        "E_BAD_PAYLOAD",
-        `[MODEL] [E_BAD_PAYLOAD] Edit request edits[${index}] must be a three-position array [remove_from, remove_to, replacement_text] or an object {remove_from, remove_to, replacement_text}.`,
-      );
+      throw new DomainError("E_BAD_PAYLOAD", {
+        message: `Edit request edits[${index}] must be a three-position array [remove_from, remove_to, replacement_text] or an object {remove_from, remove_to, replacement_text}.`,
+      });
     }
   }
 }
 
 // legacy — now always fails with new shape message (batch_edit removed)
 export function assertBatchEditRequest(_request: unknown): asserts _request is BatchEditParams {
-  throw new CodedError(
-    "E_BAD_PAYLOAD",
-    "[MODEL] [E_BAD_PAYLOAD] batch_edit has been removed. Use edit with { path, edits: [[remove_from, remove_to, replacement_text], ...] }.",
-  );
+  throw new DomainError("E_BAD_PAYLOAD", {
+    message:
+      "batch_edit has been removed. Use edit with { path, edits: [[remove_from, remove_to, replacement_text], ...] }.",
+  });
 }
 
 export function assertReadRequest(request: unknown): asserts request is ReadParams {
   if (!isRec(request))
-    throw new CodedError(
-      "E_BAD_PAYLOAD",
-      "[MODEL] [E_BAD_PAYLOAD] Read request must be an object.",
-    );
+    throw new DomainError("E_BAD_PAYLOAD", { message: "Read request must be an object." });
   rejectUnknownFields(request, READ_KS, "Read request");
   if (typeof request.path !== "string" || request.path.length === 0) {
-    throw new CodedError(
-      "E_BAD_PAYLOAD",
-      '[MODEL] [E_BAD_PAYLOAD] Read request requires a non-empty "path" string.',
-    );
+    throw new DomainError("E_BAD_PAYLOAD", {
+      message: 'Read request requires a non-empty "path" string.',
+    });
   }
 }
 
 export function assertUndoRequest(request: unknown): asserts request is UndoParams {
   if (!isRec(request))
-    throw new CodedError(
-      "E_BAD_PAYLOAD",
-      "[MODEL] [E_BAD_PAYLOAD] undo_last_edit request must be an object.",
-    );
+    throw new DomainError("E_BAD_PAYLOAD", {
+      message: "undo_last_edit request must be an object.",
+    });
   normalizeFilePath(request);
   if (typeof request.path !== "string" || request.path.length === 0) {
-    throw new CodedError(
-      "E_BAD_PAYLOAD",
-      '[MODEL] [E_BAD_PAYLOAD] undo_last_edit request requires a non-empty "path" string.',
-    );
+    throw new DomainError("E_BAD_PAYLOAD", {
+      message: 'undo_last_edit request requires a non-empty "path" string.',
+    });
   }
 }
 

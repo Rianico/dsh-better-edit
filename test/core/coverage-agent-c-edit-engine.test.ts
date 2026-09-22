@@ -211,7 +211,7 @@ describe("coverage: edit-engine applyOne", () => {
         throw err as any;
       },
     ).catch(() => {});
-    expect(String(rejected)).toMatch(/E_STALE_ANCHOR|E_BAD_ANCHOR|AnchorMismatch/);
+    expect(String(rejected)).toMatch(/E_STALE_ANCHOR|E_MALFORMED_ANCHOR|AnchorMismatch/);
   });
 
   it("noop detection keeps original hashes", async () => {

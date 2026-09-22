@@ -17,7 +17,7 @@
  * @module dsh-better-edit/hashline/anchor-pipeline
  */
 
-import { abortIf, splitLines, rejectUnknownFields, clipLine, CodedError } from "../utils.js";
+import { abortIf, splitLines, rejectUnknownFields, clipLine } from "../utils.js";
 import {
   HASH_CLASS,
   HL_BARE_PREFIX_RE,
@@ -33,19 +33,24 @@ import {
 } from "./hash-assign.js";
 import { recordServed, servedPositionsOf } from "../session-view.js";
 import { SERVED_ECHO_CAP } from "../constants.js";
-import { NEW_CONTENT_NOT_STRING_MSG } from "../constants.js";
-
+import { NEW_CONTENT_NOT_STRING_MSG, NEW_CONTENT_BODY } from "../constants.js";
+import { DomainError, formatWarning } from "../domain-errors.js";
+import type { ErrorPayloadMap, ServedRow, DomainErrorCode } from "../domain-errors.js";
+import type { EditMode } from "../contract.js";
 export type Anchor = { hash: string };
 
-function diagRef(ref: string): string {
+function diagRef(ref: string): { rawAnchor: string; reason: string } {
   const trimmed = ref.trim();
 
   if (!trimmed.length) {
-    return `[MODEL] [E_BAD_ANCHOR] Invalid anchor. Expected a 3-char alphanumeric anchor (e.g. "aB3").`;
+    return { rawAnchor: trimmed, reason: 'Expected a 3-char alphanumeric anchor (e.g. "aB3").' };
   }
 
   if (/^\d+/.test(trimmed)) {
-    return `[MODEL] [E_BAD_ANCHOR] Invalid anchor. Use the hash alone (e.g. "aB3") — no line numbers or trailing content.`;
+    return {
+      rawAnchor: trimmed,
+      reason: 'Use the hash alone (e.g. "aB3") — no line numbers or trailing content.',
+    };
   }
 
   if (trimmed.includes("│") && trimmed.includes("\n")) {
@@ -58,13 +63,23 @@ function diagRef(ref: string): string {
     const firstHash = firstMatch?.[0] ?? "wUp";
     const lastHash = lastMatch?.[0] ?? "AU6";
     const preview = first.slice(0, 60);
-    return `[MODEL] [E_BAD_ANCHOR] Invalid anchor — remove_from must be a single bare 3-char hash (e.g. "wUp"), not a block with HASH│. Received ${lines.length} lines starting "${preview}…" — use only the first hash "${firstHash}" as remove_from and "${lastHash}" as remove_to, and put the new content (without HASH│) in replacement_text.`;
+    return {
+      rawAnchor: trimmed,
+      reason: `remove_from must be a single bare 3-char hash (e.g. "wUp"), not a block with HASH│. Received ${lines.length} lines starting "${preview}…" — use only the first hash "${firstHash}" as remove_from and "${lastHash}" as remove_to, and put the new content (without HASH│) in replacement_text.`,
+    };
   }
   if (trimmed.includes("│")) {
-    return `[MODEL] [E_BAD_ANCHOR] Invalid anchor "${trimmed}". remove_from and remove_to must contain the 3-char hash only — remove everything from "│" onward.`;
+    return {
+      rawAnchor: trimmed,
+      reason:
+        'remove_from and remove_to must contain the 3-char hash only — remove everything from "│" onward.',
+    };
   }
 
-  return `[MODEL] [E_BAD_ANCHOR] Invalid anchor "${trimmed}". Expected a 3-char alphanumeric anchor (e.g. "aB3").`;
+  return {
+    rawAnchor: trimmed,
+    reason: 'Expected a 3-char alphanumeric anchor (e.g. "aB3").',
+  };
 }
 
 function parseRef(ref: string): Anchor {
@@ -74,9 +89,9 @@ function parseRef(ref: string): Anchor {
     return { hash: trimmed };
   }
 
-  throw new CodedError("E_BAD_ANCHOR", diagRef(ref));
+  const diag = diagRef(ref);
+  throw new DomainError("E_MALFORMED_ANCHOR", { rawAnchor: diag.rawAnchor, reason: diag.reason });
 }
-
 export const parseHashRef = parseRef;
 
 export function parseText(edit: string): string[] {
@@ -147,10 +162,9 @@ function fmtMismatchWithServes(
   fileLines: string[],
   fileHashes: string[],
   filePath?: string,
-): { message: string; servedRows: ServedRow[] } {
-  assertAligned(fileLines, fileHashes, "fmtMismatch");
-
-  const out: string[] = [];
+): { headline: string; servedBlock: string; servedRows: ServedRow[] } {
+  const headlines: string[] = [];
+  const blocks: string[] = [];
   const servedRows: ServedRow[] = [];
   const seen = new Set<number>();
   const pushRow = (ln: number) => {
@@ -165,8 +179,8 @@ function fmtMismatchWithServes(
 
   const refList = notFound.map((m) => `"${m.ref.hash}"`).join(", ");
   if (notFound.length > 0) {
-    out.push(
-      `[MODEL] [E_STALE_ANCHOR] ${notFound.length} stale anchor${notFound.length > 1 ? "s" : ""}${filePath ? ` in ${filePath}` : ""}: ${refList}. Re-read for fresh anchors.`,
+    headlines.push(
+      `${notFound.length} stale anchor${notFound.length > 1 ? "s" : ""}${filePath ? ` in ${filePath}` : ""}: ${refList}. Re-read for fresh anchors.`,
     );
     for (const m of notFound) {
       const ctx = m.context;
@@ -178,16 +192,14 @@ function fmtMismatchWithServes(
         rows.push(`    ${ln}: ${fileHashes[ln - 1]}│${clipLine(fileLines[ln - 1] ?? "")}`);
         pushRow(ln);
       }
-      out.push("");
-      out.push(
+      blocks.push(
         `  Current context around resolved anchor "${ctx.hash}" (line ${ctx.line}):\n${rows.join("\n")}`,
       );
     }
   }
   if (ambiguous.length > 0) {
-    if (out.length > 0) out.push("");
-    out.push(
-      `[MODEL] [E_STALE_ANCHOR] ${ambiguous.length} ambiguous anchor${ambiguous.length > 1 ? "s" : ""}${filePath ? ` in ${filePath}` : ""}. Re-read for fresh anchors.`,
+    headlines.push(
+      `${ambiguous.length} ambiguous anchor${ambiguous.length > 1 ? "s" : ""}${filePath ? ` in ${filePath}` : ""}. Re-read for fresh anchors.`,
     );
     for (const m of ambiguous) {
       const sample = (m.candidates ?? []).slice(0, 5);
@@ -202,13 +214,11 @@ function fmtMismatchWithServes(
           return `    ${line}: ${fileHashes[line - 1]}│${content}`;
         })
         .join("\n");
-      out.push(`  Hash "${m.ref.hash}" matches lines ${sample.join(", ")}${more}.\n${lines}`);
+      blocks.push(`  Hash "${m.ref.hash}" matches lines ${sample.join(", ")}${more}.\n${lines}`);
     }
   }
-
-  return { message: out.join("\n"), servedRows };
+  return { headline: headlines.join("\n\n"), servedBlock: blocks.join("\n\n"), servedRows };
 }
-
 const ITEM_KS = new Set(["replacement_text", "remove_from", "remove_to"]);
 
 function assertItem(edit: Record<string, unknown>): void {
@@ -220,31 +230,27 @@ function assertItem(edit: Record<string, unknown>): void {
   );
 
   if ("remove_from" in edit && typeof edit.remove_from !== "string") {
-    throw new CodedError(
-      "E_BAD_PAYLOAD",
-      `[MODEL] [E_BAD_PAYLOAD] Field "remove_from" must be an anchor string (3-char hash).`,
-    );
+    throw new DomainError("E_BAD_PAYLOAD", {
+      message: `Field "remove_from" must be an anchor string (3-char hash).`,
+    });
   }
   if ("remove_to" in edit && typeof edit.remove_to !== "string") {
-    throw new CodedError(
-      "E_BAD_PAYLOAD",
-      `[MODEL] [E_BAD_PAYLOAD] Field "remove_to" must be an anchor string (3-char hash).`,
-    );
+    throw new DomainError("E_BAD_PAYLOAD", {
+      message: `Field "remove_to" must be an anchor string (3-char hash).`,
+    });
   }
   if (!("replacement_text" in edit)) {
-    throw new CodedError(
-      "E_BAD_PAYLOAD",
-      `[MODEL] [E_BAD_PAYLOAD] The edit requires a "replacement_text" field. Provide the replacement text (use "" to delete).`,
-    );
+    throw new DomainError("E_BAD_PAYLOAD", {
+      message: `The edit requires a "replacement_text" field. Provide the replacement text (use "" to delete).`,
+    });
   }
   if (typeof edit.replacement_text !== "string") {
-    throw new CodedError("E_BAD_PAYLOAD", NEW_CONTENT_NOT_STRING_MSG);
+    throw new DomainError("E_BAD_PAYLOAD", { message: NEW_CONTENT_BODY });
   }
   if (typeof edit.remove_from !== "string" || typeof edit.remove_to !== "string") {
-    throw new CodedError(
-      "E_BAD_PAYLOAD",
-      `[MODEL] [E_BAD_PAYLOAD] The edit requires "remove_from" and "remove_to" anchor strings (3-char hashes from read output).`,
-    );
+    throw new DomainError("E_BAD_PAYLOAD", {
+      message: `The edit requires "remove_from" and "remove_to" anchor strings (3-char hashes from read output).`,
+    });
   }
 }
 
@@ -269,23 +275,24 @@ export function resEdit(edit: HTEdit, _warnings?: string[]): HEdit {
       const hash = firstHashFromBlock(trimmed);
       if (hash) {
         const lines = trimmed.split("\n").length;
-        throw new CodedError(
-          "E_BAD_ANCHOR",
-          `[MODEL] [E_BAD_ANCHOR] extracted first hash "${hash}" from ${lines}-line block — use bare "${hash}" next time`,
-        );
+        throw new DomainError("E_MALFORMED_ANCHOR", {
+          rawAnchor: trimmed,
+          reason: `extracted first hash "${hash}" from ${lines}-line block — use bare "${hash}" next time`,
+        });
       }
     }
     const match = trimmed.match(ANCHOR_ROW_RE);
     if (match) {
-      let message: string;
+      let reason: string;
       if (match[1] === "+") {
-        message = `[E_BAD_ANCHOR] stripped diff-preview marker from remove_from/remove_to "${trimmed}".`;
+        reason = `stripped diff-preview marker from remove_from/remove_to — pass the bare anchor.`;
       } else if (match[1] === "-") {
-        message = `[E_BAD_ANCHOR] stripped leading "-" marker from remove_from/remove_to "${trimmed}".`;
+        reason = `stripped leading "-" marker from remove_from/remove_to — pass the bare anchor.`;
       } else {
-        message = `[E_BAD_ANCHOR] stripped "HASH│" prefix from remove_from/remove_to "${trimmed}".`;
+        reason = `stripped "HASH│" prefix from remove_from/remove_to — pass the bare anchor.`;
       }
-      throw new CodedError("E_BAD_ANCHOR", `[MODEL] ${message}`);
+      // Channel rule: the model must retry with the bare anchor → MODEL audience via the registry.
+      throw new DomainError("E_MALFORMED_ANCHOR", { rawAnchor: trimmed, reason });
     }
     return ref;
   }) as [string, string];
@@ -296,10 +303,9 @@ export function resEdit(edit: HTEdit, _warnings?: string[]): HEdit {
 }
 
 function warnUnicodeEsc(edit: HEdit, warnings: string[]): void {
-  if (edit.content_lines.some((line) => /\\uDDDD/i.test(line))) {
-    warnings.push(
-      "Detected literal \\uDDDD in edit content; no autocorrection applied. Verify whether this should be a real Unicode escape or plain text.",
-    );
+  const index = edit.content_lines.findIndex((line) => /\\uDDDD/i.test(line));
+  if (index !== -1) {
+    warnings.push(formatWarning("W_UNICODE_LITERAL", { line: index + 1 }));
   }
 }
 
@@ -322,14 +328,15 @@ function stripBarePrefixes(edit: HEdit, fileHashes: string[], _warnings: string[
       : `${matchedCount}/${stripped.length} matched`;
   if (matchedCount === stripped.length) {
     throw new BadAnchorError(
-      `[MODEL] [E_BAD_ANCHOR] stripped "HASH│" prefix from ${locations} (${evidence}) — use bare content without HASH│ next time.`,
+      locations,
+      `stripped "HASH│" prefix from ${locations} (${evidence}) — use bare content without HASH│ next time.`,
       { ...edit, content_lines: contentLines },
     );
   }
-  throw new BadAnchorError(
-    `[MODEL] [E_BAD_ANCHOR] stripped "HASH│" prefix from ${locations} (${evidence}).`,
-    { ...edit, content_lines: contentLines },
-  );
+  throw new BadAnchorError(locations, `stripped "HASH│" prefix from ${locations} (${evidence}).`, {
+    ...edit,
+    content_lines: contentLines,
+  });
 }
 
 /** @internal — private to anchor-pipeline seam */
@@ -350,10 +357,10 @@ function stripDiffPrefixes(edit: HEdit, _warnings: string[]): HEdit {
   });
   if (stripped.length === 0) return edit;
   const locations = stripped.map((i) => `replacement_text line ${i + 1}`).join(", ");
-  throw new BadAnchorError(
-    `[MODEL] [E_BAD_ANCHOR] stripped diff-preview marker from ${locations}.`,
-    { ...edit, content_lines: contentLines },
-  );
+  throw new BadAnchorError(locations, `stripped diff-preview marker from ${locations}.`, {
+    ...edit,
+    content_lines: contentLines,
+  });
 }
 
 /** @internal — private to anchor-pipeline seam */
@@ -369,7 +376,7 @@ function swapReversedRanges(edit: HEdit, fileHashes: string[], warnings: string[
     return edit;
   }
   warnings.push(
-    `[USER] [E_REVERSED_ANCHORS] reversed remove_from/remove_to (${startRef.hash} after ${endRef.hash}); swapped (healed).`,
+    formatWarning("W_REVERSED_ANCHORS", { fromHash: startRef.hash, toHash: endRef.hash }),
   );
   return { ...edit, hash_bounds: [endRef, startRef] as [Anchor, Anchor] };
 }
@@ -418,12 +425,10 @@ function valEdit(
     }
     return { resolved: undefined, mismatches };
   }
-  if (startResolved.line > endResolved.line) {
-    throw new CodedError(
-      "E_REVERSED_ANCHORS",
-      `[MODEL] [E_REVERSED_ANCHORS] Range start line ${startResolved.line} must be <= end line ${endResolved.line} (anchors ${edit.hash_bounds[0].hash} and ${edit.hash_bounds[1].hash}).`,
-    );
-  }
+  // Reversal always heals upstream in swapReversedRanges (which runs before
+  // valEdit in applyEdit): when both anchors resolve, startLine <= endLine is
+  // guaranteed, so no refusal arm exists here. Anchors carry no order — only
+  // the resolved lines of the anchor_from/anchor_to slot pair matter.
   const endLine = endResolved.line;
   return {
     resolved: {
@@ -442,30 +447,54 @@ export { warnUnicodeEsc };
 
 export type ServedCode = "E_STALE_RANGE" | "E_UNSERVED_RANGE";
 
-export interface ServedRow {
-  position: number;
-  hash: string;
-}
-
-export class ServedRejectionError extends CodedError {
+export type { ServedRow, RangeCause } from "../domain-errors.js";
+export class ServedRejectionError extends DomainError<DomainErrorCode> {
   readonly code: ServedCode;
   readonly unservedKind: "boundary" | "interior" | undefined;
-  readonly firstOffendingLine: number | undefined;
-  readonly servedRows: ServedRow[];
 
-  constructor(opts: {
-    code: ServedCode;
-    unservedKind?: "boundary" | "interior";
-    message: string;
-    firstOffendingLine?: number;
-    servedRows: ServedRow[];
-  }) {
-    super(opts.code, opts.message);
+  constructor(
+    opts:
+      | {
+          code: "E_STALE_RANGE";
+          headline: string;
+          servedRows: ServedRow[];
+          servedBlock: string;
+          firstOffendingLine?: number;
+          reread?: boolean;
+        }
+      | {
+          code: "E_UNSERVED_RANGE";
+          headline: string;
+          servedRows: ServedRow[];
+          servedBlock: string;
+          unservedKind: "boundary" | "interior";
+          firstOffendingLine?: number;
+        },
+  ) {
+    if (opts.code === "E_STALE_RANGE") {
+      super("E_STALE_RANGE", {
+        headline: opts.headline,
+        servedRows: opts.servedRows,
+        servedBlock: opts.servedBlock,
+        ...(opts.firstOffendingLine !== undefined
+          ? { firstOffendingLine: opts.firstOffendingLine }
+          : {}),
+        ...(opts.reread !== undefined ? { reread: opts.reread } : {}),
+      });
+    } else {
+      super("E_UNSERVED_RANGE", {
+        headline: opts.headline,
+        servedRows: opts.servedRows,
+        servedBlock: opts.servedBlock,
+        unservedKind: opts.unservedKind,
+        ...(opts.firstOffendingLine !== undefined
+          ? { firstOffendingLine: opts.firstOffendingLine }
+          : {}),
+      });
+    }
     this.name = "ServedRejectionError";
     this.code = opts.code;
-    this.unservedKind = opts.unservedKind;
-    this.firstOffendingLine = opts.firstOffendingLine;
-    this.servedRows = opts.servedRows;
+    this.unservedKind = opts.code === "E_UNSERVED_RANGE" ? opts.unservedKind : undefined;
   }
 }
 
@@ -473,28 +502,23 @@ export function isServedRejection(error: unknown): error is ServedRejectionError
   return error instanceof ServedRejectionError;
 }
 
-export class AnchorMismatchError extends CodedError {
-  readonly servedRows: ServedRow[];
-
-  constructor(message: string, servedRows: ServedRow[]) {
-    super("E_STALE_ANCHOR", message);
+export class AnchorMismatchError extends DomainError<DomainErrorCode> {
+  constructor(code: DomainErrorCode, payload: ErrorPayloadMap[DomainErrorCode]) {
+    super(code, payload);
     this.name = "AnchorMismatchError";
-    this.servedRows = servedRows;
   }
 }
-
 /** Thrown when replacement_text carries anchor-syntax garbage (HASH│/diff-preview prefixes).
- * Carries the stripped edit so applyEdit can distinguish served-echo (→ E_SERVED_ECHO
- * denial downstream) from garbage (→ E_BAD_ANCHOR stands). */
-export class BadAnchorError extends CodedError {
+ * Carries the stripped edit so applyEdit can distinguish served-echo (→ E_SUSPICIOUS_TEXT
+ * denial downstream) from garbage (→ E_MALFORMED_ANCHOR stands). */
+export class BadAnchorError extends DomainError<"E_MALFORMED_ANCHOR"> {
   readonly stripped: HEdit;
-  constructor(message: string, stripped: HEdit) {
-    super("E_BAD_ANCHOR", message);
+  constructor(rawAnchor: string, reason: string, stripped: HEdit) {
+    super("E_MALFORMED_ANCHOR", { rawAnchor, reason });
     this.name = "BadAnchorError";
     this.stripped = stripped;
   }
 }
-
 export function isAnchorMismatch(error: unknown): error is AnchorMismatchError {
   return error instanceof AnchorMismatchError;
 }
@@ -517,9 +541,16 @@ export function findEditHashEcho(
   return undefined;
 }
 
+/**
+ * Served-echo refusal: the replacement reproduces a row actually served for
+ * this session, path, and line. A DomainError<"E_SUSPICIOUS_TEXT"> whose
+ * code, message header and audience agree — while staying instanceof
+ * AnchorMismatchError so the existing reject-and-serve branches (which catch
+ * AnchorMismatchError / ServedRejectionError) keep recognising it.
+ */
 export class EditHashEchoError extends AnchorMismatchError {
-  constructor(message: string, servedRows: ServedRow[] = []) {
-    super(message, servedRows);
+  constructor(payload: ErrorPayloadMap["E_SUSPICIOUS_TEXT"]) {
+    super("E_SUSPICIOUS_TEXT", payload);
     this.name = "EditHashEchoError";
   }
 }
@@ -541,11 +572,6 @@ export function buildRangeEcho(
 export function fmtServedRows(rows: ServedRow[], fileLines: string[]): string {
   return rows.map((row) => `${row.hash}${HASH_SEP}${fileLines[row.position] ?? ""}`).join("\n");
 }
-
-function retryHint(): string {
-  return "Retry with these anchors (no read needed).";
-}
-
 function paginationHint(nextOffset: number, more: number): string {
   return `[... ${more} more — read offset=${nextOffset}]`;
 }
@@ -606,7 +632,9 @@ export function verifyServedRange(args: {
         if (expected !== undefined && expected !== null && expected !== actual) {
           throw new ServedRejectionError({
             code: "E_STALE_RANGE",
-            message: `[MODEL] [E_STALE_RANGE] anchor "${retiredHash}" was freed since last full read (retired, canon changed from "${expected}" to "${actual}"). Re-read.\nCurrent range:\n${echo}`,
+            headline: `anchor "${retiredHash}" was freed since last full read (retired, canon changed from "${expected}" to "${actual}"). Re-read.`,
+            servedBlock: echo,
+            reread: true,
             firstOffendingLine: pos + 1,
             servedRows: echoRows,
           });
@@ -760,12 +788,12 @@ export function verifyServedRange(args: {
       throw new ServedRejectionError({
         code: "E_UNSERVED_RANGE",
         unservedKind: "boundary",
-        message:
-          `[MODEL] [E_UNSERVED_RANGE] cannot verify range against served state${where}: ${problems.join("; ")}. ` +
+        headline:
+          `cannot verify range against served state${where}: ${problems.join("; ")}. ` +
           `No served span matched the current range (${currentLen} lines). ` +
           `A full read will re-sync the served mirror — the echoed range below is current content, ` +
-          `but retrying without re-reading cannot clear a stale duplicate outside the echoed window.\n` +
-          `Current range:\n${echo}`,
+          `but retrying without re-reading cannot clear a stale duplicate outside the echoed window.`,
+        servedBlock: echo,
         servedRows: echoRows,
       });
     }
@@ -781,7 +809,8 @@ export function verifyServedRange(args: {
         const offendingLine = from + k + 1;
         throw new ServedRejectionError({
           code: "E_STALE_RANGE",
-          message: `[MODEL] [E_STALE_RANGE] line ${offendingLine}${where} differs from what was served.\nCurrent range:\n${echo}\n${retryHint()}`,
+          headline: `line ${offendingLine}${where} differs from what was served.`,
+          servedBlock: echo,
           firstOffendingLine: offendingLine,
           servedRows: echoRows,
         });
@@ -793,7 +822,8 @@ export function verifyServedRange(args: {
         throw new ServedRejectionError({
           code: "E_UNSERVED_RANGE",
           unservedKind: "interior",
-          message: `[MODEL] [E_UNSERVED_RANGE] line ${i + 1}${where} was never served.\nCurrent range:\n${echo}\n${retryHint()}`,
+          headline: `line ${i + 1}${where} was never served.`,
+          servedBlock: echo,
           firstOffendingLine: i + 1,
           servedRows: echoRows,
         });
@@ -834,7 +864,8 @@ export function verifyServedRange(args: {
       if (!lenHealed) {
         throw new ServedRejectionError({
           code: "E_STALE_RANGE",
-          message: `[MODEL] [E_STALE_RANGE] served span (${servedLen} lines) no longer matches current range (${currentLen} lines)${where}.\nCurrent range:\n${echo}\n${retryHint()}`,
+          headline: `served span (${servedLen} lines) no longer matches current range (${currentLen} lines)${where}.`,
+          servedBlock: echo,
           firstOffendingLine: startLine,
           servedRows: echoRows,
         });
@@ -844,7 +875,9 @@ export function verifyServedRange(args: {
     if (strictPos && from !== startLine - 1) {
       throw new ServedRejectionError({
         code: "E_STALE_RANGE",
-        message: `[MODEL] [E_STALE_RANGE] anchor was served at line ${from + 1} but now resolves to line ${startLine} (pos-restricted concurrency). Re-read.\nCurrent range:\n${echo}`,
+        headline: `anchor was served at line ${from + 1} but now resolves to line ${startLine} (pos-restricted concurrency). Re-read.`,
+        servedBlock: echo,
+        reread: true,
         firstOffendingLine: startLine,
         servedRows: echoRows,
       });
@@ -858,7 +891,9 @@ export function verifyServedRange(args: {
           if (expected !== actual) {
             throw new ServedRejectionError({
               code: "E_STALE_RANGE",
-              message: `[MODEL] [E_STALE_RANGE] line ${startLine + k}${where} canon differs from served (expected "${expected}" vs actual "${actual}").\nCurrent range:\n${echo}`,
+              headline: `line ${startLine + k}${where} canon differs from served (expected "${expected}" vs actual "${actual}").`,
+              servedBlock: echo,
+              reread: true,
               firstOffendingLine: startLine + k,
               servedRows: echoRows,
             });
@@ -879,7 +914,9 @@ export function verifyServedRange(args: {
         ) {
           throw new ServedRejectionError({
             code: "E_STALE_RANGE",
-            message: `[MODEL] [E_STALE_RANGE] line ${startLine + k}${where} uses retired anchor "${h}" (freed since last full read, canon changed). Re-read.\nCurrent range:\n${echo}`,
+            headline: `line ${startLine + k}${where} uses retired anchor "${h}" (freed since last full read, canon changed). Re-read.`,
+            servedBlock: echo,
+            reread: true,
             firstOffendingLine: startLine + k,
             servedRows: echoRows,
           });
@@ -891,7 +928,8 @@ export function verifyServedRange(args: {
         const offendingLine = startLine + k;
         throw new ServedRejectionError({
           code: "E_STALE_RANGE",
-          message: `[MODEL] [E_STALE_RANGE] line ${offendingLine}${where} differs from what was served.\nCurrent range:\n${echo}\n${retryHint()}`,
+          headline: `line ${offendingLine}${where} differs from what was served.`,
+          servedBlock: echo,
           firstOffendingLine: offendingLine,
           servedRows: echoRows,
         });
@@ -959,9 +997,7 @@ type NoopSpan = {
 };
 function assertNotEmpty(originalContent: string, result: string): void {
   if (originalContent.length > 0 && result.length === 0) {
-    throw new Error(
-      "[MODEL] [E_EMPTY_RANGE] Cannot empty a non-empty file via edit. Use `write` if you need to clear the file.",
-    );
+    throw new DomainError("E_EMPTY_RANGE", {});
   }
 }
 
@@ -1047,6 +1083,7 @@ export function applyEdit(
   epochSnapshotId?: string,
   curSnapshotId?: string,
   strictPos?: boolean,
+  mode?: EditMode,
 ): {
   content: string;
   firstChangedLine: number | undefined;
@@ -1060,6 +1097,14 @@ export function applyEdit(
   const lineIndex = buildIdx(content);
   const fileHashes = precomputedHashes ?? lineHashesPure(content);
   const warnings: string[] = [];
+  const literal = mode === "literal";
+  let bypassNoted = false;
+  const noteLiteralBypass = (): void => {
+    if (!bypassNoted) {
+      bypassNoted = true;
+      warnings.push(formatWarning("W_LITERAL_BYPASS", {}));
+    }
+  };
 
   const rangeFixed = swapReversedRanges(edit, fileHashes, warnings);
   let prefixFixed: HEdit;
@@ -1068,8 +1113,8 @@ export function applyEdit(
   } catch (error) {
     if (!(error instanceof BadAnchorError) || !served) throw error;
     // Anchor-syntax garbage that is actually served-echo belongs to the
-    // E_SERVED_ECHO guard below: re-check the stripped + raw lines at the
-    // resolved start line and throw the echo denial; otherwise E_BAD_ANCHOR stands.
+    // E_SUSPICIOUS_TEXT guard below: re-check the stripped + raw lines at the
+    // resolved start line and throw the echo denial; otherwise E_MALFORMED_ANCHOR stands.
     const stripped = error.stripped;
     const lineByHash = new Map<string, number>();
     for (let i = 0; i < fileHashes.length; i++) lineByHash.set(fileHashes[i]!, i + 1);
@@ -1082,10 +1127,24 @@ export function applyEdit(
         ? findEditHashEcho(stripped.content_lines, served, startLine)
         : undefined);
     if (echo) {
-      const msg = `[MODEL] [E_SERVED_ECHO] Refused edit to ${filePath ?? "(unknown file)"}: replacement line ${echo.k} begins with the exact ${echo.hash}${HASH_SEP} anchor served for this session, path, and range-relative line. Remove the copied anchors and retry. Nothing was written.`;
-      throw new EditHashEchoError(msg, []);
+      if (literal) {
+        // Declared literal bytes are the intent: apply the raw edit verbatim
+        // (prefixes intact), not the stripped form. Non-echo garbage still
+        // throws BadAnchorError below via `throw error`.
+        prefixFixed = rangeFixed;
+        noteLiteralBypass();
+      } else {
+        throw new EditHashEchoError({
+          target: "edit",
+          path: filePath ?? "(unknown file)",
+          line: echo.k,
+          hash: echo.hash,
+          servedLine: startLine! + echo.k - 1,
+        });
+      }
+    } else {
+      throw error;
     }
-    throw error;
   }
 
   const { resolved: initialResolved, mismatches } = valEdit(
@@ -1096,13 +1155,13 @@ export function applyEdit(
     signal,
   );
   if (mismatches.length || !initialResolved) {
-    const { message, servedRows } = fmtMismatchWithServes(
+    const { headline, servedBlock, servedRows } = fmtMismatchWithServes(
       mismatches,
       lineIndex.fileLines,
       fileHashes,
       filePath,
     );
-    throw new AnchorMismatchError(message, servedRows);
+    throw new AnchorMismatchError("E_STALE_ANCHOR", { headline, servedRows, servedBlock });
   }
 
   warnUnicodeEsc(prefixFixed, warnings);
@@ -1116,8 +1175,17 @@ export function applyEdit(
     if (!echo) echo = findEditHashEcho(resolved.content_lines, served, startLineEcho);
     if (!echo) echo = findEditHashEcho(prefixFixed.content_lines, served, startLineEcho);
     if (echo) {
-      const msg = `[MODEL] [E_SERVED_ECHO] Refused edit to ${filePath ?? "(unknown file)"}: replacement line ${echo.k} begins with the exact ${echo.hash}${HASH_SEP} anchor served for this session, path, and range-relative line. Remove the copied anchors and retry. Nothing was written.`;
-      throw new EditHashEchoError(msg, []);
+      if (literal) {
+        noteLiteralBypass();
+      } else {
+        throw new EditHashEchoError({
+          target: "edit",
+          path: filePath ?? "(unknown file)",
+          line: echo.k,
+          hash: echo.hash,
+          servedLine: startLineEcho + echo.k - 1,
+        });
+      }
     }
     const startAnchor = resolved.hash_bounds[0];
     const endAnchor = resolved.hash_bounds[1];

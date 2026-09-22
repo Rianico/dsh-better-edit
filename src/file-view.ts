@@ -26,6 +26,7 @@ import { SNIFF_BYTES, MAX_BYTES, MAX_READ_LINE_BYTES, eLargeFileMsg } from "./co
 import { lineHashes, fmtRegion, HASH_SEP } from "./hashline/index.js";
 import { HASH_SPACE } from "./hashline/hash-assign.js";
 import { visLines, abortIf, errCode } from "./utils.js";
+import { DomainError } from "./domain-errors.js";
 import { detectEnding, toLF, stripBOM, type LineEnding } from "./edit-diff.js";
 import { resolveTarget, toCwd } from "./paths.js";
 import type { FileIO } from "./fs-bridge.js";
@@ -285,16 +286,19 @@ export async function valAccess(
   } catch (error: unknown) {
     const code = errCode(error);
     if (code === "ENOENT") {
-      throw new Error(`[MODEL] [E_NOT_FOUND] File not found: ${path}`);
+      throw new DomainError("E_NOT_FOUND", { path });
     }
     if (code === "EACCES" || code === "EPERM") {
-      const accessLabel = accessMode & constants.W_OK ? "not writable" : "not readable";
-      throw new Error(`[MODEL] [E_ACCESS] File is ${accessLabel}: ${path}`);
+      throw new DomainError("E_ACCESS", {
+        path,
+        kind: "denied",
+        access: accessMode & constants.W_OK ? "write" : "read",
+      });
     }
     if (code === "ELOOP") {
-      throw new Error(`[MODEL] [E_ACCESS] Too many symbolic links while resolving: ${path}`);
+      throw new DomainError("E_ACCESS", { path, kind: "symlink-loop" });
     }
-    throw new Error(`[MODEL] [E_ACCESS] Cannot access file: ${path}`);
+    throw new DomainError("E_ACCESS", { path, kind: "unreachable" });
   }
 }
 
@@ -303,17 +307,17 @@ export function valKind(
   path: string,
 ): asserts file is { kind: "text"; text: string; hadUtf8DecodeErrors?: true } {
   if (file.kind === "directory") {
-    throw new Error(`[MODEL] [E_UNSUPPORTED_FILE] Path is a directory: ${path}.`);
+    throw new DomainError("E_UNSUPPORTED_FILE", { path, kind: "directory" });
   }
   if (file.kind === "binary") {
-    throw new Error(
-      `[MODEL] [E_UNSUPPORTED_FILE] Path is a binary file: ${path} (${file.description}). Hashline edit only supports text files.`,
-    );
+    throw new DomainError("E_UNSUPPORTED_FILE", {
+      path,
+      kind: "binary",
+      description: file.description,
+    });
   }
   if (file.kind === "image") {
-    throw new Error(
-      `[MODEL] [E_UNSUPPORTED_FILE] Path is an image file: ${path}. Hashline edit only supports text files.`,
-    );
+    throw new DomainError("E_UNSUPPORTED_FILE", { path, kind: "image" });
   }
 }
 
@@ -449,9 +453,9 @@ export async function readNormFile(
 function normPosInt(value: number | undefined, name: "offset" | "limit"): number | undefined {
   if (value === undefined) return undefined;
   if (!Number.isInteger(value) || value < 1) {
-    throw new Error(
-      `[MODEL] [E_BAD_PAYLOAD] Read request field "${name}" must be a positive integer.`,
-    );
+    throw new DomainError("E_BAD_PAYLOAD", {
+      message: `Read request field "${name}" must be a positive integer.`,
+    });
   }
   return value;
 }

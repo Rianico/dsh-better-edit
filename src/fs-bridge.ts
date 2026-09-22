@@ -39,7 +39,7 @@ import {
 } from "./file-encoding-state.js";
 import type { FileEncodingState } from "./file-encoding-state.js";
 import { codeOf } from "./utils.js";
-
+import { DomainError } from "./domain-errors.js";
 // Re-export file encoding state seam for backward compat (file-view, read-and-serve, tests)
 export type { FileEncodingState } from "./file-encoding-state.js";
 export {
@@ -101,15 +101,18 @@ export function mapFsError(error: unknown, displayPath: string): never {
   if (error instanceof Error && typeof (error as { code?: unknown }).code === "string") {
     const code = (error as unknown as { code: string }).code;
     if (code === "FS_NOT_FOUND") {
-      throw new Error(`[MODEL] [E_NOT_FOUND] File not found: ${displayPath}`);
+      throw new DomainError("E_NOT_FOUND", { path: displayPath });
     }
     if (code === "FS_PERMISSION_DENIED") {
-      throw new Error(`[MODEL] [E_ACCESS] Cannot access file: ${displayPath}`);
+      throw new DomainError("E_ACCESS", { path: displayPath, kind: "denied" });
     }
     if (code === "FS_NOT_TEXT" || code === "FS_NOT_REGULAR_FILE") {
-      throw new Error(
-        `[MODEL] [E_UNSUPPORTED_FILE] Path is not a readable UTF-8 text file: ${displayPath}. Hashline editing only supports text files. Try read({encoding: "gbk"}) or enable autoGuessEncoding.`,
-      );
+      throw new DomainError("E_UNSUPPORTED_FILE", {
+        path: displayPath,
+        kind: "binary",
+        description:
+          'not a readable UTF-8 text file (try read({encoding: "gbk"}) or enable autoGuessEncoding)',
+      });
     }
     if (code === "FS_BAD_ENCODING") {
       throw new Error(
@@ -122,9 +125,12 @@ export function mapFsError(error: unknown, displayPath: string): never {
       );
     }
     if (code === "FS_STALE_VERSION") {
-      throw new Error(
-        `[MODEL] [E_STALE_RANGE] The file changed on disk since it was read (version guard rejected the write). Call read() to get fresh anchors, then retry.`,
-      );
+      throw new DomainError("E_STALE_RANGE", {
+        headline:
+          "The file changed on disk since it was read (version guard rejected the write). Call read() to get fresh anchors, then retry.",
+        servedRows: [],
+        servedBlock: "",
+      });
     }
     if (code === "FS_NOT_OBSERVED") {
       throw new Error(

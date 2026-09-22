@@ -1,3 +1,5 @@
+import { formatError } from "./domain-errors.js";
+
 export const AUTO_READ_MAX = 2000;
 export const SNIFF_BYTES = 8192;
 export const MAX_BYTES = 100 * 1024 * 1024;
@@ -11,11 +13,25 @@ export const BATCH_EDIT_MAX_ITEMS = EDITS_MAX_ITEMS;
 export const SERVED_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 export const SERVED_ECHO_CAP = 150;
 export const NOOP_LOOP_THRESHOLD = 3;
-export const NEW_CONTENT_NOT_STRING_MSG =
-  `[MODEL] [E_BAD_PAYLOAD] "replacement_text" must be a string with \\n line separators, not an array.` +
+export const NEW_CONTENT_BODY =
+  `"replacement_text" must be a string with \\n line separators, not an array.` +
   ` Do not pass an array of lines — pass the replacement text as one string: "line1\\nline2". Use "" to delete a range.`;
+/** Model-facing header for a non-string replacement_text, composed once by the registry. */
+export const NEW_CONTENT_NOT_STRING_MSG = formatError("E_BAD_PAYLOAD", {
+  message: NEW_CONTENT_BODY,
+});
 
 export function eLargeFileMsg(displayPath: string, lineCount: number, maxLines: number): string {
-  return `[MODEL] [E_LARGE_FILE] ${displayPath} has ${lineCount} lines, exceeding the ${maxLines}-line edit limit. Hashline editing targets source-sized files; for very large files use write or a non-line-based approach.`;
+  return formatError("E_LARGE_FILE", {
+    path: displayPath,
+    lineCount,
+    limit: maxLines,
+    limitKind: "lines",
+  });
 }
-export const E_ANCHOR_SPACE_EXHAUSTED_WARNING = "[E_ANCHOR_SPACE_EXHAUSTED] Anchor space exhausted";
+/**
+ * Legacy export kept for compat. The anchor-space event is a hard capacity
+ * refusal routed through formatError("E_LARGE_FILE", { limitKind: "hash-space" });
+ * the soft promotion notice is a plain non-header string built at the call site.
+ */
+export const E_ANCHOR_SPACE_EXHAUSTED_WARNING = "Anchor space exhausted";

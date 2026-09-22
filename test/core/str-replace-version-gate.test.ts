@@ -5,7 +5,7 @@
  * Uses a fake `ctx.fs` with production `ctxFsIO` version semantics
  * (dsh-fs-local strips BOM via TextDecoder, versions are non-empty strings):
  * `view`/`read` must authorize `str_replace`/`insert`, while an external
- * change must still fail loud with E_BLIND_REPLACE.
+ * change must still fail loud with E_BAD_PAYLOAD (unviewed-file fold of E_BLIND_REPLACE).
  * @module dsh-better-edit/str-replace-version-gate.test
  */
 import { describe, expect, it, vi, beforeEach } from "vitest";
@@ -150,7 +150,7 @@ describe("issue #69: ctxFsIO version semantics authorize shadow writes", () => {
     expect(res.text).toMatch(/Replaced 1 occurrence/);
   });
 
-  it("external change after view still fails loud with E_BLIND_REPLACE", async () => {
+  it("external change after view still fails loud with E_BAD_PAYLOAD", async () => {
     const fake = makeProdFs();
     const p = "/abs/drift.txt";
     fake.seed(p, Buffer.from("alpha\r\nbravo\r\ncharlie\r\n", "utf-8"));
@@ -161,6 +161,6 @@ describe("issue #69: ctxFsIO version semantics authorize shadow writes", () => {
     fake.externalWrite(p, Buffer.from("alpha\r\nCHANGED\r\ncharlie\r\n", "utf-8"));
     await expect(
       tool.execute({ command: "str_replace", path: p, old_str: "alpha", new_str: "ALPHA" }, exec),
-    ).rejects.toThrow(/E_BLIND_REPLACE/);
+    ).rejects.toThrow(/E_BAD_PAYLOAD.*has not been viewed/);
   });
 });

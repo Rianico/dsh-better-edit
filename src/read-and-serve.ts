@@ -116,7 +116,7 @@ export async function readAndServe(
   } catch (e: unknown) {
     if (
       e instanceof AnchorSpaceExhaustedError ||
-      (e instanceof Error && e.message.includes("E_ANCHOR_SPACE_EXHAUSTED"))
+      (e instanceof Error && e.message.includes("probing failed over"))
     ) {
       const retiredCount = retiredHashes.size;
       const servedCount = servedForNorm.filter((h): h is string => h !== null).length;
@@ -129,7 +129,8 @@ export async function readAndServe(
           store.clearCards(sessionKey, absolutePath);
         } catch {}
       } catch {}
-      promotionWarning = `[E_ANCHOR_SPACE_EXHAUSTED] Anchor space exhausted (retired ${retiredCount} + served ${servedCount} = ${reservedCount} of ${HASH_SPACE}); promotion cleared retired — re-read recommended, stale-anchor checks degraded until next full read.`;
+      // Soft promotion notice: plain non-header text (no [E_] code, no audience).
+      promotionWarning = `Anchor space exhausted (retired ${retiredCount} + served ${servedCount} = ${reservedCount} of ${HASH_SPACE}); promotion cleared retired — re-read recommended, stale-anchor checks degraded until next full read.`;
       // Retry ignoring retired (served only) — also drop removedHashes from previous
       retiredHashes = new Set<string>();
       reservedHashes = new Set<string>([...servedForNorm.filter((h): h is string => h !== null)]);

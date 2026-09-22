@@ -104,7 +104,7 @@ describe("epoch lifecycle belongs to full reads (#69)", () => {
           home,
           { sessionKey },
         ),
-      ).rejects.toThrow(/\[E_BAD_ANCHOR\]/);
+      ).rejects.toThrow(/\[E_MALFORMED_ANCHOR\]/);
       expect(await loadServed(sessionKey, join(home, "nope.txt"))).toEqual([]);
     } finally {
       shutdownHashStore();

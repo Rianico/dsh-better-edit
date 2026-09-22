@@ -25,6 +25,7 @@ import {
 } from "./encoding.js";
 import type { CandidatePreview } from "./encoding.js";
 import { detectEnding, restoreEndings, toLF, type LineEnding } from "./edit-diff.js";
+import { DomainError, formatError } from "./domain-errors.js";
 
 // ---------------------------------------------------------------------------
 // State — per-targetKey, session-TTL, version-invalidated
@@ -76,11 +77,18 @@ export function invalidateIfStale(targetKey: string, currentVersion: string | un
 // Pure helpers — no IO
 // ---------------------------------------------------------------------------
 
-export function buildTop3ErrorMessage(displayPath: string, candidates: CandidatePreview[]): string {
+export function buildTop3Description(candidates: CandidatePreview[]): string {
   const candStr = candidates
     .map((c) => `${c.encoding}("${c.sample.slice(0, 20).replace(/"/g, "'")}")`)
     .join(", ");
-  return `[MODEL] [E_UNSUPPORTED_FILE] Path is not a readable UTF-8 text file: ${displayPath}. Hashline editing only supports text files. Top-3 guesses: ${candStr}. Try read({encoding: "<encoding>"}) or set DSH_BETTER_EDIT_AUTO_GUESS_ENCODING=true to auto-decode.`;
+  return `not readable UTF-8 text — top guesses: ${candStr}; try read({encoding: "<encoding>"}) or set DSH_BETTER_EDIT_AUTO_GUESS_ENCODING=true to auto-decode`;
+}
+export function buildTop3ErrorMessage(displayPath: string, candidates: CandidatePreview[]): string {
+  return formatError("E_UNSUPPORTED_FILE", {
+    path: displayPath,
+    kind: "binary",
+    description: buildTop3Description(candidates),
+  });
 }
 
 function buildAutoGuessFooterFromCandidates(
@@ -312,7 +320,11 @@ export async function decodeForOpen(
     candidates = top3Candidates(bytes, config.supportedEncodings);
   }
   const display = opts.displayPath ?? "(unknown path)";
-  throw new Error(buildTop3ErrorMessage(display, candidates));
+  throw new DomainError("E_UNSUPPORTED_FILE", {
+    path: display,
+    kind: "binary",
+    description: buildTop3Description(candidates),
+  });
 }
 
 // ---------------------------------------------------------------------------

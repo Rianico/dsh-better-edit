@@ -87,27 +87,27 @@ describe("resEdit", () => {
     expect(() => resEdit(edit)).toThrow(/requires a "replacement_text" field/i);
   });
 
-  it("rejects a HASH│content row pasted into remove_from/remove_to with E_BAD_ANCHOR", () => {
+  it("rejects a HASH│content row pasted into remove_from/remove_to with E_MALFORMED_ANCHOR", () => {
     const edit: HTEdit = {
       remove_from: "MQX│const x = 1;",
       remove_to: "MQX│const x = 1;",
       replacement_text: "new",
     };
     const warnings: string[] = [];
-    expect(() => resEdit(edit, warnings)).toThrow(/\[E_BAD_ANCHOR\]/);
+    expect(() => resEdit(edit, warnings)).toThrow(/\[E_MALFORMED_ANCHOR\]/);
     expect(() => resEdit(edit, warnings)).toThrow('stripped "HASH│" prefix');
     expect(() => resEdit(edit, warnings)).toThrow("from remove_from/remove_to");
     expect(warnings).toEqual([]);
   });
 
-  it("rejects diff-preview rows pasted into remove_from/remove_to with E_BAD_ANCHOR", () => {
+  it("rejects diff-preview rows pasted into remove_from/remove_to with E_MALFORMED_ANCHOR", () => {
     const edit: HTEdit = {
       remove_from: "+MQX│const x = 1;",
       remove_to: "-MQX│const x = 1;",
       replacement_text: "new",
     };
     const warnings: string[] = [];
-    expect(() => resEdit(edit, warnings)).toThrow(/\[E_BAD_ANCHOR\]/);
+    expect(() => resEdit(edit, warnings)).toThrow(/\[E_MALFORMED_ANCHOR\]/);
     expect(() => resEdit(edit, warnings)).toThrow("stripped diff-preview marker");
     const edit2: HTEdit = {
       remove_from: "-MQX│const x = 1;",
@@ -132,6 +132,6 @@ describe("resEdit", () => {
       remove_to: "MQX",
       replacement_text: "new",
     };
-    expect(() => resEdit(edit)).toThrow(/\[E_BAD_ANCHOR\]/);
+    expect(() => resEdit(edit)).toThrow(/\[E_MALFORMED_ANCHOR\]/);
   });
 });

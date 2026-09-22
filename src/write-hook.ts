@@ -19,7 +19,7 @@ import { execCwd, execSessionKey, withWorkspace } from "./workspace-context.js";
 import { loadServed } from "./session-view.js";
 import { HASH_SEP } from "./hashline/hash-assign.js";
 import { abortIf, splitLines } from "./utils.js";
-
+import { formatError } from "./domain-errors.js";
 const AUTO_READ_HEADING = "--- Auto-read (hashline anchors) ---";
 
 export interface ServedHashEcho {
@@ -68,12 +68,15 @@ export async function servedHashEchoDenial(
   const served = await loadServed(sessionKey, absolutePath);
   const match = findServedHashEcho(content, served);
   if (!match) return undefined;
-  return (
-    `[MODEL] [E_SERVED_ECHO] Refused write to ${rawPath}: line ${match.line} begins with ` +
-    `the exact ${match.hash}${HASH_SEP} anchor served for this session, path, and line. ` +
-    `HASH${HASH_SEP} anchors are tool output, not file content. ` +
-    "Retry with file content only (remove the entire copied anchor chain). Nothing was written."
-  );
+  // A write echo names the same session/path/line the anchor was served for,
+  // so the served line equals the content line.
+  return formatError("E_SUSPICIOUS_TEXT", {
+    target: "write",
+    path: rawPath,
+    line: match.line,
+    hash: match.hash,
+    servedLine: match.line,
+  });
 }
 
 /**
@@ -96,6 +99,9 @@ export function registerWriteHook(rootCtx: Context, agentCtx: Context, io: FileI
       const rawPath = args?.file_path ?? args?.path;
       const content = args?.content;
       if (typeof rawPath !== "string" || typeof content !== "string") return next();
+      // Declared literal content bypasses the served-echo guard (edit-path
+      // W_LITERAL_BYPASS producer lives in anchor-pipeline applyEdit).
+      if (args?.mode === "literal") return next();
 
       const cwd = execCwd(exec);
       return withWorkspace(cwd, async () => {
