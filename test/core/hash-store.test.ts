@@ -1648,8 +1648,8 @@ it("getFileUndo round-trips updatedAt as a number", async () => {
   });
 });
 
-it("restore puts the prior v7 row back byte-identical", async () => {
-  await withTempHome(async () => {
+it("restore puts the prior v7 row back content-identical with a fresh pair stamp", async () => {
+  await withTempHome(async (home) => {
     const { saveUndo } = await import("../../src/undo-edit.js");
     const internal = (await loadHashStore()) as unknown as InternalHashStore;
     const first = await saveUndo("/r.ts", {
@@ -1670,8 +1670,23 @@ it("restore puts the prior v7 row back byte-identical", async () => {
     });
     expect(second.persisted).toBe(true);
     await second.restore();
-    expect(internal.getFileUndo("/r.ts")).toEqual(before);
+    // One-stamp rule: restore rewrites the pair now — content byte-identical,
+    // stamp refreshed once for both sides (P1: no per-side clocks).
+    const after = internal.getFileUndo("/r.ts");
+    expect({ ...after, updatedAt: 0 }).toEqual({ ...before, updatedAt: 0 });
+    expect(after?.updatedAt ?? 0).toBeGreaterThanOrEqual(before?.updatedAt ?? 0);
     expect((await loadHashStore()).getUndo("/r.ts")).toBeDefined();
+    const check = new DatabaseSync(sqlitePath(home));
+    const legacyTs = (
+      check.prepare("SELECT updated_at AS v FROM undo WHERE path = ?").get("/r.ts") as { v: number }
+    ).v;
+    const v7Ts = (
+      check.prepare("SELECT updated_at AS v FROM file_undo WHERE path = ?").get("/r.ts") as {
+        v: number;
+      }
+    ).v;
+    check.close();
+    expect(legacyTs).toBe(v7Ts);
   });
 });
 
@@ -1709,9 +1724,8 @@ it("v7 write fault leaves the previous undo readable and reports failure", async
     // Both rows atomic: the previous undo reads back byte-identical.
     expect((await loadHashStore()).getUndo("/f.ts")).toEqual(legacyBefore);
     expect(internal.getFileUndo("/f.ts")).toEqual(v7Before);
-    // Two clocks, reconciled: the legacy row stamps store time (Date.now() at the
-    // store write) while the v7 row carries the caller-passed updatedAt — both must
-    // be sane numbers from this save, proving neither side wrote garbage.
+    // One stamp, reconciled: the impl stamps both rows once per write, so after a
+    // failed write both must still carry the same sane stamp from the good save.
     const check = new DatabaseSync(sqlitePath(home), {
       defensive: false,
     } as any);
@@ -1725,6 +1739,7 @@ it("v7 write fault leaves the previous undo readable and reports failure", async
         v: number;
       }
     ).v;
+    expect(legacyTs).toBe(v7Ts);
     check.close();
     const now = Date.now();
     for (const ts of [legacyTs, v7Ts]) {
@@ -1855,6 +1870,16 @@ it("store getUndo heals both rows on non-hashlist", async () => {
     expect(store.getUndo("/s2.ts")).toBeUndefined();
     const internal = store as unknown as InternalHashStore;
     expect(internal.getFileUndo("/s2.ts")).toBeUndefined();
+    const check = new DatabaseSync(sqlitePath(home));
+    const legacy = check.prepare("SELECT COUNT(*) AS n FROM undo WHERE path = ?").get("/s2.ts") as {
+      n: number;
+    };
+    const v7 = check
+      .prepare("SELECT COUNT(*) AS n FROM file_undo WHERE path = ?")
+      .get("/s2.ts") as { n: number };
+    check.close();
+    expect(legacy.n).toBe(0);
+    expect(v7.n).toBe(0);
   });
 });
 
@@ -1875,6 +1900,17 @@ it("store getFileUndo heals both rows on bad JSON", async () => {
     const internal = store as unknown as InternalHashStore;
     expect(internal.getFileUndo("/s3.ts")).toBeUndefined();
     expect(store.getUndo("/s3.ts")).toBeUndefined();
+    expect(store.getUndo("/s3.ts")).toBeUndefined();
+    const check = new DatabaseSync(sqlitePath(home));
+    const legacy = check.prepare("SELECT COUNT(*) AS n FROM undo WHERE path = ?").get("/s3.ts") as {
+      n: number;
+    };
+    const v7 = check
+      .prepare("SELECT COUNT(*) AS n FROM file_undo WHERE path = ?")
+      .get("/s3.ts") as { n: number };
+    check.close();
+    expect(legacy.n).toBe(0);
+    expect(v7.n).toBe(0);
   });
 });
 
@@ -1895,32 +1931,73 @@ it("store getFileUndo heals both rows on non-hashlist", async () => {
     const internal = store as unknown as InternalHashStore;
     expect(internal.getFileUndo("/s4.ts")).toBeUndefined();
     expect(store.getUndo("/s4.ts")).toBeUndefined();
+    const check = new DatabaseSync(sqlitePath(home));
+    const legacy = check.prepare("SELECT COUNT(*) AS n FROM undo WHERE path = ?").get("/s4.ts") as {
+      n: number;
+    };
+    const v7 = check
+      .prepare("SELECT COUNT(*) AS n FROM file_undo WHERE path = ?")
+      .get("/s4.ts") as { n: number };
+    check.close();
+    expect(legacy.n).toBe(0);
+    expect(v7.n).toBe(0);
   });
 });
 
-it("pruneUndoOlderThan prunes both undo tables by age", async () => {
+it("prune keeps the pair when any side is newer than the cutoff", async () => {
   await withTempHome(async (home) => {
+    // Load first: the open-time TTL janitor must never see the forced stamps below.
+    const store = await loadHashStore();
     const { saveUndo } = await import("../../src/undo-edit.js");
-    const entry = (tag: string) => ({
-      content: `${tag}\n`,
+    await saveUndo("/split.ts", {
+      content: "a\n",
       bom: "",
-      originalEnding: "\n" as const,
+      originalEnding: "\n",
       hashes: ["H01"],
-      resultContent: `${tag}!\n`,
+      resultContent: "b\n",
     });
-    await saveUndo("/old.ts", entry("old"));
-    await saveUndo("/young.ts", entry("young"));
+    const raw = new DatabaseSync(sqlitePath(home));
+    // Divergent stamps, no wall clock: legacy older than the cutoff, v7 newer.
+    raw.prepare("UPDATE undo SET updated_at = ? WHERE path = ?").run(1, "/split.ts");
+    raw.prepare("UPDATE file_undo SET updated_at = ? WHERE path = ?").run(200, "/split.ts");
+    raw.close();
+    store.pruneUndoOlderThan(150);
+    // Newest-side rule: the young v7 row keeps the pair alive — never one side alone.
+    expect(store.getUndo("/split.ts")).toBeDefined();
+    const internal = store as unknown as InternalHashStore;
+    expect(internal.getFileUndo("/split.ts")).toBeDefined();
+  });
+});
+
+it("prune deletes the pair when both sides are older than the cutoff", async () => {
+  await withTempHome(async (home) => {
+    const store = await loadHashStore();
+    const { saveUndo } = await import("../../src/undo-edit.js");
+    await saveUndo("/old.ts", {
+      content: "a\n",
+      bom: "",
+      originalEnding: "\n",
+      hashes: ["H01"],
+      resultContent: "b\n",
+    });
     const raw = new DatabaseSync(sqlitePath(home));
     raw.prepare("UPDATE undo SET updated_at = ? WHERE path = ?").run(1, "/old.ts");
     raw.prepare("UPDATE file_undo SET updated_at = ? WHERE path = ?").run(1, "/old.ts");
     raw.close();
-    const store = await loadHashStore();
-    store.pruneUndoOlderThan(Date.now());
+    store.pruneUndoOlderThan(150);
     expect(store.getUndo("/old.ts")).toBeUndefined();
     const internal = store as unknown as InternalHashStore;
     expect(internal.getFileUndo("/old.ts")).toBeUndefined();
-    expect(store.getUndo("/young.ts")).toBeDefined();
-    expect(internal.getFileUndo("/young.ts")).toBeDefined();
+    const check = new DatabaseSync(sqlitePath(home));
+    const legacy = check
+      .prepare("SELECT COUNT(*) AS n FROM undo WHERE path = ?")
+      .get("/old.ts") as { n: number };
+    const v7 = check
+      .prepare("SELECT COUNT(*) AS n FROM file_undo WHERE path = ?")
+      .get("/old.ts") as { n: number };
+    check.close();
+    expect(legacy.n).toBe(0);
+    expect(v7.n).toBe(0);
   });
 });
 
@@ -1986,6 +2063,13 @@ it("pruneMissing deletes the whole v7 lineage family for missing paths", async (
       hashes: ["K01", "K02"],
       resultContent: "z\n",
     });
+    const keepMeta = new DatabaseSync(sqlitePath(home));
+    keepMeta
+      .prepare(
+        "INSERT OR REPLACE INTO served_session_meta (session_id, file_path, reported, updated_at) VALUES (?, ?, ?, ?)",
+      )
+      .run("s1", keep, JSON.stringify(["K01"]), Date.now());
+    keepMeta.close();
     await store.pruneMissing();
     const check = new DatabaseSync(sqlitePath(home));
     const count = (sql: string, p: string) => (check.prepare(sql).get(p) as { n: number }).n;
@@ -2010,6 +2094,11 @@ it("pruneMissing deletes the whole v7 lineage family for missing paths", async (
     expect(count("SELECT COUNT(*) AS n FROM line_id_counters WHERE path = ?", keep)).toBe(1);
     expect(count("SELECT COUNT(*) AS n FROM served_leases WHERE file_path = ?", keep)).toBe(1);
     expect(store.getUndo(keep)).toBeDefined();
+    // A wipe-all-file_undo regression would still pass the line above — pin the v7 side too.
+    expect((store as unknown as InternalHashStore).getFileUndo(keep)).toBeDefined();
+    expect(count("SELECT COUNT(*) AS n FROM served_session_meta WHERE file_path = ?", keep)).toBe(
+      1,
+    );
     check.close();
   });
 });
@@ -2047,5 +2136,65 @@ it("legacy write fault leaves the previous undo readable and reports failure", a
     // Rollback proven in the legacy direction: both rows read back byte-identical.
     expect((await loadHashStore()).getUndo("/g.ts")).toEqual(legacyBefore);
     expect(internal.getFileUndo("/g.ts")).toEqual(v7Before);
+  });
+});
+
+it("pruneMissing rolls back every table when a later delete faults", async () => {
+  await withTempHome(async (home) => {
+    const store = await loadHashStore();
+    const { saveUndo } = await import("../../src/undo-edit.js");
+    // Missing path with a full family; served_session_meta is last in the prune order.
+    store.commitSnapshot({
+      path: "/gone-rb.ts",
+      content: "a\n",
+      hashes: ["H01"],
+      leases: { sessionKey: "s1", rows: [{ position: 0, hash: "H01" }] },
+    });
+    await saveUndo("/gone-rb.ts", {
+      content: "a\n",
+      bom: "",
+      originalEnding: "\n",
+      hashes: ["H01"],
+      resultContent: "b\n",
+    });
+    await recordServed("s1", "/gone-rb.ts", [{ position: 0, hash: "H01" }], 1);
+    const meta = new DatabaseSync(sqlitePath(home));
+    meta
+      .prepare(
+        "INSERT OR REPLACE INTO served_session_meta (session_id, file_path, reported, updated_at) VALUES (?, ?, ?, ?)",
+      )
+      .run("s1", "/gone-rb.ts", JSON.stringify(["H01"]), Date.now());
+    meta.close();
+    // Fault the LAST delete: the abort must roll back every earlier delete in the unit.
+    const setup = new DatabaseSync(sqlitePath(home), {
+      defensive: false,
+    } as any);
+    setup.exec(
+      "CREATE TRIGGER t2b_meta_fault BEFORE DELETE ON served_session_meta " +
+        "BEGIN SELECT RAISE(ABORT, 'injected'); END;",
+    );
+    setup.close();
+    await expect(store.pruneMissing()).rejects.toThrow("injected");
+    const check = new DatabaseSync(sqlitePath(home));
+    const count = (sql: string, p: string) => (check.prepare(sql).get(p) as { n: number }).n;
+    expect(count("SELECT COUNT(*) AS n FROM file_snapshots WHERE path = ?", "/gone-rb.ts")).toBe(1);
+    expect(
+      count(
+        "SELECT COUNT(*) AS n FROM line_lineage WHERE snapshot_id IN (SELECT snapshot_id FROM file_snapshots WHERE path = ?)",
+        "/gone-rb.ts",
+      ),
+    ).toBe(1);
+    expect(count("SELECT COUNT(*) AS n FROM line_id_counters WHERE path = ?", "/gone-rb.ts")).toBe(
+      1,
+    );
+    expect(
+      count("SELECT COUNT(*) AS n FROM served_leases WHERE file_path = ?", "/gone-rb.ts"),
+    ).toBe(1);
+    expect(
+      count("SELECT COUNT(*) AS n FROM served_session_meta WHERE file_path = ?", "/gone-rb.ts"),
+    ).toBe(1);
+    expect(count("SELECT COUNT(*) AS n FROM undo WHERE path = ?", "/gone-rb.ts")).toBe(1);
+    expect(count("SELECT COUNT(*) AS n FROM file_undo WHERE path = ?", "/gone-rb.ts")).toBe(1);
+    check.close();
   });
 });

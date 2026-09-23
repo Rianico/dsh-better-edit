@@ -37,7 +37,6 @@ import {
   createLineageStore,
   ensureLineageTables,
   snapshotHashFor,
-  LineageCorruptError,
   type LineageStore,
 } from "./snapshot-store/lineage-store.js";
 // ---- validators (owned here; the store's corruption handling uses them) ----
@@ -101,8 +100,8 @@ interface Prepared {
   undoUpsert: (...params: SqlParams) => void;
   undoGet: (...params: SqlParams) => Record<string, unknown> | undefined;
   undoDelete: (...params: SqlParams) => void;
-  undoPruneOlderThan: (...params: SqlParams) => void;
-  fileUndoPruneOlderThan: (...params: SqlParams) => void;
+  undoPrunePair: (...params: SqlParams) => void;
+  fileUndoPrunePair: (...params: SqlParams) => void;
   fileUndoUpsert: (...params: (string | number | null)[]) => void;
   fileUndoGet: (...params: SqlParams) => FileUndoRow | undefined;
   fileUndoDelete: (...params: SqlParams) => void;
@@ -161,7 +160,7 @@ export interface HashStore {
   writeUndoPair(path: string, legacy: UndoRecord | undefined, v7: FileUndoRecord | undefined): void;
   /** Both undo rows in one transaction. */
   deleteUndoPair(path: string): void;
-  /** The v7 undo row for a path, same healing contract as the legacy row. */
+  /** The v7 undo row for a path, same healing contract as the legacy row. Sole consumer: undo-edit readFileUndo (rg-verified); kept on the store face beside getUndo because both readers share the pair-healing closures. */
   getFileUndo(path: string): FileUndoRecord | undefined;
   // ---- maintenance ---------------------------------------------------------
   /** Delete every row family's entries for paths that no longer exist on disk. */
@@ -527,8 +526,15 @@ function buildStore(db: DatabaseSync, storePath: string): { db: DatabaseSync; st
     "SELECT content, bom, ending, hashes, result_content FROM undo WHERE path = ?",
   );
   const undoDelStmt = db.prepare("DELETE FROM undo WHERE path = ?");
-  const undoPruneOlderThanStmt = db.prepare("DELETE FROM undo WHERE updated_at < ?");
-  const fileUndoPruneOlderThanStmt = db.prepare("DELETE FROM file_undo WHERE updated_at < ?");
+  // Pair-atomic age prune: a path's pair is pruned only when its NEWEST side is older
+  // than the cutoff — a recently written side keeps the pair alive. Decide per path,
+  // never one side alone (independent per-table deletes split the pair, F1 class).
+  const pairPrunePredicate =
+    "path IN (SELECT path FROM (SELECT path, MAX(updated_at) AS newest FROM (" +
+    "SELECT path, updated_at FROM undo UNION ALL SELECT path, updated_at FROM file_undo" +
+    ") GROUP BY path) WHERE newest < ?)";
+  const undoPrunePairStmt = db.prepare(`DELETE FROM undo WHERE ${pairPrunePredicate}`);
+  const fileUndoPrunePairStmt = db.prepare(`DELETE FROM file_undo WHERE ${pairPrunePredicate}`);
   const fileUndoUpsertStmt = db.prepare(
     "INSERT INTO file_undo (path, content, bom, ending, hashes, result_content, snapshot_hash, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?) " +
       "ON CONFLICT(path) DO UPDATE SET content = excluded.content, bom = excluded.bom, ending = excluded.ending, hashes = excluded.hashes, result_content = excluded.result_content, snapshot_hash = excluded.snapshot_hash, updated_at = excluded.updated_at",
@@ -602,14 +608,14 @@ function buildStore(db: DatabaseSync, storePath: string): { db: DatabaseSync; st
         undoDelStmt.run(...params);
       });
     },
-    undoPruneOlderThan: (...params) => {
+    undoPrunePair: (...params) => {
       withBusyRetry(() => {
-        undoPruneOlderThanStmt.run(...params);
+        undoPrunePairStmt.run(...params);
       });
     },
-    fileUndoPruneOlderThan: (...params) => {
+    fileUndoPrunePair: (...params) => {
       withBusyRetry(() => {
-        fileUndoPruneOlderThanStmt.run(...params);
+        fileUndoPrunePairStmt.run(...params);
       });
     },
     fileUndoUpsert: (...params: (string | number | null)[]) => {
@@ -745,6 +751,17 @@ function makeDomainStore(
     legacy: UndoRecord | undefined,
     v7: FileUndoRecord | undefined,
   ): void {
+    // Contract: at least one side must be present (both-absent is deleteUndoPair's job).
+    if (!legacy && !v7) {
+      throw new Error(
+        "writeUndoPair requires at least one side; use deleteUndoPair to clear the pair",
+      );
+    }
+    // One stamp for both rows: the pair's age is a pair property. The old code stamped
+    // legacy from the store clock and v7 from the caller's updatedAt, so a straddled
+    // millisecond split the pair at prune time. The impl is the single clock now; the
+    // caller's updatedAt is advisory and intentionally unused.
+    const stamp = Date.now();
     withUndoPairTxn(() => {
       if (legacy) {
         stmts.undoUpsert(
@@ -754,7 +771,7 @@ function makeDomainStore(
           legacy.ending,
           JSON.stringify(legacy.hashes),
           legacy.resultContent,
-          Date.now(),
+          stamp,
         );
       } else {
         stmts.undoDelete(path);
@@ -768,7 +785,7 @@ function makeDomainStore(
           JSON.stringify(v7.hashes),
           v7.resultContent,
           v7.snapshotHash,
-          v7.updatedAt,
+          stamp,
         );
       } else {
         stmts.fileUndoDelete(path);
@@ -855,9 +872,6 @@ function makeDomainStore(
     getFileUndo(path) {
       const row = stmts.fileUndoGet(path);
       if (!row) return undefined;
-      if (!("snapshot_hash" in row)) {
-        throw new LineageCorruptError("file_undo row is missing snapshot_hash");
-      }
       try {
         const parsed = JSON.parse(row.hashes as string);
         if (!isValidHashList(parsed)) {
@@ -1034,8 +1048,8 @@ function makeDomainStore(
     },
     pruneUndoOlderThan(ts) {
       withUndoPairTxn(() => {
-        stmts.undoPruneOlderThan(ts);
-        stmts.fileUndoPruneOlderThan(ts);
+        stmts.undoPrunePair(ts);
+        stmts.fileUndoPrunePair(ts);
       });
     },
 

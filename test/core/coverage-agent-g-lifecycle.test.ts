@@ -36,7 +36,7 @@ describe("coverage-agent-g lifecycle", () => {
     lc._resetLifecycleForTests();
     const fakeStmts: any = {
       servedPruneOlderThan: () => {},
-      undoPruneOlderThan: () => {},
+      undoPrunePair: () => {},
     };
     const fakeStore: any = { pruneMissing: () => Promise.resolve() };
     await lc.onStoreOpen(storePath, fakeStmts, fakeStore);
@@ -63,7 +63,7 @@ describe("coverage-agent-g lifecycle", () => {
     const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
     const lc = await import("../../src/store-lifecycle.js");
     lc._resetLifecycleForTests();
-    const fakeStmts: any = { servedPruneOlderThan: () => {}, undoPruneOlderThan: () => {} };
+    const fakeStmts: any = { servedPruneOlderThan: () => {}, undoPrunePair: () => {} };
     const fakeStore: any = { pruneMissing: () => Promise.resolve() };
     await lc.onStoreOpen(storePath, fakeStmts, fakeStore);
     expect(warnSpy).toHaveBeenCalled();
@@ -85,7 +85,7 @@ describe("coverage-agent-g lifecycle", () => {
     lc._resetLifecycleForTests();
     await lc.onStoreOpen(
       "/tmp/central/store.json",
-      { servedPruneOlderThan: () => {}, undoPruneOlderThan: () => {} } as any,
+      { servedPruneOlderThan: () => {}, undoPrunePair: () => {} } as any,
       { pruneMissing: () => Promise.resolve() } as any,
     );
     spyLoad.mockRestore();
@@ -104,7 +104,7 @@ describe("coverage-agent-g lifecycle", () => {
     lc._resetLifecycleForTests();
     await lc.onStoreOpen(
       storePath,
-      { servedPruneOlderThan: () => {}, undoPruneOlderThan: () => {} } as any,
+      { servedPruneOlderThan: () => {}, undoPrunePair: () => {} } as any,
       { pruneMissing: () => Promise.resolve() } as any,
     );
     spyLoad.mockRestore();
@@ -125,7 +125,7 @@ describe("coverage-agent-g lifecycle", () => {
     lc._resetLifecycleForTests();
     await lc.onStoreOpen(
       storePath,
-      { servedPruneOlderThan: () => {}, undoPruneOlderThan: () => {} } as any,
+      { servedPruneOlderThan: () => {}, undoPrunePair: () => {} } as any,
       { pruneMissing: () => Promise.resolve() } as any,
     );
     spyLoad.mockRestore();
@@ -144,7 +144,7 @@ describe("coverage-agent-g lifecycle", () => {
       servedPruneOlderThan: () => {
         throw new Error("served fail");
       },
-      undoPruneOlderThan: () => {
+      undoPrunePair: () => {
         throw new Error("undo fail");
       },
     };
@@ -163,7 +163,7 @@ describe("coverage-agent-g lifecycle", () => {
       undo_ttl_s: -1,
     } as any);
     const pruneMock = vi.fn(() => Promise.resolve());
-    const stmts: any = { servedPruneOlderThan: () => {}, undoPruneOlderThan: () => {} };
+    const stmts: any = { servedPruneOlderThan: () => {}, undoPrunePair: () => {} };
     await lc.onStoreOpen("/tmp/p1", stmts, { pruneMissing: pruneMock } as any);
     expect(pruneMock).toHaveBeenCalledTimes(1);
     // second call throttled (same storePath, within 24h)
