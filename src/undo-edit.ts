@@ -32,12 +32,6 @@ async function writeUndo(path: string, entry: UndoRecord): Promise<void> {
   });
 }
 
-/** Drop the undo row for a path from the active store (legacy healing path). */
-async function removeUndo(path: string): Promise<void> {
-  const store = await loadHashStore();
-  store.deleteUndo(path);
-}
-
 /** Load the v7 undo row for a path from the active store, if any. */
 async function readFileUndo(path: string): Promise<FileUndoRecord | undefined> {
   const store = await loadHashStore();
@@ -104,7 +98,8 @@ export async function getUndo(path: string): Promise<UndoEntry | undefined> {
     if (!record) return undefined;
     const originalEnding = record.ending;
     if (originalEnding !== "\r\n" && originalEnding !== "\n" && originalEnding !== "\r") {
-      await removeUndo(path);
+      const store = await loadHashStore();
+      store.deleteUndoPair(path);
       return undefined;
     }
     return {

@@ -152,7 +152,64 @@ describe("undo leases — read, edit, undo through the real tools", () => {
         staleMessage = error instanceof Error ? error.message : String(error);
       }
       expect(threw).toBe(true);
-      // Tool envelope is the batch abort; the inner failure names the stale anchor.
+      expect(staleCode).toBe("E_BATCH_ABORT");
+      expect(staleMessage).toContain("[E_STALE_ANCHOR]");
+      expect(await fileText()).toBe(beforeStale);
+    });
+  });
+
+  it("stale pre-edit anchors fail loudly and change nothing", async () => {
+    // Guard mechanism: the served-anchor hash-equality check in applyEdit
+    // (anchor-pipeline.ts) rejects anchors absent from the current assignment —
+    // the exclusion lists only decide which anchors get minted, not this guard.
+    await withTempFile("undo-stale.txt", "alpha\nbeta\ngamma\ndelta\n", async ({ cwd, path }) => {
+      const harness = setupIntegrationTest(cwd);
+      const readTool = harness.getTool("read");
+      const editTool = harness.getTool("edit");
+      const read = async () =>
+        rowAnchors(await readTool.execute("read", { path: "undo-stale.txt" }));
+      const fileText = () => readFile(path, "utf8");
+      const servedA = await read();
+      const betaAnchor = servedA[1]!;
+      await editTool.execute("edit", {
+        path: "undo-stale.txt",
+        anchor_from: betaAnchor,
+        anchor_to: betaAnchor,
+        replace_with: "",
+      });
+      const textB1 = await fileText();
+      const gammaAnchorB1 = await withWorkspace(cwd, async () => {
+        const store = await internalStore();
+        const rows = store.lineageFor(path, snapshotHashFor(textB1));
+        return rows.find((row) => row.lineId === 3)!.anchor;
+      });
+      await editTool.execute("edit", {
+        path: "undo-stale.txt",
+        anchor_from: gammaAnchorB1,
+        anchor_to: gammaAnchorB1,
+        replace_with: "GAMMA",
+      });
+      const undoTool = harness.getTool("undo_last_edit");
+      await undoTool.execute("undo", { path: "undo-stale.txt" });
+      expect(await fileText()).toBe(textB1);
+      const { codeOf } = await import("../../src/utils.js");
+      const beforeStale = await fileText();
+      let threw = false;
+      let staleCode: string | undefined;
+      let staleMessage = "";
+      try {
+        await editTool.execute("edit", {
+          path: "undo-stale.txt",
+          anchor_from: gammaAnchorB1,
+          anchor_to: gammaAnchorB1,
+          replace_with: "STALE",
+        });
+      } catch (error) {
+        threw = true;
+        staleCode = codeOf(error);
+        staleMessage = error instanceof Error ? error.message : String(error);
+      }
+      expect(threw).toBe(true);
       expect(staleCode).toBe("E_BATCH_ABORT");
       expect(staleMessage).toContain("[E_STALE_ANCHOR]");
       expect(await fileText()).toBe(beforeStale);

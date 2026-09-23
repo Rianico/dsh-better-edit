@@ -37,6 +37,7 @@ import {
   createLineageStore,
   ensureLineageTables,
   snapshotHashFor,
+  LineageCorruptError,
   type LineageStore,
 } from "./snapshot-store/lineage-store.js";
 // ---- validators (owned here; the store's corruption handling uses them) ----
@@ -149,6 +150,8 @@ export interface HashStore {
   findSnapshotPaths(hashes: string[]): string[];
 
   // ---- undo entries (one per path) ----------------------------------------
+  // Single-row undo faces are internal: healing and test fixtures only. All production
+  // writes move legacy + v7 together through the pair face below (one writer rule).
   /** The undo row for a path, healing a corrupt row (parse → validate → delete). */
   getUndo(path: string): UndoRecord | undefined;
   upsertUndo(path: string, entry: UndoRecord): void;
@@ -522,7 +525,7 @@ function buildStore(db: DatabaseSync, storePath: string): { db: DatabaseSync; st
     db.exec("ALTER TABLE served ADD COLUMN retired TEXT");
   }
   const allStmt = db.prepare(
-    "SELECT path FROM snapshots UNION SELECT path FROM undo UNION SELECT path FROM served",
+    "SELECT path FROM snapshots UNION SELECT path FROM undo UNION SELECT path FROM served UNION SELECT path FROM file_undo",
   );
   const undoUpsertStmt = db.prepare(
     "INSERT INTO undo (path, content, bom, ending, hashes, result_content, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?) " +
@@ -709,10 +712,59 @@ function makeDomainStore(
   lineageStore: LineageStore,
   db: DatabaseSync,
 ): InternalHashStore {
-  function undoPairUpsertImpl(path: string, legacy: UndoRecord, v7: FileUndoRecord): void {
+  /**
+   * Transaction owner for the undo pair: the store's own `db` handle (opened in
+   * buildStore). Not a second owner beside the snapshot/lineage stores — those
+   * manage their own tables and transactions; this helper only wraps undo's two rows.
+   */
+  function withUndoPairTxn(fn: () => void): void {
     withBusyRetry(() => {
       db.exec("BEGIN IMMEDIATE");
       try {
+        fn();
+        db.exec("COMMIT");
+      } catch (error) {
+        try {
+          db.exec("ROLLBACK");
+        } catch (rollbackError) {
+          console.warn(rollbackError);
+        }
+        throw error;
+      }
+    });
+  }
+
+  function undoPairUpsertImpl(path: string, legacy: UndoRecord, v7: FileUndoRecord): void {
+    withUndoPairTxn(() => {
+      stmts.undoUpsert(
+        path,
+        legacy.content,
+        legacy.bom,
+        legacy.ending,
+        JSON.stringify(legacy.hashes),
+        legacy.resultContent,
+        Date.now(),
+      );
+      stmts.fileUndoUpsert(
+        path,
+        v7.content,
+        v7.bom,
+        v7.ending,
+        JSON.stringify(v7.hashes),
+        v7.resultContent,
+        v7.snapshotHash,
+        v7.updatedAt,
+      );
+    });
+  }
+
+  function undoPairRestoreImpl(
+    path: string,
+    legacy: UndoRecord | undefined,
+    v7: FileUndoRecord | undefined,
+  ): void {
+    withUndoPairTxn(() => {
+      if (legacy) {
         stmts.undoUpsert(
           path,
           legacy.content,
@@ -722,6 +774,10 @@ function makeDomainStore(
           legacy.resultContent,
           Date.now(),
         );
+      } else {
+        stmts.undoDelete(path);
+      }
+      if (v7) {
         stmts.fileUndoUpsert(
           path,
           v7.content,
@@ -732,80 +788,16 @@ function makeDomainStore(
           v7.snapshotHash,
           v7.updatedAt,
         );
-        db.exec("COMMIT");
-      } catch (error) {
-        try {
-          db.exec("ROLLBACK");
-        } catch (rollbackError) {
-          console.warn(rollbackError);
-        }
-        throw error;
-      }
-    });
-  }
-
-  function undoPairRestoreImpl(
-    path: string,
-    legacy: UndoRecord | undefined,
-    v7: FileUndoRecord | undefined,
-  ): void {
-    withBusyRetry(() => {
-      db.exec("BEGIN IMMEDIATE");
-      try {
-        if (legacy) {
-          stmts.undoUpsert(
-            path,
-            legacy.content,
-            legacy.bom,
-            legacy.ending,
-            JSON.stringify(legacy.hashes),
-            legacy.resultContent,
-            Date.now(),
-          );
-        } else {
-          stmts.undoDelete(path);
-        }
-        if (v7) {
-          stmts.fileUndoUpsert(
-            path,
-            v7.content,
-            v7.bom,
-            v7.ending,
-            JSON.stringify(v7.hashes),
-            v7.resultContent,
-            v7.snapshotHash,
-            v7.updatedAt,
-          );
-        } else {
-          stmts.fileUndoDelete(path);
-        }
-        db.exec("COMMIT");
-      } catch (error) {
-        try {
-          db.exec("ROLLBACK");
-        } catch (rollbackError) {
-          console.warn(rollbackError);
-        }
-        throw error;
+      } else {
+        stmts.fileUndoDelete(path);
       }
     });
   }
 
   function undoPairDeleteImpl(path: string): void {
-    withBusyRetry(() => {
-      db.exec("BEGIN IMMEDIATE");
-      try {
-        stmts.undoDelete(path);
-        stmts.fileUndoDelete(path);
-        db.exec("COMMIT");
-      } catch (error) {
-        try {
-          db.exec("ROLLBACK");
-        } catch (rollbackError) {
-          console.warn(rollbackError);
-        }
-        throw error;
-      }
+    withUndoPairTxn(() => {
+      stmts.undoDelete(path);
+      stmts.fileUndoDelete(path);
     });
   }
 
@@ -904,6 +896,9 @@ function makeDomainStore(
     getFileUndo(path) {
       const row = stmts.fileUndoGet(path);
       if (!row) return undefined;
+      if (!("snapshot_hash" in row)) {
+        throw new LineageCorruptError("file_undo row is missing snapshot_hash");
+      }
       try {
         const parsed = JSON.parse(row.hashes as string);
         if (!isValidHashList(parsed)) {
@@ -911,12 +906,12 @@ function makeDomainStore(
           return undefined;
         }
         return {
-          content: row.content as string,
-          bom: row.bom as string,
-          ending: row.ending as string,
+          content: row.content,
+          bom: row.bom,
+          ending: row.ending,
           hashes: parsed as string[],
-          resultContent: row.result_content as string,
-          snapshotHash: (row.snapshot_hash as string | null) ?? null,
+          resultContent: row.result_content,
+          snapshotHash: row.snapshot_hash ?? null,
           updatedAt: row.updated_at,
         };
       } catch (error) {
@@ -1096,6 +1091,7 @@ function makeDomainStore(
         for (const path of missing) {
           snapshotStore.deleteByPath(path);
           stmts.undoDelete(path);
+          stmts.fileUndoDelete(path);
           stmts.servedDeletePath(path);
         }
       });

@@ -1659,6 +1659,7 @@ it("v7 write fault leaves the previous undo readable and reports failure", async
       hashes: ["H01"],
       resultContent: "two\n",
     };
+    const t0 = Date.now();
     expect((await saveUndo("/f.ts", v1)).persisted).toBe(true);
     const legacyBefore = (await loadHashStore()).getUndo("/f.ts");
     const v7Before = internal.getFileUndo("/f.ts");
@@ -1681,6 +1682,29 @@ it("v7 write fault leaves the previous undo readable and reports failure", async
     // Both rows atomic: the previous undo reads back byte-identical.
     expect((await loadHashStore()).getUndo("/f.ts")).toEqual(legacyBefore);
     expect(internal.getFileUndo("/f.ts")).toEqual(v7Before);
+    // Two clocks, reconciled: the legacy row stamps store time (Date.now() at the
+    // store write) while the v7 row carries the caller-passed updatedAt — both must
+    // be sane numbers from this save, proving neither side wrote garbage.
+    const check = new DatabaseSync(sqlitePath(home), {
+      defensive: false,
+    } as any);
+    const legacyTs = (
+      check.prepare("SELECT updated_at AS v FROM undo WHERE path = ?").get("/f.ts") as {
+        v: number;
+      }
+    ).v;
+    const v7Ts = (
+      check.prepare("SELECT updated_at AS v FROM file_undo WHERE path = ?").get("/f.ts") as {
+        v: number;
+      }
+    ).v;
+    check.close();
+    const now = Date.now();
+    for (const ts of [legacyTs, v7Ts]) {
+      expect(typeof ts).toBe("number");
+      expect(ts).toBeGreaterThanOrEqual(t0);
+      expect(ts).toBeLessThanOrEqual(now);
+    }
   });
 });
 
@@ -1710,5 +1734,49 @@ it("pre-v7 NULL pin reads as null and is overwritten cleanly", async () => {
       resultContent: "b\n",
     });
     expect(internal.getFileUndo("/n.ts")?.snapshotHash).toBe(snapshotHashFor("a\n"));
+  });
+});
+
+it("corrupt legacy undo row heals both rows", async () => {
+  await withTempHome(async (home) => {
+    const { saveUndo, getUndo } = await import("../../src/undo-edit.js");
+    await saveUndo("/h.ts", {
+      content: "a\n",
+      bom: "",
+      originalEnding: "\n",
+      hashes: ["H01"],
+      resultContent: "b\n",
+    });
+    const internal = (await loadHashStore()) as unknown as InternalHashStore;
+    expect(internal.getFileUndo("/h.ts")).toBeDefined();
+    shutdownHashStore();
+    const raw = new DatabaseSync(sqlitePath(home), {
+      defensive: false,
+    } as any);
+    raw.prepare("UPDATE undo SET ending = ? WHERE path = ?").run("??", "/h.ts");
+    raw.close();
+    await loadHashStore();
+    expect(await getUndo("/h.ts")).toBeUndefined();
+    const reopened = (await loadHashStore()) as unknown as InternalHashStore;
+    expect(reopened.getFileUndo("/h.ts")).toBeUndefined();
+  });
+});
+
+it("pruneMissing deletes file_undo rows for missing paths", async () => {
+  await withTempHome(async () => {
+    const { saveUndo } = await import("../../src/undo-edit.js");
+    const internal = (await loadHashStore()) as unknown as InternalHashStore;
+    await saveUndo("/gone.ts", {
+      content: "a\n",
+      bom: "",
+      originalEnding: "\n",
+      hashes: ["H01"],
+      resultContent: "b\n",
+    });
+    await recordServed("cp3-prune", "/gone.ts", [{ position: 0, hash: "H01" }], 1);
+    expect(internal.getFileUndo("/gone.ts")).toBeDefined();
+    await (await loadHashStore()).pruneMissing();
+    expect(internal.getFileUndo("/gone.ts")).toBeUndefined();
+    expect((await loadHashStore()).getUndo("/gone.ts")).toBeUndefined();
   });
 });
