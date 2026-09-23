@@ -78,7 +78,11 @@ snapshots` / `DELETE FROM undo` that ADR-0016 left in place (pending CP4)
 ## Consequences
 
 - Crash safety is transactional per commit (snapshot + lineage + leases in one
-  unit); cross-commit consistency (undo lease restore) is CP4.
+  unit); cross-commit consistency (undo lease restore) is CP4. The transitional
+  dual-write is NOT atomic: `upsertSnapshot` commits the legacy row in its own
+  transaction before the lineage commit, so a lineage failure leaves a legacy row
+  with no lineage — by design the read prefers lineage when present and falls
+  back to legacy otherwise.
 - Pairing-rule changes are data-compatible only forward: new snapshots pair
   against whatever lineage exists; old rows are never rewritten.
 - Read together with `0016-store-version-flap-guard.md`: 0016 made store open
