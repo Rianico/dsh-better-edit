@@ -427,14 +427,31 @@ function ensureSchema(db: DatabaseSync): void {
  * from HASH_STORE_VERSION (including an absent or non-integer stamp on a
  * pre-versioning store). The sole writer of meta.version. CP1 has no data
  * steps — later tickets add ordered, guarded data statements beside the stamp
- * write inside the same transaction.
+ * write inside the same transaction. The stamp is re-checked under the
+ * RESERVED lock: a newer writer that committed between the probe and
+ * BEGIN IMMEDIATE is refused here, so the stamp write can never silently
+ * downgrade a newer store.
  */
-function migrateForward(db: DatabaseSync, _from: number | undefined): void {
-  void _from;
+/**
+ * Fail-closed refusal shared by the pre-write fast path and the
+ * in-transaction re-check: a stamp newer than this build is never touched.
+ */
+function assertNotNewer(stored: number | undefined, storePath: string): void {
+  if (stored !== undefined && stored > HASH_STORE_VERSION) {
+    throw new DomainError("E_STORE_NEWER_VERSION", {
+      path: storePath,
+      storedVersion: stored,
+      supportedVersion: HASH_STORE_VERSION,
+    });
+  }
+}
+
+function migrateForward(db: DatabaseSync, storePath: string): void {
   let migrationOpen = false;
   try {
     db.exec("BEGIN IMMEDIATE");
     migrationOpen = true;
+    assertNotNewer(storedVersion(db), storePath);
     db.prepare(
       "INSERT INTO meta (key, value) VALUES ('version', ?) " +
         "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
@@ -455,17 +472,11 @@ function migrateForward(db: DatabaseSync, _from: number | undefined): void {
 
 function buildStore(db: DatabaseSync, storePath: string): { db: DatabaseSync; stmts: Prepared } {
   const stored = storedVersion(db);
-  if (stored !== undefined && stored > HASH_STORE_VERSION) {
-    throw new DomainError("E_STORE_NEWER_VERSION", {
-      path: storePath,
-      storedVersion: stored,
-      supportedVersion: HASH_STORE_VERSION,
-    });
-  }
+  assertNotNewer(stored, storePath);
   db.exec("PRAGMA journal_mode = WAL");
   db.exec("PRAGMA synchronous = NORMAL");
   ensureSchema(db);
-  if (stored !== HASH_STORE_VERSION) migrateForward(db, stored);
+  if (stored !== HASH_STORE_VERSION) migrateForward(db, storePath);
   const currentServedColumns = db.prepare("PRAGMA table_info(served)").all() as {
     name: string;
   }[];

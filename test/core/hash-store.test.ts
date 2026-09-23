@@ -443,9 +443,33 @@ describe("hash-store — schema versioning", () => {
       (await loadServedStore()).upsertServed("sessionA", "/p.ts", JSON.stringify(["XYZ"]));
       shutdownHashStore();
 
-      const stamp = (value: string): void => {
-        const db = new DatabaseSync(sqlitePath(home), { defensive: false } as any);
-        db.prepare("UPDATE meta SET value = ? WHERE key = 'version'").run(value);
+      const raw = (): DatabaseSync =>
+        new DatabaseSync(sqlitePath(home), { defensive: false } as any);
+      const stamp = (): string | undefined => {
+        const db = raw();
+        const row = db.prepare("SELECT value FROM meta WHERE key = 'version'").get() as
+          | { value?: string }
+          | undefined;
+        db.close();
+        return row?.value;
+      };
+      const count = (table: string): number => {
+        const db = raw();
+        const row = db.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get() as { n: number };
+        db.close();
+        return row.n;
+      };
+      const armTrigger = (): void => {
+        const db = raw();
+        db.exec(
+          "CREATE TRIGGER block_version_write BEFORE UPDATE OF value ON meta " +
+            "WHEN OLD.key = 'version' BEGIN SELECT RAISE(ABORT, 'blocked'); END;",
+        );
+        db.close();
+      };
+      const dropTrigger = (): void => {
+        const db = raw();
+        db.exec("DROP TRIGGER block_version_write");
         db.close();
       };
       const readAll = async (): Promise<{ snapshots: number; undo: boolean; served: unknown }> => {
@@ -457,24 +481,41 @@ describe("hash-store — schema versioning", () => {
         };
       };
 
-      stamp("5");
-      await loadHashStore();
-      const afterFirst = await readAll();
-      expect(afterFirst).toEqual({ snapshots: 1, undo: true, served: ["XYZ"] });
-      shutdownHashStore();
+      const stampDb = raw();
+      stampDb.prepare("UPDATE meta SET value = '5' WHERE key = 'version'").run();
+      stampDb.close();
 
-      stamp("5");
-      await loadHashStore();
-      const afterSecond = await readAll();
-      expect(afterSecond).toEqual(afterFirst);
-      shutdownHashStore();
+      // Positive control + ROLLBACK-arm coverage: the migration's stamp write
+      // is blocked, the open fails, and the store is left untouched.
+      armTrigger();
+      await expect(loadHashStore()).rejects.toThrow(/blocked/);
+      expect(stamp()).toBe("5");
+      expect(count("snapshots")).toBe(1);
+      expect(count("undo")).toBe(1);
+      const blockedServed = raw();
+      const blockedRow = blockedServed
+        .prepare("SELECT hashes FROM served WHERE session_id = ? AND path = ?")
+        .get("sessionA", "/p.ts") as { hashes: string };
+      blockedServed.close();
+      expect(JSON.parse(blockedRow.hashes)).toEqual(["XYZ"]);
+      const blockedEntries = await readdir(configHome(home));
+      expect(blockedEntries.some((name) => name.includes(".corrupt-"))).toBe(false);
 
-      const check = new DatabaseSync(sqlitePath(home), { defensive: false } as any);
-      const row = check.prepare("SELECT value FROM meta WHERE key = 'version'").get() as
-        | { value?: string }
-        | undefined;
-      check.close();
-      expect(row?.value).toBe(String(HASH_STORE_VERSION));
+      // The failed migration left the store re-runnable: drop the trigger and
+      // the same open migrates forward with every row family intact.
+      dropTrigger();
+      await loadHashStore();
+      expect(await readAll()).toEqual({ snapshots: 1, undo: true, served: ["XYZ"] });
+      shutdownHashStore();
+      expect(stamp()).toBe(String(HASH_STORE_VERSION));
+
+      // Refutable half: a write detector armed on a current store. Any version
+      // write on a current store now throws instead of passing silently.
+      armTrigger();
+      const current = await loadHashStore();
+      expect(current.getSnapshot("/p.ts", "x\n")).toEqual(["XYZ"]);
+      shutdownHashStore();
+      dropTrigger();
 
       const beforeBytes = await readFile(sqlitePath(home));
       await loadHashStore();
