@@ -373,7 +373,108 @@ function addColumnIfMissing(db: DatabaseSync, table: string, column: string, typ
  * and DROP TABLE served only for the pre-session-keyed shell (no session_id —
  * unusable by either version). No DELETE FROM anywhere on this path.
  */
+/**
+ * v7 state tables. All additive (IF NOT EXISTS), owned by this build: a v6
+ * process never names them, so a version flap cannot cost v7 anything.
+ */
+function ensureV7Tables(db: DatabaseSync): void {
+  db.exec(
+    "CREATE TABLE IF NOT EXISTS file_snapshots (" +
+      "snapshot_id INTEGER PRIMARY KEY AUTOINCREMENT, " +
+      "path TEXT NOT NULL, " +
+      "snapshot_hash TEXT NOT NULL, " +
+      "line_count INTEGER NOT NULL, " +
+      "created_at INTEGER NOT NULL, " +
+      "committed INTEGER NOT NULL DEFAULT 1, " +
+      "UNIQUE (path, snapshot_hash)" +
+      ")",
+  );
+  db.exec("CREATE INDEX IF NOT EXISTS idx_snapshots_created ON file_snapshots (created_at)");
+  db.exec(
+    "CREATE TABLE IF NOT EXISTS line_id_counters (" +
+      "path TEXT PRIMARY KEY, " +
+      "next_id INTEGER NOT NULL" +
+      ")",
+  );
+  db.exec(
+    "CREATE TABLE IF NOT EXISTS line_lineage (" +
+      "snapshot_id INTEGER NOT NULL, " +
+      "line_number INTEGER NOT NULL, " +
+      "line_id INTEGER NOT NULL, " +
+      "canon_hash TEXT NOT NULL, " +
+      "anchor TEXT NOT NULL, " +
+      "PRIMARY KEY (snapshot_id, line_number), " +
+      "FOREIGN KEY (snapshot_id) REFERENCES file_snapshots(snapshot_id) ON DELETE CASCADE" +
+      ")",
+  );
+  db.exec(
+    "CREATE UNIQUE INDEX IF NOT EXISTS idx_lineage_snapshot_line_id " +
+      "ON line_lineage (snapshot_id, line_id)",
+  );
+  db.exec(
+    "CREATE TABLE IF NOT EXISTS file_undo (" +
+      "path TEXT PRIMARY KEY, " +
+      "content TEXT NOT NULL, " +
+      "bom TEXT NOT NULL, " +
+      "ending TEXT NOT NULL, " +
+      "hashes TEXT NOT NULL, " +
+      "result_content TEXT NOT NULL, " +
+      "snapshot_hash TEXT, " +
+      "updated_at INTEGER NOT NULL" +
+      ")",
+  );
+  db.exec(
+    "CREATE TABLE IF NOT EXISTS served_leases (" +
+      "session_id TEXT NOT NULL, " +
+      "file_path TEXT NOT NULL, " +
+      "anchor TEXT NOT NULL, " +
+      "line_id INTEGER NOT NULL, " +
+      "canon_hash TEXT NOT NULL, " +
+      "served_snapshot_hash TEXT NOT NULL, " +
+      "served_line_number INTEGER NOT NULL, " +
+      "updated_at INTEGER NOT NULL, " +
+      "retired_at INTEGER, " +
+      "PRIMARY KEY (session_id, file_path, anchor)" +
+      ")",
+  );
+  db.exec(
+    "CREATE INDEX IF NOT EXISTS idx_leases_line " +
+      "ON served_leases (session_id, file_path, line_id)",
+  );
+  db.exec(
+    "CREATE INDEX IF NOT EXISTS idx_leases_line_num " +
+      "ON served_leases (session_id, file_path, served_line_number)",
+  );
+  db.exec(
+    "CREATE INDEX IF NOT EXISTS idx_leases_file_retired " +
+      "ON served_leases (file_path, retired_at)",
+  );
+  db.exec(
+    "CREATE INDEX IF NOT EXISTS idx_leases_session_anchor " +
+      "ON served_leases (session_id, anchor)",
+  );
+  db.exec(
+    "CREATE TABLE IF NOT EXISTS served_session_meta (" +
+      "session_id TEXT NOT NULL, " +
+      "file_path TEXT NOT NULL, " +
+      "reported TEXT, " +
+      "updated_at INTEGER NOT NULL, " +
+      "PRIMARY KEY (session_id, file_path)" +
+      ")",
+  );
+}
+
 function ensureSchema(db: DatabaseSync): void {
+  db.exec(
+    "CREATE TABLE IF NOT EXISTS meta (" + "key TEXT PRIMARY KEY, " + "value TEXT NOT NULL" + ")",
+  );
+  ensureV7Tables(db);
+  // WHY the v6 shells stay whole: an un-restarted v6 session — or a v6
+  // process in a concurrent worktree — prepares statements against these
+  // exact tables, so they are created complete on every open and never
+  // dropped or reshaped here. v7 state stays isolated in the v7 tables
+  // above. `cards` is kept because the released v6 build names it at store
+  // open; porting upstream's column list would break it.
   db.exec(
     "CREATE TABLE IF NOT EXISTS snapshots (" +
       "path TEXT PRIMARY KEY, " +
@@ -382,9 +483,6 @@ function ensureSchema(db: DatabaseSync): void {
       "hashes TEXT NOT NULL, " +
       "updated_at INTEGER NOT NULL" +
       ")",
-  );
-  db.exec(
-    "CREATE TABLE IF NOT EXISTS meta (" + "key TEXT PRIMARY KEY, " + "value TEXT NOT NULL" + ")",
   );
   db.exec(
     "CREATE TABLE IF NOT EXISTS undo (" +
@@ -475,6 +573,8 @@ function buildStore(db: DatabaseSync, storePath: string): { db: DatabaseSync; st
   assertNotNewer(stored, storePath);
   db.exec("PRAGMA journal_mode = WAL");
   db.exec("PRAGMA synchronous = NORMAL");
+  // Explicit intent: node:sqlite already enables FK constraints by default.
+  db.exec("PRAGMA foreign_keys = ON");
   ensureSchema(db);
   if (stored !== HASH_STORE_VERSION) migrateForward(db, storePath);
   const currentServedColumns = db.prepare("PRAGMA table_info(served)").all() as {

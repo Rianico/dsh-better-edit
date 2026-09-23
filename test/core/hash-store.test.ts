@@ -322,6 +322,370 @@ describe("hash-store — schema versioning", () => {
     });
   });
 
+  it("creates the v7 tables, indices and lineage foreign key on a fresh store", async () => {
+    await withTempHome(async (home) => {
+      await loadHashStore();
+      shutdownHashStore();
+
+      const db = new DatabaseSync(sqlitePath(home), {
+        defensive: false,
+      } as any);
+      const tables = db.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all() as {
+        name: string;
+      }[];
+      const tableNames = tables.map((table) => table.name);
+      for (const expected of [
+        "file_snapshots",
+        "line_id_counters",
+        "line_lineage",
+        "file_undo",
+        "served_leases",
+        "served_session_meta",
+      ]) {
+        expect(tableNames).toContain(expected);
+      }
+
+      const fks = db.prepare("PRAGMA foreign_key_list(line_lineage)").all() as {
+        table?: string;
+        on_delete?: string;
+      }[];
+      expect(fks).toHaveLength(1);
+      expect(fks[0]?.table).toBe("file_snapshots");
+      expect(fks[0]?.on_delete).toBe("CASCADE");
+
+      const insertSnapshot = (): unknown =>
+        db
+          .prepare(
+            "INSERT INTO file_snapshots (path, snapshot_hash, line_count, created_at) " +
+              "VALUES (?, ?, ?, ?)",
+          )
+          .run("/p.ts", "h1", 1, 1);
+      insertSnapshot();
+      expect(insertSnapshot).toThrow();
+      db.prepare(
+        "INSERT INTO file_snapshots (path, snapshot_hash, line_count, created_at) " +
+          "VALUES (?, ?, ?, ?)",
+      ).run("/p.ts", "h2", 1, 3);
+
+      const parent = db
+        .prepare(
+          "INSERT INTO file_snapshots (path, snapshot_hash, line_count, created_at) " +
+            "VALUES (?, ?, ?, ?)",
+        )
+        .run("/q.ts", "hp", 2, 4) as { lastInsertRowid: number | bigint };
+      const parentId = Number(parent.lastInsertRowid);
+      const insertLineage = (snapshotId: number): unknown =>
+        db
+          .prepare(
+            "INSERT INTO line_lineage (snapshot_id, line_number, line_id, canon_hash, anchor) " +
+              "VALUES (?, ?, ?, ?, ?)",
+          )
+          .run(snapshotId, 1, 7, "c", "a");
+      expect(() => insertLineage(parentId + 9999)).toThrow();
+      insertLineage(parentId);
+      db.prepare("DELETE FROM file_snapshots WHERE snapshot_id = ?").run(parentId);
+      const orphans = db.prepare("SELECT COUNT(*) AS n FROM line_lineage WHERE snapshot_id = ?").get(
+        parentId,
+      ) as { n: number };
+      expect(orphans.n).toBe(0);
+
+      const indices = db.prepare("SELECT name FROM sqlite_master WHERE type = 'index'").all() as {
+        name: string;
+      }[];
+      const indexNames = indices.map((index) => index.name);
+      for (const expected of [
+        "idx_snapshots_created",
+        "idx_lineage_snapshot_line_id",
+        "idx_leases_line",
+        "idx_leases_line_num",
+        "idx_leases_file_retired",
+        "idx_leases_session_anchor",
+      ]) {
+        expect(indexNames).toContain(expected);
+      }
+      db.close();
+    });
+  });
+
+  it("keeps the v6 shells complete with cards on a fresh store", async () => {
+    await withTempHome(async (home) => {
+      await loadHashStore();
+      shutdownHashStore();
+
+      const db = new DatabaseSync(sqlitePath(home), {
+        defensive: false,
+      } as any);
+      const columns = (table: string): string[] =>
+        (db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[]).map(
+          (column) => column.name,
+        );
+      expect(columns("snapshots")).toEqual(["path", "checksum", "line_count", "hashes", "updated_at"]);
+      expect(columns("undo")).toEqual([
+        "path",
+        "content",
+        "bom",
+        "ending",
+        "hashes",
+        "result_content",
+        "updated_at",
+      ]);
+      expect(columns("served")).toEqual([
+        "session_id",
+        "path",
+        "hashes",
+        "reported",
+        "retired",
+        "canons",
+        "snapshotId",
+        "cards",
+        "updated_at",
+      ]);
+      db.close();
+    });
+  });
+
+  it("migrates a real v6 store forward with every row and shell column intact", async () => {
+    await withTempHome(async (home) => {
+      // v6 release schema, ce657e4: shells verbatim, meta stamped 6.
+      await mkdir(configHome(home), { recursive: true });
+      const now = Date.now();
+      const fixture = new DatabaseSync(sqlitePath(home), {
+        defensive: false,
+      } as any);
+      fixture.exec(
+        "CREATE TABLE snapshots (" +
+          "path TEXT PRIMARY KEY, " +
+          "checksum TEXT NOT NULL, " +
+          "line_count INTEGER NOT NULL, " +
+          "hashes TEXT NOT NULL, " +
+          "updated_at INTEGER NOT NULL" +
+          ")",
+      );
+      fixture.exec("CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)");
+      fixture.exec(
+        "CREATE TABLE undo (" +
+          "path TEXT PRIMARY KEY, " +
+          "content TEXT NOT NULL, " +
+          "bom TEXT NOT NULL, " +
+          "ending TEXT NOT NULL, " +
+          "hashes TEXT NOT NULL, " +
+          "result_content TEXT NOT NULL, " +
+          "updated_at INTEGER NOT NULL" +
+          ")",
+      );
+      fixture.exec(
+        "CREATE TABLE served (" +
+          "session_id TEXT NOT NULL, " +
+          "path TEXT NOT NULL, " +
+          "hashes TEXT NOT NULL, " +
+          "reported TEXT, " +
+          "retired TEXT, " +
+          "canons TEXT, " +
+          "snapshotId TEXT, " +
+          "cards TEXT, " +
+          "updated_at INTEGER NOT NULL, " +
+          "PRIMARY KEY (session_id, path)" +
+          ")",
+      );
+      fixture.prepare("INSERT INTO meta (key, value) VALUES ('version', '6')").run();
+      fixture
+        .prepare("INSERT INTO snapshots (path, checksum, line_count, hashes, updated_at) VALUES (?, ?, ?, ?, ?)")
+        .run("/p.ts", contentChecksum("x\n"), 1, JSON.stringify(["XYZ"]), now);
+      fixture
+        .prepare(
+          "INSERT INTO undo (path, content, bom, ending, hashes, result_content, updated_at) " +
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+        )
+        .run("/u.ts", "old", "", "\n", JSON.stringify(["UVW"]), "new", now);
+      fixture
+        .prepare(
+          "INSERT INTO served (session_id, path, hashes, reported, retired, canons, snapshotId, cards, updated_at) " +
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        )
+        .run("sessionA", "/p.ts", JSON.stringify(["XYZ"]), null, null, null, null, JSON.stringify(["C1"]), now);
+      const before = {
+        snapshots: fixture.prepare("SELECT * FROM snapshots ORDER BY path").all(),
+        undo: fixture.prepare("SELECT * FROM undo ORDER BY path").all(),
+        served: fixture.prepare("SELECT * FROM served ORDER BY session_id, path").all(),
+      };
+      fixture.close();
+
+      await loadHashStore();
+      shutdownHashStore();
+
+      const check = new DatabaseSync(sqlitePath(home), {
+        defensive: false,
+      } as any);
+      expect(check.prepare("SELECT * FROM snapshots ORDER BY path").all()).toEqual(before.snapshots);
+      expect(check.prepare("SELECT * FROM undo ORDER BY path").all()).toEqual(before.undo);
+      expect(check.prepare("SELECT * FROM served ORDER BY session_id, path").all()).toEqual(before.served);
+      for (const table of [
+        "file_snapshots",
+        "line_id_counters",
+        "line_lineage",
+        "file_undo",
+        "served_leases",
+        "served_session_meta",
+      ]) {
+        const row = check.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get() as { n: number };
+        expect(row.n).toBe(0);
+      }
+      const servedCols = (check.prepare("PRAGMA table_info(served)").all() as { name: string }[]).map(
+        (column) => column.name,
+      );
+      expect(servedCols).toEqual([
+        "session_id",
+        "path",
+        "hashes",
+        "reported",
+        "retired",
+        "canons",
+        "snapshotId",
+        "cards",
+        "updated_at",
+      ]);
+      const version = check.prepare("SELECT value FROM meta WHERE key = 'version'").get() as
+        | { value?: string }
+        | undefined;
+      check.close();
+      expect(version?.value).toBe("7");
+    });
+  });
+
+  it("accepts stamp 7 without a migration write and refuses stamp 8", async () => {
+    await withTempHome(async (home) => {
+      const store = await loadHashStore();
+      await put(store, "/p.ts", "x\n", ["XYZ"]);
+      store.upsertUndo("/u.ts", {
+        content: "old",
+        bom: "",
+        ending: "\n",
+        hashes: ["UVW"],
+        resultContent: "new",
+      });
+      (await loadServedStore()).upsertServed("sessionA", "/p.ts", JSON.stringify(["XYZ"]));
+      shutdownHashStore();
+
+      const rawConn = (): DatabaseSync =>
+        new DatabaseSync(sqlitePath(home), { defensive: false } as any);
+      const armTrigger = (): void => {
+        const db = rawConn();
+        db.exec(
+          "CREATE TRIGGER block_version_write BEFORE UPDATE OF value ON meta " +
+            "WHEN OLD.key = 'version' BEGIN SELECT RAISE(ABORT, 'blocked'); END;",
+        );
+        db.close();
+      };
+      const dropTrigger = (): void => {
+        const db = rawConn();
+        db.exec("DROP TRIGGER block_version_write");
+        db.close();
+      };
+
+      armTrigger();
+      const current = await loadHashStore();
+      expect(current.getSnapshot("/p.ts", "x\n")).toEqual(["XYZ"]);
+      shutdownHashStore();
+      dropTrigger();
+
+      const stampDb = rawConn();
+      stampDb.prepare("UPDATE meta SET value = '8' WHERE key = 'version'").run();
+      stampDb.close();
+
+      const before = await readFile(sqlitePath(home));
+      const failure = await loadHashStore().then(
+        () => null,
+        (error: unknown) => error,
+      );
+      expect(failure).toBeInstanceOf(DomainError);
+      expect((failure as DomainError).code).toBe("E_STORE_NEWER_VERSION");
+      const after = await readFile(sqlitePath(home));
+      expect(after.equals(before)).toBe(true);
+
+      const check = rawConn();
+      const version = check.prepare("SELECT value FROM meta WHERE key = 'version'").get() as
+        | { value?: string }
+        | undefined;
+      expect(version?.value).toBe("8");
+      expect((check.prepare("SELECT COUNT(*) AS n FROM snapshots").get() as { n: number }).n).toBe(1);
+      expect((check.prepare("SELECT COUNT(*) AS n FROM undo").get() as { n: number }).n).toBe(1);
+      expect(
+        (check.prepare("SELECT COUNT(*) AS n FROM served").get() as { n: number }).n,
+      ).toBe(1);
+      check.close();
+
+      const entries = await readdir(configHome(home));
+      expect(entries.some((name) => name.includes(".corrupt-"))).toBe(false);
+    });
+  });
+
+  it("survives a v6 downgrade with v6 rows intact and v7 tables empty", async () => {
+    await withTempHome(async (home) => {
+      const store = await loadHashStore();
+      await put(store, "/p.ts", "x\n", ["XYZ"]);
+      store.upsertUndo("/u.ts", {
+        content: "old",
+        bom: "",
+        ending: "\n",
+        hashes: ["UVW"],
+        resultContent: "new",
+      });
+      (await loadServedStore()).upsertServed("sessionA", "/p.ts", JSON.stringify(["XYZ"]));
+      shutdownHashStore();
+
+      const rawConn = (): DatabaseSync =>
+        new DatabaseSync(sqlitePath(home), { defensive: false } as any);
+      const snapshotRows = (): unknown[] => {
+        const db = rawConn();
+        const rows = db.prepare("SELECT * FROM snapshots ORDER BY path").all();
+        db.close();
+        return rows;
+      };
+      const beforeSnapshots = snapshotRows();
+      const beforeUndo = ((): unknown[] => {
+        const db = rawConn();
+        const rows = db.prepare("SELECT * FROM undo ORDER BY path").all();
+        db.close();
+        return rows;
+      })();
+      const beforeServed = ((): unknown[] => {
+        const db = rawConn();
+        const rows = db.prepare("SELECT * FROM served ORDER BY session_id, path").all();
+        db.close();
+        return rows;
+      })();
+
+      // Simulate a v6 process that opened the store and re-stamped it.
+      const stampDb = rawConn();
+      stampDb.prepare("UPDATE meta SET value = '6' WHERE key = 'version'").run();
+      stampDb.close();
+
+      await loadHashStore();
+      shutdownHashStore();
+
+      const check = rawConn();
+      expect(check.prepare("SELECT * FROM snapshots ORDER BY path").all()).toEqual(beforeSnapshots);
+      expect(check.prepare("SELECT * FROM undo ORDER BY path").all()).toEqual(beforeUndo);
+      expect(check.prepare("SELECT * FROM served ORDER BY session_id, path").all()).toEqual(beforeServed);
+      for (const table of [
+        "file_snapshots",
+        "line_id_counters",
+        "line_lineage",
+        "file_undo",
+        "served_leases",
+        "served_session_meta",
+      ]) {
+        const row = check.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get() as { n: number };
+        expect(row.n).toBe(0);
+      }
+      const version = check.prepare("SELECT value FROM meta WHERE key = 'version'").get() as
+        | { value?: string }
+        | undefined;
+      check.close();
+      expect(version?.value).toBe("7");
+    });
+  });
+
   it("keeps snapshots when the stored version matches", async () => {
     await withTempHome(async () => {
       const store = await loadHashStore();
