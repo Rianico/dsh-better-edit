@@ -11,6 +11,7 @@ import {
   createLineageStore,
   snapshotHashFor,
   type LineageStore,
+  LineageCorruptError,
 } from "../../src/snapshot-store/lineage-store.js";
 
 beforeAll(async () => {
@@ -318,7 +319,7 @@ describe("lineage-store — adopt refreshes anchors, never identity", () => {
     lineage.commitSnapshot({ path: "/e.ts", content, hashes: ["A0", "A1"] });
     db.exec("DELETE FROM line_lineage");
     expect(() => lineage.commitSnapshot({ path: "/e.ts", content, hashes: ["B0", "B1"] })).toThrow(
-      "snapshot row has no lineage",
+      LineageCorruptError,
     );
   });
 

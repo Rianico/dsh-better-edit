@@ -12,6 +12,7 @@ import {
   type InternalHashStore,
 } from "../../src/hash-store.js";
 import { recordServed } from "../../src/session-view.js";
+import { LineageCorruptError } from "../../src/snapshot-store/lineage-store.js";
 import { DomainError } from "../../src/domain-errors.js";
 import { HASH_STORE_VERSION } from "../../src/constants.js";
 import { CANON_VERSION } from "../../src/hashline/hash-assign.js";
@@ -1469,10 +1470,9 @@ describe("hash-store — v7 snapshot materialization", () => {
     });
   });
 
-  it("lineage insert fault leaves the legacy row and falls back without crashing", async () => {
+  it("lineage insert fault rolls back; the handle stays usable and no orphan persists", async () => {
     await withTempHome(async (home) => {
-      await loadHashStore();
-      shutdownHashStore();
+      const store = await loadHashStore();
       const setup = new DatabaseSync(sqlitePath(home), {
         defensive: false,
       } as any);
@@ -1481,69 +1481,100 @@ describe("hash-store — v7 snapshot materialization", () => {
           "BEGIN SELECT RAISE(ABORT, 'injected'); END;",
       );
       setup.close();
-      const store = await loadHashStore();
-      const content = "alpha\nbeta\n";
-      expect(() =>
-        store.upsertSnapshot("/g.ts", contentChecksum(content), 2, ["AAa", "AAb"], content),
-      ).toThrow("injected");
-      // The legacy row committed in its own transaction; lineage is absent; the
-      // read falls back to legacy with no crash.
-      expect(store.getSnapshot("/g.ts", content)).toEqual(["AAa", "AAb"]);
-      shutdownHashStore();
-      const check = new DatabaseSync(sqlitePath(home), {
-        defensive: false,
-      } as any);
-      const snapCount = (
-        check.prepare("SELECT COUNT(*) AS n FROM file_snapshots").get() as { n: number }
-      ).n;
-      const linCount = (
-        check.prepare("SELECT COUNT(*) AS n FROM line_lineage").get() as { n: number }
-      ).n;
-      expect(snapCount).toBe(0);
-      expect(linCount).toBe(0);
-      check.close();
-    });
-  });
-
-  it("adopt on an orphan snapshot row throws; serve paths fail closed without repair", async () => {
-    await withTempHome(async (home) => {
-      const internal = (await loadHashStore()) as unknown as InternalHashStore;
       const content = "alpha\nbeta\n";
       const hashes = ["AAa", "AAb"];
-      internal.commitSnapshot({ path: "/o.ts", content, hashes });
-      shutdownHashStore();
-      // Corrupt out-of-band: keep the snapshot row, empty the lineage.
-      const cut = new DatabaseSync(sqlitePath(home), {
+      expect(() =>
+        store.upsertSnapshot("/g.ts", contentChecksum(content), 2, hashes, content),
+      ).toThrow("injected");
+      // Same-connection proof: drop the trigger, then the same live handle must
+      // succeed (a wedged transaction would fail locked).
+      const drop = new DatabaseSync(sqlitePath(home), {
         defensive: false,
       } as any);
-      cut.exec("DELETE FROM line_lineage");
-      cut.close();
-      const reopened = (await loadHashStore()) as unknown as InternalHashStore;
-      // Direct call fails loud: the orphan can never be adopted silently.
-      expect(() => reopened.commitSnapshot({ path: "/o.ts", content, hashes })).toThrow(
-        "snapshot row has no lineage",
-      );
-      // Serve path: no lease, no crash, and no silent repair of the lineage.
-      await recordServed(
-        "cp3-orphan",
-        "/o.ts",
-        [
-          { position: 0, hash: "AAa" },
-          { position: 1, hash: "AAb" },
-        ],
-        2,
-        { hashes, content },
-      );
-      expect(reopened.leaseFor("cp3-orphan", "/o.ts", "AAa")).toBeUndefined();
-      shutdownHashStore();
-      const check = new DatabaseSync(sqlitePath(home), {
-        defensive: false,
-      } as any);
-      const linCount = (
-        check.prepare("SELECT COUNT(*) AS n FROM line_lineage").get() as { n: number }
+      drop.exec("DROP TRIGGER t2b_dual");
+      expect(() =>
+        store.upsertSnapshot("/g.ts", contentChecksum(content), 2, hashes, content),
+      ).not.toThrow();
+      expect(store.getSnapshot("/g.ts", content)).toEqual(hashes);
+      // Per-path counts: exactly one snapshot with its full lineage — no orphan,
+      // no partial row set (global 0/0 would break as soon as any other row exists).
+      const snapCount = (
+        drop.prepare("SELECT COUNT(*) AS n FROM file_snapshots WHERE path = ?").get("/g.ts") as {
+          n: number;
+        }
       ).n;
-      expect(linCount).toBe(0);
-      check.close();
+      const linCount = (
+        drop
+          .prepare(
+            "SELECT COUNT(*) AS n FROM line_lineage WHERE snapshot_id IN " +
+              "(SELECT snapshot_id FROM file_snapshots WHERE path = ?)",
+          )
+          .get("/g.ts") as { n: number }
+      ).n;
+      expect(snapCount).toBe(1);
+      expect(linCount).toBe(2);
+      drop.close();
     });
+  });
+});
+
+it("adopt on an orphan snapshot row throws; serve paths fail closed without repair", async () => {
+  await withTempHome(async (home) => {
+    const internal = (await loadHashStore()) as unknown as InternalHashStore;
+    const content = "alpha\nbeta\n";
+    const hashes = ["AAa", "AAb"];
+    internal.commitSnapshot({ path: "/o.ts", content, hashes });
+    shutdownHashStore();
+    // Corrupt out-of-band: keep the snapshot row, empty the lineage.
+    const cut = new DatabaseSync(sqlitePath(home), {
+      defensive: false,
+    } as any);
+    cut.exec("DELETE FROM line_lineage");
+    cut.close();
+    const reopened = (await loadHashStore()) as unknown as InternalHashStore;
+    // Direct call fails loud: the orphan can never be adopted silently.
+    expect(() => reopened.commitSnapshot({ path: "/o.ts", content, hashes })).toThrow(
+      LineageCorruptError,
+    );
+    // Serve path: no lease, no crash, and no silent repair of the lineage.
+    await recordServed(
+      "cp3-orphan",
+      "/o.ts",
+      [
+        { position: 0, hash: "AAa" },
+        { position: 1, hash: "AAb" },
+      ],
+      2,
+      { hashes, content },
+    );
+    expect(reopened.leaseFor("cp3-orphan", "/o.ts", "AAa")).toBeUndefined();
+    shutdownHashStore();
+    const check = new DatabaseSync(sqlitePath(home), {
+      defensive: false,
+    } as any);
+    const linCount = (
+      check.prepare("SELECT COUNT(*) AS n FROM line_lineage").get() as { n: number }
+    ).n;
+    expect(linCount).toBe(0);
+    check.close();
+  });
+});
+
+it("lineage with a corrupt anchor falls back instead of serving it", async () => {
+  await withTempHome(async (home) => {
+    const internal = (await loadHashStore()) as unknown as InternalHashStore;
+    const content = "alpha\nbeta\n";
+    const hashes = ["AAa", "AAb"];
+    internal.commitSnapshot({ path: "/k.ts", content, hashes });
+    shutdownHashStore();
+    // Corrupt out-of-band: intact numbering, invalid anchor shape.
+    const cut = new DatabaseSync(sqlitePath(home), {
+      defensive: false,
+    } as any);
+    cut.prepare("UPDATE line_lineage SET anchor = ? WHERE line_number = ?").run("!!!", 1);
+    cut.close();
+    const reopened = await loadHashStore();
+    // No legacy row was ever written: the hit is rejected, fallback misses.
+    expect(reopened.getSnapshot("/k.ts", content)).toBeUndefined();
   });
 });

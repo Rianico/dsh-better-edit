@@ -661,7 +661,7 @@ function makeDomainStore(
       // fallback-only healing is fail-closed (ADR-0017).
       if (
         lineage.length === splitLines(content).length &&
-        lineage.every((row, index) => row.lineNumber === index + 1)
+        lineage.every((row, index) => row.lineNumber === index + 1 && HASH_RE.test(row.anchor))
       ) {
         return lineage.map((row) => row.anchor);
       }
