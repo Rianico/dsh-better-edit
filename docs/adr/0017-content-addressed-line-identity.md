@@ -83,6 +83,10 @@ snapshots` / `DELETE FROM undo` that ADR-0016 left in place (pending CP4)
   transaction before the lineage commit, so a lineage failure leaves a legacy row
   with no lineage — by design the read prefers lineage when present and falls
   back to legacy otherwise.
+- Corrupt snapshots fail loud, never silent: adopt on a snapshot row with empty
+  lineage throws `LineageCorruptError` (a silent no-op would pin the path lease-less
+  forever — the orphan is sticky), and the read serves a lineage hit only when its
+  length matches the content and `line_number`s are dense 1..N.
 - Pairing-rule changes are data-compatible only forward: new snapshots pair
   against whatever lineage exists; old rows are never rewritten.
 - Read together with `0016-store-version-flap-guard.md`: 0016 made store open
