@@ -36,6 +36,17 @@ export function snapshotHashFor(content: string): string {
   return `${CANON_VERSION}:${contentChecksum(content)}`;
 }
 
+/**
+ * A snapshot row whose lineage is missing or malformed. Thrown (never silently
+ * repaired) so a corrupt snapshot can never pin a path into a lease-less state.
+ */
+export class LineageCorruptError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "LineageCorruptError";
+  }
+}
+
 export interface CommitLeases {
   sessionKey: string;
   rows: ReadonlyArray<{ position: number; hash: string | null }>;
@@ -323,16 +334,21 @@ export function createLineageStore(db: DatabaseSync): LineageStore {
             // SAFETY: SELECT list matches LineageRecord field-for-field (same statement shape
             // as grantLeases/lineageFor).
             const stored = snapshotLineageStmt.all(snapshotId) as unknown as LineageRecord[];
+            if (stored.length === 0 && lines.length > 0) {
+              throw new LineageCorruptError(
+                `commitSnapshot(${input.path}): snapshot row has no lineage`,
+              );
+            }
             if (stored.length > 0) {
               if (stored.length !== lines.length) {
-                throw new Error(
+                throw new LineageCorruptError(
                   `commitSnapshot(${input.path}): stored lineage has ${stored.length} rows ` +
                     `for ${lines.length} lines`,
                 );
               }
               for (let index = 0; index < lines.length; index++) {
                 if (stored[index]!.line_number !== index + 1) {
-                  throw new Error(
+                  throw new LineageCorruptError(
                     `commitSnapshot(${input.path}): lineage row out of order at index ${index}`,
                   );
                 }

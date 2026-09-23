@@ -312,15 +312,14 @@ describe("lineage-store — adopt refreshes anchors, never identity", () => {
     expect(changes() - before).toBe(1);
   });
 
-  it("adopt with emptied lineage leaves it alone", () => {
+  it("adopt with emptied lineage throws instead of silently no-oping", () => {
     const { db, lineage } = open();
     const content = "alpha\nbeta";
     lineage.commitSnapshot({ path: "/e.ts", content, hashes: ["A0", "A1"] });
     db.exec("DELETE FROM line_lineage");
-    expect(() =>
-      lineage.commitSnapshot({ path: "/e.ts", content, hashes: ["B0", "B1"] }),
-    ).not.toThrow();
-    expect(lineage.lineageFor("/e.ts", snapshotHashFor(content))).toEqual([]);
+    expect(() => lineage.commitSnapshot({ path: "/e.ts", content, hashes: ["B0", "B1"] })).toThrow(
+      "snapshot row has no lineage",
+    );
   });
 
   it("leases granted with reassignment resolve by anchor through the refreshed lineage", () => {
@@ -334,14 +333,20 @@ describe("lineage-store — adopt refreshes anchors, never identity", () => {
       path: "/h.ts",
       content,
       hashes: ["B0", "B1"],
-      leases: { sessionKey: "s", rows: [{ position: 0, hash: "B1" }] },
+      leases: {
+        sessionKey: "s",
+        rows: [
+          { position: 0, hash: "B1" },
+          { position: 1, hash: "A1" },
+        ],
+      },
     });
     const lease = lineage.leaseFor("s", "/h.ts", "B1");
     expect(lease).toBeDefined();
     expect(lease?.lineId).toBe(2);
     expect(lease?.canonHash).toBe(canonDigest("beta"));
     expect(lease?.lineNumber).toBe(1);
-    // The pre-refresh H1 anchor no longer resolves.
+    // The stale H1 row was attempted in this very batch and granted nothing.
     expect(lineage.leaseFor("s", "/h.ts", "A1")).toBeUndefined();
   });
 

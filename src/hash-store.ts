@@ -22,7 +22,7 @@ import { DatabaseSync } from "node:sqlite";
 import { hashStorePath } from "./store-tenancy.js";
 import { onStoreOpen, setStoresGetter } from "./store-lifecycle.js";
 import { workspaceCwd } from "./workspace-context.js";
-import { errCode } from "./utils.js";
+import { errCode, splitLines } from "./utils.js";
 import { initHasher, HASH_RE } from "./hashline/hash-assign.js";
 import { HASH_STORE_VERSION, HASH_STORE_BUSY_TIMEOUT, SERVED_TTL_MS } from "./constants.js";
 import { DomainError } from "./domain-errors.js";
@@ -659,7 +659,10 @@ function makeDomainStore(
       const lineage = lineageStore.lineageFor(path, snapshotHashFor(content));
       // A lineage hit shields a corrupt legacy row from healing by design —
       // fallback-only healing is fail-closed (ADR-0017).
-      if (lineage.length > 0) {
+      if (
+        lineage.length === splitLines(content).length &&
+        lineage.every((row, index) => row.lineNumber === index + 1)
+      ) {
         return lineage.map((row) => row.anchor);
       }
       return snapshotStore.get(path, content, deleteCorrupt);

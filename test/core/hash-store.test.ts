@@ -1368,7 +1368,7 @@ describe("hash-store — v7 snapshot materialization", () => {
     });
   });
 
-  it("(d-i) no-context serve of a legacy-only row grants no lease and does not crash", async () => {
+  it("(d-i) no-context serve of a legacy-only row grants no lease", async () => {
     await withTempHome(async () => {
       const internal = (await loadHashStore()) as unknown as InternalHashStore;
       await put(internal, "/d.ts", "x\n", ["XYZ"]);
@@ -1399,6 +1399,24 @@ describe("hash-store — v7 snapshot materialization", () => {
       const store = await loadHashStore();
       store.upsertSnapshot("/e.ts", contentChecksum("x\n"), 1, ["XYZ"], "x\n");
       expect(store.getSnapshot("/e.ts", "x\n")).toEqual(["XYZ"]);
+      // Key oracle, both sides: the v7 snapshot hash names the legacy checksum.
+      const keyed = new DatabaseSync(sqlitePath(home), {
+        defensive: false,
+      } as any);
+      const snapHash = (
+        keyed
+          .prepare("SELECT snapshot_hash AS v FROM file_snapshots WHERE path = ?")
+          .get("/e.ts") as {
+          v: string;
+        }
+      ).v;
+      const checksum = (
+        keyed.prepare("SELECT checksum AS v FROM snapshots WHERE path = ?").get("/e.ts") as {
+          v: string;
+        }
+      ).v;
+      expect(snapHash).toBe(checksum);
+      keyed.close();
       shutdownHashStore();
       const raw = new DatabaseSync(sqlitePath(home), {
         defensive: false,
@@ -1446,6 +1464,8 @@ describe("hash-store — v7 snapshot materialization", () => {
       expect(() =>
         reopened.commitSnapshot({ path: "/c.ts", content, hashes: ["AAa", "AAb"] }),
       ).toThrow("stored lineage has 1 rows for 2 lines");
+      // Read half: the partial lineage is not served as a truncated array.
+      expect(reopened.getSnapshot("/c.ts", content)).toBeUndefined();
     });
   });
 
@@ -1469,6 +1489,61 @@ describe("hash-store — v7 snapshot materialization", () => {
       // The legacy row committed in its own transaction; lineage is absent; the
       // read falls back to legacy with no crash.
       expect(store.getSnapshot("/g.ts", content)).toEqual(["AAa", "AAb"]);
+      shutdownHashStore();
+      const check = new DatabaseSync(sqlitePath(home), {
+        defensive: false,
+      } as any);
+      const snapCount = (
+        check.prepare("SELECT COUNT(*) AS n FROM file_snapshots").get() as { n: number }
+      ).n;
+      const linCount = (
+        check.prepare("SELECT COUNT(*) AS n FROM line_lineage").get() as { n: number }
+      ).n;
+      expect(snapCount).toBe(0);
+      expect(linCount).toBe(0);
+      check.close();
+    });
+  });
+
+  it("adopt on an orphan snapshot row throws; serve paths fail closed without repair", async () => {
+    await withTempHome(async (home) => {
+      const internal = (await loadHashStore()) as unknown as InternalHashStore;
+      const content = "alpha\nbeta\n";
+      const hashes = ["AAa", "AAb"];
+      internal.commitSnapshot({ path: "/o.ts", content, hashes });
+      shutdownHashStore();
+      // Corrupt out-of-band: keep the snapshot row, empty the lineage.
+      const cut = new DatabaseSync(sqlitePath(home), {
+        defensive: false,
+      } as any);
+      cut.exec("DELETE FROM line_lineage");
+      cut.close();
+      const reopened = (await loadHashStore()) as unknown as InternalHashStore;
+      // Direct call fails loud: the orphan can never be adopted silently.
+      expect(() => reopened.commitSnapshot({ path: "/o.ts", content, hashes })).toThrow(
+        "snapshot row has no lineage",
+      );
+      // Serve path: no lease, no crash, and no silent repair of the lineage.
+      await recordServed(
+        "cp3-orphan",
+        "/o.ts",
+        [
+          { position: 0, hash: "AAa" },
+          { position: 1, hash: "AAb" },
+        ],
+        2,
+        { hashes, content },
+      );
+      expect(reopened.leaseFor("cp3-orphan", "/o.ts", "AAa")).toBeUndefined();
+      shutdownHashStore();
+      const check = new DatabaseSync(sqlitePath(home), {
+        defensive: false,
+      } as any);
+      const linCount = (
+        check.prepare("SELECT COUNT(*) AS n FROM line_lineage").get() as { n: number }
+      ).n;
+      expect(linCount).toBe(0);
+      check.close();
     });
   });
 });
