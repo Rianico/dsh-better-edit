@@ -1,10 +1,11 @@
 import { describe, expect, it, vi, beforeAll } from "vitest";
-import { mkdtemp, mkdir, rm, writeFile, stat, readdir } from "fs/promises";
+import { mkdtemp, mkdir, readFile, rm, writeFile, stat, readdir } from "fs/promises";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
-import { loadHashStore, shutdownHashStore, type HashStore } from "../../src/hash-store.js";
+import { loadHashStore, loadServedStore, shutdownHashStore, type HashStore } from "../../src/hash-store.js";
+import { DomainError } from "../../src/domain-errors.js";
 import { HASH_STORE_VERSION } from "../../src/constants.js";
 import { CANON_VERSION } from "../../src/hashline/hash-assign.js";
 import { initHasher, contentChecksum } from "../../src/hashline/hasher.js";
@@ -332,7 +333,7 @@ describe("hash-store — schema versioning", () => {
     });
   });
 
-  it("invalidates all snapshots when the stored version differs", async () => {
+  it("refuses to open a store written by a newer version and writes nothing", async () => {
     await withTempHome(async (home) => {
       const store = await loadHashStore();
       await put(store, "/p.ts", "x\n", ["XYZ"]);
@@ -343,6 +344,8 @@ describe("hash-store — schema versioning", () => {
         hashes: ["UVW"],
         resultContent: "new",
       });
+      const served = await loadServedStore();
+      served.upsertServed("sessionA", "/p.ts", JSON.stringify(["XYZ"]));
       shutdownHashStore();
 
       const db = new DatabaseSync(sqlitePath(home), {
@@ -351,9 +354,151 @@ describe("hash-store — schema versioning", () => {
       db.prepare("UPDATE meta SET value = '999' WHERE key = 'version'").run();
       db.close();
 
+      const before = await readFile(sqlitePath(home));
+      const failure = await loadHashStore().then(
+        () => null,
+        (error: unknown) => error,
+      );
+      expect(failure).toBeInstanceOf(DomainError);
+      expect((failure as DomainError).code).toBe("E_STORE_NEWER_VERSION");
+      expect(String((failure as Error).message)).toContain("[MODEL] [E_STORE_NEWER_VERSION]");
+      await expect(loadHashStore()).rejects.toThrow("[MODEL] [E_STORE_NEWER_VERSION]");
+
+      const after = await readFile(sqlitePath(home));
+      expect(after.equals(before)).toBe(true);
+
+      const check = new DatabaseSync(sqlitePath(home), {
+        defensive: false,
+      } as any);
+      const version = check.prepare("SELECT value FROM meta WHERE key = 'version'").get() as
+        | { value?: string }
+        | undefined;
+      expect(version?.value).toBe("999");
+      const snapshots = check.prepare("SELECT COUNT(*) AS n FROM snapshots").get() as {
+        n: number;
+      };
+      expect(snapshots.n).toBe(1);
+      const undos = check.prepare("SELECT COUNT(*) AS n FROM undo").get() as { n: number };
+      expect(undos.n).toBe(1);
+      const servedRow = check
+        .prepare("SELECT hashes FROM served WHERE session_id = ? AND path = ?")
+        .get("sessionA", "/p.ts") as { hashes: string };
+      expect(JSON.parse(servedRow.hashes)).toEqual(["XYZ"]);
+      check.close();
+
+      const entries = await readdir(configHome(home));
+      expect(entries.some((name) => name.includes(".corrupt-"))).toBe(false);
+    });
+  });
+
+  it("migrates an older store forward and preserves every row family", async () => {
+    await withTempHome(async (home) => {
+      const store = await loadHashStore();
+      await put(store, "/p.ts", "x\n", ["XYZ"]);
+      store.upsertUndo("/u.ts", {
+        content: "old",
+        bom: "",
+        ending: "\n",
+        hashes: ["UVW"],
+        resultContent: "new",
+      });
+      const served = await loadServedStore();
+      served.upsertServed("sessionA", "/p.ts", JSON.stringify(["XYZ"]));
+      shutdownHashStore();
+
+      const db = new DatabaseSync(sqlitePath(home), {
+        defensive: false,
+      } as any);
+      db.prepare("UPDATE meta SET value = '5' WHERE key = 'version'").run();
+      db.close();
+
       const reloaded = await loadHashStore();
-      expect(reloaded.getSnapshot("/p.ts", "x\n")).toBeUndefined();
-      expect(reloaded.getUndo("/u.ts")).toBeUndefined();
+      expect(reloaded.getSnapshot("/p.ts", "x\n")).toEqual(["XYZ"]);
+      expect(reloaded.getUndo("/u.ts")?.hashes).toEqual(["UVW"]);
+      expect((await loadServedStore()).getServed("sessionA", "/p.ts")).toEqual(["XYZ"]);
+      shutdownHashStore();
+
+      const check = new DatabaseSync(sqlitePath(home), {
+        defensive: false,
+      } as any);
+      const row = check.prepare("SELECT value FROM meta WHERE key = 'version'").get() as
+        | { value?: string }
+        | undefined;
+      check.close();
+      expect(row?.value).toBe(String(HASH_STORE_VERSION));
+    });
+  });
+
+  it("treats a repeated forward migration as a no-op and leaves a current store untouched", async () => {
+    await withTempHome(async (home) => {
+      const store = await loadHashStore();
+      await put(store, "/p.ts", "x\n", ["XYZ"]);
+      store.upsertUndo("/u.ts", {
+        content: "old",
+        bom: "",
+        ending: "\n",
+        hashes: ["UVW"],
+        resultContent: "new",
+      });
+      (await loadServedStore()).upsertServed("sessionA", "/p.ts", JSON.stringify(["XYZ"]));
+      shutdownHashStore();
+
+      const stamp = (value: string): void => {
+        const db = new DatabaseSync(sqlitePath(home), { defensive: false } as any);
+        db.prepare("UPDATE meta SET value = ? WHERE key = 'version'").run(value);
+        db.close();
+      };
+      const readAll = async (): Promise<{ snapshots: number; undo: boolean; served: unknown }> => {
+        const current = await loadHashStore();
+        return {
+          snapshots: current.allSnapshotHashes().length,
+          undo: current.getUndo("/u.ts") !== undefined,
+          served: (await loadServedStore()).getServed("sessionA", "/p.ts"),
+        };
+      };
+
+      stamp("5");
+      await loadHashStore();
+      const afterFirst = await readAll();
+      expect(afterFirst).toEqual({ snapshots: 1, undo: true, served: ["XYZ"] });
+      shutdownHashStore();
+
+      stamp("5");
+      await loadHashStore();
+      const afterSecond = await readAll();
+      expect(afterSecond).toEqual(afterFirst);
+      shutdownHashStore();
+
+      const check = new DatabaseSync(sqlitePath(home), { defensive: false } as any);
+      const row = check.prepare("SELECT value FROM meta WHERE key = 'version'").get() as
+        | { value?: string }
+        | undefined;
+      check.close();
+      expect(row?.value).toBe(String(HASH_STORE_VERSION));
+
+      const beforeBytes = await readFile(sqlitePath(home));
+      await loadHashStore();
+      shutdownHashStore();
+      const afterBytes = await readFile(sqlitePath(home));
+      expect(afterBytes.equals(beforeBytes)).toBe(true);
+    });
+  });
+
+  it("treats a non-integer version stamp as unknown and migrates forward", async () => {
+    await withTempHome(async (home) => {
+      const store = await loadHashStore();
+      await put(store, "/p.ts", "x\n", ["XYZ"]);
+      shutdownHashStore();
+
+      const db = new DatabaseSync(sqlitePath(home), {
+        defensive: false,
+      } as any);
+      db.prepare("UPDATE meta SET value = 'abc' WHERE key = 'version'").run();
+      db.close();
+
+      const reloaded = await loadHashStore();
+      expect(reloaded.getSnapshot("/p.ts", "x\n")).toEqual(["XYZ"]);
+      shutdownHashStore();
 
       const check = new DatabaseSync(sqlitePath(home), {
         defensive: false,

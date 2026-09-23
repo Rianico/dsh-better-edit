@@ -24,6 +24,7 @@ import { workspaceCwd } from "./workspace-context.js";
 import { errCode, splitLines } from "./utils.js";
 import { initHasher, contentChecksum, HASH_RE, CANON_VERSION } from "./hashline/hash-assign.js";
 import { HASH_STORE_VERSION, HASH_STORE_BUSY_TIMEOUT, SERVED_TTL_MS } from "./constants.js";
+import { DomainError } from "./domain-errors.js";
 
 // ---- validators (owned here; the store's corruption handling uses them) ----
 
@@ -249,6 +250,7 @@ export function loadServedStore(cwd?: string): Promise<ServedPersistence> {
 // ---- db plumbing (private) --------------------------------------------------
 
 export function isCorruptionError(error: unknown): boolean {
+  if (error instanceof DomainError) return false;
   if (error && typeof error === "object") {
     const errcode = (error as { errcode?: unknown }).errcode;
     if (typeof errcode === "number") {
@@ -316,7 +318,7 @@ function openDb(storePath: string): { db: DatabaseSync; stmts: Prepared } {
     timeout: HASH_STORE_BUSY_TIMEOUT,
   });
   try {
-    return buildStore(db);
+    return buildStore(db, storePath);
   } catch (error) {
     try {
       db.close();
@@ -327,9 +329,51 @@ function openDb(storePath: string): { db: DatabaseSync; stmts: Prepared } {
   }
 }
 
-function buildStore(db: DatabaseSync): { db: DatabaseSync; stmts: Prepared } {
-  db.exec("PRAGMA journal_mode = WAL");
-  db.exec("PRAGMA synchronous = NORMAL");
+/**
+ * Read-only probe of the store's schema stamp. Safe on a store whose schema
+ * we do not own: two SELECTs, no DDL, no PRAGMA, no run(). Returns undefined
+ * when the meta table or the version row is absent, or when the value does
+ * not parse as a base-10 integer. Probe errors propagate — a malformed meta
+ * is genuine corruption and must keep flowing to the corruption path.
+ */
+function storedVersion(db: DatabaseSync): number | undefined {
+  const metaRow = db
+    .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'meta'")
+    .get() as { name?: string } | undefined;
+  if (metaRow === undefined) return undefined;
+  const versionRow = db.prepare("SELECT value FROM meta WHERE key = 'version'").get() as
+    | { value?: string }
+    | undefined;
+  if (versionRow?.value === undefined) return undefined;
+  const parsed = Number.parseInt(versionRow.value, 10);
+  return Number.isInteger(parsed) ? parsed : undefined;
+}
+
+/**
+ * Idempotent column backfill: ALTER TABLE only when the column is missing.
+ * Table/column/type ride an identifier allowlist (SQLite has no bind
+ * parameters for DDL identifiers); every current caller passes constants.
+ */
+const SCHEMA_IDENTIFIER_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
+function addColumnIfMissing(db: DatabaseSync, table: string, column: string, type: string): void {
+  for (const identifier of [table, column, type]) {
+    if (!SCHEMA_IDENTIFIER_RE.test(identifier)) {
+      throw new Error(`Refused schema backfill for non-identifier: ${identifier}`);
+    }
+  }
+  const columns = db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[];
+  if (!columns.some((entry) => entry.name === column)) {
+    db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${type}`);
+  }
+}
+
+/**
+ * Non-destructive, idempotent schema build. Runs on every open: CREATE TABLE
+ * IF NOT EXISTS for the current shapes, backfill of the newer served columns,
+ * and DROP TABLE served only for the pre-session-keyed shell (no session_id —
+ * unusable by either version). No DELETE FROM anywhere on this path.
+ */
+function ensureSchema(db: DatabaseSync): void {
   db.exec(
     "CREATE TABLE IF NOT EXISTS snapshots (" +
       "path TEXT PRIMARY KEY, " +
@@ -353,19 +397,10 @@ function buildStore(db: DatabaseSync): { db: DatabaseSync; stmts: Prepared } {
       "updated_at INTEGER NOT NULL" +
       ")",
   );
-  const versionRow = db.prepare("SELECT value FROM meta WHERE key = 'version'").get() as
-    | { value?: string }
-    | undefined;
-  const versionChanged =
-    versionRow !== undefined && versionRow.value !== String(HASH_STORE_VERSION);
-  if (versionChanged) {
-    db.exec("DELETE FROM snapshots");
-    db.exec("DELETE FROM undo");
-  }
   const servedColumns = db.prepare("PRAGMA table_info(served)").all() as {
     name: string;
   }[];
-  if (versionChanged || !servedColumns.some((column) => column.name === "session_id")) {
+  if (!servedColumns.some((column) => column.name === "session_id")) {
     db.exec("DROP TABLE IF EXISTS served");
   }
   db.exec(
@@ -382,6 +417,55 @@ function buildStore(db: DatabaseSync): { db: DatabaseSync; stmts: Prepared } {
       "PRIMARY KEY (session_id, path)" +
       ")",
   );
+  addColumnIfMissing(db, "served", "canons", "TEXT");
+  addColumnIfMissing(db, "served", "snapshotId", "TEXT");
+  addColumnIfMissing(db, "served", "cards", "TEXT");
+}
+
+/**
+ * The single atomic forward migration. Called only when the stamp differs
+ * from HASH_STORE_VERSION (including an absent or non-integer stamp on a
+ * pre-versioning store). The sole writer of meta.version. CP1 has no data
+ * steps — later tickets add ordered, guarded data statements beside the stamp
+ * write inside the same transaction.
+ */
+function migrateForward(db: DatabaseSync, _from: number | undefined): void {
+  void _from;
+  let migrationOpen = false;
+  try {
+    db.exec("BEGIN IMMEDIATE");
+    migrationOpen = true;
+    db.prepare(
+      "INSERT INTO meta (key, value) VALUES ('version', ?) " +
+        "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+    ).run(String(HASH_STORE_VERSION));
+    db.exec("COMMIT");
+    migrationOpen = false;
+  } catch (error) {
+    if (migrationOpen) {
+      try {
+        db.exec("ROLLBACK");
+      } catch (rollbackError) {
+        console.warn(rollbackError);
+      }
+    }
+    throw error;
+  }
+}
+
+function buildStore(db: DatabaseSync, storePath: string): { db: DatabaseSync; stmts: Prepared } {
+  const stored = storedVersion(db);
+  if (stored !== undefined && stored > HASH_STORE_VERSION) {
+    throw new DomainError("E_STORE_NEWER_VERSION", {
+      path: storePath,
+      storedVersion: stored,
+      supportedVersion: HASH_STORE_VERSION,
+    });
+  }
+  db.exec("PRAGMA journal_mode = WAL");
+  db.exec("PRAGMA synchronous = NORMAL");
+  ensureSchema(db);
+  if (stored !== HASH_STORE_VERSION) migrateForward(db, stored);
   const currentServedColumns = db.prepare("PRAGMA table_info(served)").all() as {
     name: string;
   }[];
@@ -412,28 +496,6 @@ function buildStore(db: DatabaseSync): { db: DatabaseSync; stmts: Prepared } {
       throw error;
     }
   }
-  const canonsColumns = db.prepare("PRAGMA table_info(served)").all() as {
-    name: string;
-  }[];
-  if (!canonsColumns.some((column) => column.name === "canons")) {
-    db.exec("ALTER TABLE served ADD COLUMN canons TEXT");
-  }
-  const snapshotColumns = db.prepare("PRAGMA table_info(served)").all() as {
-    name: string;
-  }[];
-  if (!snapshotColumns.some((column) => column.name === "snapshotId")) {
-    db.exec("ALTER TABLE served ADD COLUMN snapshotId TEXT");
-  }
-  const cardsColumns = db.prepare("PRAGMA table_info(served)").all() as {
-    name: string;
-  }[];
-  if (!cardsColumns.some((column) => column.name === "cards")) {
-    db.exec("ALTER TABLE served ADD COLUMN cards TEXT");
-  }
-  db.prepare(
-    "INSERT INTO meta (key, value) VALUES ('version', ?) " +
-      "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-  ).run(String(HASH_STORE_VERSION));
   const getStmt = db.prepare(
     "SELECT hashes FROM snapshots WHERE path = ? AND checksum = ? AND line_count = ?",
   );

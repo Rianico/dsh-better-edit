@@ -106,7 +106,8 @@ export type DomainErrorCode =
   | "E_BAD_COMMAND"
   | "E_FILE_EXISTS"
   | "E_NO_MATCH"
-  | "E_AMBIGUOUS_MATCH";
+  | "E_AMBIGUOUS_MATCH"
+  | "E_STORE_NEWER_VERSION";
 
 /**
  * Applied-tier warning codes. A `[W_*]` line reports an applied mutation;
@@ -284,6 +285,11 @@ export interface ErrorPayloadMap {
   E_AMBIGUOUS_MATCH: {
     path: string;
     matches: number;
+  };
+  E_STORE_NEWER_VERSION: {
+    path: string;
+    storedVersion: number;
+    supportedVersion: number;
   };
 }
 
@@ -663,6 +669,13 @@ export const ERROR_REGISTRY: { [K in DomainErrorCode]: CodeSpec<ErrorPayloadMap[
     audience: "MODEL",
     format: ({ path, matches }) =>
       `str_replace_editor: old_str has multiple matches (${matches}) in ${path} — must match exactly once. Narrow old_str with more context. Nothing was written.`,
+  },
+  E_STORE_NEWER_VERSION: {
+    audience: "MODEL",
+    format: ({ path, storedVersion, supportedVersion }) =>
+      `The hash store at ${path} was written by a newer dsh-better-edit (store schema ${storedVersion}; this build supports ${supportedVersion}). Nothing was written — this build refuses to touch a newer store. Upgrade dsh-better-edit to the newer version, or point the store at a different directory.`,
+    // WHY remedy: the stamp proves a newer writer owns the file and this build cannot read it — upgrade or retarget pins the recovery.
+    remedy: "Upgrade dsh-better-edit to the newer version, or point the store at a different directory.",
   },
 };
 

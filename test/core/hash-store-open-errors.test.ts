@@ -146,6 +146,23 @@ describe("hash store open error handling", () => {
     }).toThrow(/locked/);
     expect(state.runCalls - callsBefore).toBe(4);
   });
+  it("never classifies a newer-version refusal as corruption", async () => {
+    const { isCorruptionError } = await import("../../src/hash-store");
+    const { DomainError } = await import("../../src/domain-errors");
+    const refusal = new DomainError("E_STORE_NEWER_VERSION", {
+      path: "/store/hash-store.sqlite",
+      storedVersion: 999,
+      supportedVersion: 6,
+    });
+    expect(isCorruptionError(refusal)).toBe(false);
+    // The guard is message-independent: even a DomainError whose rendered text
+    // matches the corruption regex must never route to quarantine.
+    const lookalike = new DomainError("E_UNKNOWN", {
+      errorName: "Error",
+      message: "database disk image is malformed",
+    });
+    expect(isCorruptionError(lookalike)).toBe(false);
+  });
 });
 
 describe("isCorruptionError", () => {
