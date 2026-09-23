@@ -26,7 +26,11 @@ import { errCode, splitLines } from "./utils.js";
 import { initHasher, contentChecksum, HASH_RE } from "./hashline/hash-assign.js";
 import { HASH_STORE_VERSION, HASH_STORE_BUSY_TIMEOUT, SERVED_TTL_MS } from "./constants.js";
 import { DomainError } from "./domain-errors.js";
-import { createSnapshotStore, isValidHashList, type SnapshotStore } from "./snapshot-store/index.js";
+import {
+  createSnapshotStore,
+  isValidHashList,
+  type SnapshotStore,
+} from "./snapshot-store/index.js";
 import { withBusyRetry } from "./store-retry.js";
 
 // ---- validators (owned here; the store's corruption handling uses them) ----
@@ -36,10 +40,6 @@ export interface LegacySnapshot {
   content: string;
   hashes: string[];
 }
-
-// isValidHashList lives in snapshot-store (its primary consumer); re-exported here
-// so the undo/served healing below and external importers keep one surface.
-export { isValidHashList };
 
 export function isValidSnapshot(value: unknown): value is LegacySnapshot {
   if (typeof value !== "object" || value === null) return false;
@@ -66,7 +66,6 @@ export function isValidServedList(value: unknown): value is (string | null)[] {
   }
   return true;
 }
-
 
 /** The undo row contract shared by undo-edit and the store. */
 export interface UndoRecord {
@@ -256,7 +255,6 @@ export function isCorruptionError(error: unknown): boolean {
     /corrupt|not a database|malformed|database disk image/i.test(error.message)
   );
 }
-
 
 function openDbWithBusyRetry(storePath: string): {
   db: DatabaseSync;

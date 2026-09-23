@@ -47,9 +47,7 @@ export function createSnapshotStore(db: DatabaseSync): SnapshotStore {
     get(path, content, deleteCorrupt = true) {
       const checksum = cacheKey(contentChecksum(content));
       const lineCount = splitLines(content).length;
-      const row = getStmt.get(path, checksum, lineCount) as
-        | Record<string, unknown>
-        | undefined;
+      const row = getStmt.get(path, checksum, lineCount) as Record<string, unknown> | undefined;
       if (!row) return undefined;
       try {
         const parsed = JSON.parse(row.hashes as string);

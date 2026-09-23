@@ -4,7 +4,6 @@ import { join } from "node:path";
 import { existsSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import {
-  isValidHashList,
   isValidSnapshot,
   isValidServedList,
   isCorruptionError,
@@ -12,6 +11,7 @@ import {
   shutdownHashStore,
   withStore,
 } from "../../src/hash-store.js";
+import { isValidHashList } from "../../src/snapshot-store/index.js";
 import { getWritableTempRoot } from "../support/fixtures.js";
 import { contentChecksum } from "../../src/hashline/hash-assign.js";
 import { splitLines } from "../../src/utils.js";

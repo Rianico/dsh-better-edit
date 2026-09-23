@@ -4,7 +4,12 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
-import { loadHashStore, loadServedStore, shutdownHashStore, type HashStore } from "../../src/hash-store.js";
+import {
+  loadHashStore,
+  loadServedStore,
+  shutdownHashStore,
+  type HashStore,
+} from "../../src/hash-store.js";
 import { DomainError } from "../../src/domain-errors.js";
 import { HASH_STORE_VERSION } from "../../src/constants.js";
 import { CANON_VERSION } from "../../src/hashline/hash-assign.js";
@@ -384,9 +389,9 @@ describe("hash-store — schema versioning", () => {
       expect(() => insertLineage(parentId + 9999)).toThrow();
       insertLineage(parentId);
       db.prepare("DELETE FROM file_snapshots WHERE snapshot_id = ?").run(parentId);
-      const orphans = db.prepare("SELECT COUNT(*) AS n FROM line_lineage WHERE snapshot_id = ?").get(
-        parentId,
-      ) as { n: number };
+      const orphans = db
+        .prepare("SELECT COUNT(*) AS n FROM line_lineage WHERE snapshot_id = ?")
+        .get(parentId) as { n: number };
       expect(orphans.n).toBe(0);
 
       const indices = db.prepare("SELECT name FROM sqlite_master WHERE type = 'index'").all() as {
@@ -419,7 +424,13 @@ describe("hash-store — schema versioning", () => {
         (db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[]).map(
           (column) => column.name,
         );
-      expect(columns("snapshots")).toEqual(["path", "checksum", "line_count", "hashes", "updated_at"]);
+      expect(columns("snapshots")).toEqual([
+        "path",
+        "checksum",
+        "line_count",
+        "hashes",
+        "updated_at",
+      ]);
       expect(columns("undo")).toEqual([
         "path",
         "content",
@@ -489,7 +500,9 @@ describe("hash-store — schema versioning", () => {
       );
       fixture.prepare("INSERT INTO meta (key, value) VALUES ('version', '6')").run();
       fixture
-        .prepare("INSERT INTO snapshots (path, checksum, line_count, hashes, updated_at) VALUES (?, ?, ?, ?, ?)")
+        .prepare(
+          "INSERT INTO snapshots (path, checksum, line_count, hashes, updated_at) VALUES (?, ?, ?, ?, ?)",
+        )
         .run("/p.ts", contentChecksum("x\n"), 1, JSON.stringify(["XYZ"]), now);
       fixture
         .prepare(
@@ -502,7 +515,17 @@ describe("hash-store — schema versioning", () => {
           "INSERT INTO served (session_id, path, hashes, reported, retired, canons, snapshotId, cards, updated_at) " +
             "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
-        .run("sessionA", "/p.ts", JSON.stringify(["XYZ"]), null, null, null, null, JSON.stringify(["C1"]), now);
+        .run(
+          "sessionA",
+          "/p.ts",
+          JSON.stringify(["XYZ"]),
+          null,
+          null,
+          null,
+          null,
+          JSON.stringify(["C1"]),
+          now,
+        );
       const before = {
         snapshots: fixture.prepare("SELECT * FROM snapshots ORDER BY path").all(),
         undo: fixture.prepare("SELECT * FROM undo ORDER BY path").all(),
@@ -516,9 +539,13 @@ describe("hash-store — schema versioning", () => {
       const check = new DatabaseSync(sqlitePath(home), {
         defensive: false,
       } as any);
-      expect(check.prepare("SELECT * FROM snapshots ORDER BY path").all()).toEqual(before.snapshots);
+      expect(check.prepare("SELECT * FROM snapshots ORDER BY path").all()).toEqual(
+        before.snapshots,
+      );
       expect(check.prepare("SELECT * FROM undo ORDER BY path").all()).toEqual(before.undo);
-      expect(check.prepare("SELECT * FROM served ORDER BY session_id, path").all()).toEqual(before.served);
+      expect(check.prepare("SELECT * FROM served ORDER BY session_id, path").all()).toEqual(
+        before.served,
+      );
       for (const table of [
         "file_snapshots",
         "line_id_counters",
@@ -530,9 +557,9 @@ describe("hash-store — schema versioning", () => {
         const row = check.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get() as { n: number };
         expect(row.n).toBe(0);
       }
-      const servedCols = (check.prepare("PRAGMA table_info(served)").all() as { name: string }[]).map(
-        (column) => column.name,
-      );
+      const servedCols = (
+        check.prepare("PRAGMA table_info(served)").all() as { name: string }[]
+      ).map((column) => column.name);
       expect(servedCols).toEqual([
         "session_id",
         "path",
@@ -607,11 +634,11 @@ describe("hash-store — schema versioning", () => {
         | { value?: string }
         | undefined;
       expect(version?.value).toBe("8");
-      expect((check.prepare("SELECT COUNT(*) AS n FROM snapshots").get() as { n: number }).n).toBe(1);
+      expect((check.prepare("SELECT COUNT(*) AS n FROM snapshots").get() as { n: number }).n).toBe(
+        1,
+      );
       expect((check.prepare("SELECT COUNT(*) AS n FROM undo").get() as { n: number }).n).toBe(1);
-      expect(
-        (check.prepare("SELECT COUNT(*) AS n FROM served").get() as { n: number }).n,
-      ).toBe(1);
+      expect((check.prepare("SELECT COUNT(*) AS n FROM served").get() as { n: number }).n).toBe(1);
       check.close();
 
       const entries = await readdir(configHome(home));
@@ -666,7 +693,9 @@ describe("hash-store — schema versioning", () => {
       const check = rawConn();
       expect(check.prepare("SELECT * FROM snapshots ORDER BY path").all()).toEqual(beforeSnapshots);
       expect(check.prepare("SELECT * FROM undo ORDER BY path").all()).toEqual(beforeUndo);
-      expect(check.prepare("SELECT * FROM served ORDER BY session_id, path").all()).toEqual(beforeServed);
+      expect(check.prepare("SELECT * FROM served ORDER BY session_id, path").all()).toEqual(
+        beforeServed,
+      );
       for (const table of [
         "file_snapshots",
         "line_id_counters",

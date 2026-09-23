@@ -675,7 +675,8 @@ export const ERROR_REGISTRY: { [K in DomainErrorCode]: CodeSpec<ErrorPayloadMap[
     format: ({ path, storedVersion, supportedVersion }) =>
       `The hash store at ${path} was written by a newer dsh-better-edit (store schema ${storedVersion}; this build supports ${supportedVersion}). Nothing was written — this build refuses to touch a newer store. Upgrade dsh-better-edit to the newer version, or point the store at a different directory.`,
     // WHY remedy: the stamp proves a newer writer owns the file and this build cannot read it — upgrade or retarget pins the recovery.
-    remedy: "Upgrade dsh-better-edit to the newer version, or point the store at a different directory.",
+    remedy:
+      "Upgrade dsh-better-edit to the newer version, or point the store at a different directory.",
   },
 };
 
