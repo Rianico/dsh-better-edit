@@ -273,3 +273,65 @@ describe("lineage-store — input validation", () => {
     expect(counters).toBe(0);
   });
 });
+
+describe("lineage-store — adopt refreshes anchors, never identity", () => {
+  it("same content with a new assignment updates anchors only", () => {
+    const { db, lineage } = open();
+    const content = "alpha\nbeta\ngamma";
+    const h1 = ["A0", "A1", "A2"];
+    const h2 = ["B0", "B1", "B2"];
+    lineage.commitSnapshot({ path: "/r.ts", content, hashes: h1 });
+    const before = lineage.lineageFor("/r.ts", snapshotHashFor(content));
+    expect(before.map((row) => row.anchor)).toEqual(h1);
+    const counterBefore = db.prepare("SELECT * FROM line_id_counters WHERE path = ?").get("/r.ts");
+    lineage.commitSnapshot({ path: "/r.ts", content, hashes: h2 });
+    const after = lineage.lineageFor("/r.ts", snapshotHashFor(content));
+    expect(after.map((row) => row.anchor)).toEqual(h2);
+    expect(after.map((row) => row.lineId)).toEqual(before.map((row) => row.lineId));
+    expect(after.map((row) => row.canonHash)).toEqual(before.map((row) => row.canonHash));
+    expect(after.map((row) => row.lineNumber)).toEqual([1, 2, 3]);
+    expect(db.prepare("SELECT * FROM line_id_counters WHERE path = ?").get("/r.ts")).toEqual(
+      counterBefore,
+    );
+  });
+
+  it("identical adopt writes nothing (compare-then-update)", () => {
+    const { db, lineage } = open();
+    const content = "alpha\nbeta";
+    lineage.commitSnapshot({ path: "/c.ts", content, hashes: ["A0", "A1"] });
+    const changes = () => (db.prepare("SELECT total_changes() AS n").get() as { n: number }).n;
+    const before = changes();
+    lineage.commitSnapshot({ path: "/c.ts", content, hashes: ["A0", "A1"] });
+    expect(changes() - before).toBe(0);
+    lineage.commitSnapshot({ path: "/c.ts", content, hashes: ["A0", "B1"] });
+    expect(changes() - before).toBe(1);
+  });
+
+  it("adopt with emptied lineage leaves it alone", () => {
+    const { db, lineage } = open();
+    const content = "alpha\nbeta";
+    lineage.commitSnapshot({ path: "/e.ts", content, hashes: ["A0", "A1"] });
+    db.exec("DELETE FROM line_lineage");
+    expect(() =>
+      lineage.commitSnapshot({ path: "/e.ts", content, hashes: ["B0", "B1"] }),
+    ).not.toThrow();
+    expect(lineage.lineageFor("/e.ts", snapshotHashFor(content))).toEqual([]);
+  });
+
+  it("leases granted after reassignment resolve through the refreshed lineage", () => {
+    const { lineage } = open();
+    const content = "alpha\nbeta";
+    lineage.commitSnapshot({ path: "/h.ts", content, hashes: ["A0", "A1"] });
+    lineage.commitSnapshot({ path: "/h.ts", content, hashes: ["B0", "B1"] });
+    lineage.commitSnapshot({
+      path: "/h.ts",
+      content,
+      hashes: ["B0", "B1"],
+      leases: { sessionKey: "s", rows: [{ position: 1, hash: "B1" }] },
+    });
+    const lease = lineage.leaseFor("s", "/h.ts", "B1");
+    expect(lease).toBeDefined();
+    expect(lease?.lineId).toBe(2);
+    expect(lease?.canonHash).toBe(canonDigest("beta"));
+  });
+});

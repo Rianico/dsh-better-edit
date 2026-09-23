@@ -258,6 +258,9 @@ export function createLineageStore(db: DatabaseSync): LineageStore {
     "SELECT line_id, canon_hash, served_snapshot_hash, served_line_number, retired_at " +
       "FROM served_leases WHERE session_id = ? AND file_path = ? AND anchor = ?",
   );
+  const updateLineageAnchorStmt = db.prepare(
+    "UPDATE line_lineage SET anchor = ? WHERE snapshot_id = ? AND line_number = ?",
+  );
 
   function grantLeases(
     snapshotId: number,
@@ -312,8 +315,27 @@ export function createLineageStore(db: DatabaseSync): LineageStore {
             | undefined;
           let snapshotId: number;
           if (existing !== undefined) {
-            // Adopt-if-exists: allocate nothing, write no lineage.
+            // Adopt-if-exists: allocate nothing — but refresh the anchor column to the live
+            // assignment (compare-then-update, diffs only). Anchor assignment is not
+            // content-determined (retire/reservation-dependent), so stored anchors go
+            // archaeological without this; identity (line_id, canon_hash) stays first-wins.
             snapshotId = existing.snapshot_id;
+            // SAFETY: SELECT list matches LineageRecord field-for-field (same statement shape
+            // as grantLeases/lineageFor).
+            const stored = snapshotLineageStmt.all(snapshotId) as unknown as LineageRecord[];
+            if (stored.length > 0) {
+              if (stored.length !== lines.length) {
+                throw new Error(
+                  `commitSnapshot(${input.path}): stored lineage has ${stored.length} rows ` +
+                    `for ${lines.length} lines`,
+                );
+              }
+              for (let index = 0; index < lines.length; index++) {
+                if (stored[index]!.anchor !== input.hashes[index]) {
+                  updateLineageAnchorStmt.run(input.hashes[index], snapshotId, index + 1);
+                }
+              }
+            }
           } else {
             const latest = latestSnapshotStmt.get(input.path) as SnapshotRow | undefined;
             const prev: PrevLine[] =

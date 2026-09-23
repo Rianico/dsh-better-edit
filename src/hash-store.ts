@@ -654,20 +654,13 @@ function makeDomainStore(
     engine: "node:sqlite",
 
     getSnapshot(path, content, deleteCorrupt = true) {
-      // Live assignment first: the legacy row tracks the LATEST hashes for this content
-      // (overwrite semantics) — that is what `previous` stability needs. Lineage is
-      // first-write-wins per content (adopt-if-exists) and can hold archaeological
-      // anchors the retire machinery already replaced; preferring it resurrects
-      // retired hashes. Lineage stays the fallback materialization (CP2 substrate).
-      const legacy = snapshotStore.get(path, content, deleteCorrupt);
-      if (legacy !== undefined) {
-        return legacy;
-      }
+      // Lineage first: adopt refreshes stored anchors to the live assignment, so the
+      // lineage tracks the current snapshot and the legacy row stays the upgrade fallback.
       const lineage = lineageStore.lineageFor(path, snapshotHashFor(content));
       if (lineage.length > 0) {
         return lineage.map((row) => row.anchor);
       }
-      return undefined;
+      return snapshotStore.get(path, content, deleteCorrupt);
     },
     upsertSnapshot(path, checksum, lineCount, hashes, content?) {
       snapshotStore.upsert(path, checksum, lineCount, hashes);
