@@ -76,3 +76,7 @@ Bump `HASH_STORE_VERSION` 6 → 7 with six new tables, all additive:
 - `served_session_meta` — per-session, per-file reported state.
 
 Shell-retention contract: the v6 shells (`snapshots`, `undo`, `served`) keep their exact v6 shapes — in particular `served.cards`, which the released v6 build names at store open — so an un-restarted v6 session or a concurrent v6 worktree never hits a missing table or a dropped column. A v6 process wipes only its own shells and never names the v7 tables, which is what makes the flap survivable. Version boundary: stamp 7 opens (migrating forward when older); stamp 8 is refused with `E_STORE_NEWER_VERSION`.
+
+## Legacy import and compat shells
+
+The legacy JSON *file* import lives in `src/snapshot-store/migrate.ts` (the module owns the `snapshots` table). The legacy `snapshots` **blob rows** stay in the shell untouched: they are old-canon and carry no line text, so stable `line_id`/`canon_hash` identity cannot be derived from them — fabricating it would poison the identity space. They are rebuilt from content on the next read. The v6 shells are covered by a statement-replay compat test (the v6 read/write/delete shapes against v7-created and migrated stores).
