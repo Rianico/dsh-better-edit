@@ -86,7 +86,6 @@ snapshots` / `DELETE FROM undo` that ADR-0016 left in place (pending CP4)
 - Corrupt snapshots fail loud, never silent: adopt on a snapshot row with empty
   lineage throws `LineageCorruptError` (a silent no-op would pin the path lease-less
   forever — the orphan is sticky), and the read serves a lineage hit only when its
-  forever — the orphan is sticky), and the read serves a lineage hit only when its
   length matches the content, `line_number`s are dense 1..N, and every anchor matches
   `HASH_RE`.
 - Pairing-rule changes are data-compatible only forward: new snapshots pair
@@ -94,3 +93,21 @@ snapshots` / `DELETE FROM undo` that ADR-0016 left in place (pending CP4)
 - Read together with `0016-store-version-flap-guard.md`: 0016 made store open
   non-destructive; this ADR makes the upgrade path non-destructive too. The
   two store ADRs are a deliberate divergence from upstream as a pair.
+
+## Named deviation (T2b-scoped): fresh anchors after undo, not same-string revival
+
+- Upstream consumes `file_undo.snapshot_hash` via `anchorsForSnapshotHash`
+  (`../pi-better-edit/src/edit-undo.ts:183-196`) and serves the pinned snapshot's
+  anchors, so `read → edit → undo` revives the _same_ anchor strings.
+- Our tree serves **fresh** anchors after undo: `line_lineage.anchor` is a
+  current-assignment record refreshed on adopt (CP3), and assignment is
+  retire/reservation-dependent — a snapshot keeps no anchor history. The undo
+  rehash excludes retired/reserved assignments (`removedHashes` /
+  `blockedRestoreHashes`), so a retired anchor is never resurrected.
+- Therefore the restored lines keep their pre-edit `line_id` and the undo
+  response is self-consistent, while a stale handle fails loudly
+  (`E_STALE_ANCHOR`, pinned by the CP4 undo-leases test). **Named deviation,
+  T2b-scoped** — accepted conditional on that pin.
+- Follow-up trigger: _anchor history for same-string revival_ — needed before
+  any consumer relies on pre-edit anchor strings surviving an undo (T3
+  verification or later); reference upstream `edit-undo.ts:188`.
