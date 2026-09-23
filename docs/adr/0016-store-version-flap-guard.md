@@ -46,7 +46,7 @@ Upstream `buildStore` is also additive and never wipes on mismatch, but it
 writes `meta.version` unconditionally — so an older build opening a newer
 store silently downgrades the stamp while leaving newer-schema rows it cannot
 read in place. We diverge deliberately: a newer store is unavailable to this
-build rather than silently downgraded. The cost is availability (a v6 process
+build rather than silently downgraded. The cost is availability (this build
 cannot use a v7-touched store until upgraded); the payoff is that no build
 ever corrupts a store it does not understand. The refusal message states the
 fact, states that nothing was written, and names the two recoveries (upgrade,
@@ -54,11 +54,12 @@ or point the store elsewhere).
 
 ## Consequences
 
-- A v6 process keeps working against its own shells; a v7 store is refused
+- The released v6 build keeps working against its own shells; a v7 store is refused
   loudly instead of wiped or downgraded.
 - v7 state stays isolated in v7 tables once CP2 lands (the guard is what makes
-  that isolation safe from the v6 side).
+  that isolation safe from this build's side of the flap).
 - `E_STORE_NEWER_VERSION` joins the closed domain-error registry (audience
   `MODEL`, with remedy); its message must never contain corruption-class words
   (`corrupt`, `not a database`, `malformed`, `database disk image`), enforced
   by the quarantine-guard test, or a valid newer store would be quarantined.
+- The in-transaction stamp re-check is defensive: it has no deterministic interleaving test at CP1; its refusal logic is shared with the probe-time refusal covered by T1.
