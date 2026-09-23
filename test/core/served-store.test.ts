@@ -406,7 +406,7 @@ describe("served state — schema versioning", () => {
     });
   });
 
-  it("preserves served rows but invalidates rebound sources when adding retired anchors", async () => {
+  it("preserves served rows and rebound sources when adding the retired column", async () => {
     await withTempHome(async (home) => {
       const path = join(home, "rebound.txt");
       const content = "new\nold\n";
@@ -433,8 +433,16 @@ describe("served state — schema versioning", () => {
       expect(store.getAnchorReservations("sessionA", path).reservedHashes).toEqual(
         new Set(["AAA"]),
       );
-      expect((await loadHashStore()).getSnapshot(path, content)).toBeUndefined();
-      expect((await loadHashStore()).getUndo(path)).toBeUndefined();
+      // The retired-column upgrade is non-destructive (ADR-0017): snapshot and undo
+      // rows survive; only the missing column is backfilled.
+      expect((await loadHashStore()).getSnapshot(path, content)).toEqual(["BBB", "AAA"]);
+      expect((await loadHashStore()).getUndo(path)).toEqual({
+        content: "old\nnew\n",
+        bom: "",
+        ending: "\n",
+        hashes: ["BBB", "AAA"],
+        resultContent: content,
+      });
       store.upsertRetiredAnchors("sessionA", path, JSON.stringify(["BBB"]));
       expect(store.getRetiredAnchors("sessionA", path)).toEqual(new Set(["BBB"]));
     });

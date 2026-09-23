@@ -36,6 +36,7 @@ import { migrateLegacyStore } from "./snapshot-store/migrate.js";
 import {
   createLineageStore,
   ensureLineageTables,
+  snapshotHashFor,
   type LineageStore,
 } from "./snapshot-store/lineage-store.js";
 // ---- validators (owned here; the store's corruption handling uses them) ----
@@ -478,31 +479,9 @@ function buildStore(db: DatabaseSync, storePath: string): { db: DatabaseSync; st
     name: string;
   }[];
   if (!currentServedColumns.some((column) => column.name === "retired")) {
-    let migrationOpen = false;
-    try {
-      db.exec("BEGIN IMMEDIATE");
-      migrationOpen = true;
-      const migrationColumns = db.prepare("PRAGMA table_info(served)").all() as { name: string }[];
-      if (!migrationColumns.some((column) => column.name === "retired")) {
-        db.exec("ALTER TABLE served ADD COLUMN retired TEXT");
-        // Pre-fix snapshots and undo entries may already bind a remembered
-        // anchor to the wrong position. Preserve served rows, but rebuild
-        // every source that could restore the rebound anchor.
-        db.exec("DELETE FROM snapshots");
-        db.exec("DELETE FROM undo");
-      }
-      db.exec("COMMIT");
-      migrationOpen = false;
-    } catch (error) {
-      if (migrationOpen) {
-        try {
-          db.exec("ROLLBACK");
-        } catch (rollbackError) {
-          console.warn(rollbackError);
-        }
-      }
-      throw error;
-    }
+    // Single idempotent ALTER needs no transaction: ALTER TABLE is atomic, and an
+    // upgrade must never destroy snapshot/undo rows (ADR-0017 retires the wipe).
+    db.exec("ALTER TABLE served ADD COLUMN retired TEXT");
   }
   const allStmt = db.prepare(
     "SELECT path FROM snapshots UNION SELECT path FROM undo UNION SELECT path FROM served",
@@ -675,7 +654,20 @@ function makeDomainStore(
     engine: "node:sqlite",
 
     getSnapshot(path, content, deleteCorrupt = true) {
-      return snapshotStore.get(path, content, deleteCorrupt);
+      // Live assignment first: the legacy row tracks the LATEST hashes for this content
+      // (overwrite semantics) — that is what `previous` stability needs. Lineage is
+      // first-write-wins per content (adopt-if-exists) and can hold archaeological
+      // anchors the retire machinery already replaced; preferring it resurrects
+      // retired hashes. Lineage stays the fallback materialization (CP2 substrate).
+      const legacy = snapshotStore.get(path, content, deleteCorrupt);
+      if (legacy !== undefined) {
+        return legacy;
+      }
+      const lineage = lineageStore.lineageFor(path, snapshotHashFor(content));
+      if (lineage.length > 0) {
+        return lineage.map((row) => row.anchor);
+      }
+      return undefined;
     },
     upsertSnapshot(path, checksum, lineCount, hashes, content?) {
       snapshotStore.upsert(path, checksum, lineCount, hashes);

@@ -9,7 +9,9 @@ import {
   loadServedStore,
   shutdownHashStore,
   type HashStore,
+  type InternalHashStore,
 } from "../../src/hash-store.js";
+import { recordServed } from "../../src/session-view.js";
 import { DomainError } from "../../src/domain-errors.js";
 import { HASH_STORE_VERSION } from "../../src/constants.js";
 import { CANON_VERSION } from "../../src/hashline/hash-assign.js";
@@ -1248,6 +1250,153 @@ describe("hash-store — schema versioning", () => {
         | undefined;
       check.close();
       expect(row?.value).toBe(String(HASH_STORE_VERSION));
+    });
+  });
+});
+
+describe("hash-store — pre-retired upgrade preserves rows", () => {
+  it("adds the retired column without wiping snapshots or undo", async () => {
+    await withTempHome(async (home) => {
+      await mkdir(configHome(home), { recursive: true });
+      const now = Date.now();
+      const fixture = new DatabaseSync(sqlitePath(home), {
+        defensive: false,
+      } as any);
+      fixture.exec(
+        "CREATE TABLE snapshots (" +
+          "path TEXT PRIMARY KEY, " +
+          "checksum TEXT NOT NULL, " +
+          "line_count INTEGER NOT NULL, " +
+          "hashes TEXT NOT NULL, " +
+          "updated_at INTEGER NOT NULL" +
+          ")",
+      );
+      fixture.exec("CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)");
+      fixture.exec(
+        "CREATE TABLE undo (" +
+          "path TEXT PRIMARY KEY, " +
+          "content TEXT NOT NULL, " +
+          "bom TEXT NOT NULL, " +
+          "ending TEXT NOT NULL, " +
+          "hashes TEXT NOT NULL, " +
+          "result_content TEXT NOT NULL, " +
+          "updated_at INTEGER NOT NULL" +
+          ")",
+      );
+      // served predates the retired column: every shell except retired.
+      fixture.exec(
+        "CREATE TABLE served (" +
+          "session_id TEXT NOT NULL, " +
+          "path TEXT NOT NULL, " +
+          "hashes TEXT NOT NULL, " +
+          "reported TEXT, " +
+          "canons TEXT, " +
+          "snapshotId TEXT, " +
+          "cards TEXT, " +
+          "updated_at INTEGER NOT NULL, " +
+          "PRIMARY KEY (session_id, path)" +
+          ")",
+      );
+      fixture.prepare("INSERT INTO meta (key, value) VALUES ('version', '6')").run();
+      fixture
+        .prepare(
+          "INSERT INTO snapshots (path, checksum, line_count, hashes, updated_at) VALUES (?, ?, ?, ?, ?)",
+        )
+        .run("/p.ts", "ck", 1, JSON.stringify(["XYZ"]), now);
+      fixture
+        .prepare(
+          "INSERT INTO undo (path, content, bom, ending, hashes, result_content, updated_at) " +
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+        )
+        .run("/u.ts", "old", "", "\n", JSON.stringify(["UVW"]), "new", now);
+      fixture
+        .prepare(
+          "INSERT INTO served (session_id, path, hashes, reported, canons, snapshotId, cards, updated_at) " +
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        )
+        .run("sessionA", "/p.ts", JSON.stringify(["XYZ"]), null, null, null, null, now);
+      const beforeSnapshots = fixture.prepare("SELECT * FROM snapshots ORDER BY path").all();
+      const beforeUndo = fixture.prepare("SELECT * FROM undo ORDER BY path").all();
+      fixture.close();
+
+      await loadHashStore();
+      const served = await loadServedStore();
+      served.upsertServed("sessionB", "/q.ts", JSON.stringify(["AAA"]));
+      expect(served.getServed("sessionB", "/q.ts")).toEqual(["AAA"]);
+      expect(served.getServed("sessionA", "/p.ts")).toEqual(["XYZ"]);
+      shutdownHashStore();
+
+      const check = new DatabaseSync(sqlitePath(home), {
+        defensive: false,
+      } as any);
+      const cols = (check.prepare("PRAGMA table_info(served)").all() as { name: string }[]).map(
+        (column) => column.name,
+      );
+      expect(cols).toContain("retired");
+      expect(check.prepare("SELECT * FROM snapshots ORDER BY path").all()).toEqual(beforeSnapshots);
+      expect(check.prepare("SELECT * FROM undo ORDER BY path").all()).toEqual(beforeUndo);
+      check.close();
+    });
+  });
+});
+
+describe("hash-store — v7 snapshot materialization", () => {
+  it("(a) lineage present, legacy absent returns lineage anchors", async () => {
+    await withTempHome(async () => {
+      const internal = (await loadHashStore()) as unknown as InternalHashStore;
+      internal.commitSnapshot({
+        path: "/a.ts",
+        content: "alpha\nbeta\n",
+        hashes: ["AAa", "AAb"],
+      });
+      expect(internal.getSnapshot("/a.ts", "alpha\nbeta\n")).toEqual(["AAa", "AAb"]);
+    });
+  });
+
+  it("(b) legacy row present, no lineage returns legacy anchors", async () => {
+    await withTempHome(async () => {
+      const store = await loadHashStore();
+      await put(store, "/b.ts", "x\n", ["XYZ"]);
+      expect(store.getSnapshot("/b.ts", "x\n")).toEqual(["XYZ"]);
+    });
+  });
+
+  it("(c) neither returns undefined", async () => {
+    await withTempHome(async () => {
+      const store = await loadHashStore();
+      expect(store.getSnapshot("/nope.ts", "x\n")).toBeUndefined();
+    });
+  });
+
+  it("(d) legacy-only snapshot serves rows with no lease and no crash", async () => {
+    await withTempHome(async () => {
+      const internal = (await loadHashStore()) as unknown as InternalHashStore;
+      await put(internal, "/d.ts", "x\n", ["XYZ"]);
+      expect(internal.getSnapshot("/d.ts", "x\n")).toEqual(["XYZ"]);
+      await recordServed("cp3-sess", "/d.ts", [{ position: 0, hash: "XYZ" }], 1);
+      expect(internal.leaseFor("cp3-sess", "/d.ts", "XYZ")).toBeUndefined();
+    });
+  });
+
+  it("(e) lineage and legacy agree byte-for-byte on the same content", async () => {
+    await withTempHome(async (home) => {
+      const store = await loadHashStore();
+      store.upsertSnapshot("/e.ts", contentChecksum("x\n"), 1, ["XYZ"], "x\n");
+      expect(store.getSnapshot("/e.ts", "x\n")).toEqual(["XYZ"]);
+      shutdownHashStore();
+      const raw = new DatabaseSync(sqlitePath(home), {
+        defensive: false,
+      } as any);
+      raw
+        .prepare(
+          "DELETE FROM line_lineage WHERE snapshot_id IN " +
+            "(SELECT snapshot_id FROM file_snapshots WHERE path = ?)",
+        )
+        .run("/e.ts");
+      raw.prepare("DELETE FROM file_snapshots WHERE path = ?").run("/e.ts");
+      raw.close();
+      const reopened = await loadHashStore();
+      expect(reopened.getSnapshot("/e.ts", "x\n")).toEqual(["XYZ"]);
     });
   });
 });
