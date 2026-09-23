@@ -10,6 +10,7 @@ import {
   shutdownHashStore,
   withStore,
 } from "../../src/hash-store.js";
+import { saveUndo } from "../../src/undo-edit.js";
 import { isValidSnapshot } from "../../src/snapshot-store/migrate.js";
 import { isValidHashList } from "../../src/snapshot-store/index.js";
 import { getWritableTempRoot } from "../support/fixtures.js";
@@ -117,10 +118,10 @@ describe("coverage-agent-d hash-store operations", () => {
   it("getUndo corrupt handling", async () => {
     await withTempHome(async () => {
       const store = await loadHashStore();
-      store.upsertUndo("/u.ts", {
+      await saveUndo("/u.ts", {
         content: "c",
         bom: "",
-        ending: "\n",
+        originalEnding: "\n",
         hashes: ["aaa"],
         resultContent: "r",
       });
@@ -180,10 +181,10 @@ describe("coverage-agent-d hash-store operations", () => {
       await store.pruneMissing();
       // file doesn't exist, should be pruned
       expect(store.getSnapshot("/missing-file-xyz.ts", "x\n")).toBeUndefined();
-      store.upsertUndo("/u2.ts", {
+      await saveUndo("/u2.ts", {
         content: "c",
         bom: "",
-        ending: "\n",
+        originalEnding: "\n",
         hashes: ["aaa"],
         resultContent: "r",
       });

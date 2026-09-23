@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { getWritableTempRoot } from "../support/fixtures.js";
+import { saveUndo } from "../../src/undo-edit.js";
 
 describe("coverage-agent-g hash-store", () => {
   beforeEach(() => vi.restoreAllMocks());
@@ -72,10 +73,10 @@ describe("coverage-agent-g hash-store", () => {
       const { loadHashStore, shutdownHashStore } = await import("../../src/hash-store.js");
       const store: any = await loadHashStore();
       const p = join(dir, "a.txt");
-      store.upsertUndo(p, {
+      await saveUndo(p, {
         content: "c",
         bom: "",
-        ending: "\n",
+        originalEnding: "\n",
         hashes: ["abc"],
         resultContent: "r",
       });

@@ -19,6 +19,7 @@ import {
 import { HASH_STORE_VERSION, SERVED_TTL_MS } from "../../src/constants.js";
 import { initHasher, contentChecksum } from "../../src/hashline/hasher.js";
 import { getWritableTempRoot } from "../support/fixtures.js";
+import { saveUndo } from "../../src/undo-edit.js";
 
 let tmpHome: string;
 beforeAll(async () => {
@@ -251,10 +252,10 @@ describe("served state — session wipe keeps snapshots and undo", () => {
       await recordServed("sessionA", "/a.ts", [{ position: 0, hash: "abc" }]);
       await recordServed("sessionA", "/b.ts", [{ position: 1, hash: "def" }]);
       store.upsertSnapshot("/a.ts", contentChecksum("a\n"), 1, ["abc"]);
-      store.upsertUndo("/u.ts", {
+      await saveUndo("/u.ts", {
         content: "old",
         bom: "",
-        ending: "\n",
+        originalEnding: "\n",
         hashes: ["UVW"],
         resultContent: "new",
       });
@@ -343,10 +344,10 @@ describe("served state — schema versioning", () => {
       const store = await loadHashStore();
       await recordServed("sessionA", "/p.ts", [{ position: 0, hash: "XYZ" }]);
       store.upsertSnapshot("/p.ts", contentChecksum("x\n"), 1, ["XYZ"]);
-      store.upsertUndo("/u.ts", {
+      await saveUndo("/u.ts", {
         content: "old",
         bom: "",
-        ending: "\n",
+        originalEnding: "\n",
         hashes: ["UVW"],
         resultContent: "new",
       });
@@ -414,10 +415,10 @@ describe("served state — schema versioning", () => {
       const initialStore = await loadHashStore();
       await recordServed("sessionA", path, [{ position: 0, hash: "AAA" }]);
       initialStore.upsertSnapshot(path, contentChecksum(content), 2, ["BBB", "AAA"]);
-      initialStore.upsertUndo(path, {
+      await saveUndo(path, {
         content: "old\nnew\n",
         bom: "",
-        ending: "\n",
+        originalEnding: "\n",
         hashes: ["BBB", "AAA"],
         resultContent: content,
       });
@@ -488,17 +489,17 @@ describe("served state — pruneMissing", () => {
       await recordServed("sessionA", "/gone.ts", [{ position: 0, hash: "GON" }]);
       store.upsertSnapshot(existing, contentChecksum("keep\n"), 1, ["KEP"]);
       store.upsertSnapshot("/gone.ts", contentChecksum("gone\n"), 1, ["GON"]);
-      store.upsertUndo(existing, {
+      await saveUndo(existing, {
         content: "old",
         bom: "",
-        ending: "\n",
+        originalEnding: "\n",
         hashes: ["KEP"],
         resultContent: "new",
       });
-      store.upsertUndo("/gone.ts", {
+      await saveUndo("/gone.ts", {
         content: "old",
         bom: "",
-        ending: "\n",
+        originalEnding: "\n",
         hashes: ["GON"],
         resultContent: "new",
       });

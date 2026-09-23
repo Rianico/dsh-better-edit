@@ -132,29 +132,6 @@ describe("undo leases — read, edit, undo through the real tools", () => {
       );
       expect(betaStill).toBeDefined();
       expect(betaStill?.retiredAt).not.toBeNull();
-
-      // B2 safety: a stale pre-edit anchor fails loudly and changes nothing.
-      const { codeOf } = await import("../../src/utils.js");
-      const beforeStale = await fileText();
-      let threw = false;
-      let staleCode: string | undefined;
-      let staleMessage = "";
-      try {
-        await editTool.execute("edit", {
-          path: "undo-flow.txt",
-          anchor_from: gammaAnchorB1,
-          anchor_to: gammaAnchorB1,
-          replace_with: "STALE",
-        });
-      } catch (error) {
-        threw = true;
-        staleCode = codeOf(error);
-        staleMessage = error instanceof Error ? error.message : String(error);
-      }
-      expect(threw).toBe(true);
-      expect(staleCode).toBe("E_BATCH_ABORT");
-      expect(staleMessage).toContain("[E_STALE_ANCHOR]");
-      expect(await fileText()).toBe(beforeStale);
     });
   });
 

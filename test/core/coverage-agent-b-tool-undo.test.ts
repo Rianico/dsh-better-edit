@@ -5,6 +5,7 @@ import { localIO } from "../../src/fs-bridge.js";
 import { buildUndoTool } from "../../src/tool-undo.js";
 import { FsSandboxController } from "../../src/sandbox.js";
 import { saveUndo, clearUndo, getUndo } from "../../src/undo-edit.js";
+import { hashStorePath } from "../../src/paths.js";
 
 function makeExec(cwd: string, sessionKey = "test-session") {
   return {
@@ -142,13 +143,15 @@ describe("undo-edit persistence coverage", () => {
       // directly write invalid record via hash-store
       const { loadHashStore } = await import("../../src/hash-store.js");
       const store = await loadHashStore();
-      (store as any).upsertUndo(abs, {
-        content: "a",
-        bom: "",
-        ending: "invalid",
-        hashes: ["h"],
-        resultContent: "b",
-      });
+      // Frozen v6 row (legacy-only, invalid ending): the pair face cannot express it.
+      const { DatabaseSync: RawSync } = await import("node:sqlite");
+      const raw = new RawSync(hashStorePath());
+      raw
+        .prepare(
+          "INSERT OR REPLACE INTO undo (path, content, bom, ending, hashes, result_content, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        )
+        .run(abs, "a", "", "invalid", JSON.stringify(["h"]), "b", Date.now());
+      raw.close();
       const loaded = await getUndo(abs);
       expect(loaded).toBeUndefined();
     });

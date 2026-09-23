@@ -81,6 +81,8 @@ export interface LineageStore {
   commitSnapshot(input: CommitSnapshotInput): void;
   lineageFor(path: string, snapshotHash: string): LineageRow[];
   leaseFor(sessionKey: string, path: string, anchor: string): LeaseRow | undefined;
+  /** Delete a path's whole lineage family (snapshots, lineage, counters, leases). */
+  deleteByPath(path: string): void;
 }
 
 interface SnapshotRow {
@@ -277,7 +279,12 @@ export function createLineageStore(db: DatabaseSync): LineageStore {
     "UPDATE served_leases SET retired_at = ? WHERE file_path = ? AND retired_at IS NULL " +
       "AND line_id NOT IN (SELECT line_id FROM line_lineage WHERE snapshot_id = ?)",
   );
-
+  const deleteSnapshotsByPathStmt = db.prepare("DELETE FROM file_snapshots WHERE path = ?");
+  const deleteLineageByPathStmt = db.prepare(
+    "DELETE FROM line_lineage WHERE snapshot_id IN (SELECT snapshot_id FROM file_snapshots WHERE path = ?)",
+  );
+  const deleteCountersByPathStmt = db.prepare("DELETE FROM line_id_counters WHERE path = ?");
+  const deleteLeasesByPathStmt = db.prepare("DELETE FROM served_leases WHERE file_path = ?");
   function retireAbsentLeases(snapshotId: number, path: string, now: number): void {
     retireAbsentLeasesStmt.run(now, path, snapshotId);
   }
@@ -456,6 +463,14 @@ export function createLineageStore(db: DatabaseSync): LineageStore {
         lineNumber: row.served_line_number,
         retiredAt: row.retired_at,
       };
+    },
+    deleteByPath(path) {
+      // Explicit lineage delete first: the FK cascade covers FK-on openers, but
+      // deleteByPath must hold for any opener (e.g. :memory: test DBs).
+      deleteLineageByPathStmt.run(path);
+      deleteSnapshotsByPathStmt.run(path);
+      deleteCountersByPathStmt.run(path);
+      deleteLeasesByPathStmt.run(path);
     },
   };
 }

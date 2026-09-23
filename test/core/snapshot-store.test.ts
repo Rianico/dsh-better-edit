@@ -7,6 +7,7 @@ import { loadHashStore, shutdownHashStore, type HashStore } from "../../src/hash
 import { initHasher, contentChecksum } from "../../src/hashline/hasher.js";
 import { splitLines } from "../../src/utils.js";
 import { getWritableTempRoot } from "../support/fixtures.js";
+import { saveUndo } from "../../src/undo-edit.js";
 
 let tmpHome: string;
 beforeAll(async () => {
@@ -155,10 +156,10 @@ describe("snapshot-store — pruneMissing", () => {
   it("removes undo entries for files that no longer exist", async () => {
     await withTempHome(async () => {
       const store = await loadHashStore();
-      store.upsertUndo("/gone.ts", {
+      await saveUndo("/gone.ts", {
         content: "old",
         bom: "",
-        ending: "\n",
+        originalEnding: "\n",
         hashes: ["ZZZ"],
         resultContent: "new",
       });
@@ -173,10 +174,10 @@ describe("snapshot-store — pruneMissing", () => {
       await writeFile(existing, "keep\n", "utf-8");
 
       const store = await loadHashStore();
-      store.upsertUndo(existing, {
+      await saveUndo(existing, {
         content: "old",
         bom: "",
-        ending: "\n",
+        originalEnding: "\n",
         hashes: ["KEP"],
         resultContent: "new",
       });

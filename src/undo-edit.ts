@@ -21,7 +21,7 @@ async function readUndo(path: string): Promise<UndoRecord | undefined> {
 /** Persist the undo rows (legacy + v7 snapshot pin) for a path to the active store. */
 async function writeUndo(path: string, entry: UndoRecord): Promise<void> {
   const store = await loadHashStore();
-  store.upsertUndoPair(path, entry, {
+  store.writeUndoPair(path, entry, {
     content: entry.content,
     bom: entry.bom,
     ending: entry.ending,
@@ -79,7 +79,7 @@ export async function saveUndo(
       try {
         if (previous ?? previousFileUndo) {
           const store = await loadHashStore();
-          store.restoreUndoPair(path, previous, previousFileUndo);
+          store.writeUndoPair(path, previous, previousFileUndo);
         } else {
           const store = await loadHashStore();
           store.deleteUndoPair(path);

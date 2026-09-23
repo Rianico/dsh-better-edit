@@ -102,6 +102,7 @@ interface Prepared {
   undoGet: (...params: SqlParams) => Record<string, unknown> | undefined;
   undoDelete: (...params: SqlParams) => void;
   undoPruneOlderThan: (...params: SqlParams) => void;
+  fileUndoPruneOlderThan: (...params: SqlParams) => void;
   fileUndoUpsert: (...params: (string | number | null)[]) => void;
   fileUndoGet: (...params: SqlParams) => FileUndoRow | undefined;
   fileUndoDelete: (...params: SqlParams) => void;
@@ -120,6 +121,7 @@ interface Prepared {
   servedCardsClear: (...params: SqlParams) => void;
   servedDelete: (...params: SqlParams) => void;
   servedDeletePath: (...params: SqlParams) => void;
+  servedMetaDeletePath: (...params: SqlParams) => void;
   servedWipe: (...params: SqlParams) => void;
   servedPruneOlderThan: (...params: SqlParams) => void;
 }
@@ -150,27 +152,17 @@ export interface HashStore {
   findSnapshotPaths(hashes: string[]): string[];
 
   // ---- undo entries (one per path) ----------------------------------------
-  // Single-row undo faces are internal: healing and test fixtures only. All production
-  // writes move legacy + v7 together through the pair face below (one writer rule).
+  // Undo rows move together: all production writes go through the pair face below
+  // (one writer rule). Legacy-only rows exist only as pre-v7 data on disk.
   /** The undo row for a path, healing a corrupt row (parse → validate → delete). */
   getUndo(path: string): UndoRecord | undefined;
-  upsertUndo(path: string, entry: UndoRecord): void;
-  deleteUndo(path: string): void;
   pruneUndoOlderThan(ts: number): void;
-  /** Both undo rows in one transaction (upsert legacy + v7). */
-  upsertUndoPair(path: string, legacy: UndoRecord, v7: FileUndoRecord): void;
-  /** Both undo rows in one transaction (write-back-or-delete each side). */
-  restoreUndoPair(
-    path: string,
-    legacy: UndoRecord | undefined,
-    v7: FileUndoRecord | undefined,
-  ): void;
+  /** The single undo writer: write-back-or-delete each side in one transaction. */
+  writeUndoPair(path: string, legacy: UndoRecord | undefined, v7: FileUndoRecord | undefined): void;
   /** Both undo rows in one transaction. */
   deleteUndoPair(path: string): void;
   /** The v7 undo row for a path, same healing contract as the legacy row. */
   getFileUndo(path: string): FileUndoRecord | undefined;
-  upsertFileUndo(path: string, record: FileUndoRecord): void;
-  deleteFileUndo(path: string): void;
   // ---- maintenance ---------------------------------------------------------
   /** Delete every row family's entries for paths that no longer exist on disk. */
   pruneMissing(): Promise<void>;
@@ -525,7 +517,7 @@ function buildStore(db: DatabaseSync, storePath: string): { db: DatabaseSync; st
     db.exec("ALTER TABLE served ADD COLUMN retired TEXT");
   }
   const allStmt = db.prepare(
-    "SELECT path FROM snapshots UNION SELECT path FROM undo UNION SELECT path FROM served UNION SELECT path FROM file_undo",
+    "SELECT path FROM snapshots UNION SELECT path FROM undo UNION SELECT path FROM served UNION SELECT path FROM file_undo UNION SELECT path FROM file_snapshots UNION SELECT path FROM line_id_counters UNION SELECT file_path FROM served_leases UNION SELECT file_path FROM served_session_meta",
   );
   const undoUpsertStmt = db.prepare(
     "INSERT INTO undo (path, content, bom, ending, hashes, result_content, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?) " +
@@ -536,6 +528,7 @@ function buildStore(db: DatabaseSync, storePath: string): { db: DatabaseSync; st
   );
   const undoDelStmt = db.prepare("DELETE FROM undo WHERE path = ?");
   const undoPruneOlderThanStmt = db.prepare("DELETE FROM undo WHERE updated_at < ?");
+  const fileUndoPruneOlderThanStmt = db.prepare("DELETE FROM file_undo WHERE updated_at < ?");
   const fileUndoUpsertStmt = db.prepare(
     "INSERT INTO file_undo (path, content, bom, ending, hashes, result_content, snapshot_hash, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?) " +
       "ON CONFLICT(path) DO UPDATE SET content = excluded.content, bom = excluded.bom, ending = excluded.ending, hashes = excluded.hashes, result_content = excluded.result_content, snapshot_hash = excluded.snapshot_hash, updated_at = excluded.updated_at",
@@ -591,6 +584,9 @@ function buildStore(db: DatabaseSync, storePath: string): { db: DatabaseSync; st
   );
   const servedDeleteStmt = db.prepare("DELETE FROM served WHERE session_id = ? AND path = ?");
   const servedDeletePathStmt = db.prepare("DELETE FROM served WHERE path = ?");
+  const servedMetaDeletePathStmt = db.prepare(
+    "DELETE FROM served_session_meta WHERE file_path = ?",
+  );
   const servedWipeStmt = db.prepare("DELETE FROM served WHERE session_id = ?");
   const servedPruneOlderThanStmt = db.prepare("DELETE FROM served WHERE updated_at < ?");
   const stmts: Prepared = {
@@ -609,6 +605,11 @@ function buildStore(db: DatabaseSync, storePath: string): { db: DatabaseSync; st
     undoPruneOlderThan: (...params) => {
       withBusyRetry(() => {
         undoPruneOlderThanStmt.run(...params);
+      });
+    },
+    fileUndoPruneOlderThan: (...params) => {
+      withBusyRetry(() => {
+        fileUndoPruneOlderThanStmt.run(...params);
       });
     },
     fileUndoUpsert: (...params: (string | number | null)[]) => {
@@ -691,6 +692,11 @@ function buildStore(db: DatabaseSync, storePath: string): { db: DatabaseSync; st
         servedDeletePathStmt.run(...params);
       });
     },
+    servedMetaDeletePath: (...params) => {
+      withBusyRetry(() => {
+        servedMetaDeletePathStmt.run(...params);
+      });
+    },
     servedWipe: (...params) => {
       withBusyRetry(() => {
         servedWipeStmt.run(...params);
@@ -734,31 +740,7 @@ function makeDomainStore(
     });
   }
 
-  function undoPairUpsertImpl(path: string, legacy: UndoRecord, v7: FileUndoRecord): void {
-    withUndoPairTxn(() => {
-      stmts.undoUpsert(
-        path,
-        legacy.content,
-        legacy.bom,
-        legacy.ending,
-        JSON.stringify(legacy.hashes),
-        legacy.resultContent,
-        Date.now(),
-      );
-      stmts.fileUndoUpsert(
-        path,
-        v7.content,
-        v7.bom,
-        v7.ending,
-        JSON.stringify(v7.hashes),
-        v7.resultContent,
-        v7.snapshotHash,
-        v7.updatedAt,
-      );
-    });
-  }
-
-  function undoPairRestoreImpl(
+  function writeUndoPairImpl(
     path: string,
     legacy: UndoRecord | undefined,
     v7: FileUndoRecord | undefined,
@@ -833,6 +815,9 @@ function makeDomainStore(
     leaseFor(sessionKey, path, anchor) {
       return lineageStore.leaseFor(sessionKey, path, anchor);
     },
+    deleteByPath(path) {
+      lineageStore.deleteByPath(path);
+    },
     allKnownPaths() {
       return stmts.allPaths() as { path: string }[];
     },
@@ -852,7 +837,7 @@ function makeDomainStore(
       try {
         const parsed = JSON.parse(row.hashes as string);
         if (!isValidHashList(parsed)) {
-          stmts.undoDelete(path);
+          undoPairDeleteImpl(path);
           return undefined;
         }
         return {
@@ -863,35 +848,9 @@ function makeDomainStore(
           resultContent: row.result_content as string,
         };
       } catch (error) {
-        stmts.undoDelete(path);
+        undoPairDeleteImpl(path);
         return undefined;
       }
-    },
-    upsertUndo(path, entry) {
-      stmts.undoUpsert(
-        path,
-        entry.content,
-        entry.bom,
-        entry.ending,
-        JSON.stringify(entry.hashes),
-        entry.resultContent,
-        Date.now(),
-      );
-    },
-    deleteUndo(path) {
-      stmts.undoDelete(path);
-    },
-    upsertFileUndo(path, record) {
-      stmts.fileUndoUpsert(
-        path,
-        record.content,
-        record.bom,
-        record.ending,
-        JSON.stringify(record.hashes),
-        record.resultContent,
-        record.snapshotHash,
-        record.updatedAt,
-      );
     },
     getFileUndo(path) {
       const row = stmts.fileUndoGet(path);
@@ -902,7 +861,7 @@ function makeDomainStore(
       try {
         const parsed = JSON.parse(row.hashes as string);
         if (!isValidHashList(parsed)) {
-          stmts.fileUndoDelete(path);
+          undoPairDeleteImpl(path);
           return undefined;
         }
         return {
@@ -915,18 +874,12 @@ function makeDomainStore(
           updatedAt: row.updated_at,
         };
       } catch (error) {
-        stmts.fileUndoDelete(path);
+        undoPairDeleteImpl(path);
         return undefined;
       }
     },
-    deleteFileUndo(path) {
-      stmts.fileUndoDelete(path);
-    },
-    upsertUndoPair(path, legacy, v7) {
-      undoPairUpsertImpl(path, legacy, v7);
-    },
-    restoreUndoPair(path, legacy, v7) {
-      undoPairRestoreImpl(path, legacy, v7);
+    writeUndoPair(path, legacy, v7) {
+      writeUndoPairImpl(path, legacy, v7);
     },
     deleteUndoPair(path) {
       undoPairDeleteImpl(path);
@@ -1080,19 +1033,25 @@ function makeDomainStore(
       stmts.servedPruneOlderThan(ts);
     },
     pruneUndoOlderThan(ts) {
-      stmts.undoPruneOlderThan(ts);
+      withUndoPairTxn(() => {
+        stmts.undoPruneOlderThan(ts);
+        stmts.fileUndoPruneOlderThan(ts);
+      });
     },
 
     async pruneMissing() {
       const rows = stmts.allPaths() as { path: string }[];
       const missing = await statMissing(rows);
       if (missing.length === 0) return;
+      // Transaction owner: withStore — one unit for the legacy rows and the v7 family.
       withStore(() => {
         for (const path of missing) {
           snapshotStore.deleteByPath(path);
+          lineageStore.deleteByPath(path);
           stmts.undoDelete(path);
           stmts.fileUndoDelete(path);
           stmts.servedDeletePath(path);
+          stmts.servedMetaDeletePath(path);
         }
       });
     },
