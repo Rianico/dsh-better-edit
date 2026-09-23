@@ -49,6 +49,9 @@ vi.mock("node:sqlite", () => ({
             if (!state.persistentBusy) state.busyOnce = null;
             throw err;
           }
+          // node:sqlite run() always returns this shape; the lineage path reads
+          // lastInsertRowid, so the mock must not return undefined.
+          return { changes: 1, lastInsertRowid: 1 };
         },
       };
     }
@@ -145,6 +148,21 @@ describe("hash store open error handling", () => {
       store.upsertSnapshot("/p.ts", "checksum", 1, ["AAA"]);
     }).toThrow(/locked/);
     expect(state.runCalls - callsBefore).toBe(4);
+  });
+
+  it("retries a transient busy error inside a lineage statement", async () => {
+    const { loadHashStore, shutdownHashStore } = await import("../../src/hash-store");
+    shutdownHashStore();
+    const internal = (await loadHashStore()) as unknown as {
+      commitSnapshot(input: { path: string; content: string; hashes: string[] }): void;
+    };
+    // First .run inside commitSnapshot is the counter upsert; without the per-statement
+    // withBusyRetry the busy error would abort the whole unit instead of retrying.
+    state.busyOnce = busyError("database is locked");
+    expect(() => {
+      internal.commitSnapshot({ path: "/lin.ts", content: "a\n", hashes: ["AAA"] });
+    }).not.toThrow();
+    expect(state.runCalls).toBeGreaterThan(1);
   });
   it("never classifies a newer-version refusal as corruption", async () => {
     const { isCorruptionError } = await import("../../src/hash-store");

@@ -11,7 +11,7 @@ import {
   type HashStore,
   type InternalHashStore,
 } from "../../src/hash-store.js";
-import { recordServed } from "../../src/session-view.js";
+import { recordServed, recordServedTruncated } from "../../src/session-view.js";
 import { LineageCorruptError } from "../../src/snapshot-store/lineage-store.js";
 import { DomainError } from "../../src/domain-errors.js";
 import { HASH_STORE_VERSION } from "../../src/constants.js";
@@ -1611,6 +1611,53 @@ it("#6 served ↔ served_leases: a lease fault leaves the served row at its pre-
   });
 });
 
+it("#6 truncated served ↔ served_leases: a lease fault leaves the served row at its pre-write value", async () => {
+  await withTempHome(async (home) => {
+    const store = await loadServedStore();
+    const sessionKey = "t3a-p6t";
+    const filePath = "/p6t.ts";
+    // Pre-write row contract: the served array as it stands before the failed pair.
+    await recordServed(sessionKey, filePath, [{ position: 0, hash: "ZzZ" }], 1);
+    expect(store.getServed(sessionKey, filePath)).toEqual(["ZzZ"]);
+
+    const content = "alpha\nbeta\n";
+    const hashes = ["AAa", "AAb"];
+    const setup = new DatabaseSync(sqlitePath(home), { defensive: false } as any);
+    setup.exec(
+      "CREATE TRIGGER t3a_lease_fault_trunc BEFORE INSERT ON served_leases " +
+        "BEGIN SELECT RAISE(ABORT, 'injected'); END;",
+    );
+    setup.close();
+
+    // Truncated path, same pair contract — and the direct re-entrancy proof: the
+    // nested `commitSnapshot` must JOIN the outer `withStore` unit, or this would
+    // raise `cannot start a transaction within a transaction` before any assertion.
+    await recordServedTruncated(
+      sessionKey,
+      filePath,
+      [
+        { position: 0, hash: hashes[0]! },
+        { position: 1, hash: hashes[1]! },
+      ],
+      2,
+      0,
+      undefined,
+      { hashes, content },
+    );
+
+    // Row contract, never a COUNT: the stored JSON is byte-identical to the pre-write value.
+    expect(store.getServed(sessionKey, filePath)).toEqual(["ZzZ"]);
+    const check = new DatabaseSync(sqlitePath(home), { defensive: false } as any);
+    const leases = (
+      check
+        .prepare("SELECT COUNT(*) AS n FROM served_leases WHERE session_id = ? AND file_path = ?")
+        .get(sessionKey, filePath) as { n: number }
+    ).n;
+    check.close();
+    expect(leases).toBe(0);
+  });
+});
+
 it("adopt on an orphan snapshot row throws; serve paths fail closed without repair", async () => {
   await withTempHome(async (home) => {
     const internal = (await loadHashStore()) as unknown as InternalHashStore;
@@ -1641,6 +1688,11 @@ it("adopt on an orphan snapshot row throws; serve paths fail closed without repa
       { hashes, content },
     );
     expect(reopened.leaseFor("cp3-orphan", "/o.ts", "AAa")).toBeUndefined();
+    // Throw-arm contract (#6): a `commitSnapshot` that throws rolls the `served` row
+    // back with it. A served row claiming a verification whose lease grant failed IS
+    // the split the pair contract removes; `recordServed` only logs the error, so the
+    // rollback — not the log — is what must be pinned here.
+    expect(reopened.getServed("cp3-orphan", "/o.ts")).toEqual([]);
     shutdownHashStore();
     const check = new DatabaseSync(sqlitePath(home), {
       defensive: false,

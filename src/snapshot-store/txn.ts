@@ -14,13 +14,18 @@
  * - A nested failure propagates to the outermost owner, which is the only place
  *   that rolls back. Inner callers never swallow the error — swallowing would let
  *   the outer COMMIT persist a half-written pair.
- * - `snapshot-store/migrate.ts` keeps its own `BEGIN IMMEDIATE`: it runs on a
- *   fresh handle during `openStore`, before any store object exists, so it can
- *   never nest under this owner.
+ * - Two more `BEGIN IMMEDIATE` sites exist on a store handle, but both are PRE-STORE
+ *   only and can never nest under this owner: `snapshot-store/migrate.ts:67` (fresh
+ *   handle during `openStore`) and `hash-store.ts:471` (`migrateForward`, during
+ *   `buildStore`, before any store object exists). A grep-auditor counts three BEGIN
+ *   sites in total; exactly one of them is reachable from a live store.
  *
- * Retry policy is the shared `withBusyRetry` (store-retry), applied to the
- * `BEGIN IMMEDIATE` acquisition only: statements inside `fn` retry themselves,
- * so retrying the body here would multiply attempts and duplicate work.
+ * Retry policy (shared `withBusyRetry`, store-retry): this owner retries the two
+ * ACQUISITION points — `BEGIN IMMEDIATE` (lock acquisition) and `COMMIT` (lock
+ * release; a busy COMMIT leaves the transaction open and is retryable). It does NOT
+ * retry the body: statement-level retry belongs to the family that owns the
+ * statement. `hash-store`'s `stmts` wrappers and `snapshot-store/index.ts` wrap each
+ * `.run`, and `lineage-store.ts` wraps all ten of its own `.run` sites.
  * @module dsh-better-edit/snapshot-store/txn
  */
 import { DatabaseSync } from "node:sqlite";
@@ -32,16 +37,19 @@ export function withTransaction(db: DatabaseSync, fn: () => void): void {
     fn();
     return;
   }
-  // Retry the ACQUISITION only. Every statement inside `fn` carries its own
-  // `withBusyRetry` (the store's row-family wrappers), so re-running the whole
-  // body on an already-exhausted busy error would multiply attempts 4x and
-  // duplicate side effects that the inner retry had already rolled back.
+  // Retry the ACQUISITION points only. Statement-level retry belongs to the family
+  // that owns the statement (hash-store's `stmts` wrappers, snapshot-store/index.ts,
+  // lineage-store.ts), so re-running the whole body here would multiply attempts 4x
+  // and duplicate work the inner retry had already rolled back.
   withBusyRetry(() => {
     db.exec("BEGIN IMMEDIATE");
   });
   try {
     fn();
-    db.exec("COMMIT");
+    // COMMIT is the lock release: a busy COMMIT leaves the transaction open.
+    withBusyRetry(() => {
+      db.exec("COMMIT");
+    });
   } catch (error) {
     try {
       db.exec("ROLLBACK");

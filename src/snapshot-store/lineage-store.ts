@@ -9,6 +9,10 @@
  * grant inside the store's single re-entrant transaction owner
  * (`snapshot-store/txn.ts`). Outermost it opens ONE `BEGIN IMMEDIATE`; nested it
  * joins the caller's unit, so a failure rolls the whole unit back and propagates.
+ * Retry policy: the owner retries only the BEGIN/COMMIT acquisitions, so every
+ * `.run` below carries its own `withBusyRetry` — matching `hash-store`'s `stmts`
+ * wrappers and `snapshot-store/index.ts`. A transient SQLITE_BUSY on any lineage
+ * statement retries instead of aborting the unit.
  *
  * Pairing rule (deterministic): a new snapshot's lines inherit `line_id`s from
  * the path's latest committed snapshot —
@@ -31,6 +35,7 @@
 import { DatabaseSync } from "node:sqlite";
 import { CANON_VERSION, canonDigest, contentChecksum } from "../hashline/hash-assign.js";
 import { splitLines } from "../utils.js";
+import { withBusyRetry } from "../store-retry.js";
 import { withTransaction } from "./txn.js";
 
 export function snapshotHashFor(content: string): string {
@@ -287,7 +292,9 @@ export function createLineageStore(db: DatabaseSync): LineageStore {
   const deleteCountersByPathStmt = db.prepare("DELETE FROM line_id_counters WHERE path = ?");
   const deleteLeasesByPathStmt = db.prepare("DELETE FROM served_leases WHERE file_path = ?");
   function retireAbsentLeases(snapshotId: number, path: string, now: number): void {
-    retireAbsentLeasesStmt.run(now, path, snapshotId);
+    withBusyRetry(() => {
+      retireAbsentLeasesStmt.run(now, path, snapshotId);
+    });
   }
 
   function grantLeases(
@@ -311,16 +318,18 @@ export function createLineageStore(db: DatabaseSync): LineageStore {
       if (row.hash === null) continue;
       const hit = byAnchor.get(row.hash);
       if (!hit) continue;
-      upsertLeaseStmt.run(
-        leases.sessionKey,
-        path,
-        row.hash,
-        hit.lineId,
-        hit.canonHash,
-        snapshotHash,
-        row.position + 1,
-        now,
-      );
+      withBusyRetry(() => {
+        upsertLeaseStmt.run(
+          leases.sessionKey,
+          path,
+          row.hash,
+          hit.lineId,
+          hit.canonHash,
+          snapshotHash,
+          row.position + 1,
+          now,
+        );
+      });
     }
   }
 
@@ -367,7 +376,9 @@ export function createLineageStore(db: DatabaseSync): LineageStore {
               );
             }
             if (stored[index]!.anchor !== input.hashes[index]) {
-              updateLineageAnchorStmt.run(input.hashes[index], snapshotId, index + 1);
+              withBusyRetry(() => {
+                updateLineageAnchorStmt.run(input.hashes[index], snapshotId, index + 1);
+              });
             }
           }
         } else {
@@ -393,14 +404,13 @@ export function createLineageStore(db: DatabaseSync): LineageStore {
           const counter = getCounterStmt.get(input.path) as CounterRow | undefined;
           let fresh = counter === undefined ? 1 : counter.next_id;
           const freshCount = inherited.filter((id) => id === null).length;
-          upsertCounterStmt.run(input.path, fresh + freshCount);
+          withBusyRetry(() => {
+            upsertCounterStmt.run(input.path, fresh + freshCount);
+          });
           // SAFETY: node:sqlite run() always returns { changes, lastInsertRowid };
           // the unknown hop only satisfies the overlap check for lastInsertRowid's bigint union.
-          const info = insertSnapshotStmt.run(
-            input.path,
-            snapshotHash,
-            lines.length,
-            now,
+          const info = withBusyRetry(() =>
+            insertSnapshotStmt.run(input.path, snapshotHash, lines.length, now),
           ) as unknown as { lastInsertRowid: number | bigint };
           snapshotId = Number(info.lastInsertRowid);
           for (let index = 0; index < lines.length; index++) {
@@ -409,13 +419,15 @@ export function createLineageStore(db: DatabaseSync): LineageStore {
               lineId = fresh;
               fresh += 1;
             }
-            insertLineageStmt.run(
-              snapshotId,
-              index + 1,
-              lineId,
-              curCanons[index]!,
-              input.hashes[index]!,
-            );
+            withBusyRetry(() => {
+              insertLineageStmt.run(
+                snapshotId,
+                index + 1,
+                lineId,
+                curCanons[index]!,
+                input.hashes[index]!,
+              );
+            });
           }
         }
         if (input.leases !== undefined) {
@@ -457,10 +469,18 @@ export function createLineageStore(db: DatabaseSync): LineageStore {
     deleteByPath(path) {
       // Explicit lineage delete first: the FK cascade covers FK-on openers, but
       // deleteByPath must hold for any opener (e.g. :memory: test DBs).
-      deleteLineageByPathStmt.run(path);
-      deleteSnapshotsByPathStmt.run(path);
-      deleteCountersByPathStmt.run(path);
-      deleteLeasesByPathStmt.run(path);
+      withBusyRetry(() => {
+        deleteLineageByPathStmt.run(path);
+      });
+      withBusyRetry(() => {
+        deleteSnapshotsByPathStmt.run(path);
+      });
+      withBusyRetry(() => {
+        deleteCountersByPathStmt.run(path);
+      });
+      withBusyRetry(() => {
+        deleteLeasesByPathStmt.run(path);
+      });
     },
   };
 }
