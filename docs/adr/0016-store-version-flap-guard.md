@@ -21,7 +21,7 @@ it with the "wrong" build.
 Store open is now non-destructive and version-guarded:
 
 - **Additive, idempotent schema on every open** (`ensureSchema`): `CREATE
-  TABLE IF NOT EXISTS` for the current shapes, `addColumnIfMissing` backfill
+TABLE IF NOT EXISTS` for the current shapes, `addColumnIfMissing` backfill
   for newer `served` columns. `DROP TABLE served` fires only for the
   pre-session-keyed shell (no `session_id` — unusable by either version).
   No `DELETE FROM` anywhere on this path.
