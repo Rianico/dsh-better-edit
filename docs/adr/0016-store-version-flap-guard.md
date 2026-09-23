@@ -63,3 +63,16 @@ or point the store elsewhere).
   (`corrupt`, `not a database`, `malformed`, `database disk image`), enforced
   by the quarantine-guard test, or a valid newer store would be quarantined.
 - The in-transaction stamp re-check is defensive: it has no deterministic interleaving test at CP1; its refusal logic is shared with the probe-time refusal covered by T1.
+
+## Schema v7
+
+Bump `HASH_STORE_VERSION` 6 → 7 with six new tables, all additive:
+
+- `file_snapshots` — content-addressed snapshot headers (`UNIQUE (path, snapshot_hash)`).
+- `line_id_counters` — per-path stable line-id allocation.
+- `line_lineage` — per-snapshot line identity and canon hashes, `FOREIGN KEY (snapshot_id) REFERENCES file_snapshots` with `ON DELETE CASCADE`.
+- `file_undo` — v7 undo pins (carries an optional `snapshot_hash`).
+- `served_leases` — per-session served-line leases with position and retirement.
+- `served_session_meta` — per-session, per-file reported state.
+
+Shell-retention contract: the v6 shells (`snapshots`, `undo`, `served`) keep their exact v6 shapes — in particular `served.cards`, which the released v6 build names at store open — so an un-restarted v6 session or a concurrent v6 worktree never hits a missing table or a dropped column. A v6 process wipes only its own shells and never names the v7 tables, which is what makes the flap survivable. Version boundary: stamp 7 opens (migrating forward when older); stamp 8 is refused with `E_STORE_NEWER_VERSION`.
