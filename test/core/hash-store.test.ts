@@ -501,7 +501,9 @@ describe("hash-store — schema versioning", () => {
       const db = new DatabaseSync(sqlitePath(home), {
         defensive: false,
       } as any);
-      const stored = db.prepare("SELECT checksum, line_count FROM snapshots WHERE path = ?").get("/p.ts") as {
+      const stored = db
+        .prepare("SELECT checksum, line_count FROM snapshots WHERE path = ?")
+        .get("/p.ts") as {
         checksum: string;
         line_count: number;
       };
@@ -511,11 +513,24 @@ describe("hash-store — schema versioning", () => {
       expect(JSON.parse(snapRow.hashes)).toEqual(["XYZ"]);
       const undoRow = db
         .prepare("SELECT content, bom, ending, hashes, result_content FROM undo WHERE path = ?")
-        .get("/u.ts") as { content: string; bom: string; ending: string; hashes: string; result_content: string };
-      expect(undoRow).toMatchObject({ content: "old", bom: "", ending: "\n", result_content: "new" });
+        .get("/u.ts") as {
+        content: string;
+        bom: string;
+        ending: string;
+        hashes: string;
+        result_content: string;
+      };
+      expect(undoRow).toMatchObject({
+        content: "old",
+        bom: "",
+        ending: "\n",
+        result_content: "new",
+      });
       expect(JSON.parse(undoRow.hashes)).toEqual(["UVW"]);
       const servedRow = db
-        .prepare("SELECT hashes, reported, retired, canons, snapshotId, cards FROM served WHERE session_id = ? AND path = ?")
+        .prepare(
+          "SELECT hashes, reported, retired, canons, snapshotId, cards FROM served WHERE session_id = ? AND path = ?",
+        )
         .get("sessionA", "/p.ts") as { hashes: string };
       expect(JSON.parse(servedRow.hashes)).toEqual(["XYZ"]);
 
@@ -543,25 +558,48 @@ describe("hash-store — schema versioning", () => {
           "ON CONFLICT(session_id, path) DO UPDATE SET hashes = excluded.hashes, updated_at = excluded.updated_at",
       ).run("sessionB", "/v.ts", JSON.stringify(["CCC"]), now);
       const vServed = db
-        .prepare("SELECT hashes, reported, retired, canons, snapshotId, cards FROM served WHERE session_id = ? AND path = ?")
+        .prepare(
+          "SELECT hashes, reported, retired, canons, snapshotId, cards FROM served WHERE session_id = ? AND path = ?",
+        )
         .get("sessionB", "/v.ts") as {
-          hashes: string;
-          reported: null;
-          retired: null;
-          canons: null;
-          snapshotId: null;
-          cards: null;
-        };
+        hashes: string;
+        reported: null;
+        retired: null;
+        canons: null;
+        snapshotId: null;
+        cards: null;
+      };
       expect(JSON.parse(vServed.hashes)).toEqual(["CCC"]);
-      expect(vServed).toMatchObject({ reported: null, retired: null, canons: null, snapshotId: null, cards: null });
+      expect(vServed).toMatchObject({
+        reported: null,
+        retired: null,
+        canons: null,
+        snapshotId: null,
+        cards: null,
+      });
 
       db.prepare("DELETE FROM snapshots WHERE path = ?").run("/v.ts");
       db.prepare("DELETE FROM undo WHERE path = ?").run("/v2.ts");
       db.prepare("DELETE FROM served WHERE session_id = ?").run("sessionB");
       db.prepare("DELETE FROM served WHERE path = ?").run("/v.ts");
-      expect((db.prepare("SELECT COUNT(*) AS n FROM snapshots WHERE path = ?").get("/v.ts") as { n: number }).n).toBe(0);
-      expect((db.prepare("SELECT COUNT(*) AS n FROM undo WHERE path = ?").get("/v2.ts") as { n: number }).n).toBe(0);
-      expect((db.prepare("SELECT COUNT(*) AS n FROM served WHERE session_id = ?").get("sessionB") as { n: number }).n).toBe(0);
+      expect(
+        (
+          db.prepare("SELECT COUNT(*) AS n FROM snapshots WHERE path = ?").get("/v.ts") as {
+            n: number;
+          }
+        ).n,
+      ).toBe(0);
+      expect(
+        (db.prepare("SELECT COUNT(*) AS n FROM undo WHERE path = ?").get("/v2.ts") as { n: number })
+          .n,
+      ).toBe(0);
+      expect(
+        (
+          db.prepare("SELECT COUNT(*) AS n FROM served WHERE session_id = ?").get("sessionB") as {
+            n: number;
+          }
+        ).n,
+      ).toBe(0);
       expect((db.prepare("SELECT COUNT(*) AS n FROM snapshots").get() as { n: number }).n).toBe(1);
       db.close();
 
@@ -627,7 +665,9 @@ describe("hash-store — schema versioning", () => {
       );
       fixture.prepare("INSERT INTO meta (key, value) VALUES ('version', '6')").run();
       fixture
-        .prepare("INSERT INTO snapshots (path, checksum, line_count, hashes, updated_at) VALUES (?, ?, ?, ?, ?)")
+        .prepare(
+          "INSERT INTO snapshots (path, checksum, line_count, hashes, updated_at) VALUES (?, ?, ?, ?, ?)",
+        )
         .run("/p.ts", "ck", 1, JSON.stringify(["XYZ"]), now);
       fixture
         .prepare(
@@ -640,7 +680,17 @@ describe("hash-store — schema versioning", () => {
           "INSERT INTO served (session_id, path, hashes, reported, retired, canons, snapshotId, cards, updated_at) " +
             "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
-        .run("sessionA", "/p.ts", JSON.stringify(["XYZ"]), null, null, null, null, JSON.stringify(["C1"]), now);
+        .run(
+          "sessionA",
+          "/p.ts",
+          JSON.stringify(["XYZ"]),
+          null,
+          null,
+          null,
+          null,
+          JSON.stringify(["C1"]),
+          now,
+        );
       const before = {
         snapshots: fixture.prepare("SELECT * FROM snapshots ORDER BY path").all(),
         undo: fixture.prepare("SELECT * FROM undo ORDER BY path").all(),
@@ -654,7 +704,6 @@ describe("hash-store — schema versioning", () => {
       // Byte-identical straight after the v7 open, before any v6 write.
       expect(readAll()).toEqual(before);
       shutdownHashStore();
-
 
       const db = rawConn();
       db.prepare(

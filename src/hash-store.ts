@@ -36,7 +36,6 @@ import { migrateLegacyStore } from "./snapshot-store/migrate.js";
 
 // ---- validators (owned here; the store's corruption handling uses them) ----
 
-
 /** A served-row array: per-position hash, or null for never-served slots. */
 export function isValidCanonsList(value: unknown): value is (string | null)[] {
   if (!Array.isArray(value)) return false;
