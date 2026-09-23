@@ -27,7 +27,9 @@ Line identity is content-addressed and append-only:
   `served_snapshot_hash`, `served_line_number`.
 - **Adoption allocates nothing.** Re-committing byte-identical content resolves
   the existing `(path, snapshot_hash)` row and writes no lineage and touches no
-  counter; leases still grant against the adopted snapshot.
+  counter; leases still grant against the adopted snapshot. Adopt refreshes the `anchor`
+  column to the live assignment (compare-then-update, differing rows only); `line_id`,
+  `canon_hash` and the counter never change at adopt.
 - **Canonical-form pairing (deterministic rules 1–4).** A new snapshot inherits
   `line_id`s from the path's latest committed snapshot: (1) same line number
   and same `canon_hash` wins; (2) a remaining line whose canon matches exactly
@@ -47,10 +49,18 @@ Line identity is content-addressed and append-only:
   lineage invariant: no lease can point at a snapshot that was never recorded,
   and re-serving old rows after newer snapshots exist still binds the old
   snapshot's lineage.
-- **Live read prefers lineage.** `HashStore.getSnapshot` materializes anchors
-  from `line_lineage` ordered by `line_number` when present, falling back to
-  the legacy row (corrupt-row healing applies to the fallback only).
-  Cross-path scans stay on the legacy table this round.
+- **Anchor assignment is not content-determined — and that is why the refresh exists.**
+  The same content re-hashed under different retire/reservation sets gets different
+  anchors, so the stored `anchor` column goes archaeological while identity stays put.
+  Without the adopt refresh, `getSnapshot` would return retired hashes and the lease
+  grant's `byAnchor` lookup would silently miss (fail-closed, no lease). The refresh
+  keeps the lineage tracking the live assignment inside the same transaction.
+- **Live read prefers lineage-with-refresh over the legacy overwrite cache.**
+  `HashStore.getSnapshot` materializes anchors from `line_lineage` ordered by
+  `line_number` when present, falling back to the legacy row (corrupt-row healing
+  applies to the fallback only). Lineage-first is correct only because the adopt
+  refresh keeps it live; the legacy row overwrites per hash and cannot serve as the
+  identity source. Cross-path scans stay on the legacy table this round.
 
 ## Non-changes recorded
 
