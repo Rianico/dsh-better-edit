@@ -281,18 +281,20 @@ export interface ServeSnapshot {
 
 /**
  * Funnel for lease granting: materialize-or-adopt the serve snapshot and grant
- * leases for the served rows as-is inside the store's single transaction.
+ * leases for the served rows as-is. Caller-owned transaction: this must run
+ * INSIDE the `withStore` unit that wrote the `served` row it derives from, so a
+ * lease fault rolls the pair back instead of splitting it.
  * Fail closed: no content/hashes (or a length mismatch) grants nothing and
- * throws nothing — the legacy served-state write already succeeded.
+ * throws nothing — the served-state write in the same unit still commits.
  */
-async function grantServeLeases(
+function grantServeLeases(
   store: ServedPersistence,
   sessionKey: string,
   path: string,
   rows: readonly ServedEntry[],
   hashes: readonly string[] | undefined,
   content: string | undefined,
-): Promise<void> {
+): void {
   if (content === undefined || hashes === undefined) return;
   if (splitLines(content).length !== hashes.length) return;
   const internal = store as unknown as InternalHashStore;
@@ -353,8 +355,9 @@ export async function recordServed(
         }
         sweepAndRetire(store, sessionKey, path, current, updated, rows);
       }
+      // Pair #6: the lease grant and the `served` row it derives from are ONE unit.
+      grantServeLeases(store, sessionKey, path, rows, full?.hashes, full?.content);
     });
-    await grantServeLeases(store, sessionKey, path, rows, full?.hashes, full?.content);
   } catch (error) {
     console.error("Failed to record served rows:", error);
   }
@@ -399,15 +402,16 @@ export async function recordServedTruncated(
         store.upsertServedCanons(sessionKey, path, JSON.stringify(updatedCanons));
       }
       sweepAndRetire(store, sessionKey, path, current, updated, rows);
+      // Pair #6: the lease grant and the `served` row it derives from are ONE unit.
+      grantServeLeases(
+        store,
+        sessionKey,
+        path,
+        rows,
+        serveSnapshot?.hashes,
+        serveSnapshot?.content,
+      );
     });
-    await grantServeLeases(
-      store,
-      sessionKey,
-      path,
-      rows,
-      serveSnapshot?.hashes,
-      serveSnapshot?.content,
-    );
   } catch (error) {
     console.error("Failed to record truncated served rows:", error);
   }

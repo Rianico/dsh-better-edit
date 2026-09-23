@@ -6,8 +6,9 @@
  * never recorded (or lineage without its snapshot row).
  *
  * Transaction semantics: `commitSnapshot` runs adopt-or-insert plus the lease
- * grant inside ONE `BEGIN IMMEDIATE` (shared `withBusyRetry` policy). Any
- * failure rolls everything back and propagates.
+ * grant inside the store's single re-entrant transaction owner
+ * (`snapshot-store/txn.ts`). Outermost it opens ONE `BEGIN IMMEDIATE`; nested it
+ * joins the caller's unit, so a failure rolls the whole unit back and propagates.
  *
  * Pairing rule (deterministic): a new snapshot's lines inherit `line_id`s from
  * the path's latest committed snapshot —
@@ -30,7 +31,7 @@
 import { DatabaseSync } from "node:sqlite";
 import { CANON_VERSION, canonDigest, contentChecksum } from "../hashline/hash-assign.js";
 import { splitLines } from "../utils.js";
-import { withBusyRetry } from "../store-retry.js";
+import { withTransaction } from "./txn.js";
 
 export function snapshotHashFor(content: string): string {
   return `${CANON_VERSION}:${contentChecksum(content)}`;
@@ -334,106 +335,95 @@ export function createLineageStore(db: DatabaseSync): LineageStore {
       const snapshotHash = snapshotHashFor(input.content);
       const curCanons = lines.map((line) => canonDigest(line));
       const now = Date.now();
-      withBusyRetry(() => {
-        db.exec("BEGIN IMMEDIATE");
-        try {
-          const existing = getSnapshotStmt.get(input.path, snapshotHash) as
-            | { snapshot_id: number }
-            | undefined;
-          let snapshotId: number;
-          if (existing !== undefined) {
-            // Adopt-if-exists: allocate nothing — but refresh the anchor column to the live
-            // assignment (compare-then-update, diffs only). Anchor assignment is not
-            // content-determined (retire/reservation-dependent), so stored anchors go
-            // archaeological without this; identity (line_id, canon_hash) stays first-wins.
-            snapshotId = existing.snapshot_id;
-            // SAFETY: SELECT list matches LineageRecord field-for-field (same statement shape
-            // as grantLeases/lineageFor).
-            const stored = snapshotLineageStmt.all(snapshotId) as unknown as LineageRecord[];
-            if (stored.length === 0) {
+      withTransaction(db, () => {
+        const existing = getSnapshotStmt.get(input.path, snapshotHash) as
+          | { snapshot_id: number }
+          | undefined;
+        let snapshotId: number;
+        if (existing !== undefined) {
+          // Adopt-if-exists: allocate nothing — but refresh the anchor column to the live
+          // assignment (compare-then-update, diffs only). Anchor assignment is not
+          // content-determined (retire/reservation-dependent), so stored anchors go
+          // archaeological without this; identity (line_id, canon_hash) stays first-wins.
+          snapshotId = existing.snapshot_id;
+          // SAFETY: SELECT list matches LineageRecord field-for-field (same statement shape
+          // as grantLeases/lineageFor).
+          const stored = snapshotLineageStmt.all(snapshotId) as unknown as LineageRecord[];
+          if (stored.length === 0) {
+            throw new LineageCorruptError(
+              `commitSnapshot(${input.path}): snapshot row has no lineage`,
+            );
+          }
+          if (stored.length !== lines.length) {
+            throw new LineageCorruptError(
+              `commitSnapshot(${input.path}): stored lineage has ${stored.length} rows ` +
+                `for ${lines.length} lines`,
+            );
+          }
+          for (let index = 0; index < lines.length; index++) {
+            if (stored[index]!.line_number !== index + 1) {
               throw new LineageCorruptError(
-                `commitSnapshot(${input.path}): snapshot row has no lineage`,
+                `commitSnapshot(${input.path}): lineage row out of order at index ${index}`,
               );
             }
-            if (stored.length !== lines.length) {
-              throw new LineageCorruptError(
-                `commitSnapshot(${input.path}): stored lineage has ${stored.length} rows ` +
-                  `for ${lines.length} lines`,
-              );
-            }
-            for (let index = 0; index < lines.length; index++) {
-              if (stored[index]!.line_number !== index + 1) {
-                throw new LineageCorruptError(
-                  `commitSnapshot(${input.path}): lineage row out of order at index ${index}`,
-                );
-              }
-              if (stored[index]!.anchor !== input.hashes[index]) {
-                updateLineageAnchorStmt.run(input.hashes[index], snapshotId, index + 1);
-              }
-            }
-          } else {
-            const latest = latestSnapshotStmt.get(input.path) as SnapshotRow | undefined;
-            const prev: PrevLine[] =
-              latest === undefined
-                ? []
-                : // SAFETY: SELECT list (line_number, line_id, canon_hash) matches the inline
-                  // record shape; node:sqlite returns one record per row with exactly those columns.
-                  (
-                    prevLineageStmt.all(latest.snapshot_id) as unknown as {
-                      line_number: number;
-                      line_id: number;
-                      canon_hash: string;
-                    }[]
-                  ).map((row) => ({
-                    lineNumber: row.line_number,
-                    lineId: row.line_id,
-                    canonHash: row.canon_hash,
-                  }));
-            const inherited = pairLineIds(prev, curCanons);
-            // ONE counter upsert for the whole fresh block.
-            const counter = getCounterStmt.get(input.path) as CounterRow | undefined;
-            let fresh = counter === undefined ? 1 : counter.next_id;
-            const freshCount = inherited.filter((id) => id === null).length;
-            upsertCounterStmt.run(input.path, fresh + freshCount);
-            // SAFETY: node:sqlite run() always returns { changes, lastInsertRowid };
-            // the unknown hop only satisfies the overlap check for lastInsertRowid's bigint union.
-            const info = insertSnapshotStmt.run(
-              input.path,
-              snapshotHash,
-              lines.length,
-              now,
-            ) as unknown as { lastInsertRowid: number | bigint };
-            snapshotId = Number(info.lastInsertRowid);
-            for (let index = 0; index < lines.length; index++) {
-              let lineId = inherited[index];
-              if (lineId === null) {
-                lineId = fresh;
-                fresh += 1;
-              }
-              insertLineageStmt.run(
-                snapshotId,
-                index + 1,
-                lineId,
-                curCanons[index]!,
-                input.hashes[index]!,
-              );
+            if (stored[index]!.anchor !== input.hashes[index]) {
+              updateLineageAnchorStmt.run(input.hashes[index], snapshotId, index + 1);
             }
           }
-          if (input.leases !== undefined) {
-            grantLeases(snapshotId, snapshotHash, input.path, input.leases, now);
+        } else {
+          const latest = latestSnapshotStmt.get(input.path) as SnapshotRow | undefined;
+          const prev: PrevLine[] =
+            latest === undefined
+              ? []
+              : // SAFETY: SELECT list (line_number, line_id, canon_hash) matches the inline
+                // record shape; node:sqlite returns one record per row with exactly those columns.
+                (
+                  prevLineageStmt.all(latest.snapshot_id) as unknown as {
+                    line_number: number;
+                    line_id: number;
+                    canon_hash: string;
+                  }[]
+                ).map((row) => ({
+                  lineNumber: row.line_number,
+                  lineId: row.line_id,
+                  canonHash: row.canon_hash,
+                }));
+          const inherited = pairLineIds(prev, curCanons);
+          // ONE counter upsert for the whole fresh block.
+          const counter = getCounterStmt.get(input.path) as CounterRow | undefined;
+          let fresh = counter === undefined ? 1 : counter.next_id;
+          const freshCount = inherited.filter((id) => id === null).length;
+          upsertCounterStmt.run(input.path, fresh + freshCount);
+          // SAFETY: node:sqlite run() always returns { changes, lastInsertRowid };
+          // the unknown hop only satisfies the overlap check for lastInsertRowid's bigint union.
+          const info = insertSnapshotStmt.run(
+            input.path,
+            snapshotHash,
+            lines.length,
+            now,
+          ) as unknown as { lastInsertRowid: number | bigint };
+          snapshotId = Number(info.lastInsertRowid);
+          for (let index = 0; index < lines.length; index++) {
+            let lineId = inherited[index];
+            if (lineId === null) {
+              lineId = fresh;
+              fresh += 1;
+            }
+            insertLineageStmt.run(
+              snapshotId,
+              index + 1,
+              lineId,
+              curCanons[index]!,
+              input.hashes[index]!,
+            );
           }
-          // Both paths, same transaction: leases whose line left the resolved snapshot retire;
-          // revival stays the grant path's retired_at = NULL.
-          retireAbsentLeases(snapshotId, input.path, now);
-          db.exec("COMMIT");
-        } catch (error) {
-          try {
-            db.exec("ROLLBACK");
-          } catch (rollbackError) {
-            console.warn(rollbackError); // best-effort rollback; the original error propagates
-          }
-          throw error;
         }
+        if (input.leases !== undefined) {
+          grantLeases(snapshotId, snapshotHash, input.path, input.leases, now);
+        }
+        // Both paths, same transaction: leases whose line left the resolved snapshot retire;
+        // revival stays the grant path's retired_at = NULL.
+        retireAbsentLeases(snapshotId, input.path, now);
       });
     },
 

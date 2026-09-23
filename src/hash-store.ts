@@ -39,6 +39,7 @@ import {
   snapshotHashFor,
   type LineageStore,
 } from "./snapshot-store/lineage-store.js";
+import { withTransaction } from "./snapshot-store/txn.js";
 // ---- validators (owned here; the store's corruption handling uses them) ----
 
 /** A served-row array: per-position hash, or null for never-served slots. */
@@ -120,7 +121,6 @@ interface Prepared {
   servedCardsClear: (...params: SqlParams) => void;
   servedDelete: (...params: SqlParams) => void;
   servedDeletePath: (...params: SqlParams) => void;
-  servedMetaDeletePath: (...params: SqlParams) => void;
   servedWipe: (...params: SqlParams) => void;
   servedPruneOlderThan: (...params: SqlParams) => void;
 }
@@ -377,15 +377,6 @@ function ensureV7Tables(db: DatabaseSync): void {
       "updated_at INTEGER NOT NULL" +
       ")",
   );
-  db.exec(
-    "CREATE TABLE IF NOT EXISTS served_session_meta (" +
-      "session_id TEXT NOT NULL, " +
-      "file_path TEXT NOT NULL, " +
-      "reported TEXT, " +
-      "updated_at INTEGER NOT NULL, " +
-      "PRIMARY KEY (session_id, file_path)" +
-      ")",
-  );
 }
 
 /**
@@ -516,7 +507,7 @@ function buildStore(db: DatabaseSync, storePath: string): { db: DatabaseSync; st
     db.exec("ALTER TABLE served ADD COLUMN retired TEXT");
   }
   const allStmt = db.prepare(
-    "SELECT path FROM snapshots UNION SELECT path FROM undo UNION SELECT path FROM served UNION SELECT path FROM file_undo UNION SELECT path FROM file_snapshots UNION SELECT path FROM line_id_counters UNION SELECT file_path FROM served_leases UNION SELECT file_path FROM served_session_meta",
+    "SELECT path FROM snapshots UNION SELECT path FROM undo UNION SELECT path FROM served UNION SELECT path FROM file_undo UNION SELECT path FROM file_snapshots UNION SELECT path FROM line_id_counters UNION SELECT file_path FROM served_leases",
   );
   const undoUpsertStmt = db.prepare(
     "INSERT INTO undo (path, content, bom, ending, hashes, result_content, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?) " +
@@ -590,9 +581,6 @@ function buildStore(db: DatabaseSync, storePath: string): { db: DatabaseSync; st
   );
   const servedDeleteStmt = db.prepare("DELETE FROM served WHERE session_id = ? AND path = ?");
   const servedDeletePathStmt = db.prepare("DELETE FROM served WHERE path = ?");
-  const servedMetaDeletePathStmt = db.prepare(
-    "DELETE FROM served_session_meta WHERE file_path = ?",
-  );
   const servedWipeStmt = db.prepare("DELETE FROM served WHERE session_id = ?");
   const servedPruneOlderThanStmt = db.prepare("DELETE FROM served WHERE updated_at < ?");
   const stmts: Prepared = {
@@ -698,11 +686,6 @@ function buildStore(db: DatabaseSync, storePath: string): { db: DatabaseSync; st
         servedDeletePathStmt.run(...params);
       });
     },
-    servedMetaDeletePath: (...params) => {
-      withBusyRetry(() => {
-        servedMetaDeletePathStmt.run(...params);
-      });
-    },
     servedWipe: (...params) => {
       withBusyRetry(() => {
         servedWipeStmt.run(...params);
@@ -726,24 +709,11 @@ function makeDomainStore(
 ): InternalHashStore {
   /**
    * Transaction owner for the undo pair: the store's own `db` handle (opened in
-   * buildStore). Not a second owner beside the snapshot/lineage stores — those
-   * manage their own tables and transactions; this helper only wraps undo's two rows.
+   * buildStore). Delegates to the single re-entrant owner so an undo-pair write
+   * joins an outer unit (e.g. pruneMissing) instead of nesting a BEGIN.
    */
   function withUndoPairTxn(fn: () => void): void {
-    withBusyRetry(() => {
-      db.exec("BEGIN IMMEDIATE");
-      try {
-        fn();
-        db.exec("COMMIT");
-      } catch (error) {
-        try {
-          db.exec("ROLLBACK");
-        } catch (rollbackError) {
-          console.warn(rollbackError);
-        }
-        throw error;
-      }
-    });
+    withTransaction(db, fn);
   }
 
   function writeUndoPairImpl(
@@ -818,10 +788,14 @@ function makeDomainStore(
       return snapshotStore.get(path, content, deleteCorrupt);
     },
     upsertSnapshot(path, checksum, lineCount, hashes, content?) {
-      snapshotStore.upsert(path, checksum, lineCount, hashes);
-      if (content !== undefined) {
-        lineageStore.commitSnapshot({ path, content, hashes });
-      }
+      // Pair #5: the legacy `snapshots` row and the v7 family are ONE unit. A v7
+      // fault (or a crash) must not leave the legacy row written and v7 absent.
+      withTransaction(db, () => {
+        snapshotStore.upsert(path, checksum, lineCount, hashes);
+        if (content !== undefined) {
+          lineageStore.commitSnapshot({ path, content, hashes });
+        }
+      });
     },
     commitSnapshot(input) {
       lineageStore.commitSnapshot(input);
@@ -1065,7 +1039,6 @@ function makeDomainStore(
           stmts.undoDelete(path);
           stmts.fileUndoDelete(path);
           stmts.servedDeletePath(path);
-          stmts.servedMetaDeletePath(path);
         }
       });
     },
@@ -1211,25 +1184,13 @@ export function shutdownHashStore(): void {
 /**
  * Run `fn` inside one BEGIN IMMEDIATE transaction on the active workspace's
  * store. Without an open store for this context the call runs bare (the
- * caller has already loaded the store in every in-process path).
+ * caller has already loaded the store in every in-process path). Re-entrant:
+ * when a store already has a transaction open, `fn` joins it.
  */
 export function withStore(fn: () => void): void {
   const store = currentStore();
   if (store) {
-    withBusyRetry(() => {
-      store.db.exec("BEGIN IMMEDIATE");
-      try {
-        fn();
-        store.db.exec("COMMIT");
-      } catch (e) {
-        try {
-          store.db.exec("ROLLBACK");
-        } catch (error) {
-          console.warn(error); // best-effort rollback; the original error propagates
-        }
-        throw e;
-      }
-    });
+    withTransaction(store.db, fn);
   } else {
     fn();
   }

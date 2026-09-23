@@ -377,7 +377,6 @@ describe("hash-store — schema versioning", () => {
         "line_lineage",
         "file_undo",
         "served_leases",
-        "served_session_meta",
       ]) {
         expect(tableNames).toContain(expected);
       }
@@ -862,7 +861,6 @@ describe("hash-store — schema versioning", () => {
         "line_lineage",
         "file_undo",
         "served_leases",
-        "served_session_meta",
       ]) {
         const row = check.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get() as { n: number };
         expect(row.n).toBe(0);
@@ -1012,7 +1010,6 @@ describe("hash-store — schema versioning", () => {
         "line_lineage",
         "file_undo",
         "served_leases",
-        "served_session_meta",
       ]) {
         const row = check.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get() as { n: number };
         expect(row.n).toBe(0);
@@ -1497,7 +1494,7 @@ describe("hash-store — v7 snapshot materialization", () => {
     });
   });
 
-  it("lineage insert fault rolls back; the handle stays usable and no orphan persists", async () => {
+  it("#5 snapshots ↔ file_snapshots: a lineage fault rolls back the legacy row and the v7 family", async () => {
     await withTempHome(async (home) => {
       const store = await loadHashStore();
       const setup = new DatabaseSync(sqlitePath(home), {
@@ -1513,6 +1510,32 @@ describe("hash-store — v7 snapshot materialization", () => {
       expect(() =>
         store.upsertSnapshot("/g.ts", contentChecksum(content), 2, hashes, content),
       ).toThrow("injected");
+      // Pair #5 row contract: neither side of the pair may survive the fault.
+      const pairCheck = new DatabaseSync(sqlitePath(home), { defensive: false } as any);
+      const legacyRows = (
+        pairCheck.prepare("SELECT COUNT(*) AS n FROM snapshots WHERE path = ?").get("/g.ts") as {
+          n: number;
+        }
+      ).n;
+      const v7Rows = (
+        pairCheck
+          .prepare("SELECT COUNT(*) AS n FROM file_snapshots WHERE path = ?")
+          .get("/g.ts") as {
+          n: number;
+        }
+      ).n;
+      const lineageRows = (
+        pairCheck
+          .prepare(
+            "SELECT COUNT(*) AS n FROM line_lineage WHERE snapshot_id IN " +
+              "(SELECT snapshot_id FROM file_snapshots WHERE path = ?)",
+          )
+          .get("/g.ts") as { n: number }
+      ).n;
+      pairCheck.close();
+      expect(legacyRows).toBe(0);
+      expect(v7Rows).toBe(0);
+      expect(lineageRows).toBe(0);
       // Same-connection proof: drop the trigger, then the same live handle must
       // succeed (a wedged transaction would fail locked).
       const drop = new DatabaseSync(sqlitePath(home), {
@@ -1542,6 +1565,49 @@ describe("hash-store — v7 snapshot materialization", () => {
       expect(linCount).toBe(2);
       drop.close();
     });
+  });
+});
+
+it("#6 served ↔ served_leases: a lease fault leaves the served row at its pre-write value", async () => {
+  await withTempHome(async (home) => {
+    const store = await loadServedStore();
+    const sessionKey = "t3a-p6";
+    const filePath = "/p6.ts";
+    // Pre-write row contract: the served array as it stands before the failed pair.
+    await recordServed(sessionKey, filePath, [{ position: 0, hash: "ZzZ" }], 1);
+    expect(store.getServed(sessionKey, filePath)).toEqual(["ZzZ"]);
+
+    const content = "alpha\nbeta\n";
+    const hashes = ["AAa", "AAb"];
+    const setup = new DatabaseSync(sqlitePath(home), { defensive: false } as any);
+    setup.exec(
+      "CREATE TRIGGER t3a_lease_fault BEFORE INSERT ON served_leases " +
+        "BEGIN SELECT RAISE(ABORT, 'injected'); END;",
+    );
+    setup.close();
+
+    // Full read: the served upsert and the lease grant it derives from are ONE unit.
+    await recordServed(
+      sessionKey,
+      filePath,
+      [
+        { position: 0, hash: hashes[0]! },
+        { position: 1, hash: hashes[1]! },
+      ],
+      2,
+      { hashes, content },
+    );
+
+    // Row contract, never a COUNT: the stored JSON is byte-identical to the pre-write value.
+    expect(store.getServed(sessionKey, filePath)).toEqual(["ZzZ"]);
+    const check = new DatabaseSync(sqlitePath(home), { defensive: false } as any);
+    const leases = (
+      check
+        .prepare("SELECT COUNT(*) AS n FROM served_leases WHERE session_id = ? AND file_path = ?")
+        .get(sessionKey, filePath) as { n: number }
+    ).n;
+    check.close();
+    expect(leases).toBe(0);
   });
 });
 
@@ -2033,13 +2099,6 @@ it("pruneMissing deletes the whole v7 lineage family for missing paths", async (
       ],
       2,
     );
-    const meta = new DatabaseSync(sqlitePath(home));
-    meta
-      .prepare(
-        "INSERT OR REPLACE INTO served_session_meta (session_id, file_path, reported, updated_at) VALUES (?, ?, ?, ?)",
-      )
-      .run("s1", "/gone-fam.ts", JSON.stringify(["H01"]), Date.now());
-    meta.close();
     // v7-only path: lineage family and nothing else — the discovery union must find it.
     store.commitSnapshot({
       path: "/gone-pure.ts",
@@ -2063,13 +2122,6 @@ it("pruneMissing deletes the whole v7 lineage family for missing paths", async (
       hashes: ["K01", "K02"],
       resultContent: "z\n",
     });
-    const keepMeta = new DatabaseSync(sqlitePath(home));
-    keepMeta
-      .prepare(
-        "INSERT OR REPLACE INTO served_session_meta (session_id, file_path, reported, updated_at) VALUES (?, ?, ?, ?)",
-      )
-      .run("s1", keep, JSON.stringify(["K01"]), Date.now());
-    keepMeta.close();
     await store.pruneMissing();
     const check = new DatabaseSync(sqlitePath(home));
     const count = (sql: string, p: string) => (check.prepare(sql).get(p) as { n: number }).n;
@@ -2084,9 +2136,6 @@ it("pruneMissing deletes the whole v7 lineage family for missing paths", async (
       expect(count("SELECT COUNT(*) AS n FROM line_id_counters WHERE path = ?", gone)).toBe(0);
       expect(count("SELECT COUNT(*) AS n FROM served_leases WHERE file_path = ?", gone)).toBe(0);
     }
-    expect(
-      count("SELECT COUNT(*) AS n FROM served_session_meta WHERE file_path = ?", "/gone-fam.ts"),
-    ).toBe(0);
     expect(count("SELECT COUNT(*) AS n FROM undo WHERE path = ?", "/gone-fam.ts")).toBe(0);
     expect(count("SELECT COUNT(*) AS n FROM file_undo WHERE path = ?", "/gone-fam.ts")).toBe(0);
     expect(count("SELECT COUNT(*) AS n FROM file_snapshots WHERE path = ?", keep)).toBe(1);
@@ -2096,9 +2145,6 @@ it("pruneMissing deletes the whole v7 lineage family for missing paths", async (
     expect(store.getUndo(keep)).toBeDefined();
     // A wipe-all-file_undo regression would still pass the line above — pin the v7 side too.
     expect((store as unknown as InternalHashStore).getFileUndo(keep)).toBeDefined();
-    expect(count("SELECT COUNT(*) AS n FROM served_session_meta WHERE file_path = ?", keep)).toBe(
-      1,
-    );
     check.close();
   });
 });
@@ -2143,7 +2189,9 @@ it("pruneMissing rolls back every table when a later delete faults", async () =>
   await withTempHome(async (home) => {
     const store = await loadHashStore();
     const { saveUndo } = await import("../../src/undo-edit.js");
-    // Missing path with a full family; served_session_meta is last in the prune order.
+    // Missing path with a full family; `served` is last in the prune order, and
+    // legacy `snapshots` is the FIRST family — both sides of the sweep are covered.
+    store.upsertSnapshot("/gone-rb.ts", contentChecksum("a\n"), 1, ["H01"]);
     store.commitSnapshot({
       path: "/gone-rb.ts",
       content: "a\n",
@@ -2158,25 +2206,19 @@ it("pruneMissing rolls back every table when a later delete faults", async () =>
       resultContent: "b\n",
     });
     await recordServed("s1", "/gone-rb.ts", [{ position: 0, hash: "H01" }], 1);
-    const meta = new DatabaseSync(sqlitePath(home));
-    meta
-      .prepare(
-        "INSERT OR REPLACE INTO served_session_meta (session_id, file_path, reported, updated_at) VALUES (?, ?, ?, ?)",
-      )
-      .run("s1", "/gone-rb.ts", JSON.stringify(["H01"]), Date.now());
-    meta.close();
     // Fault the LAST delete: the abort must roll back every earlier delete in the unit.
     const setup = new DatabaseSync(sqlitePath(home), {
       defensive: false,
     } as any);
     setup.exec(
-      "CREATE TRIGGER t2b_meta_fault BEFORE DELETE ON served_session_meta " +
+      "CREATE TRIGGER t3a_served_fault BEFORE DELETE ON served " +
         "BEGIN SELECT RAISE(ABORT, 'injected'); END;",
     );
     setup.close();
     await expect(store.pruneMissing()).rejects.toThrow("injected");
     const check = new DatabaseSync(sqlitePath(home));
     const count = (sql: string, p: string) => (check.prepare(sql).get(p) as { n: number }).n;
+    expect(count("SELECT COUNT(*) AS n FROM snapshots WHERE path = ?", "/gone-rb.ts")).toBe(1);
     expect(count("SELECT COUNT(*) AS n FROM file_snapshots WHERE path = ?", "/gone-rb.ts")).toBe(1);
     expect(
       count(
@@ -2190,9 +2232,7 @@ it("pruneMissing rolls back every table when a later delete faults", async () =>
     expect(
       count("SELECT COUNT(*) AS n FROM served_leases WHERE file_path = ?", "/gone-rb.ts"),
     ).toBe(1);
-    expect(
-      count("SELECT COUNT(*) AS n FROM served_session_meta WHERE file_path = ?", "/gone-rb.ts"),
-    ).toBe(1);
+    expect(count("SELECT COUNT(*) AS n FROM served WHERE path = ?", "/gone-rb.ts")).toBe(1);
     expect(count("SELECT COUNT(*) AS n FROM undo WHERE path = ?", "/gone-rb.ts")).toBe(1);
     expect(count("SELECT COUNT(*) AS n FROM file_undo WHERE path = ?", "/gone-rb.ts")).toBe(1);
     check.close();
