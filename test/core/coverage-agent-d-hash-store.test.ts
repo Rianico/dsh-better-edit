@@ -4,13 +4,13 @@ import { join } from "node:path";
 import { existsSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import {
-  isValidSnapshot,
   isValidServedList,
   isCorruptionError,
   loadHashStore,
   shutdownHashStore,
   withStore,
 } from "../../src/hash-store.js";
+import { isValidSnapshot } from "../../src/snapshot-store/migrate.js";
 import { isValidHashList } from "../../src/snapshot-store/index.js";
 import { getWritableTempRoot } from "../support/fixtures.js";
 import { contentChecksum } from "../../src/hashline/hash-assign.js";
