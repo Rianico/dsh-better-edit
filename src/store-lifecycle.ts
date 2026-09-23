@@ -215,7 +215,7 @@ export async function runCentralJanitorIfDue(): Promise<void> {
 // Called from hash-store openStore after db is ready
 export async function onStoreOpen(
   storePath: string,
-  stmts: { servedPruneOlderThan: (ts: number) => void; undoPrunePair: (ts: number) => void },
+  stmts: { servedPruneOlderThan: (ts: number) => void },
   store: HashStore,
 ): Promise<void> {
   handleGitPollution(storePath);
@@ -231,7 +231,9 @@ export async function onStoreOpen(
   try {
     const cfg = loadConfig();
     if (cfg.undo_ttl_s !== -1) {
-      stmts.undoPrunePair(Date.now() - cfg.undo_ttl_s * 1000);
+      // Pair-atomic: route through the store face (both tables, one txn) — the
+      // half-pair statement must not stay reachable from the janitor (P1).
+      store.pruneUndoOlderThan(Date.now() - cfg.undo_ttl_s * 1000);
     }
   } catch (error) {
     console.warn(

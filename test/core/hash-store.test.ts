@@ -2198,3 +2198,81 @@ it("pruneMissing rolls back every table when a later delete faults", async () =>
     check.close();
   });
 });
+
+it("reopen janitor prunes both undo sides when the TTL elapsed", async () => {
+  await withTempHome(async (home) => {
+    await mkdir(configHome(home), { recursive: true });
+    await writeFile(
+      join(configHome(home), "config.yaml"),
+      "storeDir: central\nundo_ttl_s: 3600\n",
+      "utf-8",
+    );
+    // Real file: the reopen also runs pruneMissing — a missing path would vanish regardless of TTL.
+    const oldPath = join(home, "j-old.ts");
+    await writeFile(oldPath, "a\n", "utf-8");
+    const { saveUndo } = await import("../../src/undo-edit.js");
+    await saveUndo(oldPath, {
+      content: "a\n",
+      bom: "",
+      originalEnding: "\n",
+      hashes: ["H01"],
+      resultContent: "b\n",
+    });
+    const raw = new DatabaseSync(sqlitePath(home));
+    raw.prepare("UPDATE undo SET updated_at = ? WHERE path = ?").run(1000, oldPath);
+    raw.prepare("UPDATE file_undo SET updated_at = ? WHERE path = ?").run(1000, oldPath);
+    raw.close();
+    shutdownHashStore();
+    // cutoff = now - 3600s: stamp 1000 is older by an hour margin, no wall-clock dependence.
+    const store = await loadHashStore();
+    expect(store.getUndo(oldPath)).toBeUndefined();
+    const check = new DatabaseSync(sqlitePath(home));
+    const legacy = check.prepare("SELECT COUNT(*) AS n FROM undo WHERE path = ?").get(oldPath) as {
+      n: number;
+    };
+    const v7 = check.prepare("SELECT COUNT(*) AS n FROM file_undo WHERE path = ?").get(oldPath) as {
+      n: number;
+    };
+    check.close();
+    expect(legacy.n).toBe(0);
+    expect(v7.n).toBe(0);
+  });
+});
+
+it("reopen janitor keeps the pair when the v7 side is newer than the TTL", async () => {
+  await withTempHome(async (home) => {
+    await mkdir(configHome(home), { recursive: true });
+    await writeFile(
+      join(configHome(home), "config.yaml"),
+      "storeDir: central\nundo_ttl_s: 3600\n",
+      "utf-8",
+    );
+    const splitPath = join(home, "j-split.ts");
+    await writeFile(splitPath, "a\n", "utf-8");
+    const { saveUndo } = await import("../../src/undo-edit.js");
+    await saveUndo(splitPath, {
+      content: "a\n",
+      bom: "",
+      originalEnding: "\n",
+      hashes: ["H01"],
+      resultContent: "b\n",
+    });
+    const raw = new DatabaseSync(sqlitePath(home));
+    raw.prepare("UPDATE undo SET updated_at = ? WHERE path = ?").run(1000, splitPath);
+    // Young side stamped at setup: newer than the cutoff by an hour margin.
+    raw.prepare("UPDATE file_undo SET updated_at = ? WHERE path = ?").run(Date.now(), splitPath);
+    raw.close();
+    shutdownHashStore();
+    const store = await loadHashStore();
+    // Newest-side rule at open: the young v7 row keeps the legacy row alive.
+    expect(store.getUndo(splitPath)).toBeDefined();
+    // Runtime proof of the v7 row, no cast: the row and its selected fields.
+    const check = new DatabaseSync(sqlitePath(home));
+    const row = check
+      .prepare("SELECT COUNT(*) AS n, MIN(snapshot_hash) AS sh FROM file_undo WHERE path = ?")
+      .get(splitPath) as { n: number; sh: string | null };
+    check.close();
+    expect(row.n).toBe(1);
+    expect(row.sh).toMatch(/^\d+:/);
+  });
+});
