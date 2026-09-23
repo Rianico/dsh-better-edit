@@ -28,8 +28,7 @@ import {
   ALPH_RE,
   canon,
   lineHashesPure,
-  getCanonForHash,
-  rememberHashCanon,
+  canonDigest,
 } from "./hash-assign.js";
 import { recordServed, servedPositionsOf } from "../session-view.js";
 import { SERVED_ECHO_CAP } from "../constants.js";
@@ -604,17 +603,6 @@ export function verifyServedRange(args: {
   const epochSnapshotId = args.epochSnapshotId;
   const curSnapshotId = args.curSnapshotId;
   let isHealed = false;
-  for (let i = 0; i < fileHashes.length; i++) {
-    const h = fileHashes[i]!;
-    if (getCanonForHash(h) === undefined) rememberHashCanon(h, canon(fileLines[i] ?? ""));
-  }
-  for (let i = 0; i < served.length; i++) {
-    const h = served[i];
-    if (h !== null && getCanonForHash(h) === undefined) {
-      const pos = fileHashes.indexOf(h);
-      if (pos >= 0) rememberHashCanon(h, canon(fileLines[pos] ?? ""));
-    }
-  }
   const echoRows = buildRangeEcho(startLine, endLine, fileHashes);
   const totalLen = endLine - startLine + 1;
   const tail =
@@ -701,8 +689,8 @@ export function verifyServedRange(args: {
             canBuild = false;
             break;
           }
-          const c = getCanonForHash(h);
-          if (c === undefined) {
+          const c = servedCanons?.[servedFrom + k];
+          if (c === undefined || c === null) {
             canBuild = false;
             break;
           }
@@ -713,7 +701,7 @@ export function verifyServedRange(args: {
           for (let i = 0; i <= fileLines.length - servedLen; i++) {
             let ok = true;
             for (let k = 0; k < servedLen; k++) {
-              if (canon(fileLines[i + k] ?? "") !== expectedCanons[k]) {
+              if (canonDigest(fileLines[i + k] ?? "") !== canonDigest(expectedCanons[k]!)) {
                 ok = false;
                 break;
               }
@@ -732,14 +720,19 @@ export function verifyServedRange(args: {
       const startInFile = fileHashes.includes(startHash);
       const endInFile = fileHashes.includes(endHash);
       if (hasServed && (!startInFile || !endInFile)) {
-        const startCanon = getCanonForHash(startHash);
-        const endCanon = getCanonForHash(endHash);
-        if (startCanon !== undefined && endCanon !== undefined) {
+        const startCanon = servedCanons?.[startPositions[0] ?? -1];
+        const endCanon = servedCanons?.[endPositions[0] ?? -1];
+        if (
+          startCanon !== undefined &&
+          startCanon !== null &&
+          endCanon !== undefined &&
+          endCanon !== null
+        ) {
           const startMatches: number[] = [];
           const endMatches: number[] = [];
           for (let i = 0; i < fileLines.length; i++) {
-            if (canon(fileLines[i] ?? "") === startCanon) startMatches.push(i);
-            if (canon(fileLines[i] ?? "") === endCanon) endMatches.push(i);
+            if (canonDigest(fileLines[i] ?? "") === canonDigest(startCanon)) startMatches.push(i);
+            if (canonDigest(fileLines[i] ?? "") === canonDigest(endCanon)) endMatches.push(i);
             if (startMatches.length > 1 && endMatches.length > 1) break;
           }
           if (startMatches.length === 1 && endMatches.length === 1) {
@@ -808,9 +801,13 @@ export function verifyServedRange(args: {
     for (let k = 0; k < currentLen; k++) {
       const servedHash = served[from + k];
       if (servedHash === null) continue;
-      const expectedCanon = getCanonForHash(servedHash);
+      const expectedCanon = servedCanons?.[from + k];
       const actualCanon = canon(fileLines[from + k] ?? "");
-      if (expectedCanon !== undefined && expectedCanon !== actualCanon) {
+      if (
+        expectedCanon !== undefined &&
+        expectedCanon !== null &&
+        canonDigest(expectedCanon) !== canonDigest(actualCanon)
+      ) {
         const offendingLine = from + k + 1;
         throw new ServedRejectionError({
           code: "E_STALE_RANGE",
@@ -845,8 +842,8 @@ export function verifyServedRange(args: {
           canBuild = false;
           break;
         }
-        const c = getCanonForHash(h);
-        if (c === undefined) {
+        const c = servedCanons?.[from + k];
+        if (c === undefined || c === null) {
           canBuild = false;
           break;
         }
@@ -857,7 +854,7 @@ export function verifyServedRange(args: {
         for (let i = 0; i <= fileLines.length - servedLen; i++) {
           let ok = true;
           for (let k = 0; k < servedLen; k++)
-            if (canon(fileLines[i + k] ?? "") !== expectedCanons[k]) {
+            if (canonDigest(fileLines[i + k] ?? "") !== canonDigest(expectedCanons[k]!)) {
               ok = false;
               break;
             }
@@ -1328,7 +1325,5 @@ export {
   mapStableHashes,
   initHasher,
   contentChecksum,
-  getCanonForHash,
-  rememberHashCanon,
 } from "./hash-assign.js";
 export { lineHashes } from "./hash.js";

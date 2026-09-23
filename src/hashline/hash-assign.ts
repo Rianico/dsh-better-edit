@@ -98,16 +98,6 @@ export function hashAt(idx: number): string {
   return hash;
 }
 
-const hashToCanon = new Map<string, string>();
-
-export function rememberHashCanon(hash: string, canonText: string): void {
-  if (!hashToCanon.has(hash)) hashToCanon.set(hash, canonText);
-}
-
-export function getCanonForHash(hash: string): string | undefined {
-  return hashToCanon.get(hash);
-}
-
 export const HL_PREFIX_PLUS_RE = new RegExp(`^\\+${HASH_CLASS}│`);
 export const HL_PREFIX_MINUS_RE = new RegExp(`^-(?:${HASH_CLASS}│| {${ANCHOR_LEN}}│)`);
 export const HL_BARE_PREFIX_RE = new RegExp(`^\\s*(${HASH_CLASS})│`);
@@ -118,6 +108,10 @@ const CANON_RE = /[ \t\r\n]+/g;
 
 export function canon(line: string): string {
   return line.replace(CANON_RE, "");
+}
+/** Single definition of served_leases.canon_hash / line_lineage.canon_hash (CP2). */
+export function canonDigest(line: string): string {
+  return String(xxh32(canon(line)));
 }
 
 function getCanon(cache: Map<string, string>, line: string): string {
@@ -176,7 +170,6 @@ export function lineHashesPure(
       const baseIdx = (xxh32(c) >>> 14) % HASH_SPACE;
       const h = assignHash(used, baseIdx, hint);
       hashes[i] = h;
-      rememberHashCanon(h, c);
     }
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e);
@@ -285,7 +278,6 @@ export function mapStableHashes(
     const newIdx = candidates.splice(pos, 1)[0]!;
     newHashes[newIdx] = entry.hash;
     markUsed(entry.hash);
-    rememberHashCanon(entry.hash, getCanon(canonCache, oldLines[entry.index]!));
   }
   try {
     for (let i = 0; i < newLines.length; i++) {
@@ -294,7 +286,6 @@ export function mapStableHashes(
       const baseIdx = (xxh32(c) >>> 14) % HASH_SPACE;
       const h = assignHash(used, baseIdx, hint);
       newHashes[i] = h;
-      rememberHashCanon(h, c);
     }
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e);
