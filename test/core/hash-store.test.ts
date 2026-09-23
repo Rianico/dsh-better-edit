@@ -1604,3 +1604,111 @@ it("file_undo row mirrors the legacy undo row with the snapshot pin", async () =
     expect((await loadHashStore()).getUndo("/u4.ts")).toBeUndefined();
   });
 });
+
+it("getFileUndo round-trips updatedAt as a number", async () => {
+  await withTempHome(async () => {
+    const { saveUndo } = await import("../../src/undo-edit.js");
+    await saveUndo("/w.ts", {
+      content: "a\n",
+      bom: "",
+      originalEnding: "\n",
+      hashes: ["H01"],
+      resultContent: "b\n",
+    });
+    const internal = (await loadHashStore()) as unknown as InternalHashStore;
+    const row = internal.getFileUndo("/w.ts");
+    expect(typeof row?.updatedAt).toBe("number");
+  });
+});
+
+it("restore puts the prior v7 row back byte-identical", async () => {
+  await withTempHome(async () => {
+    const { saveUndo } = await import("../../src/undo-edit.js");
+    const internal = (await loadHashStore()) as unknown as InternalHashStore;
+    const first = await saveUndo("/r.ts", {
+      content: "one\n",
+      bom: "",
+      originalEnding: "\n",
+      hashes: ["H01"],
+      resultContent: "two\n",
+    });
+    expect(first.persisted).toBe(true);
+    const before = internal.getFileUndo("/r.ts");
+    const second = await saveUndo("/r.ts", {
+      content: "two\n",
+      bom: "",
+      originalEnding: "\n",
+      hashes: ["H02"],
+      resultContent: "three\n",
+    });
+    expect(second.persisted).toBe(true);
+    await second.restore();
+    expect(internal.getFileUndo("/r.ts")).toEqual(before);
+    expect((await loadHashStore()).getUndo("/r.ts")).toBeDefined();
+  });
+});
+
+it("v7 write fault leaves the previous undo readable and reports failure", async () => {
+  await withTempHome(async (home) => {
+    const { saveUndo } = await import("../../src/undo-edit.js");
+    const internal = (await loadHashStore()) as unknown as InternalHashStore;
+    const v1 = {
+      content: "one\n",
+      bom: "",
+      originalEnding: "\n",
+      hashes: ["H01"],
+      resultContent: "two\n",
+    };
+    expect((await saveUndo("/f.ts", v1)).persisted).toBe(true);
+    const legacyBefore = (await loadHashStore()).getUndo("/f.ts");
+    const v7Before = internal.getFileUndo("/f.ts");
+    const setup = new DatabaseSync(sqlitePath(home), {
+      defensive: false,
+    } as any);
+    setup.exec(
+      "CREATE TRIGGER t2b_undo BEFORE UPDATE ON file_undo " +
+        "BEGIN SELECT RAISE(ABORT, 'injected'); END;",
+    );
+    setup.close();
+    const failed = await saveUndo("/f.ts", {
+      content: "two\n",
+      bom: "",
+      originalEnding: "\n",
+      hashes: ["H02"],
+      resultContent: "three\n",
+    });
+    expect(failed.persisted).toBe(false);
+    // Both rows atomic: the previous undo reads back byte-identical.
+    expect((await loadHashStore()).getUndo("/f.ts")).toEqual(legacyBefore);
+    expect(internal.getFileUndo("/f.ts")).toEqual(v7Before);
+  });
+});
+
+it("pre-v7 NULL pin reads as null and is overwritten cleanly", async () => {
+  await withTempHome(async (home) => {
+    const internal = (await loadHashStore()) as unknown as InternalHashStore;
+    const raw = new DatabaseSync(sqlitePath(home), {
+      defensive: false,
+    } as any);
+    raw
+      .prepare(
+        "INSERT INTO file_undo (path, content, bom, ending, hashes, result_content, snapshot_hash, updated_at) " +
+          "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+      )
+      .run("/n.ts", "old\n", "", "\n", JSON.stringify(["H01"]), "new\n", null, Date.now());
+    raw.close();
+    const row = internal.getFileUndo("/n.ts");
+    expect(row?.snapshotHash).toBeNull();
+    expect(row?.hashes).toEqual(["H01"]);
+    const { saveUndo } = await import("../../src/undo-edit.js");
+    const { snapshotHashFor } = await import("../../src/snapshot-store/lineage-store.js");
+    await saveUndo("/n.ts", {
+      content: "a\n",
+      bom: "",
+      originalEnding: "\n",
+      hashes: ["H02"],
+      resultContent: "b\n",
+    });
+    expect(internal.getFileUndo("/n.ts")?.snapshotHash).toBe(snapshotHashFor("a\n"));
+  });
+});

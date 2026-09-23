@@ -80,6 +80,17 @@ export interface FileUndoRecord {
   updatedAt: number;
 }
 
+/** A `file_undo` row exactly as selected (all columns non-nullable except the pin). */
+interface FileUndoRow {
+  content: string;
+  bom: string;
+  ending: string;
+  hashes: string;
+  result_content: string;
+  snapshot_hash: string | null;
+  updated_at: number;
+}
+
 // ---- the domain interface --------------------------------------------------
 
 type SqlParams = (string | number)[];
@@ -91,7 +102,7 @@ interface Prepared {
   undoDelete: (...params: SqlParams) => void;
   undoPruneOlderThan: (...params: SqlParams) => void;
   fileUndoUpsert: (...params: (string | number | null)[]) => void;
-  fileUndoGet: (...params: SqlParams) => Record<string, unknown> | undefined;
+  fileUndoGet: (...params: SqlParams) => FileUndoRow | undefined;
   fileUndoDelete: (...params: SqlParams) => void;
   servedGet: (...params: SqlParams) => Record<string, unknown> | undefined;
   servedAllForPath: (...params: SqlParams) => Record<string, unknown>[];
@@ -143,7 +154,16 @@ export interface HashStore {
   upsertUndo(path: string, entry: UndoRecord): void;
   deleteUndo(path: string): void;
   pruneUndoOlderThan(ts: number): void;
-  pruneUndoOlderThan(ts: number): void;
+  /** Both undo rows in one transaction (upsert legacy + v7). */
+  upsertUndoPair(path: string, legacy: UndoRecord, v7: FileUndoRecord): void;
+  /** Both undo rows in one transaction (write-back-or-delete each side). */
+  restoreUndoPair(
+    path: string,
+    legacy: UndoRecord | undefined,
+    v7: FileUndoRecord | undefined,
+  ): void;
+  /** Both undo rows in one transaction. */
+  deleteUndoPair(path: string): void;
   /** The v7 undo row for a path, same healing contract as the legacy row. */
   getFileUndo(path: string): FileUndoRecord | undefined;
   upsertFileUndo(path: string, record: FileUndoRecord): void;
@@ -518,7 +538,7 @@ function buildStore(db: DatabaseSync, storePath: string): { db: DatabaseSync; st
       "ON CONFLICT(path) DO UPDATE SET content = excluded.content, bom = excluded.bom, ending = excluded.ending, hashes = excluded.hashes, result_content = excluded.result_content, snapshot_hash = excluded.snapshot_hash, updated_at = excluded.updated_at",
   );
   const fileUndoGetStmt = db.prepare(
-    "SELECT content, bom, ending, hashes, result_content, snapshot_hash FROM file_undo WHERE path = ?",
+    "SELECT content, bom, ending, hashes, result_content, snapshot_hash, updated_at FROM file_undo WHERE path = ?",
   );
   const fileUndoDelStmt = db.prepare("DELETE FROM file_undo WHERE path = ?");
   const servedGetStmt = db.prepare(
@@ -594,7 +614,7 @@ function buildStore(db: DatabaseSync, storePath: string): { db: DatabaseSync; st
       });
     },
     fileUndoGet: (...params) =>
-      fileUndoGetStmt.get(...params) as Record<string, unknown> | undefined,
+      fileUndoGetStmt.get(...params) as unknown as FileUndoRow | undefined,
     fileUndoDelete: (...params) => {
       withBusyRetry(() => {
         fileUndoDelStmt.run(...params);
@@ -687,7 +707,108 @@ function makeDomainStore(
   stmts: Prepared,
   snapshotStore: SnapshotStore,
   lineageStore: LineageStore,
+  db: DatabaseSync,
 ): InternalHashStore {
+  function undoPairUpsertImpl(path: string, legacy: UndoRecord, v7: FileUndoRecord): void {
+    withBusyRetry(() => {
+      db.exec("BEGIN IMMEDIATE");
+      try {
+        stmts.undoUpsert(
+          path,
+          legacy.content,
+          legacy.bom,
+          legacy.ending,
+          JSON.stringify(legacy.hashes),
+          legacy.resultContent,
+          Date.now(),
+        );
+        stmts.fileUndoUpsert(
+          path,
+          v7.content,
+          v7.bom,
+          v7.ending,
+          JSON.stringify(v7.hashes),
+          v7.resultContent,
+          v7.snapshotHash,
+          v7.updatedAt,
+        );
+        db.exec("COMMIT");
+      } catch (error) {
+        try {
+          db.exec("ROLLBACK");
+        } catch (rollbackError) {
+          console.warn(rollbackError);
+        }
+        throw error;
+      }
+    });
+  }
+
+  function undoPairRestoreImpl(
+    path: string,
+    legacy: UndoRecord | undefined,
+    v7: FileUndoRecord | undefined,
+  ): void {
+    withBusyRetry(() => {
+      db.exec("BEGIN IMMEDIATE");
+      try {
+        if (legacy) {
+          stmts.undoUpsert(
+            path,
+            legacy.content,
+            legacy.bom,
+            legacy.ending,
+            JSON.stringify(legacy.hashes),
+            legacy.resultContent,
+            Date.now(),
+          );
+        } else {
+          stmts.undoDelete(path);
+        }
+        if (v7) {
+          stmts.fileUndoUpsert(
+            path,
+            v7.content,
+            v7.bom,
+            v7.ending,
+            JSON.stringify(v7.hashes),
+            v7.resultContent,
+            v7.snapshotHash,
+            v7.updatedAt,
+          );
+        } else {
+          stmts.fileUndoDelete(path);
+        }
+        db.exec("COMMIT");
+      } catch (error) {
+        try {
+          db.exec("ROLLBACK");
+        } catch (rollbackError) {
+          console.warn(rollbackError);
+        }
+        throw error;
+      }
+    });
+  }
+
+  function undoPairDeleteImpl(path: string): void {
+    withBusyRetry(() => {
+      db.exec("BEGIN IMMEDIATE");
+      try {
+        stmts.undoDelete(path);
+        stmts.fileUndoDelete(path);
+        db.exec("COMMIT");
+      } catch (error) {
+        try {
+          db.exec("ROLLBACK");
+        } catch (rollbackError) {
+          console.warn(rollbackError);
+        }
+        throw error;
+      }
+    });
+  }
+
   return {
     engine: "node:sqlite",
 
@@ -796,7 +917,7 @@ function makeDomainStore(
           hashes: parsed as string[],
           resultContent: row.result_content as string,
           snapshotHash: (row.snapshot_hash as string | null) ?? null,
-          updatedAt: row.updated_at as number,
+          updatedAt: row.updated_at,
         };
       } catch (error) {
         stmts.fileUndoDelete(path);
@@ -805,6 +926,15 @@ function makeDomainStore(
     },
     deleteFileUndo(path) {
       stmts.fileUndoDelete(path);
+    },
+    upsertUndoPair(path, legacy, v7) {
+      undoPairUpsertImpl(path, legacy, v7);
+    },
+    restoreUndoPair(path, legacy, v7) {
+      undoPairRestoreImpl(path, legacy, v7);
+    },
+    deleteUndoPair(path) {
+      undoPairDeleteImpl(path);
     },
 
     getServed(sessionKey, path) {
@@ -1059,7 +1189,7 @@ async function openStore(storePath: string): Promise<HashStore> {
   }
   const snapshotStore = createSnapshotStore(db);
   const lineageStore = createLineageStore(db);
-  const store = makeDomainStore(stmts, snapshotStore, lineageStore);
+  const store = makeDomainStore(stmts, snapshotStore, lineageStore, db);
   stores.set(storePath, { path: storePath, db, stmts, store });
   await onStoreOpen(storePath, stmts, store);
 
