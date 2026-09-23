@@ -657,6 +657,8 @@ function makeDomainStore(
       // Lineage first: adopt refreshes stored anchors to the live assignment, so the
       // lineage tracks the current snapshot and the legacy row stays the upgrade fallback.
       const lineage = lineageStore.lineageFor(path, snapshotHashFor(content));
+      // A lineage hit shields a corrupt legacy row from healing by design —
+      // fallback-only healing is fail-closed (ADR-0017).
       if (lineage.length > 0) {
         return lineage.map((row) => row.anchor);
       }

@@ -1,7 +1,12 @@
 import { describe, expect, it, beforeAll } from "vitest";
 import { DatabaseSync } from "node:sqlite";
 import { splitLines } from "../../src/utils.js";
-import { canonDigest, initHasher } from "../../src/hashline/hash-assign.js";
+import {
+  CANON_VERSION,
+  canonDigest,
+  contentChecksum,
+  initHasher,
+} from "../../src/hashline/hash-assign.js";
 import {
   createLineageStore,
   snapshotHashFor,
@@ -50,7 +55,7 @@ describe("lineage-store — first snapshot and lineage shape", () => {
       splitLines(content).map((line) => canonDigest(line)),
     );
     expect(rows.map((row) => row.anchor)).toEqual(hashes);
-    expect(snapshotHashFor(content)).toBe(snapshotHashFor(content));
+    expect(snapshotHashFor(content)).toBe(`${CANON_VERSION}:${contentChecksum(content)}`);
   });
 
   it("returns [] for an unknown snapshot", () => {
@@ -318,20 +323,36 @@ describe("lineage-store — adopt refreshes anchors, never identity", () => {
     expect(lineage.lineageFor("/e.ts", snapshotHashFor(content))).toEqual([]);
   });
 
-  it("leases granted after reassignment resolve through the refreshed lineage", () => {
+  it("leases granted with reassignment resolve by anchor through the refreshed lineage", () => {
     const { lineage } = open();
     const content = "alpha\nbeta";
     lineage.commitSnapshot({ path: "/h.ts", content, hashes: ["A0", "A1"] });
-    lineage.commitSnapshot({ path: "/h.ts", content, hashes: ["B0", "B1"] });
+    // Two commits: H1, then H2 carrying the leases — refresh and grant couple in
+    // one transaction. The served position (0) deliberately disagrees with the
+    // anchor's line (2): a position-based grant would resolve line 1 instead.
     lineage.commitSnapshot({
       path: "/h.ts",
       content,
       hashes: ["B0", "B1"],
-      leases: { sessionKey: "s", rows: [{ position: 1, hash: "B1" }] },
+      leases: { sessionKey: "s", rows: [{ position: 0, hash: "B1" }] },
     });
     const lease = lineage.leaseFor("s", "/h.ts", "B1");
     expect(lease).toBeDefined();
     expect(lease?.lineId).toBe(2);
     expect(lease?.canonHash).toBe(canonDigest("beta"));
+    expect(lease?.lineNumber).toBe(1);
+    // The pre-refresh H1 anchor no longer resolves.
+    expect(lineage.leaseFor("s", "/h.ts", "A1")).toBeUndefined();
+  });
+
+  it("sparse stored lineage throws instead of silently no-oping", () => {
+    const { db, lineage } = open();
+    const content = "alpha\nbeta";
+    lineage.commitSnapshot({ path: "/s.ts", content, hashes: ["A0", "A1"] });
+    // Corrupt out-of-band: keep the row count but shift numbering (1,2 -> 11,12).
+    db.exec("UPDATE line_lineage SET line_number = line_number + 10");
+    expect(() => lineage.commitSnapshot({ path: "/s.ts", content, hashes: ["B0", "B1"] })).toThrow(
+      "out of order",
+    );
   });
 });

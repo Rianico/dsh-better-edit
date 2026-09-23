@@ -331,6 +331,11 @@ export function createLineageStore(db: DatabaseSync): LineageStore {
                 );
               }
               for (let index = 0; index < lines.length; index++) {
+                if (stored[index]!.line_number !== index + 1) {
+                  throw new Error(
+                    `commitSnapshot(${input.path}): lineage row out of order at index ${index}`,
+                  );
+                }
                 if (stored[index]!.anchor !== input.hashes[index]) {
                   updateLineageAnchorStmt.run(input.hashes[index], snapshotId, index + 1);
                 }

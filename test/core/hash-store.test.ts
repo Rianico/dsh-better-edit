@@ -1368,13 +1368,29 @@ describe("hash-store — v7 snapshot materialization", () => {
     });
   });
 
-  it("(d) legacy-only snapshot serves rows with no lease and no crash", async () => {
+  it("(d-i) no-context serve of a legacy-only row grants no lease and does not crash", async () => {
     await withTempHome(async () => {
       const internal = (await loadHashStore()) as unknown as InternalHashStore;
       await put(internal, "/d.ts", "x\n", ["XYZ"]);
       expect(internal.getSnapshot("/d.ts", "x\n")).toEqual(["XYZ"]);
       await recordServed("cp3-sess", "/d.ts", [{ position: 0, hash: "XYZ" }], 1);
       expect(internal.leaseFor("cp3-sess", "/d.ts", "XYZ")).toBeUndefined();
+    });
+  });
+
+  it("(d-ii) content-present serve of a legacy-only row materializes lineage and grants", async () => {
+    await withTempHome(async () => {
+      const internal = (await loadHashStore()) as unknown as InternalHashStore;
+      await put(internal, "/d2.ts", "x\n", ["XYZ"]);
+      await recordServed("cp3-sess2", "/d2.ts", [{ position: 0, hash: "XYZ" }], 1, {
+        hashes: ["XYZ"],
+        content: "x\n",
+      });
+      expect(internal.getSnapshot("/d2.ts", "x\n")).toEqual(["XYZ"]);
+      const lease = internal.leaseFor("cp3-sess2", "/d2.ts", "XYZ");
+      expect(lease).toBeDefined();
+      expect(lease?.lineId).toBe(1);
+      expect(lease?.lineNumber).toBe(1);
     });
   });
 
@@ -1397,6 +1413,62 @@ describe("hash-store — v7 snapshot materialization", () => {
       raw.close();
       const reopened = await loadHashStore();
       expect(reopened.getSnapshot("/e.ts", "x\n")).toEqual(["XYZ"]);
+    });
+  });
+
+  it("(f) both stores present and disagreeing returns the refreshed lineage", async () => {
+    await withTempHome(async () => {
+      const internal = (await loadHashStore()) as unknown as InternalHashStore;
+      const content = "alpha\nbeta\n";
+      const h1 = ["AAa", "AAb"];
+      const h2 = ["BBa", "BBb"];
+      // Dual-write H1 through the full upsert (legacy row + lineage insert).
+      internal.upsertSnapshot("/f.ts", contentChecksum(content), 2, h1, content);
+      // Same content, new assignment: adopt refreshes the lineage to H2 while the
+      // legacy row still carries H1 — the order under test decides here.
+      internal.commitSnapshot({ path: "/f.ts", content, hashes: h2 });
+      expect(internal.getSnapshot("/f.ts", content)).toEqual(h2);
+    });
+  });
+
+  it("partially-corrupt lineage throws instead of serving a stale mix", async () => {
+    await withTempHome(async (home) => {
+      const internal = (await loadHashStore()) as unknown as InternalHashStore;
+      const content = "alpha\nbeta\n";
+      internal.commitSnapshot({ path: "/c.ts", content, hashes: ["AAa", "AAb"] });
+      shutdownHashStore();
+      const raw = new DatabaseSync(sqlitePath(home), {
+        defensive: false,
+      } as any);
+      raw.prepare("DELETE FROM line_lineage WHERE line_number = ?").run(2);
+      raw.close();
+      const reopened = (await loadHashStore()) as unknown as InternalHashStore;
+      expect(() =>
+        reopened.commitSnapshot({ path: "/c.ts", content, hashes: ["AAa", "AAb"] }),
+      ).toThrow("stored lineage has 1 rows for 2 lines");
+    });
+  });
+
+  it("lineage insert fault leaves the legacy row and falls back without crashing", async () => {
+    await withTempHome(async (home) => {
+      await loadHashStore();
+      shutdownHashStore();
+      const setup = new DatabaseSync(sqlitePath(home), {
+        defensive: false,
+      } as any);
+      setup.exec(
+        "CREATE TRIGGER t2b_dual BEFORE INSERT ON line_lineage " +
+          "BEGIN SELECT RAISE(ABORT, 'injected'); END;",
+      );
+      setup.close();
+      const store = await loadHashStore();
+      const content = "alpha\nbeta\n";
+      expect(() =>
+        store.upsertSnapshot("/g.ts", contentChecksum(content), 2, ["AAa", "AAb"], content),
+      ).toThrow("injected");
+      // The legacy row committed in its own transaction; lineage is absent; the
+      // read falls back to legacy with no crash.
+      expect(store.getSnapshot("/g.ts", content)).toEqual(["AAa", "AAb"]);
     });
   });
 });
