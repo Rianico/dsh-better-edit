@@ -441,7 +441,10 @@ export async function enforceNoopLoop(opts: NoopLoopOptions): Promise<string | u
     if (count >= NOOP_LOOP_THRESHOLD) {
       const echoRows = buildRangeEcho(opts.range!.startLine, opts.range!.endLine, originalHashes);
       const echo = fmtServedRows(echoRows, splitLines(opts.originalNormalized));
-      await recordEchoServes(sessionKey, absolutePath, echoRows, "live", originalHashes.length);
+      await recordEchoServes(sessionKey, absolutePath, echoRows, "live", originalHashes.length, {
+        content: opts.originalNormalized,
+        hashes: originalHashes,
+      });
       throw new DomainError("E_NOOP_LOOP", {
         ref: displayPath,
         anchorFrom,
@@ -470,7 +473,10 @@ export async function enforceNoopLoop(opts: NoopLoopOptions): Promise<string | u
     const originalLines = splitLines(opts.originalNormalized);
     const echoRows = opts.echoRows;
     if (echoRows) {
-      await recordEchoServes(sessionKey, absolutePath, echoRows, "live", originalHashes.length);
+      await recordEchoServes(sessionKey, absolutePath, echoRows, "live", originalHashes.length, {
+        content: opts.originalNormalized,
+        hashes: originalHashes,
+      });
     }
     throw new DomainError("E_NOOP_LOOP", {
       ref: `edits[${index}] (${displayPath})`,
@@ -547,6 +553,7 @@ async function collectAbortPart(opts: {
       echoRows,
       "live",
       opts.originalHashes.length,
+      { content: opts.originalNormalized, hashes: opts.originalHashes },
     );
   }
   const originalLines = splitLines(opts.originalNormalized);

@@ -157,6 +157,7 @@ export function buildUndoTool(io: FileIO, sandbox: FsSandboxController) {
             contentChecksum(undo.content),
             splitLines(undo.content).length,
             restoredHashes,
+            undo.content,
           );
         } catch (error) {
           console.error("Failed to restore hash store snapshot after undo:", error);
@@ -182,6 +183,7 @@ export function buildUndoTool(io: FileIO, sandbox: FsSandboxController) {
             splitLines(undo.content).length,
             restoredRange?.firstChangedLine ?? undoDiffResult.firstChangedLine ?? 0,
             splitLines(undo.content).map((l) => canon(l)),
+            { content: undo.content, hashes: restoredHashes },
           );
         }
 

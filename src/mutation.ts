@@ -187,6 +187,7 @@ export async function execPipeline(
           error.servedRows,
           policy,
           originalHashes.length,
+          { content: originalNormalized, hashes: originalHashes },
         );
       }
       throw error;
@@ -427,6 +428,7 @@ export async function execute(opts: {
           splitLines(fileResult.result).length,
           fileResult.range.startLine - 1,
           splitLines(fileResult.result).map((l) => canon(l)),
+          { content: fileResult.result, hashes: fileResult.resultHashes },
         );
       }
     }

@@ -954,9 +954,18 @@ export async function recordEchoServes(
   rows: ServedRow[],
   policy: ServeRecordPolicy,
   lineCount?: number,
+  serveSnapshot?: { content: string; hashes: readonly string[] },
 ): Promise<void> {
   if (policy !== "live") return;
-  await recordServed(sessionKey, path, rows, lineCount);
+  await recordServed(
+    sessionKey,
+    path,
+    rows,
+    lineCount,
+    serveSnapshot === undefined
+      ? undefined
+      : { hashes: serveSnapshot.hashes, content: serveSnapshot.content },
+  );
 }
 
 type LIdx = {

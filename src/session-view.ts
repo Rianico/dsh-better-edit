@@ -30,10 +30,12 @@ import {
   type AnchorReservations,
   type ServedPersistence,
   type RetiredEntry,
+  type InternalHashStore,
 } from "./hash-store.js";
 import { SERVED_ECHO_CAP } from "./constants.js";
 import type { ServedRow, ResolvedRange } from "./hashline/anchor-pipeline.js";
 import { fmtServedRows } from "./hashline/anchor-pipeline.js";
+import { splitLines } from "./utils.js";
 
 // --- hash-store re-export (persistence note) ---
 export { loadHashStore, loadServedStore, shutdownHashStore, withStore } from "./hash-store.js";
@@ -263,6 +265,40 @@ export interface FullReadContext {
   hashes: readonly string[];
   canons?: readonly (string | null)[];
   snapshotId?: string;
+  /**
+   * Full content the hashes were computed from. When present (with `hashes`),
+   * recordServed also materializes-or-adopts the serve snapshot and grants
+   * leases for `rows` as-is through the store's single transaction.
+   */
+  content?: string;
+}
+
+/** Serve-snapshot context for lease granting: content parallel to `hashes`. */
+export interface ServeSnapshot {
+  content: string;
+  hashes: readonly string[];
+}
+
+/**
+ * Funnel for lease granting: materialize-or-adopt the serve snapshot and grant
+ * leases for the served rows as-is inside the store's single transaction.
+ * Fail closed: no content/hashes (or a length mismatch) grants nothing and
+ * throws nothing — the legacy served-state write already succeeded.
+ */
+async function grantServeLeases(
+  store: ServedPersistence,
+  sessionKey: string,
+  path: string,
+  rows: readonly ServedEntry[],
+  hashes: readonly string[] | undefined,
+  content: string | undefined,
+): Promise<void> {
+  if (content === undefined || hashes === undefined) return;
+  if (splitLines(content).length !== hashes.length) return;
+  const internal = store as unknown as InternalHashStore;
+  // SAFETY: loadServedStore returns the makeDomainStore object, which implements
+  // InternalHashStore; ServedPersistence is its narrowed public view.
+  internal.commitSnapshot({ path, content, hashes: [...hashes], leases: { sessionKey, rows } });
 }
 
 export async function recordServed(
@@ -318,6 +354,7 @@ export async function recordServed(
         sweepAndRetire(store, sessionKey, path, current, updated, rows);
       }
     });
+    await grantServeLeases(store, sessionKey, path, rows, full?.hashes, full?.content);
   } catch (error) {
     console.error("Failed to record served rows:", error);
   }
@@ -330,6 +367,7 @@ export async function recordServedTruncated(
   lineCount: number,
   clearFrom = 0,
   fullCanons?: readonly (string | null)[],
+  serveSnapshot?: ServeSnapshot,
 ): Promise<void> {
   if (rows.length === 0) return;
   try {
@@ -362,6 +400,14 @@ export async function recordServedTruncated(
       }
       sweepAndRetire(store, sessionKey, path, current, updated, rows);
     });
+    await grantServeLeases(
+      store,
+      sessionKey,
+      path,
+      rows,
+      serveSnapshot?.hashes,
+      serveSnapshot?.content,
+    );
   } catch (error) {
     console.error("Failed to record truncated served rows:", error);
   }

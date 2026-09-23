@@ -1084,7 +1084,8 @@ export async function upsertSnapshotFor(
   checksum: string,
   lineCount: number,
   hashes: string[],
+  content?: string,
 ): Promise<void> {
   const store = await loadHashStore();
-  store.upsertSnapshot(path, checksum, lineCount, hashes);
+  store.upsertSnapshot(path, checksum, lineCount, hashes, content);
 }

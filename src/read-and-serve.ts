@@ -166,6 +166,7 @@ export async function readAndServe(
       hashes: view.hashes,
       canons: fullCanons,
       snapshotId,
+      content: view.normalized,
     });
   }
   // #69: epoch lifecycle belongs to full reads — a partial (paged or

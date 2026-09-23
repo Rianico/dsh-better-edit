@@ -252,3 +252,24 @@ describe("lineage-store — atomicity (fault injection)", () => {
     expect(lineageRows).toBe(0);
   });
 });
+
+describe("lineage-store — input validation", () => {
+  it("length mismatch throws before any write", () => {
+    const { db, lineage } = open();
+    expect(() =>
+      lineage.commitSnapshot({ path: "/x.ts", content: "a\nb\nc", hashes: ["H1", "H2"] }),
+    ).toThrow("2 hashes for 3 lines");
+    const snapshots = (
+      db.prepare("SELECT COUNT(*) AS n FROM file_snapshots").get() as { n: number }
+    ).n;
+    const lineageRows = (
+      db.prepare("SELECT COUNT(*) AS n FROM line_lineage").get() as { n: number }
+    ).n;
+    const counters = (
+      db.prepare("SELECT COUNT(*) AS n FROM line_id_counters").get() as { n: number }
+    ).n;
+    expect(snapshots).toBe(0);
+    expect(lineageRows).toBe(0);
+    expect(counters).toBe(0);
+  });
+});
