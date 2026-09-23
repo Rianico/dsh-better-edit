@@ -2,9 +2,10 @@
  * The hash store — ONE deep persistence module for the hashline domain.
  *
  * Owns the sqlite db, the schema and migrations, corruption quarantine,
- * busy-retry, WAL, the legacy-JSON migration, AND the three narrow row APIs
- * the rest of the plugin needs: hash snapshots, undo entries, and served
- * rows. The prepared statements are a private implementation detail — callers
+ * Owns the sqlite db, the schema and migrations, corruption quarantine, WAL,
+ * the legacy-JSON migration, and the undo/served row APIs. Hash snapshots
+ * live in snapshot-store (shared busy-retry policy in store-retry), adapted
+ * here so the HashStore surface stays stable for its duck-typed callers.
  * use domain methods, never SQL.
  *
  * Corrupt-row handling (parse the JSON column → validate against the hash
@@ -22,9 +23,11 @@ import { hashStorePath } from "./store-tenancy.js";
 import { onStoreOpen, setStoresGetter } from "./store-lifecycle.js";
 import { workspaceCwd } from "./workspace-context.js";
 import { errCode, splitLines } from "./utils.js";
-import { initHasher, contentChecksum, HASH_RE, CANON_VERSION } from "./hashline/hash-assign.js";
+import { initHasher, contentChecksum, HASH_RE } from "./hashline/hash-assign.js";
 import { HASH_STORE_VERSION, HASH_STORE_BUSY_TIMEOUT, SERVED_TTL_MS } from "./constants.js";
 import { DomainError } from "./domain-errors.js";
+import { createSnapshotStore, isValidHashList, type SnapshotStore } from "./snapshot-store/index.js";
+import { withBusyRetry } from "./store-retry.js";
 
 // ---- validators (owned here; the store's corruption handling uses them) ----
 
@@ -34,13 +37,9 @@ export interface LegacySnapshot {
   hashes: string[];
 }
 
-export function isValidHashList(value: unknown): value is string[] {
-  if (!Array.isArray(value)) return false;
-  for (const hash of value) {
-    if (typeof hash !== "string" || !HASH_RE.test(hash)) return false;
-  }
-  return true;
-}
+// isValidHashList lives in snapshot-store (its primary consumer); re-exported here
+// so the undo/served healing below and external importers keep one surface.
+export { isValidHashList };
 
 export function isValidSnapshot(value: unknown): value is LegacySnapshot {
   if (typeof value !== "object" || value === null) return false;
@@ -68,9 +67,6 @@ export function isValidServedList(value: unknown): value is (string | null)[] {
   return true;
 }
 
-function cacheKey(checksum: string): string {
-  return `${CANON_VERSION}:${checksum}`;
-}
 
 /** The undo row contract shared by undo-edit and the store. */
 export interface UndoRecord {
@@ -86,11 +82,7 @@ export interface UndoRecord {
 type SqlParams = (string | number)[];
 
 interface Prepared {
-  get: (...params: SqlParams) => Record<string, unknown> | undefined;
   allPaths: (...params: SqlParams) => Record<string, unknown>[];
-  allHashes: (...params: SqlParams) => Record<string, unknown>[];
-  deleteOne: (...params: SqlParams) => void;
-  upsert: (...params: SqlParams) => void;
   undoUpsert: (...params: SqlParams) => void;
   undoGet: (...params: SqlParams) => Record<string, unknown> | undefined;
   undoDelete: (...params: SqlParams) => void;
@@ -265,35 +257,6 @@ export function isCorruptionError(error: unknown): boolean {
   );
 }
 
-function isBusyError(error: unknown): boolean {
-  if (error && typeof error === "object") {
-    const errcode = (error as { errcode?: unknown }).errcode;
-    if (typeof errcode === "number") return errcode === 5 || errcode === 6;
-  }
-  return error instanceof Error && /busy|locked/i.test(error.message);
-}
-
-function sleepSync(ms: number): void {
-  const sab = new Int32Array(new SharedArrayBuffer(4));
-  Atomics.wait(sab, 0, 0, ms);
-}
-
-const BUSY_RETRIES = 3;
-const BUSY_RETRY_DELAY_MS = 100;
-
-function withBusyRetry<T>(fn: () => T): T {
-  let lastError: unknown;
-  for (let attempt = 0; attempt <= BUSY_RETRIES; attempt++) {
-    try {
-      return fn();
-    } catch (error) {
-      lastError = error;
-      if (!isBusyError(error) || attempt === BUSY_RETRIES) throw error;
-      sleepSync(BUSY_RETRY_DELAY_MS);
-    }
-  }
-  throw lastError;
-}
 
 function openDbWithBusyRetry(storePath: string): {
   db: DatabaseSync;
@@ -607,17 +570,8 @@ function buildStore(db: DatabaseSync, storePath: string): { db: DatabaseSync; st
       throw error;
     }
   }
-  const getStmt = db.prepare(
-    "SELECT hashes FROM snapshots WHERE path = ? AND checksum = ? AND line_count = ?",
-  );
   const allStmt = db.prepare(
     "SELECT path FROM snapshots UNION SELECT path FROM undo UNION SELECT path FROM served",
-  );
-  const allHashesStmt = db.prepare("SELECT path, hashes FROM snapshots");
-  const delStmt = db.prepare("DELETE FROM snapshots WHERE path = ?");
-  const upsertStmt = db.prepare(
-    "INSERT INTO snapshots (path, checksum, line_count, hashes, updated_at) VALUES (?, ?, ?, ?, ?) " +
-      "ON CONFLICT(path) DO UPDATE SET checksum = excluded.checksum, line_count = excluded.line_count, hashes = excluded.hashes, updated_at = excluded.updated_at",
   );
   const undoUpsertStmt = db.prepare(
     "INSERT INTO undo (path, content, bom, ending, hashes, result_content, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?) " +
@@ -678,19 +632,7 @@ function buildStore(db: DatabaseSync, storePath: string): { db: DatabaseSync; st
   const servedWipeStmt = db.prepare("DELETE FROM served WHERE session_id = ?");
   const servedPruneOlderThanStmt = db.prepare("DELETE FROM served WHERE updated_at < ?");
   const stmts: Prepared = {
-    get: (...params) => getStmt.get(...params) as Record<string, unknown> | undefined,
     allPaths: (...params) => allStmt.all(...params) as Record<string, unknown>[],
-    allHashes: (...params) => allHashesStmt.all(...params) as Record<string, unknown>[],
-    deleteOne: (...params) => {
-      withBusyRetry(() => {
-        delStmt.run(...params);
-      });
-    },
-    upsert: (...params) => {
-      withBusyRetry(() => {
-        upsertStmt.run(...params);
-      });
-    },
     undoUpsert: (...params) => {
       withBusyRetry(() => {
         undoUpsertStmt.run(...params);
@@ -790,50 +732,27 @@ function buildStore(db: DatabaseSync, storePath: string): { db: DatabaseSync; st
 }
 
 /** Wire the domain methods over the prepared statements. */
-function makeDomainStore(stmts: Prepared): InternalHashStore {
+function makeDomainStore(stmts: Prepared, snapshotStore: SnapshotStore): InternalHashStore {
   return {
     engine: "node:sqlite",
 
     getSnapshot(path, content, deleteCorrupt = true) {
-      const checksum = cacheKey(contentChecksum(content));
-      const lineCount = splitLines(content).length;
-      const row = stmts.get(path, checksum, lineCount);
-      if (!row) return undefined;
-      try {
-        const parsed = JSON.parse(row.hashes as string);
-        if (isValidHashList(parsed)) return parsed;
-        if (deleteCorrupt) stmts.deleteOne(path);
-        return undefined;
-      } catch (error) {
-        if (deleteCorrupt) stmts.deleteOne(path);
-        return undefined;
-      }
+      return snapshotStore.get(path, content, deleteCorrupt);
     },
     upsertSnapshot(path, checksum, lineCount, hashes) {
-      stmts.upsert(path, cacheKey(checksum), lineCount, JSON.stringify(hashes), Date.now());
+      snapshotStore.upsert(path, checksum, lineCount, hashes);
     },
     allKnownPaths() {
       return stmts.allPaths() as { path: string }[];
     },
     allSnapshotHashes() {
-      return stmts.allHashes() as { path: string; hashes: string }[];
+      return snapshotStore.allHashes();
     },
     deleteSnapshot(path) {
-      stmts.deleteOne(path);
+      snapshotStore.deleteByPath(path);
     },
     findSnapshotPaths(hashes) {
-      const rows = stmts.allHashes() as { path: string; hashes: string }[];
-      const matches: string[] = [];
-      for (const row of rows) {
-        try {
-          const parsed = JSON.parse(row.hashes) as unknown;
-          if (!isValidHashList(parsed)) continue;
-          if (hashes.every((h) => parsed.includes(h))) matches.push(row.path);
-        } catch (error) {
-          console.warn(error); // unparseable row → skip it
-        }
-      }
-      return matches;
+      return snapshotStore.findPathsContaining(hashes);
     },
 
     getUndo(path) {
@@ -1029,7 +948,7 @@ function makeDomainStore(stmts: Prepared): InternalHashStore {
       if (missing.length === 0) return;
       withStore(() => {
         for (const path of missing) {
-          stmts.deleteOne(path);
+          snapshotStore.deleteByPath(path);
           stmts.undoDelete(path);
           stmts.servedDeletePath(path);
         }
@@ -1122,7 +1041,8 @@ async function openStore(storePath: string): Promise<HashStore> {
   if (!existed) {
     await migrateLegacy(db, storePath);
   }
-  const store = makeDomainStore(stmts);
+  const snapshotStore = createSnapshotStore(db);
+  const store = makeDomainStore(stmts, snapshotStore);
   stores.set(storePath, { path: storePath, db, stmts, store });
   await onStoreOpen(storePath, stmts, store);
 
