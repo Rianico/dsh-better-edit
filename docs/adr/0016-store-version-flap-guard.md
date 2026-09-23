@@ -79,4 +79,4 @@ Shell-retention contract: the v6 shells (`snapshots`, `undo`, `served`) keep the
 
 ## Legacy import and compat shells
 
-The legacy JSON *file* import lives in `src/snapshot-store/migrate.ts` (the module owns the `snapshots` table). The legacy `snapshots` **blob rows** stay in the shell untouched: they are old-canon and carry no line text, so stable `line_id`/`canon_hash` identity cannot be derived from them — fabricating it would poison the identity space. They are rebuilt from content on the next read. The v6 shells are covered by a statement-replay compat test (the v6 read/write/delete shapes against v7-created and migrated stores).
+The legacy JSON _file_ import lives in `src/snapshot-store/migrate.ts` (the module owns the `snapshots` table). The legacy `snapshots` **blob rows** stay in the shell untouched: they are old-canon and carry no line text, so stable `line_id`/`canon_hash` identity cannot be derived from them — fabricating it would poison the identity space. They are rebuilt from content on the next read. The v6 shells are covered by a statement-replay compat test (the v6 read/write/delete shapes against v7-created and migrated stores).
