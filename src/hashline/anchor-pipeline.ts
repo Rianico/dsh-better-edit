@@ -800,14 +800,12 @@ export function verifyServedRange(args: {
   if (isHealed) {
     for (let k = 0; k < currentLen; k++) {
       const servedHash = served[from + k];
-      if (servedHash === null) continue;
-      const expectedCanon = servedCanons?.[from + k];
+      if (servedHash === null || servedHash === undefined) continue;
+      const mirrorIdx = fileHashes.indexOf(servedHash);
+      if (mirrorIdx < 0) continue; // pre-fix the map could not answer for a hash absent from the file
+      const expectedCanon = canon(fileLines[mirrorIdx] ?? "");
       const actualCanon = canon(fileLines[from + k] ?? "");
-      if (
-        expectedCanon !== undefined &&
-        expectedCanon !== null &&
-        canonDigest(expectedCanon) !== canonDigest(actualCanon)
-      ) {
+      if (canonDigest(expectedCanon) !== canonDigest(actualCanon)) {
         const offendingLine = from + k + 1;
         throw new ServedRejectionError({
           code: "E_STALE_RANGE",
