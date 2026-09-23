@@ -368,12 +368,6 @@ function addColumnIfMissing(db: DatabaseSync, table: string, column: string, typ
 }
 
 /**
- * Non-destructive, idempotent schema build. Runs on every open: CREATE TABLE
- * IF NOT EXISTS for the current shapes, backfill of the newer served columns,
- * and DROP TABLE served only for the pre-session-keyed shell (no session_id —
- * unusable by either version). No DELETE FROM anywhere on this path.
- */
-/**
  * v7 state tables. All additive (IF NOT EXISTS), owned by this build: a v6
  * process never names them, so a version flap cannot cost v7 anything.
  */
@@ -464,6 +458,12 @@ function ensureV7Tables(db: DatabaseSync): void {
   );
 }
 
+/**
+ * Non-destructive, idempotent schema build. Runs on every open: CREATE TABLE
+ * IF NOT EXISTS for the current shapes, backfill of the newer served columns,
+ * and DROP TABLE served only for the pre-session-keyed shell (no session_id —
+ * unusable by either version). No DELETE FROM anywhere on this path.
+ */
 function ensureSchema(db: DatabaseSync): void {
   db.exec(
     "CREATE TABLE IF NOT EXISTS meta (" + "key TEXT PRIMARY KEY, " + "value TEXT NOT NULL" + ")",
