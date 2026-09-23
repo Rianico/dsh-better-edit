@@ -423,16 +423,6 @@ function ensureSchema(db: DatabaseSync): void {
 }
 
 /**
- * The single atomic forward migration. Called only when the stamp differs
- * from HASH_STORE_VERSION (including an absent or non-integer stamp on a
- * pre-versioning store). The sole writer of meta.version. CP1 has no data
- * steps — later tickets add ordered, guarded data statements beside the stamp
- * write inside the same transaction. The stamp is re-checked under the
- * RESERVED lock: a newer writer that committed between the probe and
- * BEGIN IMMEDIATE is refused here, so the stamp write can never silently
- * downgrade a newer store.
- */
-/**
  * Fail-closed refusal shared by the pre-write fast path and the
  * in-transaction re-check: a stamp newer than this build is never touched.
  */
@@ -446,6 +436,16 @@ function assertNotNewer(stored: number | undefined, storePath: string): void {
   }
 }
 
+/**
+ * The single atomic forward migration. Called only when the stamp differs
+ * from HASH_STORE_VERSION (including an absent or non-integer stamp on a
+ * pre-versioning store). The sole writer of meta.version. CP1 has no data
+ * steps — later tickets add ordered, guarded data statements beside the stamp
+ * write inside the same transaction. The stamp is re-checked under the
+ * RESERVED lock: a newer writer that committed between the probe and
+ * BEGIN IMMEDIATE is refused here, so the stamp write can never silently
+ * downgrade a newer store.
+ */
 function migrateForward(db: DatabaseSync, storePath: string): void {
   let migrationOpen = false;
   try {
