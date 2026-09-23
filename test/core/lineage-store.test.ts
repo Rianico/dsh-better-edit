@@ -362,3 +362,57 @@ describe("lineage-store — adopt refreshes anchors, never identity", () => {
     );
   });
 });
+
+describe("lineage-store — retirement on snapshot resolution", () => {
+  it("leases absent from the resolved snapshot retire; survivors stay live", () => {
+    const { lineage } = open();
+    const contentA = "alpha\nbeta\ngamma";
+    const contentB = "alpha\ngamma";
+    lineage.commitSnapshot({
+      path: "/p.ts",
+      content: contentA,
+      hashes: ["A0", "A1", "A2"],
+      leases: {
+        sessionKey: "s",
+        rows: [
+          { position: 0, hash: "A0" },
+          { position: 1, hash: "A1" },
+          { position: 2, hash: "A2" },
+        ],
+      },
+    });
+    // Edit drops the beta line: pure snapshot commit, no new leases — the grant
+    // and the retirement couple in the one transaction either way.
+    lineage.commitSnapshot({ path: "/p.ts", content: contentB, hashes: ["B0", "B2"] });
+    const beta = lineage.leaseFor("s", "/p.ts", "A1");
+    expect(beta).toBeDefined();
+    expect(beta?.retiredAt).not.toBeNull();
+    expect(lineage.leaseFor("s", "/p.ts", "A0")?.retiredAt).toBeNull();
+    expect(lineage.leaseFor("s", "/p.ts", "A2")?.retiredAt).toBeNull();
+  });
+
+  it("a retire-write failure rolls back the whole snapshot commit", () => {
+    const { db, lineage } = open();
+    lineage.commitSnapshot({
+      path: "/q.ts",
+      content: "alpha\nbeta",
+      hashes: ["A0", "A1"],
+      leases: { sessionKey: "s", rows: [{ position: 1, hash: "A1" }] },
+    });
+    db.exec(
+      "CREATE TRIGGER t2b_retire BEFORE UPDATE OF retired_at ON served_leases " +
+        "BEGIN SELECT RAISE(ABORT, 'injected'); END;",
+    );
+    // Dropping beta must retire A1's lease: the trigger aborts the retire, so
+    // the B snapshot must be absent — atomicity, not best-effort.
+    expect(() =>
+      lineage.commitSnapshot({ path: "/q.ts", content: "alpha", hashes: ["B0"] }),
+    ).toThrow("injected");
+    const snaps = (
+      db
+        .prepare("SELECT COUNT(*) AS n FROM file_snapshots WHERE snapshot_hash = ?")
+        .get(snapshotHashFor("alpha")) as { n: number }
+    ).n;
+    expect(snaps).toBe(0);
+  });
+});

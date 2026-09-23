@@ -1578,3 +1578,29 @@ it("lineage with a corrupt anchor falls back instead of serving it", async () =>
     expect(reopened.getSnapshot("/k.ts", content)).toBeUndefined();
   });
 });
+
+it("file_undo row mirrors the legacy undo row with the snapshot pin", async () => {
+  await withTempHome(async () => {
+    const { saveUndo, clearUndo } = await import("../../src/undo-edit.js");
+    const { snapshotHashFor } = await import("../../src/snapshot-store/lineage-store.js");
+    const internal = (await loadHashStore()) as unknown as InternalHashStore;
+    const entry = {
+      content: "old\n",
+      bom: "",
+      originalEnding: "\n",
+      hashes: ["H01"],
+      resultContent: "new\n",
+    };
+    const saved = await saveUndo("/u4.ts", entry);
+    expect(saved.persisted).toBe(true);
+    expect((await loadHashStore()).getUndo("/u4.ts")).toBeDefined();
+    const v7 = internal.getFileUndo("/u4.ts");
+    expect(v7).toBeDefined();
+    expect(v7?.snapshotHash).toBe(snapshotHashFor("old\n"));
+    expect(v7?.hashes).toEqual(["H01"]);
+    expect(v7?.resultContent).toBe("new\n");
+    await clearUndo("/u4.ts");
+    expect(internal.getFileUndo("/u4.ts")).toBeUndefined();
+    expect((await loadHashStore()).getUndo("/u4.ts")).toBeUndefined();
+  });
+});

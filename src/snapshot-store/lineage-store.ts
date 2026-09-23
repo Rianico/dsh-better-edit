@@ -273,6 +273,15 @@ export function createLineageStore(db: DatabaseSync): LineageStore {
     "UPDATE line_lineage SET anchor = ? WHERE snapshot_id = ? AND line_number = ?",
   );
 
+  const retireAbsentLeasesStmt = db.prepare(
+    "UPDATE served_leases SET retired_at = ? WHERE file_path = ? AND retired_at IS NULL " +
+      "AND line_id NOT IN (SELECT line_id FROM line_lineage WHERE snapshot_id = ?)",
+  );
+
+  function retireAbsentLeases(snapshotId: number, path: string, now: number): void {
+    retireAbsentLeasesStmt.run(now, path, snapshotId);
+  }
+
   function grantLeases(
     snapshotId: number,
     snapshotHash: string,
@@ -406,6 +415,9 @@ export function createLineageStore(db: DatabaseSync): LineageStore {
           if (input.leases !== undefined) {
             grantLeases(snapshotId, snapshotHash, input.path, input.leases, now);
           }
+          // Both paths, same transaction: leases whose line left the resolved snapshot retire;
+          // revival stays the grant path's retired_at = NULL.
+          retireAbsentLeases(snapshotId, input.path, now);
           db.exec("COMMIT");
         } catch (error) {
           try {

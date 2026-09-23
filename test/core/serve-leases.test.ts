@@ -187,6 +187,14 @@ describe("serve leases — bind to the named snapshot, never latest", () => {
         hashes: v2hashes,
         content: v2,
       });
+      // v2's commit retired v1-beta's line (absent from v2's lineage).
+      expect(store.leaseFor(sessionKey, path, v1hashes[1]!)?.retiredAt).not.toBeNull();
+      // Same-session re-serve revives through upsert conflict (retired_at = NULL).
+      await recordServed(sessionKey, path, fullRows(v1hashes), 3, {
+        hashes: v1hashes,
+        content: v1,
+      });
+      expect(store.leaseFor(sessionKey, path, v1hashes[1]!)?.retiredAt).toBeNull();
       // Re-serve v1 rows under a fresh session: adopt + grant must bind v1's
       // snapshot, not v2's. Fresh session matters: a reused session would still
       // show the earlier v1 grant and mask a mis-resolved re-serve.

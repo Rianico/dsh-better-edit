@@ -69,6 +69,17 @@ export interface UndoRecord {
   resultContent: string;
 }
 
+/** The v7 undo row contract: legacy state plus the snapshot pin. */
+export interface FileUndoRecord {
+  content: string;
+  bom: string;
+  ending: string;
+  hashes: string[];
+  resultContent: string;
+  snapshotHash: string | null;
+  updatedAt: number;
+}
+
 // ---- the domain interface --------------------------------------------------
 
 type SqlParams = (string | number)[];
@@ -79,6 +90,9 @@ interface Prepared {
   undoGet: (...params: SqlParams) => Record<string, unknown> | undefined;
   undoDelete: (...params: SqlParams) => void;
   undoPruneOlderThan: (...params: SqlParams) => void;
+  fileUndoUpsert: (...params: (string | number | null)[]) => void;
+  fileUndoGet: (...params: SqlParams) => Record<string, unknown> | undefined;
+  fileUndoDelete: (...params: SqlParams) => void;
   servedGet: (...params: SqlParams) => Record<string, unknown> | undefined;
   servedAllForPath: (...params: SqlParams) => Record<string, unknown>[];
   servedUpsert: (...params: SqlParams) => void;
@@ -129,7 +143,11 @@ export interface HashStore {
   upsertUndo(path: string, entry: UndoRecord): void;
   deleteUndo(path: string): void;
   pruneUndoOlderThan(ts: number): void;
-
+  pruneUndoOlderThan(ts: number): void;
+  /** The v7 undo row for a path, same healing contract as the legacy row. */
+  getFileUndo(path: string): FileUndoRecord | undefined;
+  upsertFileUndo(path: string, record: FileUndoRecord): void;
+  deleteFileUndo(path: string): void;
   // ---- maintenance ---------------------------------------------------------
   /** Delete every row family's entries for paths that no longer exist on disk. */
   pruneMissing(): Promise<void>;
@@ -495,6 +513,14 @@ function buildStore(db: DatabaseSync, storePath: string): { db: DatabaseSync; st
   );
   const undoDelStmt = db.prepare("DELETE FROM undo WHERE path = ?");
   const undoPruneOlderThanStmt = db.prepare("DELETE FROM undo WHERE updated_at < ?");
+  const fileUndoUpsertStmt = db.prepare(
+    "INSERT INTO file_undo (path, content, bom, ending, hashes, result_content, snapshot_hash, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?) " +
+      "ON CONFLICT(path) DO UPDATE SET content = excluded.content, bom = excluded.bom, ending = excluded.ending, hashes = excluded.hashes, result_content = excluded.result_content, snapshot_hash = excluded.snapshot_hash, updated_at = excluded.updated_at",
+  );
+  const fileUndoGetStmt = db.prepare(
+    "SELECT content, bom, ending, hashes, result_content, snapshot_hash FROM file_undo WHERE path = ?",
+  );
+  const fileUndoDelStmt = db.prepare("DELETE FROM file_undo WHERE path = ?");
   const servedGetStmt = db.prepare(
     "SELECT hashes, reported, retired, canons, snapshotId, cards FROM served WHERE session_id = ? AND path = ?",
   );
@@ -560,6 +586,18 @@ function buildStore(db: DatabaseSync, storePath: string): { db: DatabaseSync; st
     undoPruneOlderThan: (...params) => {
       withBusyRetry(() => {
         undoPruneOlderThanStmt.run(...params);
+      });
+    },
+    fileUndoUpsert: (...params: (string | number | null)[]) => {
+      withBusyRetry(() => {
+        fileUndoUpsertStmt.run(...params);
+      });
+    },
+    fileUndoGet: (...params) =>
+      fileUndoGetStmt.get(...params) as Record<string, unknown> | undefined,
+    fileUndoDelete: (...params) => {
+      withBusyRetry(() => {
+        fileUndoDelStmt.run(...params);
       });
     },
     servedGet: (...params) => servedGetStmt.get(...params) as Record<string, unknown> | undefined,
@@ -729,6 +767,44 @@ function makeDomainStore(
     },
     deleteUndo(path) {
       stmts.undoDelete(path);
+    },
+    upsertFileUndo(path, record) {
+      stmts.fileUndoUpsert(
+        path,
+        record.content,
+        record.bom,
+        record.ending,
+        JSON.stringify(record.hashes),
+        record.resultContent,
+        record.snapshotHash,
+        record.updatedAt,
+      );
+    },
+    getFileUndo(path) {
+      const row = stmts.fileUndoGet(path);
+      if (!row) return undefined;
+      try {
+        const parsed = JSON.parse(row.hashes as string);
+        if (!isValidHashList(parsed)) {
+          stmts.fileUndoDelete(path);
+          return undefined;
+        }
+        return {
+          content: row.content as string,
+          bom: row.bom as string,
+          ending: row.ending as string,
+          hashes: parsed as string[],
+          resultContent: row.result_content as string,
+          snapshotHash: (row.snapshot_hash as string | null) ?? null,
+          updatedAt: row.updated_at as number,
+        };
+      } catch (error) {
+        stmts.fileUndoDelete(path);
+        return undefined;
+      }
+    },
+    deleteFileUndo(path) {
+      stmts.fileUndoDelete(path);
     },
 
     getServed(sessionKey, path) {
