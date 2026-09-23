@@ -33,7 +33,11 @@ import {
 } from "./snapshot-store/index.js";
 import { withBusyRetry } from "./store-retry.js";
 import { migrateLegacyStore } from "./snapshot-store/migrate.js";
-
+import {
+  createLineageStore,
+  ensureLineageTables,
+  type LineageStore,
+} from "./snapshot-store/lineage-store.js";
 // ---- validators (owned here; the store's corruption handling uses them) ----
 
 /** A served-row array: per-position hash, or null for never-served slots. */
@@ -103,7 +107,13 @@ export interface HashStore {
   // ---- hash snapshots (stable anchors keyed by path+checksum+line count) ----
   /** The stored hashes for a path+content, or undefined on a miss; a corrupt row is deleted (when deleteCorrupt) and treated as a miss. */
   getSnapshot(path: string, content: string, deleteCorrupt?: boolean): string[] | undefined;
-  upsertSnapshot(path: string, checksum: string, lineCount: number, hashes: string[]): void;
+  upsertSnapshot(
+    path: string,
+    checksum: string,
+    lineCount: number,
+    hashes: string[],
+    content?: string,
+  ): void;
   /** Every path referenced by any row family (snapshots ∪ undo ∪ served). */
   allKnownPaths(): { path: string }[];
   /** Every snapshot's path and raw hashes JSON (for path-by-hash scans). */
@@ -218,10 +228,10 @@ function parseRetiredJson(raw: string | null | undefined): RetiredEntry[] {
   }
 }
 
-export type InternalHashStore = HashStore & ServedPersistence;
+export type InternalHashStore = HashStore & ServedPersistence & LineageStore;
 
 /** Load the store as served persistence — internal, for SessionView only. */
-// SAFETY: loadHashStore returns InternalHashStore (HashStore & ServedPersistence) — cast narrows to served view, validated via ServedPersistence interface; safe because InternalHashStore extends both.
+// SAFETY: loadHashStore returns InternalHashStore (HashStore & ServedPersistence & LineageStore) — cast narrows to served view, validated via ServedPersistence interface; safe because InternalHashStore extends all three.
 export function loadServedStore(cwd?: string): Promise<ServedPersistence> {
   return loadHashStore(cwd) as unknown as Promise<ServedPersistence>;
 }
@@ -321,39 +331,7 @@ function addColumnIfMissing(db: DatabaseSync, table: string, column: string, typ
  * process never names them, so a version flap cannot cost v7 anything.
  */
 function ensureV7Tables(db: DatabaseSync): void {
-  db.exec(
-    "CREATE TABLE IF NOT EXISTS file_snapshots (" +
-      "snapshot_id INTEGER PRIMARY KEY AUTOINCREMENT, " +
-      "path TEXT NOT NULL, " +
-      "snapshot_hash TEXT NOT NULL, " +
-      "line_count INTEGER NOT NULL, " +
-      "created_at INTEGER NOT NULL, " +
-      "committed INTEGER NOT NULL DEFAULT 1, " +
-      "UNIQUE (path, snapshot_hash)" +
-      ")",
-  );
-  db.exec("CREATE INDEX IF NOT EXISTS idx_snapshots_created ON file_snapshots (created_at)");
-  db.exec(
-    "CREATE TABLE IF NOT EXISTS line_id_counters (" +
-      "path TEXT PRIMARY KEY, " +
-      "next_id INTEGER NOT NULL" +
-      ")",
-  );
-  db.exec(
-    "CREATE TABLE IF NOT EXISTS line_lineage (" +
-      "snapshot_id INTEGER NOT NULL, " +
-      "line_number INTEGER NOT NULL, " +
-      "line_id INTEGER NOT NULL, " +
-      "canon_hash TEXT NOT NULL, " +
-      "anchor TEXT NOT NULL, " +
-      "PRIMARY KEY (snapshot_id, line_number), " +
-      "FOREIGN KEY (snapshot_id) REFERENCES file_snapshots(snapshot_id) ON DELETE CASCADE" +
-      ")",
-  );
-  db.exec(
-    "CREATE UNIQUE INDEX IF NOT EXISTS idx_lineage_snapshot_line_id " +
-      "ON line_lineage (snapshot_id, line_id)",
-  );
+  ensureLineageTables(db);
   db.exec(
     "CREATE TABLE IF NOT EXISTS file_undo (" +
       "path TEXT PRIMARY KEY, " +
@@ -365,36 +343,6 @@ function ensureV7Tables(db: DatabaseSync): void {
       "snapshot_hash TEXT, " +
       "updated_at INTEGER NOT NULL" +
       ")",
-  );
-  db.exec(
-    "CREATE TABLE IF NOT EXISTS served_leases (" +
-      "session_id TEXT NOT NULL, " +
-      "file_path TEXT NOT NULL, " +
-      "anchor TEXT NOT NULL, " +
-      "line_id INTEGER NOT NULL, " +
-      "canon_hash TEXT NOT NULL, " +
-      "served_snapshot_hash TEXT NOT NULL, " +
-      "served_line_number INTEGER NOT NULL, " +
-      "updated_at INTEGER NOT NULL, " +
-      "retired_at INTEGER, " +
-      "PRIMARY KEY (session_id, file_path, anchor)" +
-      ")",
-  );
-  db.exec(
-    "CREATE INDEX IF NOT EXISTS idx_leases_line " +
-      "ON served_leases (session_id, file_path, line_id)",
-  );
-  db.exec(
-    "CREATE INDEX IF NOT EXISTS idx_leases_line_num " +
-      "ON served_leases (session_id, file_path, served_line_number)",
-  );
-  db.exec(
-    "CREATE INDEX IF NOT EXISTS idx_leases_file_retired " +
-      "ON served_leases (file_path, retired_at)",
-  );
-  db.exec(
-    "CREATE INDEX IF NOT EXISTS idx_leases_session_anchor " +
-      "ON served_leases (session_id, anchor)",
   );
   db.exec(
     "CREATE TABLE IF NOT EXISTS served_session_meta (" +
@@ -718,15 +666,31 @@ function buildStore(db: DatabaseSync, storePath: string): { db: DatabaseSync; st
 }
 
 /** Wire the domain methods over the prepared statements. */
-function makeDomainStore(stmts: Prepared, snapshotStore: SnapshotStore): InternalHashStore {
+function makeDomainStore(
+  stmts: Prepared,
+  snapshotStore: SnapshotStore,
+  lineageStore: LineageStore,
+): InternalHashStore {
   return {
     engine: "node:sqlite",
 
     getSnapshot(path, content, deleteCorrupt = true) {
       return snapshotStore.get(path, content, deleteCorrupt);
     },
-    upsertSnapshot(path, checksum, lineCount, hashes) {
+    upsertSnapshot(path, checksum, lineCount, hashes, content?) {
       snapshotStore.upsert(path, checksum, lineCount, hashes);
+      if (content !== undefined) {
+        lineageStore.commitSnapshot({ path, content, hashes });
+      }
+    },
+    commitSnapshot(input) {
+      lineageStore.commitSnapshot(input);
+    },
+    lineageFor(path, snapshotHash) {
+      return lineageStore.lineageFor(path, snapshotHash);
+    },
+    leaseFor(sessionKey, path, anchor) {
+      return lineageStore.leaseFor(sessionKey, path, anchor);
     },
     allKnownPaths() {
       return stmts.allPaths() as { path: string }[];
@@ -1028,7 +992,8 @@ async function openStore(storePath: string): Promise<HashStore> {
     await migrateLegacyStore(db, join(dirname(storePath), "hash-store.json"));
   }
   const snapshotStore = createSnapshotStore(db);
-  const store = makeDomainStore(stmts, snapshotStore);
+  const lineageStore = createLineageStore(db);
+  const store = makeDomainStore(stmts, snapshotStore, lineageStore);
   stores.set(storePath, { path: storePath, db, stmts, store });
   await onStoreOpen(storePath, stmts, store);
 

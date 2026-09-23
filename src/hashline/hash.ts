@@ -14,7 +14,13 @@ import { lineHashesPure, mapStableHashes } from "./hash-assign.js";
 
 export interface HashSnapshotIO {
   get(path: string, content: string, deleteCorrupt: boolean): Promise<string[] | undefined>;
-  upsert(path: string, checksum: string, lineCount: number, hashes: string[]): Promise<void>;
+  upsert(
+    path: string,
+    checksum: string,
+    lineCount: number,
+    hashes: string[],
+    content?: string,
+  ): Promise<void>;
 }
 
 let defaultHashSnapshotIO: HashSnapshotIO | undefined;
@@ -28,8 +34,8 @@ export function snapshotIOFor(store?: HashStore): HashSnapshotIO | undefined {
     return {
       get: (path, content, deleteCorrupt) =>
         Promise.resolve(store.getSnapshot(path, content, deleteCorrupt)),
-      upsert: (path, checksum, lineCount, hashes) => {
-        store.upsertSnapshot(path, checksum, lineCount, hashes);
+      upsert: (path, checksum, lineCount, hashes, content?) => {
+        store.upsertSnapshot(path, checksum, lineCount, hashes, content);
         return Promise.resolve();
       },
     };
@@ -40,9 +46,9 @@ export function snapshotIOFor(store?: HashStore): HashSnapshotIO | undefined {
         const s = await loadHashStore();
         return s.getSnapshot(path, content, deleteCorrupt);
       },
-      upsert: async (path, checksum, lineCount, hashes) => {
+      upsert: async (path, checksum, lineCount, hashes, content?) => {
         const s = await loadHashStore();
-        s.upsertSnapshot(path, checksum, lineCount, hashes);
+        s.upsertSnapshot(path, checksum, lineCount, hashes, content);
       },
     }
   );
@@ -86,7 +92,13 @@ export async function lineHashes(
     );
     if (persist !== false && io) {
       try {
-        await io.upsert(path, contentChecksum(content), splitLines(content).length, newHashes);
+        await io.upsert(
+          path,
+          contentChecksum(content),
+          splitLines(content).length,
+          newHashes,
+          content,
+        );
       } catch (e) {
         console.error("Failed to persist hash snapshot:", e);
       }
@@ -105,7 +117,13 @@ export async function lineHashes(
   const newHashes = lineHashesPure(content, reservedHashes, retiredHashes.size, 0);
   if (persist !== false && io) {
     try {
-      await io.upsert(path, contentChecksum(content), splitLines(content).length, newHashes);
+      await io.upsert(
+        path,
+        contentChecksum(content),
+        splitLines(content).length,
+        newHashes,
+        content,
+      );
     } catch (e) {
       console.error("Failed to persist hash snapshot:", e);
     }
