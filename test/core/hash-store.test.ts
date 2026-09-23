@@ -190,6 +190,35 @@ describe("hash-store — migration from legacy hash-store.json", () => {
       expect(second.getSnapshot("/one.ts", "1\n")).toBeUndefined();
     });
   });
+
+  it("imports legacy rows through the snapshot module with identical messages and the .bak rename", async () => {
+    await withTempHome(async (home) => {
+      await writeLegacyStore(home, {
+        "/valid.ts": { content: "ok\n", hashes: ["ABC"] },
+        "/dup.ts": { content: "a\nb\n", hashes: ["AAA", "AAA"] },
+        "/bad.ts": { content: "x\n", hashes: ["ZZ"] },
+      });
+      const warnings: unknown[][] = [];
+      const spy = vi.spyOn(console, "warn").mockImplementation((...args: unknown[]) => {
+        warnings.push(args);
+      });
+      const store = await loadHashStore();
+      spy.mockRestore();
+
+      const paths = store.allKnownPaths().map((row) => row.path);
+      expect(paths).toEqual(expect.arrayContaining(["/valid.ts"]));
+      expect(paths).not.toContain("/dup.ts");
+      expect(paths).not.toContain("/bad.ts");
+      expect(store.getSnapshot("/valid.ts", "ok\n")).toBeUndefined();
+      expect(existsSync(legacyPath(home))).toBe(false);
+      expect(existsSync(`${legacyPath(home)}.bak`)).toBe(true);
+      const messages = warnings.map((args) => String(args[0]));
+      expect(messages).toContain(
+        "Skipped legacy snapshot with duplicate hashes for /dup.ts; it will be re-hashed on next read.",
+      );
+      expect(messages.filter((message) => message.includes("/bad.ts"))).toEqual([]);
+    });
+  });
 });
 
 describe("hash-store — concurrency (issue #10)", () => {
@@ -452,6 +481,208 @@ describe("hash-store — schema versioning", () => {
         "updated_at",
       ]);
       db.close();
+    });
+  });
+
+  it("replays the v6 statement set against a v7-created store", async () => {
+    await withTempHome(async (home) => {
+      const store = await loadHashStore();
+      await put(store, "/p.ts", "x\n", ["XYZ"]);
+      store.upsertUndo("/u.ts", {
+        content: "old",
+        bom: "",
+        ending: "\n",
+        hashes: ["UVW"],
+        resultContent: "new",
+      });
+      (await loadServedStore()).upsertServed("sessionA", "/p.ts", JSON.stringify(["XYZ"]));
+      shutdownHashStore();
+
+      const db = new DatabaseSync(sqlitePath(home), {
+        defensive: false,
+      } as any);
+      const stored = db.prepare("SELECT checksum, line_count FROM snapshots WHERE path = ?").get("/p.ts") as {
+        checksum: string;
+        line_count: number;
+      };
+      const snapRow = db
+        .prepare("SELECT hashes FROM snapshots WHERE path = ? AND checksum = ? AND line_count = ?")
+        .get("/p.ts", stored.checksum, stored.line_count) as { hashes: string };
+      expect(JSON.parse(snapRow.hashes)).toEqual(["XYZ"]);
+      const undoRow = db
+        .prepare("SELECT content, bom, ending, hashes, result_content FROM undo WHERE path = ?")
+        .get("/u.ts") as { content: string; bom: string; ending: string; hashes: string; result_content: string };
+      expect(undoRow).toMatchObject({ content: "old", bom: "", ending: "\n", result_content: "new" });
+      expect(JSON.parse(undoRow.hashes)).toEqual(["UVW"]);
+      const servedRow = db
+        .prepare("SELECT hashes, reported, retired, canons, snapshotId, cards FROM served WHERE session_id = ? AND path = ?")
+        .get("sessionA", "/p.ts") as { hashes: string };
+      expect(JSON.parse(servedRow.hashes)).toEqual(["XYZ"]);
+
+      const now = Date.now();
+      db.prepare(
+        "INSERT INTO snapshots (path, checksum, line_count, hashes, updated_at) VALUES (?, ?, ?, ?, ?) " +
+          "ON CONFLICT(path) DO UPDATE SET checksum = excluded.checksum, line_count = excluded.line_count, " +
+          "hashes = excluded.hashes, updated_at = excluded.updated_at",
+      ).run("/v.ts", "ck", 2, JSON.stringify(["AAA", "BBB"]), now);
+      const vSnap = db
+        .prepare("SELECT hashes FROM snapshots WHERE path = ? AND checksum = ? AND line_count = ?")
+        .get("/v.ts", "ck", 2) as { hashes: string };
+      expect(JSON.parse(vSnap.hashes)).toEqual(["AAA", "BBB"]);
+      db.prepare(
+        "INSERT INTO undo (path, content, bom, ending, hashes, result_content, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?) " +
+          "ON CONFLICT(path) DO UPDATE SET content = excluded.content, bom = excluded.bom, ending = excluded.ending, " +
+          "hashes = excluded.hashes, result_content = excluded.result_content, updated_at = excluded.updated_at",
+      ).run("/v2.ts", "c", "", "\n", JSON.stringify(["DDD"]), "r", now);
+      const vUndo = db
+        .prepare("SELECT content, bom, ending, hashes, result_content FROM undo WHERE path = ?")
+        .get("/v2.ts") as { hashes: string };
+      expect(JSON.parse(vUndo.hashes)).toEqual(["DDD"]);
+      db.prepare(
+        "INSERT INTO served (session_id, path, hashes, updated_at) VALUES (?, ?, ?, ?) " +
+          "ON CONFLICT(session_id, path) DO UPDATE SET hashes = excluded.hashes, updated_at = excluded.updated_at",
+      ).run("sessionB", "/v.ts", JSON.stringify(["CCC"]), now);
+      const vServed = db
+        .prepare("SELECT hashes, reported, retired, canons, snapshotId, cards FROM served WHERE session_id = ? AND path = ?")
+        .get("sessionB", "/v.ts") as {
+          hashes: string;
+          reported: null;
+          retired: null;
+          canons: null;
+          snapshotId: null;
+          cards: null;
+        };
+      expect(JSON.parse(vServed.hashes)).toEqual(["CCC"]);
+      expect(vServed).toMatchObject({ reported: null, retired: null, canons: null, snapshotId: null, cards: null });
+
+      db.prepare("DELETE FROM snapshots WHERE path = ?").run("/v.ts");
+      db.prepare("DELETE FROM undo WHERE path = ?").run("/v2.ts");
+      db.prepare("DELETE FROM served WHERE session_id = ?").run("sessionB");
+      db.prepare("DELETE FROM served WHERE path = ?").run("/v.ts");
+      expect((db.prepare("SELECT COUNT(*) AS n FROM snapshots WHERE path = ?").get("/v.ts") as { n: number }).n).toBe(0);
+      expect((db.prepare("SELECT COUNT(*) AS n FROM undo WHERE path = ?").get("/v2.ts") as { n: number }).n).toBe(0);
+      expect((db.prepare("SELECT COUNT(*) AS n FROM served WHERE session_id = ?").get("sessionB") as { n: number }).n).toBe(0);
+      expect((db.prepare("SELECT COUNT(*) AS n FROM snapshots").get() as { n: number }).n).toBe(1);
+      db.close();
+
+      const reopened = await loadHashStore();
+      expect(reopened.getSnapshot("/p.ts", "x\n")).toEqual(["XYZ"]);
+      shutdownHashStore();
+    });
+  });
+
+  it("keeps every v6 row byte-identical through a v7 open and a v6 write cycle", async () => {
+    await withTempHome(async (home) => {
+      const rawConn = (): DatabaseSync =>
+        new DatabaseSync(sqlitePath(home), { defensive: false } as any);
+      const readAll = (): { snapshots: unknown[]; undo: unknown[]; served: unknown[] } => {
+        const db = rawConn();
+        const rows = {
+          snapshots: db.prepare("SELECT * FROM snapshots ORDER BY path").all(),
+          undo: db.prepare("SELECT * FROM undo ORDER BY path").all(),
+          served: db.prepare("SELECT * FROM served ORDER BY session_id, path").all(),
+        };
+        db.close();
+        return rows;
+      };
+      await mkdir(configHome(home), { recursive: true });
+      const now = Date.now();
+      const fixture = new DatabaseSync(sqlitePath(home), {
+        defensive: false,
+      } as any);
+      fixture.exec(
+        "CREATE TABLE snapshots (" +
+          "path TEXT PRIMARY KEY, " +
+          "checksum TEXT NOT NULL, " +
+          "line_count INTEGER NOT NULL, " +
+          "hashes TEXT NOT NULL, " +
+          "updated_at INTEGER NOT NULL" +
+          ")",
+      );
+      fixture.exec("CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)");
+      fixture.exec(
+        "CREATE TABLE undo (" +
+          "path TEXT PRIMARY KEY, " +
+          "content TEXT NOT NULL, " +
+          "bom TEXT NOT NULL, " +
+          "ending TEXT NOT NULL, " +
+          "hashes TEXT NOT NULL, " +
+          "result_content TEXT NOT NULL, " +
+          "updated_at INTEGER NOT NULL" +
+          ")",
+      );
+      fixture.exec(
+        "CREATE TABLE served (" +
+          "session_id TEXT NOT NULL, " +
+          "path TEXT NOT NULL, " +
+          "hashes TEXT NOT NULL, " +
+          "reported TEXT, " +
+          "retired TEXT, " +
+          "canons TEXT, " +
+          "snapshotId TEXT, " +
+          "cards TEXT, " +
+          "updated_at INTEGER NOT NULL, " +
+          "PRIMARY KEY (session_id, path)" +
+          ")",
+      );
+      fixture.prepare("INSERT INTO meta (key, value) VALUES ('version', '6')").run();
+      fixture
+        .prepare("INSERT INTO snapshots (path, checksum, line_count, hashes, updated_at) VALUES (?, ?, ?, ?, ?)")
+        .run("/p.ts", "ck", 1, JSON.stringify(["XYZ"]), now);
+      fixture
+        .prepare(
+          "INSERT INTO undo (path, content, bom, ending, hashes, result_content, updated_at) " +
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+        )
+        .run("/u.ts", "old", "", "\n", JSON.stringify(["UVW"]), "new", now);
+      fixture
+        .prepare(
+          "INSERT INTO served (session_id, path, hashes, reported, retired, canons, snapshotId, cards, updated_at) " +
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        )
+        .run("sessionA", "/p.ts", JSON.stringify(["XYZ"]), null, null, null, null, JSON.stringify(["C1"]), now);
+      const before = {
+        snapshots: fixture.prepare("SELECT * FROM snapshots ORDER BY path").all(),
+        undo: fixture.prepare("SELECT * FROM undo ORDER BY path").all(),
+        served: fixture.prepare("SELECT * FROM served ORDER BY session_id, path").all(),
+      };
+      fixture.close();
+
+      await loadHashStore();
+      shutdownHashStore();
+
+      // Byte-identical straight after the v7 open, before any v6 write.
+      expect(readAll()).toEqual(before);
+      shutdownHashStore();
+
+
+      const db = rawConn();
+      db.prepare(
+        "INSERT INTO snapshots (path, checksum, line_count, hashes, updated_at) VALUES (?, ?, ?, ?, ?) " +
+          "ON CONFLICT(path) DO UPDATE SET checksum = excluded.checksum, line_count = excluded.line_count, " +
+          "hashes = excluded.hashes, updated_at = excluded.updated_at",
+      ).run("/v.ts", "ck", 2, JSON.stringify(["AAA"]), Date.now());
+      db.prepare(
+        "INSERT INTO undo (path, content, bom, ending, hashes, result_content, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?) " +
+          "ON CONFLICT(path) DO UPDATE SET content = excluded.content, bom = excluded.bom, ending = excluded.ending, " +
+          "hashes = excluded.hashes, result_content = excluded.result_content, updated_at = excluded.updated_at",
+      ).run("/v2.ts", "c", "", "\n", JSON.stringify(["DDD"]), "r", Date.now());
+      db.prepare(
+        "INSERT INTO served (session_id, path, hashes, updated_at) VALUES (?, ?, ?, ?) " +
+          "ON CONFLICT(session_id, path) DO UPDATE SET hashes = excluded.hashes, updated_at = excluded.updated_at",
+      ).run("sessionB", "/v.ts", JSON.stringify(["CCC"]), Date.now());
+      const cycleServed = db
+        .prepare("SELECT hashes FROM served WHERE session_id = ? AND path = ?")
+        .get("sessionB", "/v.ts") as { hashes: string };
+      expect(JSON.parse(cycleServed.hashes)).toEqual(["CCC"]);
+      db.prepare("DELETE FROM snapshots WHERE path = ?").run("/v.ts");
+      db.prepare("DELETE FROM undo WHERE path = ?").run("/v2.ts");
+      db.prepare("DELETE FROM served WHERE session_id = ?").run("sessionB");
+      db.prepare("DELETE FROM served WHERE path = ?").run("/v.ts");
+      db.close();
+
+      const after = readAll();
+      expect(after).toEqual(before);
     });
   });
 

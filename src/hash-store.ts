@@ -16,14 +16,14 @@
  */
 
 import { appendFileSync, existsSync, readFileSync } from "node:fs";
-import { readFile, readdir, rename, rm, mkdir, stat } from "node:fs/promises";
+import { readdir, rename, rm, mkdir, stat } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { hashStorePath } from "./store-tenancy.js";
 import { onStoreOpen, setStoresGetter } from "./store-lifecycle.js";
 import { workspaceCwd } from "./workspace-context.js";
-import { errCode, splitLines } from "./utils.js";
-import { initHasher, contentChecksum, HASH_RE } from "./hashline/hash-assign.js";
+import { errCode } from "./utils.js";
+import { initHasher, HASH_RE } from "./hashline/hash-assign.js";
 import { HASH_STORE_VERSION, HASH_STORE_BUSY_TIMEOUT, SERVED_TTL_MS } from "./constants.js";
 import { DomainError } from "./domain-errors.js";
 import {
@@ -32,21 +32,10 @@ import {
   type SnapshotStore,
 } from "./snapshot-store/index.js";
 import { withBusyRetry } from "./store-retry.js";
+import { migrateLegacyStore } from "./snapshot-store/migrate.js";
 
 // ---- validators (owned here; the store's corruption handling uses them) ----
 
-/** The legacy JSON snapshot shape (pre-sqlite stores). */
-export interface LegacySnapshot {
-  content: string;
-  hashes: string[];
-}
-
-export function isValidSnapshot(value: unknown): value is LegacySnapshot {
-  if (typeof value !== "object" || value === null) return false;
-  const v = value as Record<string, unknown>;
-  if (typeof v.content !== "string") return false;
-  return isValidHashList(v.hashes);
-}
 
 /** A served-row array: per-position hash, or null for never-served slots. */
 export function isValidCanonsList(value: unknown): value is (string | null)[] {
@@ -1037,7 +1026,7 @@ async function openStore(storePath: string): Promise<HashStore> {
   const { db, stmts } = opened;
 
   if (!existed) {
-    await migrateLegacy(db, storePath);
+    await migrateLegacyStore(db, join(dirname(storePath), "hash-store.json"));
   }
   const snapshotStore = createSnapshotStore(db);
   const store = makeDomainStore(stmts, snapshotStore);
@@ -1114,66 +1103,6 @@ export function withStore(fn: () => void): void {
     });
   } else {
     fn();
-  }
-}
-
-async function migrateLegacy(db: DatabaseSync, storePath: string): Promise<void> {
-  const legacyPath = join(dirname(storePath), "hash-store.json");
-  let content: string;
-  try {
-    content = await readFile(legacyPath, "utf-8");
-  } catch (error: unknown) {
-    if (errCode(error) === "ENOENT") return;
-    console.error("Failed to read legacy hash store for migration:", error);
-    return;
-  }
-
-  let parsed: { snapshots?: Record<string, unknown> };
-  try {
-    parsed = JSON.parse(content) as typeof parsed;
-  } catch (error) {
-    console.error("Failed to parse legacy hash store, skipping migration:", error);
-    return;
-  }
-
-  const raw = parsed.snapshots;
-  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return;
-
-  const rows: [string, string, number, string, number][] = [];
-  for (const [key, value] of Object.entries(raw)) {
-    if (!isValidSnapshot(value)) continue;
-    if (new Set(value.hashes).size !== value.hashes.length) {
-      console.warn(
-        `Skipped legacy snapshot with duplicate hashes for ${key}; it will be re-hashed on next read.`,
-      );
-      continue;
-    }
-    rows.push([
-      key,
-      contentChecksum(value.content),
-      splitLines(value.content).length,
-      JSON.stringify(value.hashes),
-      Date.now(),
-    ]);
-  }
-  if (rows.length > 0) {
-    db.exec("BEGIN IMMEDIATE");
-    try {
-      const stmt = db.prepare(
-        "INSERT OR REPLACE INTO snapshots (path, checksum, line_count, hashes, updated_at) VALUES (?, ?, ?, ?, ?)",
-      );
-      for (const row of rows) stmt.run(...row);
-      db.exec("COMMIT");
-    } catch (e) {
-      db.exec("ROLLBACK");
-      throw e;
-    }
-  }
-
-  try {
-    await rename(legacyPath, `${legacyPath}.bak`);
-  } catch (error) {
-    console.error("Failed to rename legacy hash store after migration:", error);
   }
 }
 

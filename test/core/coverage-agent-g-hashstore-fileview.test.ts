@@ -8,7 +8,8 @@ describe("coverage-agent-g hash-store", () => {
   afterEach(() => vi.restoreAllMocks());
 
   it("validators", async () => {
-    const { isValidSnapshot, isValidServedList } = await import("../../src/hash-store.js");
+    const { isValidServedList } = await import("../../src/hash-store.js");
+    const { isValidSnapshot } = await import("../../src/snapshot-store/migrate.js");
     const { isValidHashList } = await import("../../src/snapshot-store/index.js");
     expect(isValidHashList(["abc"])).toBe(true);
     expect(isValidHashList("not-array")).toBe(false);
