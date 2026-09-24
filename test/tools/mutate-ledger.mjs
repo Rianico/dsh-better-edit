@@ -115,11 +115,11 @@ const T4R6 = {
 };
 /**
  * T5 cell titles (LRU snapshot vacuum). Corpus: `docs/adr/0021-lru-snapshot-vacuum.md`.
- * Expected RED sets were measured at the T5 implementation revision; re-run to re-derive.
  * Expected RED sets were measured at the T5 implementation revision `4d1bedc`; re-run to re-derive.
  * An `expected: []` entry is a measured GREEN mutant, diagnosed by one of: (1) a real gap, (2) the
  * mutation did not apply, (3) the claim was too strong, (4) another mechanism covered the effect
  * (T5M22/T5M26/T5M28: the FK cascade or the serve write's re-materialization, per the P1 matrix).
+ */
 const T5 = {
   window:
     "cell 01 per-path window: the oldest versions are evicted and their lineage goes with them",
