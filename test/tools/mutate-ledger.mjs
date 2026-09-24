@@ -314,7 +314,7 @@ const MUTANTS = {
   M6: {
     what: "re-add E_FOREIGN_ANCHOR to DEFERRED_PRODUCERS as a bare rot-marker string",
     scope: null, // full suite
-    expected: [T4R3.backward, T4R3.deleted],
+    expected: [T4R3.backward, T4R6.holdsPins, T4R3.deleted],
     edits: [
       {
         file: DOMAIN_ERRORS,
@@ -392,7 +392,7 @@ const MUTANTS = {
   M11: {
     what: "revert G1: scan producers without stripping comments",
     scope: null, // full suite
-    expected: [T4R5.commentFake],
+    expected: [T4R5.commentFake, T4R6.limitRegex],
     edits: [
       {
         file: ARCH_SCAN,

@@ -418,15 +418,15 @@ describe("arch: domain-error registry", () => {
   // “undeclared producer”), which is the trade we accept over a silent hide.
   it("DECLARED LIMIT (full oracle): a variable-held producer reports LOUD", () => {
     const findings = findingsAfterPlant((dest) => {
-      declareMember(dest, "E_HELD_R2");
+      declareMember(dest, "E_HELD_R");
       const file = join(dest, "domain-errors.ts");
       writeFileSync(
         file,
-        `${readFileSync(file, "utf-8")}\nconst HELD_CODE = "E_HELD_R2";\nvoid new DomainError(HELD_CODE, { cause: "held" });\n`,
+        `${readFileSync(file, "utf-8")}\nconst HELD_CODE = "E_HELD_R";\nvoid new DomainError(HELD_CODE, { cause: "held" });\n`,
         "utf-8",
       );
     });
-    expect(findings.undeclaredProducers).toContain("E_HELD_R2");
+    expect(findings.undeclaredProducers).toContain("E_HELD_R");
     // H6: the false RED is diagnosable, not confusing.
     expect(undeclaredProducerMessage(findings.undeclaredProducers)).toContain(
       UNDECLARED_PRODUCER_POINTER,
@@ -435,14 +435,14 @@ describe("arch: domain-error registry", () => {
 
   it("DECLARED LIMIT (full oracle): a .mjs producer reports LOUD", () => {
     const findings = findingsAfterPlant((dest) => {
-      declareMember(dest, "E_MJS_R2");
+      declareMember(dest, "E_MJS_R");
       writeFileSync(
         join(dest, "planted-producer.mjs"),
-        'new DomainError("E_MJS_R2", { cause: "mjs" });\n',
+        'new DomainError("E_MJS_R", { cause: "mjs" });\n',
         "utf-8",
       );
     });
-    expect(findings.undeclaredProducers).toContain("E_MJS_R2");
+    expect(findings.undeclaredProducers).toContain("E_MJS_R");
     // The scan covers *.ts by design (the PREMISE: a .mjs is never typechecked).
     expect(findings.files.some((file) => file.endsWith(".mjs"))).toBe(false);
   });
