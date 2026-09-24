@@ -604,6 +604,54 @@ function buildBatchAbort(file: string, parts: AbortPart[]): DomainError<"E_BATCH
   });
 }
 
+/** The `makeDomainStore` object behind the narrowed `HashStore` view. */
+function internalStore(store: HashStore): InternalHashStore {
+  // SAFETY: `loadHashStore` and `options.store` return the `makeDomainStore` object, which
+  // implements `InternalHashStore`; `HashStore` is its narrowed public view (the same cast
+  // session-view.ts documents for its served view).
+  return store as unknown as InternalHashStore;
+}
+
+/**
+ * The `line_id` -> line-number map for one buffer, or undefined when the store read throws.
+ * `undefined` means "no source": the unconditional position check keeps guarding the edit, never a
+ * weaker check. `positionsByIdentity` itself writes nothing.
+ */
+function identityPositions(
+  store: HashStore,
+  absolutePath: string,
+  content: string,
+): Map<number, number> | undefined {
+  try {
+    return internalStore(store).positionsByIdentity(absolutePath, content);
+  } catch {
+    return undefined;
+  }
+}
+
+/** The lease lookups over an already-resolved identity map. Nothing here writes. */
+function leaseSourceFrom(
+  store: HashStore,
+  sessionKey: string,
+  absolutePath: string,
+  positions: Map<number, number>,
+): LeaseSpanSource {
+  const internal = internalStore(store);
+  return {
+    leaseFor: (anchor) => {
+      const lease = internal.leaseFor(sessionKey, absolutePath, anchor);
+      if (lease === undefined) return undefined;
+      return {
+        lineId: lease.lineId,
+        servedLineNumber: lease.lineNumber,
+        servedSnapshotHash: lease.snapshotHash,
+        retiredAt: lease.retiredAt,
+      };
+    },
+    rebasedLineOf: (lineId) => positions.get(lineId),
+  };
+}
+
 /**
  * The read-only lease-identity source for one buffer, or undefined when it cannot be built.
  *
@@ -611,11 +659,8 @@ function buildBatchAbort(file: string, parts: AbortPart[]): DomainError<"E_BATCH
  * `positionsByIdentity` over the buffer the edit is applied to. Nothing is written: the edit path
  * never re-stamps a lease and never retires one.
  *
- * RESIDUAL (CP2-r2): for batch item k > 0 the buffer is in-memory and is not a committed snapshot,
- * so `positionsByIdentity` pairs `S_latest` against the working buffer. Correct for shifted and
- * moved lines, fail-closed (`E_STALE_RANGE`) for a row whose identity an earlier edit in the same
- * batch created, or that a duplicate canon makes ambiguous. CP2-r2's explicit working-buffer
- * identity map (`spliceWorkingBufferIds`) plus commit-from-map removes that conservative rejection.
+ * For a buffer that is not a committed snapshot — batch item k > 0 — the caller passes the map it
+ * already advanced (`leaseSourceFrom` + `spliceWorkingBufferIds`) rather than re-deriving it here.
  *
  * UPGRADE CONSEQUENCE: a session whose `served` rows predate lease granting (a pre-T2b store) holds
  * no lease for those anchors, so its first edit rejects and needs one re-read. Fail-closed and
@@ -627,30 +672,56 @@ export function makeLeaseSource(
   absolutePath: string,
   content: string,
 ): LeaseSpanSource | undefined {
-  try {
-    // SAFETY: `loadHashStore` and `options.store` return the `makeDomainStore` object, which
-    // implements `InternalHashStore`; `HashStore` is its narrowed public view (the same cast
-    // session-view.ts documents for its served view).
-    const internal = store as unknown as InternalHashStore;
-    const positions = internal.positionsByIdentity(absolutePath, content);
-    return {
-      leaseFor: (anchor) => {
-        const lease = internal.leaseFor(sessionKey, absolutePath, anchor);
-        if (lease === undefined) return undefined;
-        return {
-          lineId: lease.lineId,
-          servedLineNumber: lease.lineNumber,
-          servedSnapshotHash: lease.snapshotHash,
-          retiredAt: lease.retiredAt,
-        };
-      },
-      rebasedLineOf: (lineId) => positions.get(lineId),
-    };
-  } catch {
-    // Fail-closed: with no source the unconditional position check still guards the edit — the
-    // fallback is stricter, never weaker.
-    return undefined;
+  const positions = identityPositions(store, absolutePath, content);
+  if (positions === undefined) return undefined;
+  return leaseSourceFrom(store, sessionKey, absolutePath, positions);
+}
+
+/**
+ * Index -> `line_id` for a buffer, from the identity map. `null` is a line the batch created (or
+ * one the engine could not prove moved): it carries no identity to resolve against yet.
+ */
+function idsFromPositions(positions: Map<number, number>, lineCount: number): (number | null)[] {
+  const byPosition = new Map<number, number>();
+  for (const [lineId, lineNumber] of positions) byPosition.set(lineNumber, lineId);
+  return Array.from({ length: lineCount }, (_, index) => byPosition.get(index + 1) ?? null);
+}
+
+/** The inverse of `idsFromPositions` — the shape `rebasedLineOf` reads. */
+function positionsFromIds(ids: readonly (number | null)[]): Map<number, number> {
+  const positions = new Map<number, number>();
+  for (let index = 0; index < ids.length; index++) {
+    const lineId = ids[index];
+    if (lineId !== null && lineId !== undefined) positions.set(lineId, index + 1);
   }
+  return positions;
+}
+
+/**
+ * Advance the working-buffer identity map past one APPLIED item.
+ *
+ * Lines outside the item's resolved range keep their id — they only shifted, so the same identity
+ * lives at a new coordinate. The range's replacement lines become `null`: the batch created them, so
+ * they carry no identity to resolve against until a read leases them.
+ *
+ * WHY this map exists, and why dsh does NOT port upstream's commit-from-map half: resolution needs
+ * the working buffer's identities *during* the batch, and re-pairing `S_latest` against the
+ * intermediate buffer is ambiguous exactly when the batch introduced a duplicate canon — the map is
+ * the deterministic answer there. The COMMIT path is a different question and keeps re-pairing the
+ * final content against the latest snapshot, which is *more* identity-preserving than the map for a
+ * line inside a replaced range that survived byte-identical: re-pairing inherits it, while the map
+ * would assign `null` and force a re-read on the next edit. So the map is resolution-only by design.
+ */
+function spliceWorkingBufferIds(
+  ids: readonly (number | null)[],
+  rangeStart: number,
+  rangeEnd: number,
+  lineCount: number,
+): (number | null)[] {
+  const replaced = rangeEnd - rangeStart + 1;
+  const replacementCount = Math.max(lineCount - ids.length + replaced, 0);
+  const middle = Array.from({ length: replacementCount }, () => null);
+  return [...ids.slice(0, rangeStart - 1), ...middle, ...ids.slice(rangeEnd)];
 }
 
 /** The ambient store for the lease source, or undefined when it cannot be opened. */
@@ -700,12 +771,25 @@ export async function runFileEdits(
   const warnings: string[] = [];
 
   // The lease store is resolved once per file edit; the source itself is rebuilt per buffer (the
-  // pre-pass resolves against `originalNormalized`, each loop item against `currentContent`).
+  // pre-pass resolves against `originalNormalized`, each loop item against `currentContent` plus the
+  // working-buffer identity map below).
   const leaseStore = await loadLeaseStore();
-  const originalLeaseSource =
+  const originalPositions =
     leaseStore === undefined
       ? undefined
-      : makeLeaseSource(leaseStore, opts.sessionKey, absolutePath, originalNormalized);
+      : identityPositions(leaseStore, absolutePath, originalNormalized);
+  const originalLeaseSource =
+    leaseStore === undefined || originalPositions === undefined
+      ? undefined
+      : leaseSourceFrom(leaseStore, opts.sessionKey, absolutePath, originalPositions);
+  // The working-buffer identity map: index -> `line_id | null`, seeded from the same seam the
+  // resolution uses so resolution and any future commit cannot disagree. Advanced after each
+  // applied item; a length that disagrees with the buffer's line count falls back to
+  // `positionsByIdentity` — never to a guess.
+  let currentIds =
+    originalPositions === undefined
+      ? undefined
+      : idsFromPositions(originalPositions, splitLines(originalNormalized).length);
   let currentContent = originalNormalized;
   let currentHashes = originalHashes;
   let appliedCount = 0;
@@ -769,7 +853,9 @@ export async function runFileEdits(
     const leaseSource =
       leaseStore === undefined
         ? undefined
-        : makeLeaseSource(leaseStore, opts.sessionKey, absolutePath, currentContent);
+        : currentIds !== undefined && currentIds.length === splitLines(currentContent).length
+          ? leaseSourceFrom(leaseStore, opts.sessionKey, absolutePath, positionsFromIds(currentIds))
+          : makeLeaseSource(leaseStore, opts.sessionKey, absolutePath, currentContent);
     const applied = await applyOne(
       {
         content: currentContent,
@@ -872,6 +958,14 @@ export async function runFileEdits(
       removedHashes,
     };
     currentContent = applied.result;
+    if (currentIds !== undefined) {
+      currentIds = spliceWorkingBufferIds(
+        currentIds,
+        range.startLine,
+        range.endLine,
+        splitLines(applied.result).length,
+      );
+    }
     currentHashes = applied.hashes;
     clearNoopLoop(absolutePath);
     if (applied.anchorWarnings?.length) warnings.push(...applied.anchorWarnings);
