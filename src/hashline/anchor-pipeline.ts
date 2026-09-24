@@ -179,8 +179,8 @@ function fmtMismatchWithServes(
   if (notFound.length > 0) {
     headlines.push(
       // B: a well-formed all-digit anchor that does not resolve lands here;
-      // the numeric note steers away from line numbers. E_UNKNOWN_ANCHOR
-      // keeps the same note; T4 moves production there when it gains a producer.
+      // the numeric note steers away from line numbers (T4 deleted the
+      // E_UNKNOWN_ANCHOR declaration — this headline is now the note's only home).
       `${notFound.length} stale anchor${notFound.length > 1 ? "s" : ""}${filePath ? ` in ${filePath}` : ""}: ${refList}. Re-read for fresh anchors.${numericAnchorNote(notFound.map((m) => m.ref.hash))}`,
     );
     for (const m of notFound) {

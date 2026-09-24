@@ -58,9 +58,11 @@ function listSources(root: string): string[] {
 }
 
 function unionMembers(source: string, name: string): string[] {
-  // Strip comments first: a `;` inside prose (e.g. the RETIRING note) must
-  // not terminate the union block early and silently drop trailing members.
-  const bare = source.replace(/\/\/[^\n]*/g, "").replace(/\/\*[\s\S]*?\*\//g, "");
+  // Strip comments first: a `;` inside prose must not terminate the union
+  // block early and silently drop trailing members. `stripComments` is the
+  // string-literal-aware scanner (N2) — the naive regex version could also
+  // delete real source when a string held `//`.
+  const bare = stripComments(source);
   const block = new RegExp(`export type ${name} =([\\s\\S]*?);`).exec(bare);
   expect(block?.[1], `${name} union block parses`).toBeDefined();
   const members = [...block![1].matchAll(/"([EW]_[A-Z_]+)"/g)].map((m) => m[1]!);
@@ -157,6 +159,34 @@ function findRawHeaders(file: string, text: string): string[] {
   });
   return hits;
 }
+
+// A2′ (F10): the deferral is pinned BY IDENTITY, not by shape. An owner that
+// changes must touch this test, which makes the change deliberate instead of
+// silent.
+const DEFERRED_OWNERS = {
+  W_NEVER_SERVED_SHAPE: {
+    owner: "T6 (multi-window read / region-scoped serves)",
+    trigger: "region-scoped serves land",
+  },
+  W_SERVED_PREFIX_MISMATCH: {
+    owner: "T6 (multi-window read / region-scoped serves)",
+    trigger: "region-scoped serves land",
+  },
+} as const;
+
+// A3′ (F10): the keys the renderer actually reads. `formatError`/`formatWarning`
+// compose `[${spec.audience}] [${code}] ${spec.format(payload)}` and no other
+// field is touched (measured at `3f4aca6`: `.audience` → 3 readers, `.format`
+// → 2, `.remedy` → 0). Every other declared key must be listed below with an
+// owner and a trigger, so a NEW unrendered field fails immediately.
+const RENDERED_FIELDS = new Set(["audience", "format"]);
+const DECLARATION_ONLY_FIELDS = {
+  remedy: {
+    owner: "registry header — declaration-only (the WHY `remedy` is never rendered note)",
+    trigger:
+      "removed when remedy gains a renderer (then delete the entry), or the field itself is deleted",
+  },
+} as const;
 describe("arch: domain-error registry", () => {
   const files = listSources(SRC_ROOT);
   const registrySource = readFileSync(REGISTRY_FILE, "utf-8");
@@ -172,13 +202,49 @@ describe("arch: domain-error registry", () => {
     expect(missingWarnings, `undeclared producers: ${missingWarnings.join(", ")}`).toEqual([]);
   });
 
-  it("totality backward (shrink-only): deferred codes have no producer and name a ticket", () => {
+  it("totality backward: deferred codes name a ticket and a trigger", () => {
+    // Identity FIRST: every entry is pinned by value, so an owner change must
+    // touch this test. Shape checks are secondary — `/ticket/i` could not fail
+    // while a rot-marker string was present (decision-r1 §1), which is how
+    // "range-family ticket (leases)" survived a whole lane.
+    expect(DEFERRED_PRODUCERS).toEqual(DEFERRED_OWNERS);
     for (const code of deferred) {
       expect(
         produced.has(code),
         `${code} gained a producer — remove it from DEFERRED_PRODUCERS`,
       ).toBe(false);
-      expect(DEFERRED_PRODUCERS[code]).toMatch(/ticket/i);
+      expect(DEFERRED_PRODUCERS[code]!.owner, `${code} owner is ticket-shaped`).toMatch(/^T\d+/);
+      expect(
+        DEFERRED_PRODUCERS[code]!.trigger.trim().length,
+        `${code} trigger is non-empty`,
+      ).toBeGreaterThan(0);
+    }
+  });
+
+  // C9 (F10): the deletion is a commitment, not a tidy-up. The four names may
+  // live in PROSE — the `DEFERRED_PRODUCERS` doc comment is the record — never
+  // in code, so the scan strips comments first. The union half is what a ported
+  // upstream producer trips: the code must come back WITH its producer.
+  it("deleting a deferred code's producer *stays* deleted", () => {
+    const deleted = [
+      "E_UNKNOWN_ANCHOR",
+      "E_FOREIGN_ANCHOR",
+      "E_TARGET_LOST",
+      "E_UNVERIFIED_RANGE",
+    ] as const;
+    const offenders: string[] = [];
+    for (const file of files) {
+      const code = stripComments(readFileSync(file, "utf-8"));
+      for (const name of deleted) {
+        if (code.includes(name)) offenders.push(`${file}:${name}`);
+      }
+    }
+    expect(offenders, `re-declared without a producer: ${offenders.join(", ")}`).toEqual([]);
+    for (const name of deleted) {
+      expect(
+        isDomainErrorCode(name),
+        `${name} is a union member again — it must come back WITH a producer`,
+      ).toBe(false);
     }
   });
 
@@ -201,18 +267,44 @@ describe("arch: domain-error registry", () => {
     expect(offenders, `raw headers in: ${offenders.join(", ")}`).toEqual([]);
   });
 
-  it("remedy eligibility: the five remedy-free codes carry no remedy", () => {
-    for (const code of [
-      "E_UNKNOWN",
-      "E_UNKNOWN_ANCHOR",
-      "E_FOREIGN_ANCHOR",
-      "E_UNVERIFIED_RANGE",
-      "E_NOOP_LOOP",
-    ] as const) {
+  it("remedy eligibility: the remedy-free codes carry no remedy", () => {
+    for (const code of ["E_UNKNOWN", "E_NOOP_LOOP"] as const) {
       expect(
         "remedy" in ERROR_REGISTRY[code],
         `${code} must carry no remedy (see registry header docs for WHY)`,
       ).toBe(false);
+    }
+  });
+
+  // A3′/A4 (F10): FORWARD — every declared field is rendered or allowlisted
+  // with an owner+trigger; SHRINK-ONLY — an allowlisted field that gains a
+  // reader must leave the list. `remedy` is the only such field today
+  // (measured: `git grep -n -E '\.remedy' 3f4aca6 -- src` → 0 reads).
+  it("every registry field is rendered or declaration-only", () => {
+    const entries = [...Object.entries(ERROR_REGISTRY), ...Object.entries(WARNING_REGISTRY)];
+    for (const [code, spec] of entries) {
+      for (const key of Object.keys(spec)) {
+        expect(
+          RENDERED_FIELDS.has(key) || key in DECLARATION_ONLY_FIELDS,
+          `${code}.${key} is neither rendered nor declaration-only — render it, or add it to DECLARATION_ONLY_FIELDS with an owner+trigger`,
+        ).toBe(true);
+      }
+    }
+    for (const [field, entry] of Object.entries(DECLARATION_ONLY_FIELDS)) {
+      expect(entry.owner.trim().length, `${field} allowlist entry needs an owner`).toBeGreaterThan(
+        0,
+      );
+      expect(
+        entry.trigger.trim().length,
+        `${field} allowlist entry needs a trigger`,
+      ).toBeGreaterThan(0);
+      const readers = files.filter((file) =>
+        new RegExp(`\\.${field}\\b`).test(stripComments(readFileSync(file, "utf-8"))),
+      );
+      expect(
+        readers,
+        `${field} gained a reader (${readers.join(", ")}) — remove it from DECLARATION_ONLY_FIELDS`,
+      ).toEqual([]);
     }
   });
 

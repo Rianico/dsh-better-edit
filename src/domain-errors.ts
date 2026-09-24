@@ -15,13 +15,15 @@
  * test/arch/domain-error-registry.test.ts. This is what makes the registry a
  * contract instead of a list.
  *
- * COUNT DEVIATION (F4, ratified): this registry carries 26 E_* members, not
- * upstream's 19. Upstream has no str_replace_editor shadow; the six shadow
- * codes (E_BLIND_REPLACE, E_UNSUPPORTED, E_BAD_COMMAND, E_FILE_EXISTS,
+ * COUNT DEVIATION (F4, ratified): this registry's E_* vocabulary is larger
+ * than upstream's 19. Upstream has no str_replace_editor shadow; the six
+ * shadow codes (E_BLIND_REPLACE, E_UNSUPPORTED, E_BAD_COMMAND, E_FILE_EXISTS,
  * E_NO_MATCH, E_AMBIGUOUS_MATCH) are live model-facing contract per accepted
- * ADR-0015, plus E_UNSERVED_RANGE which a later ticket retires. A closed
+ * ADR-0015, and E_UNSERVED_RANGE is live contract too (T4 declined its
+ * retirement — its producers are reachable, CP1 H1 → `SR@790`). A closed
  * vocabulary that omits live codes is not closed — it just pushes them
- * outside the contract.
+ * outside the contract (T4 also deleted four declarations that had no local
+ * producer at all; see `DEFERRED_PRODUCERS`).
  * WHY payloads carry facts, not pre-baked strings: the producer already holds
  * the evidence (line numbers, hashes, paths, counts), so the registry owns the
  * neutral sentence and the producer passes values. The one deliberate
@@ -35,12 +37,6 @@
  * intent-guessing suggestion steers the model's next action. Remedy-free by
  * rule (no `remedy` field on the registry entry):
  * - `E_UNKNOWN`: no cause is knowable at all.
- * - `E_UNKNOWN_ANCHOR`: wrong path, wrong anchors and wrong session are
- *   indistinguishable, so any suggestion would steer on a guess.
- * - `E_FOREIGN_ANCHOR`: the sibling path is the actionable fact and presumes
- *   nothing about which side is wrong.
- * - `E_UNVERIFIED_RANGE`: the served rows are the information and the model
- *   decides from them, so no retry mandate.
  * - `E_NOOP_LOOP`: the refusal's evidence pins the fact (the range already
  *   contains the text) but not the model's intent, so a remedy clause would
  *   dress a status fact as an action.
@@ -77,11 +73,7 @@ export type DomainErrorCode =
   | "E_BAD_PAYLOAD"
   | "E_EMPTY_RANGE"
   | "E_STALE_ANCHOR"
-  | "E_UNKNOWN_ANCHOR"
-  | "E_FOREIGN_ANCHOR"
   | "E_STALE_RANGE"
-  | "E_TARGET_LOST"
-  | "E_UNVERIFIED_RANGE"
   | "E_MALFORMED_ANCHOR"
   | "E_SUSPICIOUS_TEXT"
   | "E_BATCH_ABORT"
@@ -94,8 +86,6 @@ export type DomainErrorCode =
   | "E_UNDO_NOT_RECORDED"
   | "E_UNKNOWN"
   | "E_LARGE_FILE"
-  // RETIRING: E_UNSERVED_RANGE is still produced by the served-verification
-  // seam; the range-family ticket retires it (never-served → E_UNVERIFIED_RANGE).
   | "E_UNSERVED_RANGE"
   // SHADOW (F4): the str_replace_editor shadow's live model-facing contract
   // (accepted ADR-0015) — blind observation, unimplemented op, bad command,
@@ -136,15 +126,6 @@ export interface ErrorPayloadMap {
     servedBlock?: string;
     cause?: RangeCause;
   };
-  E_UNKNOWN_ANCHOR: {
-    path: string;
-    anchors: string[];
-  };
-  E_FOREIGN_ANCHOR: {
-    path: string;
-    anchors: string[];
-    homes: string[];
-  };
   E_STALE_RANGE: {
     headline: string;
     servedRows: ServedRow[];
@@ -165,18 +146,6 @@ export interface ErrorPayloadMap {
      * (T4 CP1-r2 §5: the next ticket that touches this contract).
      */
     reread?: boolean;
-  };
-  E_TARGET_LOST: {
-    servedLine: number;
-    path?: string;
-    cause: RangeCause;
-    firstOffendingLine?: number;
-  };
-  E_UNVERIFIED_RANGE: {
-    servedRows: ServedRow[];
-    servedBlock: string;
-    cause: RangeCause;
-    firstOffendingLine?: number;
   };
   E_MALFORMED_ANCHOR: {
     rawAnchor: string;
@@ -468,36 +437,6 @@ export function numericAnchorNote(anchors: string[]): string {
   );
 }
 
-function unknownAnchorFormat(payload: ErrorPayloadMap["E_UNKNOWN_ANCHOR"]): string {
-  const anchors = payload.anchors;
-  if (anchors.length === 1) {
-    return `${payload.path} has not served the anchor "${anchors[0]}"; nothing was written.${numericAnchorNote(anchors)}`;
-  }
-  if (anchors.length === 0) {
-    return `${payload.path} has not served an anchor; nothing was written.`;
-  }
-  return `${payload.path} has not served the anchors ${anchors.map((a) => `"${a}"`).join(", ")}; nothing was written.${numericAnchorNote(anchors)}`;
-}
-
-function foreignHomesDisplay(homes: string[]): string {
-  if (homes.length <= 3) return homes.join(", ");
-  return `${homes.slice(0, 3).join(", ")} and ${homes.length - 3} more`;
-}
-
-function foreignAnchorFormat(payload: ErrorPayloadMap["E_FOREIGN_ANCHOR"]): string {
-  const anchors = payload.anchors;
-  const noun =
-    anchors.length === 1
-      ? `the anchor "${anchors[0]}"`
-      : `the anchors ${anchors.map((a) => `"${a}"`).join(", ")}`;
-  const verb = anchors.length === 1 ? "is" : "are";
-  const homes = foreignHomesDisplay(payload.homes);
-  if (homes.length === 0) {
-    return `${noun} ${verb} inconsistent with ${payload.path}; nothing was written.`;
-  }
-  return `${noun} ${verb} inconsistent with ${payload.path}; served for ${homes}; nothing was written.`;
-}
-
 const BATCH_ATOMICITY_TRAILER =
   "The whole batch was rejected and NOTHING was written — no file changed and earlier items in the batch were NOT applied.";
 
@@ -566,30 +505,9 @@ export const ERROR_REGISTRY: { [K in DomainErrorCode]: CodeSpec<ErrorPayloadMap[
     // so the only fail-closed recovery is a read.
     remedy: "Read the file again for fresh anchors, then retry.",
   },
-  E_UNKNOWN_ANCHOR: {
-    audience: "MODEL",
-    format: unknownAnchorFormat,
-  },
-  E_FOREIGN_ANCHOR: {
-    audience: "MODEL",
-    format: foreignAnchorFormat,
-  },
   E_STALE_RANGE: {
     audience: "MODEL",
     format: staleRangeFormat,
-  },
-  E_TARGET_LOST: {
-    audience: "MODEL",
-    format: ({ servedLine, path }) =>
-      `line ${servedLine}${path ? ` in ${path}` : ""} no longer resolves to the line identity it was served with.\n` +
-      `The line you targeted was deleted or replaced; your anchors describe a version of this file that no longer exists. Read the file and re-target.`,
-    // WHY remedy: the leased identity is gone with no surviving window to serve — recovery is a read.
-    remedy: "Read the file and re-target.",
-  },
-  E_UNVERIFIED_RANGE: {
-    audience: "MODEL",
-    format: ({ servedBlock }) =>
-      `a bound of this range no longer resolves to the line identity it was served with.\nCurrent range (fresh read):\n${servedBlock}`,
   },
   E_MALFORMED_ANCHOR: {
     audience: "MODEL",
@@ -893,12 +811,39 @@ export function isDomainWarningCode(code: unknown): code is DomainWarningCode {
  * Codes declared by the contract but produced by a later ticket. Shrink-only:
  * a code that gains a producer MUST be removed from this map (the arch oracle
  * fails otherwise).
+ *
+ * Upstream parity is NOT a reason to keep a code nothing can produce — and it
+ * is not a reason to hide one either. T4 (CP1-r3) removed four declarations
+ * that had zero local producers, zero reachable messages and no nameable local
+ * owner; their upstream producers exist only in the range our next absorb
+ * covers, so the four are recorded here instead of declared:
+ *
+ * | unported upstream diagnostic | upstream producer (pi-better-edit@00f8c34) |
+ * |---|---|
+ * | `E_FOREIGN_ANCHOR` | `lease-resolve.ts:116` |
+ * | `E_UNKNOWN_ANCHOR` | `lease-resolve.ts:118`, `served-verification.ts:745`, `apply.ts:278` |
+ * | `E_UNVERIFIED_RANGE` | `lease-resolve.ts:186`, `served-verification.ts:187` |
+ * | `E_TARGET_LOST` | `served-verification.ts:170` |
+ *
+ * Their owner is `"upstream absorb"` and their trigger is the absorb that
+ * ports the corresponding producer. When that happens, reintroduce the code
+ * WITH its producer: the union member is gone, so the port will not compile
+ * until the absorber records a per-code decision (adopt the upstream
+ * diagnostic, or map it onto `E_STALE_RANGE` / `E_UNSERVED_RANGE` /
+ * `E_STALE_ANCHOR`). `docs/absorption-plan.md` ("Debt — T4 …") carries the
+ * same record for the next absorb.
+ *
+ * The `owner`/`trigger` values below are pinned BY IDENTITY in
+ * `test/arch/domain-error-registry.test.ts` (A2′), so changing an owner is a
+ * deliberate edit that must touch the test — never a silent one.
  */
-export const DEFERRED_PRODUCERS: Readonly<Record<string, string>> = {
-  E_UNKNOWN_ANCHOR: "range-family ticket (leases)",
-  E_FOREIGN_ANCHOR: "range-family ticket (leases)",
-  E_TARGET_LOST: "range-family ticket (leases)",
-  E_UNVERIFIED_RANGE: "range-family ticket (leases)",
-  W_NEVER_SERVED_SHAPE: "range-family ticket (region-scoped serves)",
-  W_SERVED_PREFIX_MISMATCH: "range-family ticket (region-scoped serves)",
+export const DEFERRED_PRODUCERS: Readonly<Record<string, { owner: string; trigger: string }>> = {
+  W_NEVER_SERVED_SHAPE: {
+    owner: "T6 (multi-window read / region-scoped serves)",
+    trigger: "region-scoped serves land",
+  },
+  W_SERVED_PREFIX_MISMATCH: {
+    owner: "T6 (multi-window read / region-scoped serves)",
+    trigger: "region-scoped serves land",
+  },
 };

@@ -77,6 +77,15 @@ const T4 = {
   archFields: "both range payload-map entries declare reread?: boolean",
 };
 
+/** T4 CP1-r3 cell titles (arch registry oracle + the numeric-note end-to-end cell). */
+const T4R3 = {
+  forward: "totality forward: every code is produced or deferred",
+  backward: "totality backward: deferred codes name a ticket and a trigger",
+  fields: "every registry field is rendered or declaration-only",
+  deleted: "deleting a deferred code's producer *stays* deleted",
+};
+const ARCH_REGISTRY = "test/arch/domain-error-registry.test.ts";
+
 /** Shared pre-edit for the three `recordServed` mutants. */
 const SESS_IMPORT = {
   file: ENGINE,
@@ -270,6 +279,74 @@ const MUTANTS = {
           "    /** Same rule as `E_STALE_RANGE.reread`: true omits the retry hint. */\n" +
           "    rereadRemoved?: boolean;\n" +
           '    unservedKind: "boundary" | "interior";',
+      },
+    ],
+  },
+  M6: {
+    what: "re-add E_FOREIGN_ANCHOR to DEFERRED_PRODUCERS as a bare rot-marker string",
+    scope: null, // full suite
+    expected: [T4R3.backward, T4R3.deleted],
+    edits: [
+      {
+        file: DOMAIN_ERRORS,
+        old:
+          "export const DEFERRED_PRODUCERS: Readonly<\n" +
+          "  Record<string, { owner: string; trigger: string }>\n" +
+          "> = {\n" +
+          "  W_NEVER_SERVED_SHAPE: {",
+        new:
+          "export const DEFERRED_PRODUCERS: Readonly<\n" +
+          "  Record<string, { owner: string; trigger: string } | string>\n" +
+          "> = {\n" +
+          '  E_FOREIGN_ANCHOR: "range-family ticket (leases)",\n' +
+          "  W_NEVER_SERVED_SHAPE: {",
+      },
+    ],
+  },
+  M7: {
+    what: "re-add E_TARGET_LOST as a union member with no producer and no deferral",
+    scope: null, // full suite
+    expected: [T4R3.forward, T4R3.deleted],
+    edits: [
+      {
+        file: DOMAIN_ERRORS,
+        old: '  | "E_STALE_RANGE"\n  | "E_MALFORMED_ANCHOR"',
+        new: '  | "E_STALE_RANGE"\n  | "E_TARGET_LOST"\n  | "E_MALFORMED_ANCHOR"',
+      },
+    ],
+  },
+  M8: {
+    what: "delete DECLARATION_ONLY_FIELDS while `remedy` still has no reader",
+    scope: null, // full suite
+    expected: [T4R3.fields],
+    edits: [
+      {
+        file: ARCH_REGISTRY,
+        old:
+          "const DECLARATION_ONLY_FIELDS = {\n" +
+          "  remedy: {\n" +
+          '    owner: "registry header — declaration-only (the WHY `remedy` is never rendered note)",\n' +
+          "    trigger:\n" +
+          '      "removed when remedy gains a renderer (then delete the entry), or the field itself is deleted",\n' +
+          "  },\n" +
+          "} as const;",
+        new: "const DECLARATION_ONLY_FIELDS = {} as const;",
+      },
+    ],
+  },
+  M9: {
+    what: "add a `remedy` reader (append it in staleAnchorFormat) without de-allowlisting it",
+    scope: null, // full suite
+    expected: [T4R3.fields],
+    edits: [
+      {
+        file: DOMAIN_ERRORS,
+        old:
+          "  if (!payload.servedBlock) return payload.headline;\n" +
+          "  return `${payload.headline}\\n\\n${payload.servedBlock}`;\n}",
+        new:
+          "  if (!payload.servedBlock) return payload.headline;\n" +
+          '  return `${payload.headline}\\n\\n${payload.servedBlock}\\n${ERROR_REGISTRY.E_STALE_ANCHOR.remedy ?? ""}`;\n}',
       },
     ],
   },

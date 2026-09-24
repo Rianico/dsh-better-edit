@@ -83,3 +83,31 @@
 | **T4 — epoch full-read gating**        | `absorb/t4-epoch`       | #48   | `3918292`                       | `read-and-serve.ts` (`clearDriftReported` gate), `mutation.ts` zero-serve check | partial preserves drift-reported; full clears; `typecheck+vitest` green                              |
 
 Integration: merge T1→T2→T3→T4 onto `main` sequentially (T1 first — it renames codes the others touch), `npm run build` on final lane, single PR per ticket with `Closes #NN`.
+
+## Debt — T4 (CP1-r3): four declaration-only codes
+
+### Debt — T4 deleted four declaration-only codes; the next absorb reintroduces them WITH producers
+
+Upstream `00f8c341574de69a980b3d8de168a080a860e42e` (pi-better-edit v2.2.0+1) produces six codes that **do not
+exist at the last absorbed checkpoint `87a17ebf14a1d980015b721a4fc7082d4c3b9635` (v1.6.0)** — whole-tree
+`git grep` for each of the six is **0** at that revision. Producer lines at `00f8c34`:
+
+| code                       | upstream producer                                                                                             |
+| -------------------------- | ------------------------------------------------------------------------------------------------------------- |
+| `E_FOREIGN_ANCHOR`         | `src/hashline/lease-resolve.ts:116` (`throw new DomainError`)                                                 |
+| `E_UNKNOWN_ANCHOR`         | `src/hashline/lease-resolve.ts:118`, `src/hashline/served-verification.ts:745`, `src/hashline/apply.ts:278`   |
+| `E_UNVERIFIED_RANGE`       | `src/hashline/lease-resolve.ts:186` (`code:`), `src/hashline/served-verification.ts:187` (`ServedCode` union) |
+| `E_TARGET_LOST`            | `src/hashline/served-verification.ts:170` (builder `return new DomainError("E_TARGET_LOST", …)`)              |
+| `W_NEVER_SERVED_SHAPE`     | `src/hashline/served-guard.ts:279` (`formatWarning`)                                                          |
+| `W_SERVED_PREFIX_MISMATCH` | `src/hashline/served-guard.ts:202`, `:219` (`formatWarning`)                                                  |
+
+T4 (CP1-r3) **deleted** the four `E_*` declarations from `src/domain-errors.ts` (0 local producers, 0 `docs/`
+hits, no nameable owner in the T1–T8 map) and **kept** the two `W_*` behind
+`DEFERRED_PRODUCERS = { owner: "T6 (multi-window read / region-scoped serves)", trigger: "region-scoped serves land" }`.
+
+**Instruction for the next absorb (`87a17eb..upstream/HEAD`):** when these producers are ported, **reintroduce
+each code WITH its producer — never as a bare declaration.** The union members are gone, so a ported producer
+will not compile until the absorber records a per-code decision, here: (i) _adopt_ the upstream diagnostic
+(re-add registry entry + payload map + union member + producer), or (ii) _map_ it onto the local family
+(`E_STALE_RANGE` / `E_UNSERVED_RANGE` / `E_STALE_ANCHOR`, ADR-0018/0019/0020). Do not leave this file silent
+about which was chosen.
