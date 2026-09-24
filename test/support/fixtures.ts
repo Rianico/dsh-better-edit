@@ -290,6 +290,7 @@ export function setupIntegrationTest(cwd: string, io: FileIO = localIO()) {
     getTool: (name: string) => (tools as Record<string, unknown>)[name],
     readTool: tools.read,
     editTool: tools.edit,
+    undoTool: tools.undo_last_edit,
   };
 }
 

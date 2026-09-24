@@ -91,6 +91,7 @@ export type DomainErrorCode =
   | "E_NOT_FOUND"
   | "E_UNDO_STALE"
   | "E_UNDO_UNAVAILABLE"
+  | "E_UNDO_NOT_RECORDED"
   | "E_UNKNOWN"
   | "E_LARGE_FILE"
   // RETIRING: E_UNSERVED_RANGE is still produced by the served-verification
@@ -244,6 +245,9 @@ export interface ErrorPayloadMap {
   E_UNDO_UNAVAILABLE: {
     path: string;
     batch?: boolean;
+  };
+  E_UNDO_NOT_RECORDED: {
+    path: string;
   };
   E_UNKNOWN: {
     errorName: string;
@@ -617,6 +621,17 @@ export const ERROR_REGISTRY: { [K in DomainErrorCode]: CodeSpec<ErrorPayloadMap[
       reason === "deleted"
         ? `cannot undo on ${path}: file no longer exists.`
         : `cannot undo on ${path}: file modified after edit — undo would overwrite changes.`,
+  },
+  E_UNDO_NOT_RECORDED: {
+    audience: "MODEL",
+    format: ({ path }) =>
+      `Reverted ${path} on disk, but the hash store could not record the revert — the previous ` +
+      `undo history is still in place and the stored snapshot still describes the pre-revert file. ` +
+      `The file no longer matches the recorded post-edit content, so the next undo_last_edit ` +
+      `clears that history as stale.`,
+    // WHY remedy: the file is already reverted and the pair is intact; the next undo reconciles
+    // the pair against the reverted file and terminates, so no store repair is required.
+    remedy: "Re-read the file; the next undo_last_edit will clear the stale history.",
   },
   E_UNDO_UNAVAILABLE: {
     audience: "MODEL",

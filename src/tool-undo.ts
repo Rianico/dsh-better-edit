@@ -9,10 +9,10 @@ import type { Context } from "@deepseek-ai/cordis";
 import { defineTool } from "@deepseek-ai/dsh-tools";
 import { toLF, stripBOM, genDiff, restoreEndings } from "./edit-diff.js";
 import { cntDiff, splitLines, codeOf } from "./utils.js";
-import { formatError } from "./domain-errors.js";
+import { DomainError, formatError } from "./domain-errors.js";
 import { assertUndoRequest } from "./contract.js";
 import { normalizeRequest as normReq } from "./contract.js";
-import { upsertSnapshotFor } from "./hash-store.js";
+import { loadHashStore, withStore } from "./hash-store.js";
 import { canon, contentChecksum } from "./hashline/hash-assign.js";
 import { lineHashes } from "./hashline/hash.js";
 import { changedRange } from "./hashline/anchor-pipeline.js";
@@ -151,19 +151,28 @@ export function buildUndoTool(io: FileIO, sandbox: FsSandboxController) {
           throw sandbox.mapError(error, sandboxPolicy);
         }
 
+        // The file is reverted; the store pair must move as ONE unit: the snapshot/lineage
+        // adopt (`upsertSnapshot`) and the undo-pair clear (`deleteUndoPair`) are both-or-neither.
+        // `withStore` routes both calls through the store's single re-entrant transaction owner
+        // (the store was just loaded for this workspace, so `currentStore()` is that same handle).
+        // Fail loud: a cleared pair over an un-adopted snapshot is a desync no later read/edit can see.
+        const store = await loadHashStore();
         try {
-          await upsertSnapshotFor(
-            absolutePath,
-            contentChecksum(undo.content),
-            splitLines(undo.content).length,
-            restoredHashes,
-            undo.content,
-          );
+          withStore(() => {
+            store.upsertSnapshot(
+              absolutePath,
+              contentChecksum(undo.content),
+              splitLines(undo.content).length,
+              restoredHashes,
+              undo.content,
+            );
+            store.deleteUndoPair(absolutePath);
+          });
         } catch (error) {
-          console.error("Failed to restore hash store snapshot after undo:", error);
+          // Not a swallow: the raw cause is logged for diagnosis, then the tool fails loud.
+          console.error("Failed to record the undo restore in the hash store:", error);
+          throw new DomainError("E_UNDO_NOT_RECORDED", { path });
         }
-
-        await clearUndo(absolutePath);
 
         const parts: string[] = [`Undone last edit on ${path}.`];
         if (linesAddedByEdit > 0 || linesRemovedByEdit > 0) {
