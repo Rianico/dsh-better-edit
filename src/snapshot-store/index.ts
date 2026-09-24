@@ -101,7 +101,7 @@ export function createSnapshotStore(db: DatabaseSync): SnapshotStore {
 
 // WHY: the vacuum budgets are the store's retention policy constants, so the module entry keeps
 // them on the public surface; consumers must never reach into the eviction module directly.
-export { vacuumSnapshots } from "./vacuum.js";
+export { reportVacuum, vacuumSnapshots } from "./vacuum.js";
 export type { VacuumOptions, VacuumResult } from "./vacuum.js";
 export {
   VACUUM_GLOBAL_BUDGET_BYTES,

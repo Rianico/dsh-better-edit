@@ -56,6 +56,12 @@ export interface VacuumResult {
   deferredBytes: number;
   /** Whether that deferred overflow exceeds the tolerated soft cap (spec §3.6.1). */
   overSoftOverflow: boolean;
+  /**
+   * True when this call found `db.isTransaction` and therefore swept nothing. A skip is NOT a
+   * clean sweep: every counter is zero, but the zero means "deferred to the next outermost
+   * boundary", so callers must report it as a skip rather than as "nothing to do".
+   */
+  skippedInTransaction: boolean;
 }
 
 interface VacuumSnapshotRow {
@@ -142,31 +148,59 @@ function perPathRetention(newestLineCount: number): number {
   return Math.min(VACUUM_MAX_SNAPSHOTS_PER_PATH, Math.max(VACUUM_MIN_SNAPSHOTS_PER_PATH, window));
 }
 
-// WHY — soft-overflow throttle (spec §3.6.1): the vacuum runs after every authoritative
-// materialization and at store open, so an unthrottled warning would fire on every read and edit
-// while the store stays over the soft cap. The rule is transition-in per store instance: warn only
-// on the false → true transition for a given `DatabaseSync`, stay silent while the overflow
-// persists, and re-arm when a pass reports no overflow. Observability only: never throws, never
-// evicts, never alters the caller's result.
-const softOverflowWarnedByDb = new WeakMap<DatabaseSync, boolean>();
+// WHY — report throttles (spec §3.6.1): the vacuum runs after every authoritative materialization
+// and at store open, so an unthrottled warning would fire on every read and edit while the store
+// stays over the soft cap — and a nested materialization skips on every read. Two transition-in
+// sets keyed by `context` (the stable `<store>:<site>` identity the callers pass): the overflow
+// warn fires on the false → true transition and re-arms when a pass reports no deferred bytes; the
+// skip warn fires once per context, because a skip is a property of the call site, not of the
+// store's byte state. Observability only: never throws, never evicts, never alters the result.
+// BOUND (A2): each ledger holds at most `REPORT_CONTEXT_CAP` contexts and evicts the oldest inserted
+// first, so the state is capped rather than unbounded across distinct store paths. A process that
+// touches more distinct `(store, site)` contexts than the cap can re-report an evicted context once
+// — observability only, and strictly cheaper than the leak an unbounded global Set would be.
+const REPORT_CONTEXT_CAP = 256;
+const overflowReported = new Map<string, true>();
+const skipReported = new Map<string, true>();
+
+/** Insert `context` into a capped ledger, dropping the oldest entry once the cap is reached. */
+function rememberReported(ledger: Map<string, true>, context: string): void {
+  if (ledger.size >= REPORT_CONTEXT_CAP) {
+    const oldest = ledger.keys().next();
+    if (oldest.done !== true) ledger.delete(oldest.value);
+  }
+  ledger.set(context, true);
+}
 
 /**
- * Emit the one operator-visible soft-overflow warning for a vacuum pass. Warns only when
- * `result.overSoftOverflow` holds and only on the transition into that state for the given store
- * instance; silent otherwise. Never throws: a diagnostic failure must not fail the caller.
+ * The single report owner for a vacuum pass: every trigger calls this with the module's result and
+ * its stable context. A `skippedInTransaction` pass is reported as a skip — never as a zero
+ * result — so "0 bytes deferred" can never be read as "nothing to do". A swept pass is reported
+ * when it deferred bytes or crossed the soft cap. Never throws: a diagnostic failure must not fail
+ * the caller.
  */
-function reportVacuumSoftOverflow(db: DatabaseSync, result: VacuumResult): void {
+export function reportVacuum(result: VacuumResult, context: string): void {
   try {
-    if (!result.overSoftOverflow) {
-      softOverflowWarnedByDb.set(db, false);
+    if (result.skippedInTransaction) {
+      if (skipReported.has(context)) return;
+      rememberReported(skipReported, context);
+      console.warn(
+        `dsh-better-edit: snapshot vacuum skipped inside an open transaction (${context}) — the ` +
+          `sweep owns its transaction and runs at the next outermost boundary.`,
+      );
       return;
     }
-    if (softOverflowWarnedByDb.get(db) === true) return;
-    softOverflowWarnedByDb.set(db, true);
+    if (result.deferredBytes <= 0 && !result.overSoftOverflow) {
+      overflowReported.delete(context);
+      return;
+    }
+    if (overflowReported.has(context)) return;
+    rememberReported(overflowReported, context);
     console.warn(
-      `dsh-better-edit: snapshot vacuum soft overflow: totalBytes=${result.totalBytes} ` +
-        `pinnedBytes=${result.pinnedBytes} deferredBytes=${result.deferredBytes} — pinned ` +
-        `snapshots are never evicted and this state is expected to lapse as leases expire.`,
+      `dsh-better-edit: snapshot vacuum soft overflow (${context}): ` +
+        `totalBytes=${result.totalBytes} pinnedBytes=${result.pinnedBytes} ` +
+        `deferredBytes=${result.deferredBytes} — pinned snapshots are never evicted and this ` +
+        `state is expected to lapse as leases expire.`,
     );
   } catch {
     // SAFETY: observability only — a broken diagnostic sink must never fail the caller.
@@ -184,6 +218,23 @@ function reportVacuumSoftOverflow(db: DatabaseSync, result: VacuumResult): void 
  * on an empty store.
  */
 export function vacuumSnapshots(db: DatabaseSync, options: VacuumOptions = {}): VacuumResult {
+  // WHY — the guard is about ATOMICITY, not nesting safety (TM probe M1): the `withTransaction`
+  // below would nest cleanly inside a caller-owned unit — it joins it — but the caller's later
+  // COMMIT then commits a partially applied sweep if any statement between the first and the last
+  // delete fails (measured: a mid-loop ABORT inside a caller unit leaves the pair invariant broken
+  // — `lineageLessSnapshots = 1` — even after COMMIT; the same ABORT at the outermost boundary
+  // rolls the whole sweep back). Deferring keeps every sweep one atomic unit; the result says so,
+  // so the deferral is visible instead of reading as a clean sweep.
+  if (db.isTransaction) {
+    return {
+      evicted: 0,
+      totalBytes: 0,
+      pinnedBytes: 0,
+      deferredBytes: 0,
+      overSoftOverflow: false,
+      skippedInTransaction: true,
+    };
+  }
   const now = Date.now();
   const stmts = vacuumStmts(db);
   const rows = stmts.listSnapshots();
@@ -193,6 +244,7 @@ export function vacuumSnapshots(db: DatabaseSync, options: VacuumOptions = {}): 
     pinnedBytes: 0,
     deferredBytes: 0,
     overSoftOverflow: false,
+    skippedInTransaction: false,
   };
   if (rows.length === 0) return empty;
 
@@ -241,18 +293,31 @@ export function vacuumSnapshots(db: DatabaseSync, options: VacuumOptions = {}): 
     pinnedBytes,
     deferredBytes,
     overSoftOverflow: deferredBytes > VACUUM_SOFT_OVERFLOW_BYTES - VACUUM_GLOBAL_BUDGET_BYTES,
+    skippedInTransaction: false,
   };
-  reportVacuumSoftOverflow(db, result);
   return result;
 }
 
 /**
  * Delete the evicted snapshots and their lineage in one transaction. `withTransaction` is the
- * store's single re-entrant owner: at the outermost materialization boundary this opens its own
- * `BEGIN IMMEDIATE`; invoked inside a caller-owned unit it joins instead of raising
- * "cannot start a transaction within a transaction". The explicit `line_lineage` delete comes
- * first: the FK cascade covers FK-on openers, but `:memory:` test openers do not enable
- * `foreign_keys`, so the pair must hold for any opener.
+ * store's single re-entrant owner: at the outermost boundary it opens its own `BEGIN IMMEDIATE`;
+ * invoked inside a caller-owned unit it joins that unit instead of raising "cannot start a
+ * transaction within a transaction" — nesting-safe, which is exactly why `vacuumSnapshots`
+ * refuses to run inside a unit at all (M1: a joined sweep can be partially committed by its
+ * caller). The explicit `line_lineage` delete comes first — child before parent. MEASURED (P1):
+ * node:sqlite enables `enableForeignKeyConstraints` by default AND `hash-store` sets `PRAGMA
+ * foreign_keys = ON`, so on every opener in use the `line_lineage → file_snapshots` cascade would
+ * remove these rows anyway. The explicit delete is kept as belt-and-braces — measured to remove
+ * `1 → 0` lineage rows per eviction, i.e. it is not a delete that deletes nothing — so the pair
+ * invariant does not depend on a per-connection pragma. Dropping it is therefore masked by the
+ * cascade on every current opener (GREEN meaning 4, P1 matrix), never evidence that it is dead.
+ *
+ * Do NOT add a repair here for the mirror shape — a `file_snapshots` row with no `line_lineage`
+ * rows, the codebase's "orphan snapshot row": the adopt/serve path already detects, warns about
+ * and repairs it (the lineage adopt branch, `src/hash-store.ts:838-851`), proven by
+ * `test/core/hash-store.test.ts:1665-1706` ("keep the snapshot row, empty the lineage" → served
+ * anchors + lease + `lineage: 2` + a "repairing corrupt lineage" warning). An eager repair in this
+ * module would make a second owner that can disagree with the first while both appear to work.
  */
 function deleteVacuumSnapshots(db: DatabaseSync, stmts: VacuumStmts, snapshotIds: number[]): void {
   withTransaction(db, () => {

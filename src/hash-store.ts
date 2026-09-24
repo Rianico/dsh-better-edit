@@ -29,8 +29,10 @@ import { DomainError } from "./domain-errors.js";
 import {
   createSnapshotStore,
   isValidHashList,
+  reportVacuum,
   vacuumSnapshots as runVacuumSnapshots,
   type SnapshotStore,
+  type VacuumResult,
 } from "./snapshot-store/index.js";
 import { withBusyRetry } from "./store-retry.js";
 import { migrateLegacyStore } from "./snapshot-store/migrate.js";
@@ -207,8 +209,11 @@ export interface HashStore {
   // ---- maintenance ---------------------------------------------------------
   /** Delete every row family's entries for paths that no longer exist on disk. */
   pruneMissing(): Promise<void>;
-  /** Run the snapshot retention pass (the store-open boundary); reports its own soft overflow. */
-  vacuumSnapshots(): void;
+  /**
+   * Run the snapshot retention pass and return its result. The caller (a trigger) owns the report:
+   * it calls `reportVacuum(result, context)` so exactly one site decides what an operator sees.
+   */
+  vacuumSnapshots(): VacuumResult;
 }
 
 /**
@@ -746,25 +751,26 @@ function makeDomainStore(
   db: DatabaseSync,
 ): InternalHashStore {
   /**
-   * Transaction owner for the undo pair: the store's own `db` handle (opened in
-   * buildStore). Delegates to the single re-entrant owner so an undo-pair write
-   * joins an outer unit (e.g. pruneMissing) instead of nesting a BEGIN.
-   */
-  /**
    * The post-materialization retention trigger. Runs the sweep after a v7 materialization has
-   * committed, outside that materialization's own `withTransaction` block. A materialization that
-   * joined a caller-owned unit defers instead — the sweep owns `BEGIN IMMEDIATE` and must never run
-   * inside another unit's writes; the store-open hook is the deterministic collector.
+   * committed — outside that materialization's own `withTransaction` block — and reports the result
+   * through the sweep's single report owner. The deferral itself lives in `vacuumSnapshots` (TM
+   * probe M1: a joined sweep can be partially committed by its caller), so this site is safe from
+   * any caller-owned unit by construction and only decides whether there is a v7 row to protect:
+   * `content === undefined` means the legacy row alone, with no `file_snapshots` row to keep.
    *
    * Best-effort but never silent: a retention fault can never fail the read or edit that already
    * committed, and it is reported observably (spec §3.6.1; the storage-error-transparency rule).
    * The just-committed row is protected because its lease does not exist yet.
    */
   function vacuumAfterMaterialization(path: string, content: string | undefined): void {
-    if (content === undefined || db.isTransaction) return;
+    if (content === undefined) return;
     try {
       const protectId = lineageStore.snapshotIdFor(path, snapshotHashFor(content));
-      runVacuumSnapshots(db, protectId === undefined ? {} : { protectSnapshotIds: [protectId] });
+      const result = runVacuumSnapshots(
+        db,
+        protectId === undefined ? {} : { protectSnapshotIds: [protectId] },
+      );
+      reportVacuum(result, `materialize ${path}`);
     } catch (error) {
       console.warn(
         `dsh-better-edit: snapshot vacuum failed after materializing ${path}: ${
@@ -773,6 +779,11 @@ function makeDomainStore(
       );
     }
   }
+  /**
+   * Transaction owner for the undo pair: the store's own `db` handle (opened in
+   * buildStore). Delegates to the single re-entrant owner so an undo-pair write
+   * joins an outer unit (e.g. pruneMissing) instead of nesting a BEGIN.
+   */
 
   function withUndoPairTxn(fn: () => void): void {
     withTransaction(db, fn);
@@ -1120,9 +1131,9 @@ function makeDomainStore(
     },
     vacuumSnapshots() {
       // WHY: the store-open boundary (spec §3.6.1) — on this store the open path is the only place
-      // that can reclaim a store that crashed over budget. The sweep owns its transaction and
-      // reports its own soft overflow, so the hook only needs the effect.
-      runVacuumSnapshots(db);
+      // that can reclaim a store that crashed over budget. The result goes back to the caller,
+      // which is the report owner; the sweep itself never writes to the console.
+      return runVacuumSnapshots(db);
     },
   };
 }

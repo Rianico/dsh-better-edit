@@ -1,8 +1,10 @@
 import { readFile, writeFile } from "node:fs/promises";
+import { join } from "node:path";
 import { beforeAll, describe, expect, it, vi } from "vitest";
 import { DatabaseSync } from "node:sqlite";
 import { loadHashStore, type InternalHashStore } from "../../src/hash-store.js";
 import { hashStorePath } from "../../src/store-tenancy.js";
+import { onStoreOpen } from "../../src/store-lifecycle.js";
 import { snapshotHashFor } from "../../src/snapshot-store/lineage-store.js";
 import { initHasher, lineHashes } from "../../src/hashline/index.js";
 import { codeOf } from "../../src/utils.js";
@@ -46,6 +48,47 @@ function ageLeases(db: DatabaseSync, path: string): void {
     Date.now() - SERVED_TTL_MS - 60_000,
     path,
   );
+}
+
+/** A synthetic `file_snapshots` row, for budget shapes no tool path can reach in a test. */
+function insertSnapshot(
+  db: DatabaseSync,
+  path: string,
+  snapshotHash: string,
+  lineCount: number,
+  createdAt: number,
+): void {
+  db.prepare(
+    "INSERT INTO file_snapshots (path, snapshot_hash, line_count, created_at, committed) " +
+      "VALUES (?, ?, ?, ?, 1)",
+  ).run(path, snapshotHash, lineCount, createdAt);
+}
+
+function insertLease(db: DatabaseSync, path: string, snapshotHash: string, anchor: string): void {
+  db.prepare(
+    "INSERT INTO served_leases (session_id, file_path, anchor, line_id, canon_hash, " +
+      "served_snapshot_hash, served_line_number, updated_at, retired_at) " +
+      "VALUES ('s', ?, ?, 1, 'canon', ?, 1, ?, NULL)",
+  ).run(path, anchor, snapshotHash, Date.now());
+}
+
+/**
+ * `count` 40 MB versions pinned by active leases, on real files under `dir` so that a cell driving
+ * a store open cannot have them reclaimed by `pruneMissing` first.
+ */
+async function pinnedBulk(
+  db: DatabaseSync,
+  dir: string,
+  tag: string,
+  count: number,
+): Promise<void> {
+  for (let index = 0; index < count; index++) {
+    const bulkPath = join(dir, `bulk-${tag}-${index}.ts`);
+    await writeFile(bulkPath, "x\n");
+    const hash = `${tag}:${index}`;
+    insertSnapshot(db, bulkPath, hash, 1_000_000, Date.now() + 60_000 + index);
+    insertLease(db, bulkPath, hash, `${tag}${index}`);
+  }
 }
 
 function count(db: DatabaseSync, sql: string, ...params: (string | number)[]): number {
@@ -221,10 +264,29 @@ describe("vacuum — interaction with lineage, leases and the tools", () => {
       try {
         ageLeases(db, path);
         (await storeFace(cwd)).vacuumSnapshots();
+        // §8(3): the boundary really did remove the v7 row the rejected edit resolved against…
+        const diskHash = snapshotHashFor(diskBytes);
+        expect(
+          count(
+            db,
+            "SELECT COUNT(*) AS count FROM file_snapshots WHERE path = ? AND snapshot_hash = ?",
+            path,
+            diskHash,
+          ),
+        ).toBe(0);
         const after = await it.readTool.execute("c", { path });
         const text = getText(after);
         expect(await readFile(path, "utf-8")).toBe(diskBytes);
         expect(hashlineBodies(text)).toEqual(diskBytes.replace(/\n$/, "").split("\n"));
+        // …and the read re-materialized it, so the anchors resolve against a fresh v7 row.
+        expect(
+          count(
+            db,
+            "SELECT COUNT(*) AS count FROM file_snapshots WHERE path = ? AND snapshot_hash = ?",
+            path,
+            diskHash,
+          ),
+        ).toBe(1);
         expect(text).not.toContain("CHANGED");
       } finally {
         db.close();
@@ -291,6 +353,14 @@ describe("vacuum — interaction with lineage, leases and the tools", () => {
         );
         // D2: the legacy `snapshots` row is a declared non-reclaim — one per path, upgrade fallback.
         expect(count(db, "SELECT COUNT(*) AS count FROM snapshots WHERE path = ?", path)).toBe(1);
+        // A6 — negative pin: make the legacy row WRONG, so a silent legacy serve cannot pass. A
+        // correct re-materialization still serves anchors for the on-disk bytes; a legacy serve
+        // returns the diverged anchors below. (The D2 hazard is also pinned in another lane's unit
+        // cells — `test/core/hash-store.test.ts` fails 3 tests without the lineage-first branch.)
+        db.prepare("UPDATE snapshots SET hashes = ? WHERE path = ?").run(
+          JSON.stringify(["zzz", "zzz", "zzz"]),
+          path,
+        );
 
         const after = await it.readTool.execute("c", { path });
         expect(count(db, "SELECT COUNT(*) AS count FROM file_snapshots WHERE path = ?", path)).toBe(
@@ -328,6 +398,158 @@ describe("vacuum — interaction with lineage, leases and the tools", () => {
         ).toBeGreaterThan(0);
       } finally {
         db.exec("DROP TRIGGER IF EXISTS t5_break_vacuum");
+        warn.mockRestore();
+        db.close();
+      }
+    });
+  });
+  it("cell 22 in-flight protection: the sweep never targets the row a materialization just wrote", async () => {
+    await withTempFile("cell22.txt", DISK_CONTENT, async ({ cwd, path }) => {
+      const it = setupIntegrationTest(cwd);
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      await it.readTool.execute("c", { path });
+      const db = new DatabaseSync(hashStorePath(cwd));
+      try {
+        // Over budget, and the served version is the oldest unpinned candidate.
+        ageLeases(db, path);
+        insertSnapshot(db, "/bulk-22.ts", "22:bulk", 2_000_000, Date.now() + 60_000);
+        // Rewrite the file out of band so the next read must materialize a NEW version, then put a
+        // fault on the delete of exactly that row: the sweep must never reach the row it just wrote.
+        const written = "ALPHA\nbravo\ncharlie";
+        const writtenHash = snapshotHashFor(written);
+        await writeFile(path, written);
+        db.exec(
+          "CREATE TRIGGER guard_fresh BEFORE DELETE ON file_snapshots " +
+            `WHEN OLD.snapshot_hash = '${writtenHash}' ` +
+            "BEGIN SELECT RAISE(ABORT, 'the sweep evicted the row it just materialized'); END",
+        );
+
+        const next = await it.readTool.execute("c", { path });
+
+        // (i) the sweep completed — it evicted the older candidates and the bulk row — without
+        // targeting the fresh row, so no retention failure was reported.
+        expect(warn).not.toHaveBeenCalledWith(expect.stringContaining("vacuum failed"));
+        expect(
+          count(db, "SELECT COUNT(*) AS count FROM file_snapshots WHERE path = ?", "/bulk-22.ts"),
+        ).toBe(0);
+        expect(
+          count(
+            db,
+            "SELECT COUNT(*) AS count FROM file_snapshots WHERE path = ? AND snapshot_hash = ?",
+            path,
+            writtenHash,
+          ),
+        ).toBe(1);
+        // (ii) the read served the just-materialized lineage for the on-disk bytes.
+        expect(readRowHashes(getText(next))).toEqual(await lineHashes(written, path));
+      } finally {
+        db.close();
+        warn.mockRestore();
+      }
+    });
+  });
+
+  it("cell 23 report at store open: the open trigger surfaces the deferred state", async () => {
+    await withTempFile("cell23.txt", DISK_CONTENT, async ({ cwd, path }) => {
+      const it = setupIntegrationTest(cwd);
+      await it.readTool.execute("c", { path });
+      const db = new DatabaseSync(hashStorePath(cwd));
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      try {
+        // Over the soft cap with every candidate pinned: the open sweep can only defer.
+        await pinnedBulk(db, cwd, "c23", 3);
+        warn.mockClear();
+        await onStoreOpen(
+          hashStorePath(cwd),
+          { servedPruneOlderThan: () => {} },
+          await storeFace(cwd),
+        );
+        expect(warn).toHaveBeenCalledWith(expect.stringContaining("soft overflow"));
+      } finally {
+        warn.mockRestore();
+        db.close();
+      }
+    });
+  });
+
+  it("cell 24 report at materialization: the overflow and the skip are surfaced by the trigger", async () => {
+    await withTempFile("cell24.txt", DISK_CONTENT, async ({ cwd, path }) => {
+      const it = setupIntegrationTest(cwd);
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      const db = new DatabaseSync(hashStorePath(cwd));
+      try {
+        // (a) the read's serve write joins a caller-owned unit, so its sweep defers — reported as a
+        // skip, never as a zero result that reads as "nothing to do".
+        await it.readTool.execute("c", { path });
+        expect(warn).toHaveBeenCalledWith(expect.stringContaining("skipped"));
+        expect(warn).not.toHaveBeenCalledWith(expect.stringContaining("soft overflow"));
+
+        // (b) over the soft cap, an edit whose materialization is outermost reports the deferral.
+        const anchors = readRowHashes(getText(await it.readTool.execute("c", { path })));
+        await pinnedBulk(db, cwd, "c24", 3);
+        warn.mockClear();
+        await it.editTool.execute("c", { path, edits: [[anchors[0]!, anchors[0]!, "ALPHA"]] });
+        expect(warn).toHaveBeenCalledWith(expect.stringContaining("soft overflow"));
+      } finally {
+        warn.mockRestore();
+        db.close();
+      }
+    });
+  });
+  it("cell 27 report at store open: a failing open sweep is loud and non-fatal", async () => {
+    await withTempFile("cell27.txt", DISK_CONTENT, async ({ cwd, path }) => {
+      const it = setupIntegrationTest(cwd);
+      await it.readTool.execute("c", { path });
+      const db = new DatabaseSync(hashStorePath(cwd));
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      try {
+        // Over budget, so the open sweep has a candidate, with a fault on every pair delete: the
+        // sweep throws and only the catch decides what the operator sees.
+        ageLeases(db, path);
+        const bulkPath = join(cwd, "bulk-27.ts");
+        await writeFile(bulkPath, "x\n");
+        insertSnapshot(db, bulkPath, "27:bulk", 2_000_000, Date.now() + 60_000);
+        db.exec(
+          "CREATE TRIGGER break_open BEFORE DELETE ON file_snapshots " +
+            "BEGIN SELECT RAISE(ABORT, 'injected open failure'); END",
+        );
+        warn.mockClear();
+
+        await expect(
+          onStoreOpen(hashStorePath(cwd), { servedPruneOlderThan: () => {} }, await storeFace(cwd)),
+        ).resolves.toBeUndefined();
+
+        // (i) loud: the warning names the failing store. (ii) non-fatal: open still resolved.
+        expect(warn).toHaveBeenCalledWith(
+          expect.stringContaining(`snapshot vacuum failed at store open for ${hashStorePath(cwd)}`),
+        );
+        expect(warn).toHaveBeenCalledWith(expect.stringContaining("injected open failure"));
+      } finally {
+        warn.mockRestore();
+        db.close();
+      }
+    });
+  });
+
+  it("cell 28 legacy-only upsert: no v7 materialization means no sweep and no failure", async () => {
+    await withTempFile("cell28.txt", DISK_CONTENT, async ({ cwd, path }) => {
+      const it = setupIntegrationTest(cwd);
+      await it.readTool.execute("c", { path });
+      const db = new DatabaseSync(hashStorePath(cwd));
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      try {
+        await pinnedBulk(db, cwd, "c28", 3);
+        warn.mockClear();
+        // A legacy-only write (no content) is not a v7 materialization: no fresh row to protect, so
+        // the trigger must not sweep (and must not trip over the absent content either).
+        (await storeFace(cwd)).upsertSnapshot(path, "legacy-only-checksum", 3, [
+          "aaa",
+          "bbb",
+          "ccc",
+        ]);
+        expect(warn).not.toHaveBeenCalledWith(expect.stringContaining("vacuum failed"));
+        expect(warn).not.toHaveBeenCalledWith(expect.stringContaining("soft overflow"));
+      } finally {
         warn.mockRestore();
         db.close();
       }

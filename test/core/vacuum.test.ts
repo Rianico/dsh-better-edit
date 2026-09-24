@@ -8,6 +8,7 @@ import {
   type LineageStore,
 } from "../../src/snapshot-store/lineage-store.js";
 import {
+  reportVacuum,
   vacuumSnapshots,
   VACUUM_GLOBAL_BUDGET_BYTES,
   VACUUM_MAX_SNAPSHOTS_PER_PATH,
@@ -28,6 +29,8 @@ beforeAll(async () => {
  * one in production).
  */
 function open(): { db: DatabaseSync; lineage: LineageStore } {
+  // The opener every production path uses: node:sqlite enables `enableForeignKeyConstraints` by
+  // default and `hash-store` also sets `PRAGMA foreign_keys = ON` (P1 matrix).
   const db = new DatabaseSync(":memory:");
   createFileUndoTable(db);
   return { db, lineage: createLineageStore(db) };
@@ -98,6 +101,67 @@ function ageLease(db: DatabaseSync, path: string, anchor: string, updatedAt: num
   ).run(updatedAt, path, anchor);
 }
 
+/**
+ * The pair-invariant ledger for a store: `lineageLessSnapshots` counts retained snapshots whose
+ * lineage is gone, `orphanLineage` the reverse (a lineage row whose snapshot row is gone).
+ */
+function storeCounts(db: DatabaseSync): {
+  snapshots: number;
+  lineage: number;
+  orphanLineage: number;
+  lineageLessSnapshots: number;
+} {
+  const one = (sql: string): number => (db.prepare(sql).get() as { count: number }).count;
+  return {
+    snapshots: one("SELECT COUNT(*) AS count FROM file_snapshots"),
+    lineage: one("SELECT COUNT(*) AS count FROM line_lineage"),
+    orphanLineage: one(
+      "SELECT COUNT(*) AS count FROM line_lineage ll WHERE ll.snapshot_id NOT IN " +
+        "(SELECT snapshot_id FROM file_snapshots)",
+    ),
+    lineageLessSnapshots: one(
+      "SELECT COUNT(*) AS count FROM file_snapshots fs WHERE NOT EXISTS " +
+        "(SELECT 1 FROM line_lineage ll WHERE ll.snapshot_id = fs.snapshot_id)",
+    ),
+  };
+}
+
+/** The ordered `(snapshot_id, path, snapshot_hash)` list — idempotence is about rows, not counts. */
+function rowSet(db: DatabaseSync): string[] {
+  return (
+    db
+      .prepare(
+        "SELECT snapshot_id, path, snapshot_hash FROM file_snapshots " +
+          "ORDER BY created_at ASC, snapshot_id ASC",
+      )
+      .all() as { snapshot_id: number; path: string; snapshot_hash: string }[]
+  ).map((row) => `${row.snapshot_id}:${row.path}:${row.snapshot_hash}`);
+}
+
+/** `count` snapshots of 1M-line scale (40 MB each), each pinned by an active lease. */
+function insertPinnedBulk(
+  db: DatabaseSync,
+  tag: string,
+  count: number,
+  lineCount = 1_000_000,
+): void {
+  for (let index = 0; index < count; index++) {
+    const path = `/defer-${tag}-${index}.ts`;
+    const hash = `${tag}:${index}`;
+    insertSnapshot(db, path, hash, lineCount, 3_000 + index);
+    insertLease(db, path, hash, `${tag}${index}`, Date.now(), null);
+  }
+}
+
+/**
+ * The TM probe M1 injection: after the first of two `file_snapshots` deletes, any further one
+ * aborts. A sweep that runs inside a caller-owned unit therefore aborts mid-loop — and the caller's
+ * COMMIT would commit the partial sweep, which is why `vacuumSnapshots` defers instead.
+ */
+const ABORT_LATE_TRIGGER =
+  "CREATE TRIGGER abort_late BEFORE DELETE ON file_snapshots " +
+  "WHEN (SELECT COUNT(*) FROM file_snapshots) <= 11 " +
+  "BEGIN SELECT RAISE(ABORT, 'injected mid-loop failure'); END";
 /** Retire-and-age every lease for a path, so no anchor of that snapshot still pins it. */
 function ageAllLeases(db: DatabaseSync, path: string, updatedAt: number): void {
   db.prepare("UPDATE served_leases SET retired_at = NULL, updated_at = ? WHERE file_path = ?").run(
@@ -398,7 +462,10 @@ describe("vacuum — pins", () => {
         result.deferredBytes > VACUUM_SOFT_OVERFLOW_BYTES - VACUUM_GLOBAL_BUDGET_BYTES,
       );
       expect(result.overSoftOverflow).toBe(true);
-      // The state is surfaced to an observable sink, not merely returned.
+      expect(result.skippedInTransaction).toBe(false);
+      // The sweep itself is silent — every trigger reports through the single report owner.
+      expect(warn).not.toHaveBeenCalled();
+      reportVacuum(result, "cell 09");
       expect(warn).toHaveBeenCalledWith(expect.stringContaining("soft overflow"));
       // The pinned snapshots are all still there.
       expect(countSnapshots(db, "/defer-0.ts")).toBe(1);
@@ -407,5 +474,217 @@ describe("vacuum — pins", () => {
     } finally {
       warn.mockRestore();
     }
+  });
+  it("cell 16 deferral: a sweep inside a caller-owned unit skips, the boundary stays atomic", () => {
+    const { db, lineage } = open();
+    const path = "/deferral.ts";
+    for (let index = 0; index < 12; index++) {
+      commit(lineage, path, `one\ntwo ${index}\nthree`, `V${index}`);
+    }
+    db.exec(ABORT_LATE_TRIGGER);
+    const before = storeCounts(db);
+    expect(before.snapshots).toBe(12);
+    expect(before.orphanLineage).toBe(0);
+    expect(before.lineageLessSnapshots).toBe(0);
+
+    // (a) inside a caller-owned unit the sweep defers, so the injection never fires and the
+    // caller's COMMIT cannot commit a partial sweep (probe M1: joined + ABORT -> pair broken).
+    db.exec("BEGIN IMMEDIATE");
+    const inside = vacuumSnapshots(db);
+    expect(inside.skippedInTransaction).toBe(true);
+    expect(inside.evicted).toBe(0);
+    expect(inside.totalBytes).toBe(0);
+    db.exec("COMMIT");
+    expect(storeCounts(db)).toEqual(before);
+
+    // (b) at the boundary the same injection propagates and the sweep rolls back whole.
+    expect(() => vacuumSnapshots(db)).toThrow(/injected mid-loop failure/);
+    expect(storeCounts(db)).toEqual(before);
+  });
+
+  it("cell 17 report payload: an over-budget deferral under the soft cap is reported with its numbers", () => {
+    const { db } = open();
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      // Two pinned 40 MB versions: over the hard budget, under the soft cap — so an
+      // `overSoftOverflow`-only reporter would have left this pass silent.
+      insertPinnedBulk(db, "c17", 2);
+      const first = vacuumSnapshots(db);
+      reportVacuum(first, "cell 17");
+      expect(first.deferredBytes).toBeGreaterThan(0);
+      expect(first.overSoftOverflow).toBe(false);
+      // The observable is the payload, not the call: the warning carries the numbers.
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(warn).toHaveBeenCalledWith(
+        expect.stringContaining(
+          `totalBytes=${first.totalBytes} pinnedBytes=${first.pinnedBytes} ` +
+            `deferredBytes=${first.deferredBytes}`,
+        ),
+      );
+      // A second identical pass is throttled; the transition-in half.
+      reportVacuum(vacuumSnapshots(db), "cell 17");
+      expect(warn).toHaveBeenCalledTimes(1);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("cell 18 report throttle: an under-budget pass re-arms the warning", () => {
+    const { db } = open();
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      insertPinnedBulk(db, "c18", 3);
+      reportVacuum(vacuumSnapshots(db), "cell 18");
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining("deferredBytes="));
+      // Under the soft cap: the report is silent and the throttle re-arms.
+      db.prepare("DELETE FROM file_snapshots WHERE path != '/defer-c18-0.ts'").run();
+      reportVacuum(vacuumSnapshots(db), "cell 18");
+      expect(warn).toHaveBeenCalledTimes(1);
+      // Over the cap again: the re-arm is proved by a second warning.
+      insertPinnedBulk(db, "c18b", 3);
+      reportVacuum(vacuumSnapshots(db), "cell 18");
+      expect(warn).toHaveBeenCalledTimes(2);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("cell 19 idempotence: a second sweep evicts nothing and changes no row", () => {
+    const { db, lineage } = open();
+    const path = "/idem.ts";
+    for (let index = 0; index < 12; index++) {
+      commit(lineage, path, `one\ntwo ${index}\nthree`, `V${index}`);
+    }
+    const first = vacuumSnapshots(db);
+    const afterFirst = rowSet(db);
+    const second = vacuumSnapshots(db);
+
+    expect(first.evicted).toBe(2);
+    expect(second.evicted).toBe(0);
+    expect(second.totalBytes).toBe(first.totalBytes);
+    expect(second.pinnedBytes).toBe(0);
+    expect(second.deferredBytes).toBe(0);
+    expect(second.overSoftOverflow).toBe(false);
+    expect(second.skippedInTransaction).toBe(false);
+    expect(rowSet(db)).toEqual(afterFirst);
+    expect(storeCounts(db).orphanLineage).toBe(0);
+  });
+
+  it("cell 20 pair invariant: no orphan lineage after a normal, an aborted-boundary or a deferred sweep", () => {
+    const seed = (db: DatabaseSync, lineage: LineageStore, path: string): void => {
+      for (let index = 0; index < 12; index++) {
+        commit(lineage, path, `one\ntwo ${index}\nthree`, `V${index}`);
+      }
+      expect(storeCounts(db)).toMatchObject({
+        snapshots: 12,
+        orphanLineage: 0,
+        lineageLessSnapshots: 0,
+      });
+    };
+
+    // (i) a normal sweep: every retained snapshot keeps its lineage, no orphans either way.
+    const normal = open();
+    seed(normal.db, normal.lineage, "/pair-normal.ts");
+    vacuumSnapshots(normal.db);
+    expect(storeCounts(normal.db)).toMatchObject({
+      snapshots: 10,
+      orphanLineage: 0,
+      lineageLessSnapshots: 0,
+    });
+
+    // (ii) the mid-loop ABORT at the boundary: the whole sweep rolls back, pair intact.
+    const aborted = open();
+    seed(aborted.db, aborted.lineage, "/pair-aborted.ts");
+    aborted.db.exec(ABORT_LATE_TRIGGER);
+    expect(() => vacuumSnapshots(aborted.db)).toThrow(/injected mid-loop failure/);
+    expect(storeCounts(aborted.db)).toMatchObject({
+      snapshots: 12,
+      orphanLineage: 0,
+      lineageLessSnapshots: 0,
+    });
+
+    // (iii) inside a caller-owned unit: nothing runs, so the state is unchanged.
+    const deferred = open();
+    seed(deferred.db, deferred.lineage, "/pair-deferred.ts");
+    const before = storeCounts(deferred.db);
+    deferred.db.exec("BEGIN IMMEDIATE");
+    vacuumSnapshots(deferred.db);
+    deferred.db.exec("COMMIT");
+    expect(storeCounts(deferred.db)).toEqual(before);
+  });
+
+  it("cell 21 pair invariant: an eviction leaves no orphan lineage on the real opener", () => {
+    const { db, lineage } = open();
+    const path = "/order.ts";
+    expect((db.prepare("PRAGMA foreign_keys").get() as { foreign_keys: number }).foreign_keys).toBe(
+      1,
+    );
+    for (let index = 0; index < 12; index++) {
+      commit(lineage, path, `one\ntwo ${index}\nthree`, `V${index}`);
+    }
+
+    const result = vacuumSnapshots(db);
+
+    // FK-mode-agnostic invariant: no lineage row survives its snapshot row, and no retained
+    // snapshot loses its lineage. The explicit child-first delete is what makes this true without
+    // leaning on the pragma; on this opener the cascade would mask it (P1 matrix), which is why the
+    // order/drop mutants are GREEN with meaning 4 rather than RED here.
+    expect(result.evicted).toBe(2);
+    expect(storeCounts(db).orphanLineage).toBe(0);
+    expect(storeCounts(db).lineageLessSnapshots).toBe(0);
+  });
+
+  it("cell 26 crash mid-pair: a fault between the two deletes rolls back to a whole pair", () => {
+    const { db, lineage } = open();
+    const path = "/crash.ts";
+    for (let index = 0; index < 12; index++) {
+      commit(lineage, path, `one\ntwo ${index}\nthree`, `V${index}`);
+    }
+    const before = storeCounts(db);
+    // The fault fires on the second `file_snapshots` delete, i.e. after one pair's lineage row was
+    // already deleted: only the transaction can restore it. (1) ATOMICITY at the boundary — the
+    // throw propagates and no pair state survives, neither an orphan lineage row nor a dangling
+    // snapshot row. (2) ORPHAN LINEAGE === 0 — the defect direction: an orphan lineage row has no
+    // owner to detect it, unlike a `file_snapshots` row with no lineage (the codebase's "orphan
+    // snapshot row"), which the adopt path already detects, warns about and repairs
+    // (`test/core/hash-store.test.ts:1665`) — this vacuum must not repair that shape eagerly, and
+    // (`test/core/hash-store.test.ts:1665`; the full ownership note lives at the pair delete in
+    // `src/snapshot-store/vacuum.ts`) — this vacuum must not repair that shape eagerly, and this
+    // cell asserts nothing about it.
+    db.exec(ABORT_LATE_TRIGGER);
+    expect(() => vacuumSnapshots(db)).toThrow(/injected mid-loop failure/);
+    const after = storeCounts(db);
+    expect({ snapshots: after.snapshots, lineage: after.lineage }).toEqual({
+      snapshots: before.snapshots,
+      lineage: before.lineage,
+    });
+    // Post-fault counts, asserted explicitly so the report can paste them: 12 snapshots / 36
+    // lineage rows, unchanged by the rollback (neither shape survives), orphanLineage 0.
+    expect(before.snapshots).toBe(12);
+    expect(before.lineage).toBe(36);
+    expect(after).toEqual(before);
+    expect(after.orphanLineage).toBe(0);
+  });
+
+  it("cell 25 over-broad pin: a file_undo row for another path does not pin the candidate", () => {
+    const { db, lineage } = open();
+    const path = "/pin-scope.ts";
+    const content = "one\ntwo\nthree";
+    commit(lineage, path, content, "S");
+    for (let index = 1; index <= 11; index++) {
+      commit(lineage, path, `one\ntwo ${index}\nthree`, `V${index}`);
+    }
+    // Same snapshot_hash, different path: the `fu.path = fs.path` clause must reject it.
+    db.prepare(
+      "INSERT INTO file_undo (path, content, bom, ending, hashes, result_content, " +
+        "snapshot_hash, updated_at) VALUES ('/other.ts', 'x', '', '\\n', '[]', 'x', ?, ?)",
+    ).run(snapshotHashFor(content), Date.now());
+
+    const result = vacuumSnapshots(db);
+
+    expect(result.evicted).toBe(2);
+    expect(result.pinnedBytes).toBe(0);
+    expect(snapshotHashes(db, path)).not.toContain(snapshotHashFor(content));
   });
 });

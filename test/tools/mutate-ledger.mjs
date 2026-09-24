@@ -140,10 +140,32 @@ const T5 = {
     "cell 14 cross-table: a pruned v7 family re-materializes and the legacy row is not the source",
   triggerFailure:
     "cell 15 the best-effort trigger reports its own failure and the read still succeeds",
+  deferral: "cell 16 deferral: a sweep inside a caller-owned unit skips, the boundary stays atomic",
+  reportPayload:
+    "cell 17 report payload: an over-budget deferral under the soft cap is reported with its numbers",
+  reportRearm: "cell 18 report throttle: an under-budget pass re-arms the warning",
+  idempotence: "cell 19 idempotence: a second sweep evicts nothing and changes no row",
+  pairInvariant:
+    "cell 20 pair invariant: no orphan lineage after a normal, an aborted-boundary or a deferred sweep",
+  pairOnRealOpener:
+    "cell 21 pair invariant: an eviction leaves no orphan lineage on the real opener",
+  inflightProtection:
+    "cell 22 in-flight protection: the sweep never targets the row a materialization just wrote",
+  reportAtOpen: "cell 23 report at store open: the open trigger surfaces the deferred state",
+  reportAtMaterialization:
+    "cell 24 report at materialization: the overflow and the skip are surfaced by the trigger",
+  overBroadPin:
+    "cell 25 over-broad pin: a file_undo row for another path does not pin the candidate",
+  crashMidPair:
+    "cell 26 crash mid-pair: a fault between the two deletes rolls back to a whole pair",
+  openFailure: "cell 27 report at store open: a failing open sweep is loud and non-fatal",
+  legacyOnlyUpsert:
+    "cell 28 legacy-only upsert: no v7 materialization means no sweep and no failure",
 };
 const VACUUM = "src/snapshot-store/vacuum.ts";
 const LINEAGE_STORE = "src/snapshot-store/lineage-store.ts";
 const HASH_STORE = "src/hash-store.ts";
+const STORE_LIFECYCLE = "src/store-lifecycle.ts";
 const VACUUM_UNIT = "test/core/vacuum.test.ts";
 const VACUUM_INTERACTION = "test/core/vacuum-interaction.test.ts";
 const ARCH_SCAN = "test/support/arch-scan.ts";
@@ -619,14 +641,20 @@ const MUTANTS = {
     ],
   },
   T5M9: {
-    what: "the soft-overflow report call is deleted (declaration-only state)",
+    what: "the overflow warning is deleted (the deferred state is returned, never reported)",
     scope: [VACUUM_UNIT],
-    expected: [T5.loudDeferral],
+    expected: [T5.loudDeferral, T5.reportPayload, T5.reportRearm],
     edits: [
       {
         file: VACUUM,
-        old: "  reportVacuumSoftOverflow(db, result);",
-        new: "  // mutant: the deferred state is returned but never reported",
+        old:
+          "    console.warn(\n" +
+          "      `dsh-better-edit: snapshot vacuum soft overflow (${context}): ` +\n" +
+          "        `totalBytes=${result.totalBytes} pinnedBytes=${result.pinnedBytes} ` +\n" +
+          "        `deferredBytes=${result.deferredBytes} — pinned snapshots are never evicted and this ` +\n" +
+          "        `state is expected to lapse as leases expire.`,\n" +
+          "    );",
+        new: "    // mutant: the deferred state is returned but never reported",
       },
     ],
   },
@@ -706,6 +734,188 @@ const MUTANTS = {
           "      );\n" +
           "    }",
         new: "    } catch {\n      // mutant: the retention failure is swallowed\n    }",
+      },
+    ],
+  },
+  // ---- T5 round 2: guards, reports, the pair, the cross-table pin ----
+  T5M16: {
+    what: "the in-sweep deferral guard is removed (a joined sweep runs)",
+    scope: [VACUUM_UNIT],
+    expected: [T5.deferral, T5.pairInvariant, T5.crashMidPair],
+    edits: [
+      {
+        file: VACUUM,
+        old:
+          "  if (db.isTransaction) {\n" +
+          "    return {\n" +
+          "      evicted: 0,\n" +
+          "      totalBytes: 0,\n" +
+          "      pinnedBytes: 0,\n" +
+          "      deferredBytes: 0,\n" +
+          "      overSoftOverflow: false,\n" +
+          "      skippedInTransaction: true,\n" +
+          "    };\n" +
+          "  }",
+        new: "  // mutant: the in-sweep deferral guard is removed",
+      },
+    ],
+  },
+  T5M17: {
+    what: "the content-less early return is deleted (a legacy-only write is fed to the sweep)",
+    scope: [VACUUM_INTERACTION],
+    expected: [T5.legacyOnlyUpsert],
+    edits: [
+      {
+        file: HASH_STORE,
+        old: "    if (content === undefined) return;",
+        new: "    // mutant: the legacy-only early return is removed",
+      },
+    ],
+  },
+  T5M18: {
+    what: "the overflow dedup early-return is deleted (warn on every over-budget pass)",
+    scope: [VACUUM_UNIT],
+    expected: [T5.reportPayload],
+    edits: [
+      {
+        file: VACUUM,
+        old: "    if (overflowReported.has(context)) return;",
+        new: "    // mutant: the transition-in dedup is removed",
+      },
+    ],
+  },
+  T5M19: {
+    what: "the throttle re-arm is deleted (an under-budget pass cannot re-arm)",
+    scope: [VACUUM_UNIT],
+    expected: [T5.reportRearm],
+    edits: [
+      {
+        file: VACUUM,
+        old: "      overflowReported.delete(context);",
+        new: "      // mutant: the re-arm is removed",
+      },
+    ],
+  },
+  T5M20: {
+    what: "the materialization trigger stops passing the resolved in-flight id",
+    scope: [VACUUM_INTERACTION],
+    expected: [T5.inflightProtection],
+    edits: [
+      {
+        file: HASH_STORE,
+        old: "        protectId === undefined ? {} : { protectSnapshotIds: [protectId] },",
+        new: "        {},",
+      },
+    ],
+  },
+  T5M21: {
+    what: "the store-open trigger drops the result silently",
+    scope: [VACUUM_INTERACTION],
+    expected: [T5.reportAtOpen],
+    edits: [
+      {
+        file: STORE_LIFECYCLE,
+        old: "    reportVacuum(store.vacuumSnapshots(), `store open ${storePath}`);",
+        new: "    store.vacuumSnapshots();",
+      },
+    ],
+  },
+  T5M22: {
+    what: "the pair delete order is swapped (snapshot before lineage)",
+    scope: [VACUUM_UNIT],
+    expected: [],
+    edits: [
+      {
+        file: VACUUM,
+        old: "      stmts.deleteLineage(id);\n      stmts.deleteSnapshot(id);",
+        new: "      stmts.deleteSnapshot(id);\n      stmts.deleteLineage(id);",
+      },
+    ],
+  },
+  T5M23: {
+    what: "the `file_undo` pin drops its path clause (over-broad pin)",
+    scope: [VACUUM_UNIT],
+    expected: [T5.overBroadPin],
+    edits: [
+      {
+        file: VACUUM,
+        old: '      "OR EXISTS (SELECT 1 FROM file_undo fu WHERE fu.path = fs.path " +',
+        new: '      "OR EXISTS (SELECT 1 FROM file_undo fu WHERE 1 = 1 " +',
+      },
+    ],
+  },
+  T5M24: {
+    what: "the materialization trigger drops the result silently",
+    scope: [VACUUM_INTERACTION],
+    expected: [T5.reportAtMaterialization],
+    edits: [
+      {
+        file: HASH_STORE,
+        old: "      reportVacuum(result, `materialize ${path}`);",
+        new: "      // mutant: the trigger drops the result",
+      },
+    ],
+  },
+  T5M25: {
+    what: "the store-open catch is silenced (the failure disappears)",
+    scope: [VACUUM_INTERACTION],
+    expected: [T5.openFailure],
+    edits: [
+      {
+        file: STORE_LIFECYCLE,
+        old:
+          "  } catch (error) {\n" +
+          "    console.warn(\n" +
+          "      `dsh-better-edit: snapshot vacuum failed at store open for ${storePath}: ${error instanceof Error ? error.message : String(error)}`,\n" +
+          "    );\n" +
+          "  }",
+        new: "  } catch {\n    // mutant: the store-open failure is swallowed\n  }",
+      },
+    ],
+  },
+  T5M26: {
+    what: "the explicit lineage delete is dropped (cascade-masked, P1 meaning 4)",
+    scope: [VACUUM_UNIT],
+    expected: [],
+    edits: [
+      {
+        file: VACUUM,
+        old: "      stmts.deleteLineage(id);\n      stmts.deleteSnapshot(id);",
+        new: "      stmts.deleteSnapshot(id);",
+      },
+    ],
+  },
+  T5M27: {
+    what: "the sweep's transaction wrapper is removed (same-file rollback lost)",
+    scope: [VACUUM_UNIT],
+    expected: [T5.deferral, T5.pairInvariant, T5.pairOnRealOpener, T5.crashMidPair],
+    edits: [
+      {
+        file: VACUUM,
+        old:
+          "  withTransaction(db, () => {\n" +
+          "    for (const id of snapshotIds) {\n" +
+          "      stmts.deleteLineage(id);\n" +
+          "      stmts.deleteSnapshot(id);\n" +
+          "    }\n" +
+          "  });",
+        new:
+          "  for (const id of snapshotIds) {\n" +
+          "    stmts.deleteLineage(id);\n" +
+          "    stmts.deleteSnapshot(id);\n" +
+          "  }",
+      },
+    ],
+  },
+  T5M28: {
+    what: "`getSnapshot`'s lineage-first branch is disabled (the legacy row serves)",
+    scope: [VACUUM_INTERACTION],
+    expected: [T5.crossTable],
+    edits: [
+      {
+        file: HASH_STORE,
+        old: "        lineage.length === splitLines(content).length &&",
+        new: "        lineage.length === -1 &&",
       },
     ],
   },

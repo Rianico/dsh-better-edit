@@ -20,6 +20,7 @@ import { workspaceCwd } from "./workspace-context.js";
 import { errCode, splitLines } from "./utils.js";
 import { HASH_STORE_BUSY_TIMEOUT, SERVED_TTL_MS } from "./constants.js";
 import type { HashStore } from "./hash-store.js";
+import { reportVacuum } from "./snapshot-store/index.js";
 
 // ---- throttling state (owned here) ----
 let lastPruneMsByStore = new Map<string, number>();
@@ -255,9 +256,10 @@ export async function onStoreOpen(
   }
 
   // Snapshot vacuum — the deterministic boundary (spec §3.6.1): on this store the open path is
-  // the only place that can reclaim a store that crashed over budget. Best-effort and loud.
+  // the only place that can reclaim a store that crashed over budget. This trigger owns the
+  // report (the single report owner is `reportVacuum`; the sweep never writes to the console).
   try {
-    store.vacuumSnapshots();
+    reportVacuum(store.vacuumSnapshots(), `store open ${storePath}`);
   } catch (error) {
     console.warn(
       `dsh-better-edit: snapshot vacuum failed at store open for ${storePath}: ${error instanceof Error ? error.message : String(error)}`,
