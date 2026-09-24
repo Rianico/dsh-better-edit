@@ -215,8 +215,14 @@ function pairLineIds(prev: PrevLine[], curCanons: string[]): (number | null)[] {
 
 /**
  * Classify a stored lineage family against the content being adopted. Returns the diagnosis
- * when the family is unusable — empty, wrong row count, or numbering that is not contiguous
- * from line 1 — or undefined when it can be adopted as-is.
+ * when the family is unusable — empty, wrong row count, numbering that is not contiguous from
+ * line 1, or a `canon_hash` that disagrees with the line being adopted — or undefined when it
+ * can be adopted as-is.
+ *
+ * The canon arm cannot be version skew: `snapshotHashFor` embeds `CANON_VERSION` in the key that
+ * found this row, and `canonDigest` is deterministic for a given line, so within the adopt arm a
+ * mismatch can only be corruption. Excluding it would silently inherit the corrupt row's
+ * `line_id` into every future `pairLineIds` pairing.
  *
  * Unusable is no longer thrown: the adopt arm repairs it (see the `unusable` branch below).
  * The diagnosis is still built so the repair warning carries the precise arm, and so a future
@@ -226,6 +232,7 @@ function diagnoseUnusableLineage(
   stored: readonly LineageRecord[],
   lineCount: number,
   path: string,
+  curCanons: readonly string[],
 ): LineageCorruptError | undefined {
   if (stored.length === 0) {
     return new LineageCorruptError(`commitSnapshot(${path}): snapshot row has no lineage`);
@@ -240,6 +247,13 @@ function diagnoseUnusableLineage(
     if (row === undefined || row.line_number !== index + 1) {
       return new LineageCorruptError(
         `commitSnapshot(${path}): lineage row out of order at index ${index}`,
+      );
+    }
+    const expected = curCanons[index];
+    if (expected === undefined || row.canon_hash !== expected) {
+      return new LineageCorruptError(
+        `commitSnapshot(${path}): canon mismatch at line ${index + 1}: ` +
+          `stored ${row.canon_hash} expected ${expected ?? "<missing>"}`,
       );
     }
   }
@@ -368,7 +382,7 @@ export function createLineageStore(db: DatabaseSync): LineageStore {
           const stored = snapshotLineageStmt.all(
             existing.snapshot_id,
           ) as unknown as LineageRecord[];
-          const unusable = diagnoseUnusableLineage(stored, lines.length, input.path);
+          const unusable = diagnoseUnusableLineage(stored, lines.length, input.path, curCanons);
           if (unusable === undefined) {
             // Adopt-if-exists: allocate nothing — but refresh the anchor column to the live
             // assignment (compare-then-update, diffs only). Anchor assignment is not

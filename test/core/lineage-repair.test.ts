@@ -3,13 +3,14 @@ import { readFile } from "node:fs/promises";
 import { describe, expect, it, vi } from "vitest";
 import { withTempFile, setupIntegrationTest, getText } from "../support/fixtures.js";
 import { loadHashStore, type InternalHashStore } from "../../src/hash-store.js";
+import { canonDigest } from "../../src/hashline/hash-assign.js";
 import {
   createLineageStore,
   snapshotHashFor,
   type LineageStore,
 } from "../../src/snapshot-store/lineage-store.js";
 import { hashStorePath } from "../../src/store-tenancy.js";
-import { codeOf } from "../../src/utils.js";
+import { codeOf, splitLines } from "../../src/utils.js";
 
 /**
  * CP2 — a corrupt lineage must not trap the file.
@@ -211,5 +212,56 @@ describe("CP2 — corrupt lineage", () => {
       ),
       lineageRows: lineage.lineageFor("t.txt", snapshotHashFor(content)).length,
     }).toEqual({ faulted: true, snapshotRows: 1, lineageRows: 3 });
+  });
+  it("repairs a canon-inconsistent lineage instead of reusing its ids", () => {
+    const db = new DatabaseSync(":memory:");
+    const lineage: LineageStore = createLineageStore(db);
+    const content = "alpha\nbeta";
+    const hash = snapshotHashFor(content);
+    const trueCanons = splitLines(content).map((line) => canonDigest(line));
+
+    // 1. Commit, so ids 1,2 exist and the stored canons are the true ones.
+    lineage.commitSnapshot({ path: "/k.ts", content, hashes: ["A0", "A1"] });
+    const before = lineage.lineageFor("/k.ts", hash);
+    expect(before.map((row) => row.lineId)).toEqual([1, 2]);
+    expect(before.map((row) => row.canonHash)).toEqual(trueCanons);
+
+    // 2. Corrupt the stored canon out of band: count and numbering stay intact, so only a
+    //    canon comparison can tell this family is unusable.
+    db.exec("UPDATE line_lineage SET canon_hash = 'deadbeef'");
+
+    // 3. Re-adopt the same (path, content).
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    lineage.commitSnapshot({ path: "/k.ts", content, hashes: ["A0", "A1"] });
+    const warnCalls = warn.mock.calls.length;
+    const warned = warn.mock.calls.map((call) => String(call[0])).join(" ");
+    warn.mockRestore();
+
+    const after = lineage.lineageFor("/k.ts", hash);
+    expect({
+      warnCalls,
+      warnFired: /repairing corrupt lineage/.test(warned),
+      namesCanonArm: /canon mismatch at line 1/.test(warned),
+      // STILL_CORRUPT must be false: every stored canon is the true one again.
+      canons: after.map((row) => row.canonHash),
+      numbering: after.map((row) => row.lineNumber),
+      // IDS_AFTER must not be 1,2: the corrupt rows' ids are never inherited.
+      ids: after.map((row) => row.lineId),
+      idsAreFresh: after.every((row) => before.every((old) => old.lineId !== row.lineId)),
+      snapshotRows: countRows(
+        db,
+        "SELECT COUNT(*) AS n FROM file_snapshots WHERE path = ?",
+        "/k.ts",
+      ),
+    }).toEqual({
+      warnCalls: 1,
+      warnFired: true,
+      namesCanonArm: true,
+      canons: trueCanons,
+      numbering: [1, 2],
+      idsAreFresh: true,
+      ids: [3, 4],
+      snapshotRows: 1,
+    });
   });
 });
