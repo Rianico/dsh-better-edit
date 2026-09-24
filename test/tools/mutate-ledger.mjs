@@ -104,7 +104,6 @@ const T4R5 = {
   fieldIdentity: "the field allowlist is pinned by identity and its predicates hold",
 };
 const ARCH_SCAN = "test/support/arch-scan.ts";
-const ARCH_REGISTRY = "test/arch/domain-error-registry.test.ts";
 
 /** Shared pre-edit for the three `recordServed` mutants. */
 const SESS_IMPORT = {
@@ -337,7 +336,7 @@ const MUTANTS = {
     expected: [T4R3.fields, T4R5.fieldIdentity],
     edits: [
       {
-        file: ARCH_REGISTRY,
+        file: DOMAIN_ERRORS,
         old:
           "export const DECLARATION_ONLY_FIELDS: Readonly<Record<string, AllowlistEntry>> = {\n" +
           "  remedy: {\n" +

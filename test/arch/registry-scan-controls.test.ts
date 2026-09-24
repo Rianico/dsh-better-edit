@@ -50,6 +50,10 @@ describe("arch: registry scanner negative controls", () => {
       "E_ONE",
       "E_TWO",
     ]);
+    // The nested-object producer position accepts single quotes too (M12's target).
+    expect(
+      producedCodesInText("throw new ServedRejectionError({ code: 'E_SQREJ', headline: 'h' });\n"),
+    ).toEqual(["E_SQREJ"]);
   });
 
   // C14 (G3) — M13 reverts the digit-legal character class.
@@ -63,7 +67,7 @@ describe("arch: registry scanner negative controls", () => {
     // The whole shape, including a warning-side digit name and the
     // ServedRejectionError({ code: … }) position.
     expect(
-      producedCodesInText("throw new ServedRejectionError({ code: 'W_SHAPE2', headline: 'h' });\n"),
+      producedCodesInText('throw new ServedRejectionError({ code: "W_SHAPE2", headline: "h" });\n'),
     ).toEqual(["W_SHAPE2"]);
   });
 
