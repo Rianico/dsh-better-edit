@@ -25,12 +25,15 @@ beforeAll(async () => {
  *
  * Case 1 — externally deleting the anchored line leaves the surviving byte-identical
  * twin holding the deleted line's anchor; the edit must reject and write nothing.
- * Refutability (a) position check: deleting the unconditional check
- * `if (from !== startLine - 1)` in src/hashline/anchor-pipeline.ts lets the edit apply to
- * the surviving twin (no rejection, file changes), so this test goes red. The surviving
- * twin keeps the deleted line's hash (fresh allocation hands the only remaining occurrence
- * the base slot), the served canon still matches (identical bytes), and only the served
- * POSITION disagrees — exactly what the position check pins.
+ * Refutability (a) identity arms, not the position check: Case 1 runs on the tool path (a lease
+ * source is present), so `verifyServedRange` takes `verifyRebasedSpan` and the position check is
+ * never reached for it. Knocking out BOTH arms — the retired arm
+ * (`src/hashline/anchor-pipeline.ts:673`) and the rebased-coordinate arm (`:683`) — turns this test
+ * red; either arm ALONE leaves it green (they are redundant here), pinned individually by
+ * `test/core/lease-resolve-seam.test.ts` "rejects when the leased line was retired" (`:277`) and
+ * "rejects when the leased line sits at a different coordinate (look-alike rebind)" (`:260`). The twin
+ * keeps the deleted line's hash and its canon still matches — only identity disagrees. The position
+ * check (`:833`) is the lease-less fallback, pinned by the pos-free test in this file (`:152`), not Case 1.
  *
  * Case 2 — an orphaned serve (the same hash written at a new position while the old
  * served slot survives) makes the boundary anchor ambiguous; the span must reject with

@@ -59,9 +59,16 @@ or point the store elsewhere).
 - v7 state stays isolated in v7 tables once CP2 lands (the guard is what makes
   that isolation safe from this build's side of the flap).
 - `E_STORE_NEWER_VERSION` joins the closed domain-error registry (audience
-  `MODEL`, with remedy); its message must never contain corruption-class words
-  (`corrupt`, `not a database`, `malformed`, `database disk image`), enforced
-  by the quarantine-guard test, or a valid newer store would be quarantined.
+  `MODEL`, with remedy). The property that matters is that the refusal never routes
+  to quarantine, and it is enforced by the `DomainError` short-circuit in
+  `isCorruptionError` (`src/hash-store.ts:313`) — proven load-bearing by the V3
+  knock-out (make it return `true`; four tests go red). Its message must still never
+  contain corruption-class words (`corrupt`, `not a database`, `malformed`,
+  `database disk image`), but that wording rule is **convention, not enforcement**:
+  inserting `corrupt` into the message leaves the full suite green (measured). The
+  quarantine-guard test (`test/core/hash-store-open-errors.test.ts` "never
+  classifies a newer-version refusal as corruption") pins only that a `DomainError`
+  is never classified as corruption whatever its text.
 - The in-transaction stamp re-check is defensive: it has no deterministic interleaving test at CP1; its refusal logic is shared with the probe-time refusal covered by T1.
 
 ## Schema v7

@@ -66,8 +66,8 @@ describe("batch working-buffer identity map", () => {
         [a.get("L5")!, a.get("L5")!, "L5-changed"],
       ]);
 
-      // Falsifier: any change that stops later items seeing earlier ones — the rejection is
-      // E_STALE_RANGE, so this assertion fails on `code` and on the bytes below.
+      // Falsifier: any change that stops later items seeing earlier ones — the batch aborts as
+      // `E_BATCH_ABORT` (inner cause `E_STALE_RANGE`), failing this assertion on `code` and the bytes below.
       expect(outcome).toEqual({ applied: true });
       expect(await readFile(path, "utf-8")).toBe("L1a\nL1b\nL2\nL3\nL4\nL5-changed\nL6\n");
     });
@@ -80,15 +80,15 @@ describe("batch working-buffer identity map", () => {
 
       // Item 1 replaces line 3 with `A\nX`, so the intermediate buffer is `A\nX\nA\nX` — the whole
       // interval is ambiguous for the pairing engine (no pins, several optimal embeddings), which
-      // used to leave lines 1 and 2 unpaired and reject item 2 with E_STALE_RANGE. The map knows
-      // line 1's identity directly, so item 2 applies.
+      // used to leave lines 1 and 2 unpaired — item 2's span rejected as E_STALE_RANGE, so the
+      // batch aborted as E_BATCH_ABORT. The map knows line 1's identity directly, so item 2 applies.
       const outcome = await runBatch(editTool, "a2.txt", [
         [a.get("B")!, a.get("B")!, "A\nX"],
         [a.get("A")!, a.get("A")!, "A-changed"],
       ]);
 
-      // Falsifier: pass no `currentIds` (the mutation below) and this goes RED — item 2 rejects
-      // E_STALE_RANGE and the file stays `A\nX\nB\n`.
+      // Falsifier: pass no `currentIds` (the mutation below) and this goes RED — the batch aborts as
+      // `E_BATCH_ABORT` (inner cause item 2's `E_STALE_RANGE`) and the file stays `A\nX\nB\n`.
       expect(outcome).toEqual({ applied: true });
       expect(await readFile(path, "utf-8")).toBe("A-changed\nX\nA\nX\n");
     });

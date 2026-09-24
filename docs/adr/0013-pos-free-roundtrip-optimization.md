@@ -63,7 +63,7 @@ else
     -> strict: from==startLine-1 && to==endLine-1 && tombstone∉ && canon== else E_RANGE_STALE
 ```
 
-Makes `shift==rebind` loud only when `changed` overlaps target, not when exterior. Cost is one `edit` retry via `reject-and-serve` (no `read`), rare (`~1/238k`).
+Makes `shift==rebind` loud only when `changed` overlaps target, not when exterior. Cost is one `edit` retry, rare (`~1/238k`) — and it is not a re-serve: a strict/identity rejection records nothing and grants nothing (ADR-0018, T3f), says `Re-read.`, and a retry with the echoed anchors is rejected again (measured).
 
 ### 4. Non-overlapping forever is pos-free
 
@@ -71,12 +71,24 @@ Makes `shift==rebind` loud only when `changed` overlaps target, not when exterio
 
 ## Single vs Multi-session
 
-|                                                       | Single-session (serial `read->edit*` per `sessionKey`) | Multi-session (concurrent `A`+`B`)                                                                     |
-| ----------------------------------------------------- | ------------------------------------------------------ | ------------------------------------------------------------------------------------------------------ |
-| Read-set                                              | `epoch==curId` → no concurrent writer                  | `epoch!=curId` → concurrent `changed` detected                                                         |
-| Non-overlapping `A:10..12+1` shifts `B:20..30→21..31` | `pass` — candidates `hash==` still `1`, `tombstone∉`   | `changed ∩ [L,R]==∅` → `resist` → `pass` (drift notice, not abort)                                     |
-| Overlapping `S@3 reborn @3` whole-span                | `tombstone` blocks allocation → `E_STALE_ANCHOR`       | `changed ∩ [L,R]!=∅` → `strict from==pos` → `E_RANGE_STALE`                                            |
-| Cost                                                  | `pos-free` — zero extra round trips                    | May incur one `edit` retry via `reject-and-serve` (`E.servedRows` already re-serves, no `read` needed) |
+|                                                       | Single-session (serial `read->edit*` per `sessionKey`) | Multi-session (concurrent `A`+`B`)                                                       |
+| ----------------------------------------------------- | ------------------------------------------------------ | ---------------------------------------------------------------------------------------- |
+| Read-set                                              | `epoch==curId` → no concurrent writer                  | `epoch!=curId` → concurrent `changed` detected                                           |
+| Non-overlapping `A:10..12+1` shifts `B:20..30→21..31` | `pass` — candidates `hash==` still `1`, `tombstone∉`   | `changed ∩ [L,R]==∅` → `resist` → `pass` (drift notice, not abort)                       |
+| Overlapping `S@3 reborn @3` whole-span                | `tombstone` blocks allocation → `E_STALE_ANCHOR`       | `changed ∩ [L,R]!=∅` → `strict from==pos` → `E_RANGE_STALE`                              |
+| Cost                                                  | `pos-free` — zero extra round trips                    | May incur one `edit` retry, and it is not a re-serve (ADR-0018, T3f; see the note below) |
+
+> **Historical scope (Status §3):** the strict `from==pos` column in the table above
+> is the `strictPos` fallback, which never shipped and is removed; the old code name
+> `E_RANGE_STALE` was renamed `E_STALE_RANGE` by ADR-0014. Today an overlapping
+> concurrent change goes through the identity gate — it applies at the rebased
+> coordinate, or rejects as `E_STALE_RANGE` (ADR-0018 / ADR-0019).
+>
+> The strict/identity rejection is **not** a re-serve: it records nothing and grants
+> nothing (ADR-0018, T3f), its message says `Re-read.`, and a retry with the echoed
+> anchors is rejected again (measured). The `Retry with these anchors (no read needed)`
+> hint survives only on the non-`reread` arms (served-length mismatch, `E_UNSERVED_RANGE`),
+> where the echo rows are the current file's anchors.
 
 We keep `pos-free` by default because line non-overlap ≈ semantic non-overlap for hash-anchored edits; strict would make every exterior `insert @0` abort `B`'s unrelated range, violating `CONTEXT.md:anchor philosophy` and `ADR-0004` healing. Concurrency fallback is automatic, no `supportConcurrency` flag — exterior drift stays `resist`, only overlapping concurrent goes `strict`.
 
@@ -93,4 +105,4 @@ We keep `pos-free` by default because line non-overlap ≈ semantic non-overlap 
 - `anchor-pipeline.ts:verifyServedRange` keeps candidate enumeration, adds `tombstone` filter and `servedCanons` check, `strict` pos via automatic `changed ∩ [L,R]` (no config).
 - Tests: `hashline-stable-mapping.test.ts` "reuses first removed hash" flips to `fresh hash`; new property `identical canon after removal gets ≠ removed hash`.
 
-- Round trips: single-thread exterior drift no longer aborts; concurrency strict aborts only on `read-set stale`, retry uses `E.servedRows` without `read`.
+- Round trips: single-thread exterior drift no longer aborts; a strict/identity rejection records nothing and grants nothing (ADR-0018, T3f), says `Re-read.`, and a retry with the echoed anchors is rejected again — the `Retry with these anchors (no read needed)` hint survives only on the non-`reread` arms (served-length mismatch, `E_UNSERVED_RANGE`), where the echo rows are the current file's anchors.

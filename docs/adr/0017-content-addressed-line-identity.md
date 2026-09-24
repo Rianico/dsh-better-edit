@@ -1,7 +1,7 @@
 # ADR-0017 — Content-Addressed Line Identity
 
 Date: 2026-09-23
-Status: accepted; **superseded in part by [ADR-0019](0019-lease-identity-served-span-resolution.md)** — the pairing rule, see the Amendment below
+Status: accepted; **superseded in part — the pairing rule by [ADR-0019](0019-lease-identity-served-span-resolution.md), the corrupt-lineage throw by [ADR-0020](0020-atomic-store-pairs-and-corrupt-lineage-repair.md); see the Amendment below**
 Related: `src/snapshot-store/lineage-store.ts`, `src/hash-store.ts`
 (`getSnapshot`, `buildStore`), `docs/adr/0016-store-version-flap-guard.md`
 
@@ -109,11 +109,19 @@ snapshots` / `DELETE FROM undo` that ADR-0016 left in place (pending CP4)
   transaction before the lineage commit, so a lineage failure leaves a legacy row
   with no lineage — by design the read prefers lineage when present and falls
   back to legacy otherwise.
-- Corrupt snapshots fail loud, never silent: adopt on a snapshot row with empty
-  lineage throws `LineageCorruptError` (a silent no-op would pin the path lease-less
-  forever — the orphan is sticky), and the read serves a lineage hit only when its
-  length matches the content, `line_number`s are dense 1..N, and every anchor matches
-  `HASH_RE`.
+- Corrupt snapshots are diagnosed, never silently ignored: adopt on a snapshot row
+  whose lineage `diagnoseUnusableLineage` rejects **repairs** it — the unusable
+  family is discarded and re-materialised fresh inside the caller's unit, with a
+  `console.warn` naming the arm (ADR-0020; nothing in `src/` throws
+  `LineageCorruptError`, and the empty-lineage arm is message precision only —
+  reachable only with `stored.length === 0 && lineCount ≥ 1`, where the next check
+  returns the same class of error and the same repair). Pinned by
+  `test/core/lineage-store.test.ts` "adopt with emptied lineage repairs it instead
+  of silently no-oping". The read serves a lineage hit only when its length matches
+  the content, `line_number`s are dense 1..N, and every anchor matches `HASH_RE` —
+  the dense clause pinned by `test/core/hash-store.test.ts` "getSnapshot falls back
+  to valid legacy anchors when the lineage family is corrupt", the `HASH_RE` clause
+  by "lineage with a corrupt anchor falls back instead of serving it".
 - Pairing-rule changes are data-compatible only forward: new snapshots pair
   against whatever lineage exists; old rows are never rewritten.
 - Read together with `0016-store-version-flap-guard.md`: 0016 made store open
