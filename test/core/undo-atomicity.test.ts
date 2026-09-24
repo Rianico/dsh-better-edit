@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { readFile } from "node:fs/promises";
 import { withTempFile, setupIntegrationTest, getText } from "../support/fixtures.js";
-import { loadHashStore } from "../../src/hash-store.js";
+import { loadHashStore, type InternalHashStore } from "../../src/hash-store.js";
 import { codeOf } from "../../src/utils.js";
 
 /**
@@ -38,16 +38,21 @@ interface UndoProbe {
   /** Canonical path, identical to the one `undo_last_edit` resolves. */
   abs: string;
   /** The cached store the tool itself uses (`loadHashStore(cwd)` is that entry). */
-  store: Awaited<ReturnType<typeof loadHashStore>>;
+  store: InternalHashStore;
   /** The pre-edit content the undo restores. */
   restoredContent: string;
   /** Snapshot anchors for the restored content, captured before the undo. */
   beforeAnchors: string[] | undefined;
+  /** Served/leased anchors for this session+path, captured before the undo. */
+  beforeServedAnchors: Set<string>;
 }
 
 async function probe(cwd: string, harness: Harness): Promise<UndoProbe> {
   const abs = await harness.io.resolve("t.txt", cwd, new AbortController().signal);
-  const store = await loadHashStore(cwd);
+  // Narrowed to the internal view: the cross-pair cell must stub `commitSnapshot`, a
+  // LineageStore seam member the public `HashStore` view deliberately hides (the same
+  // narrowing test/core/serve-leases.test.ts uses for the served/lease seam).
+  const store = (await loadHashStore(cwd)) as InternalHashStore;
   const entry = store.getUndo(abs);
   if (entry === undefined) throw new Error("expected an undo pair after one edit");
   return {
@@ -55,6 +60,7 @@ async function probe(cwd: string, harness: Harness): Promise<UndoProbe> {
     store,
     restoredContent: entry.content,
     beforeAnchors: store.getSnapshot(abs, entry.content),
+    beforeServedAnchors: store.getAnchorReservations(harness.sessionKey, abs).reservedHashes,
   };
 }
 
@@ -75,6 +81,33 @@ async function undoFaulting(harness: Harness): Promise<unknown> {
     return undefined;
   } catch (error) {
     return error;
+  }
+}
+
+/**
+ * The anchors the tool advertised for follow-up edits: the restored rows of its own diff
+ * (the `+` rows — `genDiff` marks removed rows `-` and context rows ` `). These are the
+ * anchors the tool's success message explicitly hands the model.
+ */
+function restoredAnchorsFromToolOutput(text: string): string[] {
+  const anchors: string[] = [];
+  for (const line of text.split("\n")) {
+    const match = /^\+\s*(?:\d+\s+)?([A-Za-z0-9]{3})│/.exec(line);
+    if (match?.[1] !== undefined) anchors.push(match[1]);
+  }
+  return anchors;
+}
+
+/** Did an edit with this anchor apply, or was it refused by the tool's error surface? */
+async function editOutcome(harness: Harness, anchor: string): Promise<"applied" | "rejected"> {
+  try {
+    const result = await harness.editTool.execute("edit", {
+      path: "t.txt",
+      edits: [[anchor, anchor, "Q"]],
+    });
+    return /\[E_[A-Z_]+\]/.test(getText(result)) ? "rejected" : "applied";
+  } catch {
+    return "rejected";
   }
 }
 
@@ -175,6 +208,74 @@ describe("undo atomicity — the snapshot adopt and the undo-pair clear", () => 
       if (hash === undefined) throw new Error("re-read row carried no anchor");
       await harness.editTool.execute("edit", { path: "t.txt", edits: [[hash, hash, "Z"]] });
       expect(await readFile(path, "utf-8")).toBe("a\nZ\nc\n");
+    });
+  });
+  it("holds both pair writes down: the serve path cannot mask the split", async () => {
+    await withTempFile("t.txt", "a\nb\nc\n", async ({ cwd, path }) => {
+      const harness = setupIntegrationTest(cwd);
+      await applyOneEdit(harness);
+      expect(await readFile(path, "utf-8")).toBe("a\nB\nc\n");
+      const p = await probe(cwd, harness);
+
+      // Hold BOTH writes of the pair down: the adopt (`upsertSnapshot`) and the serve-path
+      // re-materialization (`commitSnapshot` — the LineageStore seam member `grantServeLeases`
+      // calls from `recordServedTruncated`). A one-shot adopt spy alone let the serve path
+      // rebuild the v7 side, which is why the r1 counterexample could not show the damage.
+      const adopt = vi.spyOn(p.store, "upsertSnapshot").mockImplementation(() => {
+        throw new Error("injected: pair-adopt fault");
+      });
+      const serve = vi.spyOn(p.store, "commitSnapshot").mockImplementation(() => {
+        throw new Error("injected: serve-path fault");
+      });
+
+      let returned: string | undefined;
+      let fault: unknown;
+      try {
+        returned = getText(await harness.undoTool.execute("undo_last_edit", { path: "t.txt" }));
+      } catch (error) {
+        fault = error;
+      }
+      const advertised = returned === undefined ? [] : restoredAnchorsFromToolOutput(returned);
+      const servedAnchors = p.store.getAnchorReservations(harness.sessionKey, p.abs).reservedHashes;
+
+      // Every probe is measured here, never inferred from the claim under test.
+      const endState = {
+        toolClaimedSuccess: returned !== undefined && returned.includes("Undone last edit"),
+        faultCode: codeOf(fault),
+        undoPairPresent: p.store.getUndo(p.abs) !== undefined,
+        restoredSnapshotUnchanged:
+          JSON.stringify(p.store.getSnapshot(p.abs, p.restoredContent)) ===
+          JSON.stringify(p.beforeAnchors),
+        advertisedAnchorsServed:
+          advertised.length === 0 ? "n/a" : advertised.every((hash) => servedAnchors.has(hash)),
+        followUpEdit: "not-attempted:tool-faulted" as string,
+        nextOperation: "not-attempted" as string,
+      };
+
+      adopt.mockRestore();
+      serve.mockRestore();
+
+      if (advertised[0] !== undefined) {
+        endState.followUpEdit = await editOutcome(harness, advertised[0]);
+      }
+
+      const reread = await harness.readTool.execute("read", { path: "t.txt" });
+      const row = getText(reread)
+        .split("\n")
+        .find((line) => line.includes("│b"));
+      if (row === undefined) throw new Error("re-read did not serve line b");
+      const hash = row.split("│")[0];
+      if (hash === undefined) throw new Error("re-read row carried no anchor");
+      endState.nextOperation = await editOutcome(harness, hash);
+      expect(endState).toEqual({
+        toolClaimedSuccess: false,
+        faultCode: "E_UNDO_NOT_RECORDED",
+        undoPairPresent: true,
+        restoredSnapshotUnchanged: true,
+        advertisedAnchorsServed: "n/a",
+        followUpEdit: "not-attempted:tool-faulted",
+        nextOperation: "applied",
+      });
     });
   });
 });
