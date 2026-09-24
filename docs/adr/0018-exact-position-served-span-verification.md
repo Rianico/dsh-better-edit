@@ -164,12 +164,35 @@ identical lines, so position is the only discriminator. This ADR keeps upstream'
   records/grants nothing: the served rows are byte-identical before and after, no lease row
   appears, and every grant field (`snapshotHash`, `lineId`, `lineNumber`, `canonHash`) is
   unchanged. The next fresh read's anchor list is byte-identical to the control that performs the
-  same external change with no intervening rejected edit. The one measured lease delta is not the
-  rejection: the edit pipeline's own file normalization commits a snapshot of the externally
-  changed content, and `commitSnapshot` retires leases whose line left it (`retiredAt`); an
-  external change that preserves every served line's identity leaves lease rows byte-identical
-  including `retiredAt`. The recovery is the re-read the message already instructs; the reject
-  sites now only render the echo into the error message.
+  same external change with no intervening rejected edit. The recovery is the re-read the message
+  already instructs; the reject sites now only render the echo into the error message.
+- **`retiredAt` is a different mechanism, not an exception to the bullet above.** The edit
+  pipeline calls `normFromText` (`src/mutation.ts:125`) **before** `applyOne` (`:149`). That
+  normalization persists a snapshot of the file as it is on disk, and `commitSnapshot` retires
+  every live lease for the path whose `line_id` left that snapshot (`retireAbsentLeases`,
+  `src/snapshot-store/lineage-store.ts:478` — a path this change did not touch). Measured
+  positively: the same `normFromText` call retires the lease with **no edit and no rejection at
+  all** (the `norm-only` arm: `f9U.retiredAt` `null → 1790264335193`). Nothing on the reject path
+  owns it. The non-rejecting arms do not _show_ it because something follows the normalization and
+  revives the row — a read/serve re-commits with leases, and a passing edit's serve does the same
+  (the `accept` arm retires a different lease instead). A rejection is simply the one path where
+  nothing follows. Where the external change preserves every served `line_id` — the insert-only
+  and windowed cells — nothing is retired at all and the byte-identity above holds _including_
+  `retiredAt`; those two cells are the contrast that makes the attribution visible. Assert
+  observable equivalence, not global immutability.
+- **Every reject site is pinned by a cell that fails when the write returns** (T3f). The cells in
+  `test/core/serve-leases.test.ts` cover the in-loop/batch collector `collectAbortPart` (twin,
+  insert-only, windowed, consecutive-rejection and batch-abort drivers) and the batch branch of
+  `enforceNoopLoop` (the noop-loop cell). The remaining two sites are reached by no tool path —
+  `enforceNoopLoop`'s single-edit flavor (`PreparedItem.index` is required and the only production
+  call site, `src/mutation/engine.ts:895`, passes `item.index`) and the anonymous arrow callback
+  passed as `applyOne`'s `onReject` argument (`src/mutation/engine.ts:287`, invoked `:303`/`:324`)
+  inside `execPipeline` (`src/mutation.ts:91`; the callback is `src/mutation.ts:170-172` post-fix,
+  and held the `recordEchoServes` call at `:179` at base `4efa43a`) — `tool-edit.ts:166` → `execute`
+  (`src/mutation.ts:371`) → `applySequence` (`:382`) → `runFileEdits` (`:511` → `engine.ts:711`),
+  while `execPipeline` is reached only from the uncalled `applySingle` wrapper (`src/mutation.ts:491`;
+  no `src/` file calls it) — so those two are pinned by direct-call cells instead of tool-path cells.
+  Re-adding the write at any of the sites turns at least one cell RED, measured per site.
 - **Two commits were required for the defect to be observable — a lesson.** T2b `510af05` made
   the reject path _write_ served rows (the stale slot); T3a `b623aa8` removed the eager orphan
   heal that had been nulling it. At T2b's head the heal masked the slot — labels churned, no
