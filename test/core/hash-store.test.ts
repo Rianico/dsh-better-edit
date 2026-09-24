@@ -1781,6 +1781,75 @@ it("getFileUndo maps updatedAt from the stored file_undo.updated_at", async () =
   });
 });
 
+it("getFileUndo heals a shape-corrupt row and deletes the pair", async () => {
+  await withTempHome(async (home) => {
+    const { saveUndo } = await import("../../src/undo-edit.js");
+    await saveUndo("/shape-corrupt.ts", {
+      content: "a\n",
+      bom: "",
+      originalEnding: "\n",
+      hashes: ["H01"],
+      resultContent: "b\n",
+    });
+    const internal = (await loadHashStore()) as unknown as InternalHashStore;
+    // Happy path first, so the heal assertion below cannot be satisfied by the row never
+    // having existed.
+    expect(internal.getFileUndo("/shape-corrupt.ts")).toBeDefined();
+
+    // TEXT survives INTEGER affinity, so an UPDATE to a non-numeric string really does
+    // leave a non-number in the column and `mapFileUndoRow` really does reject it.
+    const corrupt = new DatabaseSync(sqlitePath(home));
+    corrupt
+      .prepare("UPDATE file_undo SET updated_at = 'nope' WHERE path = ?")
+      .run("/shape-corrupt.ts");
+    corrupt.close();
+
+    // A shape-corrupt row must take the SAME healing path as a JSON parse failure: the
+    // pair is deleted and the caller sees `undefined`. The face doc at the `getFileUndo`
+    // declaration promises "same healing contract as the legacy row". If the validating
+    // SELECT sits outside the try, this throws instead: the throw escapes `getFileUndo`
+    // -> `undo-edit.ts` `readFileUndo` -> `saveUndo`'s catch -> `persisted: false` ->
+    // `mutation.ts` aborts the edit, and because the pair is never deleted every future
+    // edit to this path aborts too. Fail-loud must not become fail-permanently.
+    expect(internal.getFileUndo("/shape-corrupt.ts")).toBeUndefined();
+
+    const check = new DatabaseSync(sqlitePath(home));
+    const count = (table: string) =>
+      check.prepare(`SELECT COUNT(*) AS n FROM ${table} WHERE path = ?`).get("/shape-corrupt.ts")?.[
+        "n"
+      ];
+    expect(count("file_undo")).toBe(0);
+    expect(count("undo")).toBe(0);
+    check.close();
+  });
+});
+
+it("edits to a shape-corrupt path keep succeeding after the row heals", async () => {
+  await withTempHome(async (home) => {
+    const { saveUndo } = await import("../../src/undo-edit.js");
+    const path = "/heal-repeat.ts";
+    const edit = (content: string, resultContent: string, hashes: string[]) =>
+      saveUndo(path, { content, bom: "", originalEnding: "\n", hashes, resultContent });
+
+    expect((await edit("a\n", "b\n", ["H01"])).persisted).toBe(true);
+
+    const corrupt = new DatabaseSync(sqlitePath(home));
+    corrupt.prepare("UPDATE file_undo SET updated_at = 'nope' WHERE path = ?").run(path);
+    corrupt.close();
+
+    // The read inside the first edit heals the pair, so the write still persists.
+    expect((await edit("b\n", "c\n", ["H02"])).persisted).toBe(true);
+    // The second edit is what pins "permanent denial" closed: before the fix BOTH of
+    // these returned `persisted: false` and no write ever cleared the corrupt row.
+    expect((await edit("c\n", "d\n", ["H03"])).persisted).toBe(true);
+
+    const internal = (await loadHashStore()) as unknown as InternalHashStore;
+    const final = internal.getFileUndo(path);
+    expect(final?.content).toBe("c\n");
+    expect(final?.resultContent).toBe("d\n");
+  });
+});
+
 it("restore puts the prior v7 row back content-identical with a fresh pair stamp", async () => {
   await withTempHome(async (home) => {
     const { saveUndo } = await import("../../src/undo-edit.js");

@@ -896,9 +896,12 @@ function makeDomainStore(
       }
     },
     getFileUndo(path) {
-      const row = stmts.fileUndoGet(path);
-      if (!row) return undefined;
+      // The SELECT is inside the try: `stmts.fileUndoGet` validates the raw row
+      // (`mapFileUndoRow`) and throws on a shape-corrupt row, which must take the
+      // same healing path as `getUndo`'s parse failure below.
       try {
+        const row = stmts.fileUndoGet(path);
+        if (!row) return undefined;
         const parsed = JSON.parse(row.hashes as string);
         if (!isValidHashList(parsed)) {
           undoPairDeleteImpl(path);
