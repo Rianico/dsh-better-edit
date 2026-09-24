@@ -165,8 +165,7 @@ describe("registry range-shape rules (F7)", () => {
   });
   it("E_STALE_RANGE with reread:true keeps the heading but drops the hint", () => {
     const message = formatError("E_STALE_RANGE", {
-      headline:
-        "anchor was served at line 1 but now resolves to line 5 (pos-restricted concurrency). Re-read.",
+      headline: "anchor was served at line 1 but now resolves to line 5. Re-read.",
       servedRows: rows,
       servedBlock: "abc│one",
       reread: true,

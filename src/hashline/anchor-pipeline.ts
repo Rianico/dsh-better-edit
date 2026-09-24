@@ -598,9 +598,6 @@ export function verifyServedRange(args: {
   const where = filePath ? ` in ${filePath}` : "";
   const retiredSet = args.retired ?? new Set<string>();
   const servedCanons = args.servedCanons;
-  const strictPos = args.strictPos ?? false;
-  const epochSnapshotId = args.epochSnapshotId;
-  const curSnapshotId = args.curSnapshotId;
   const echoRows = buildRangeEcho(startLine, endLine, fileHashes);
   const totalLen = endLine - startLine + 1;
   const tail =
@@ -693,11 +690,28 @@ export function verifyServedRange(args: {
       servedRows: echoRows,
     });
   }
-  // Strict pos check for concurrency (pos-free vs strict)
-  if (strictPos && from !== startLine - 1) {
+  // Position check — UNCONDITIONAL. A boundary anchor whose served position no longer
+  // equals its resolved position is stale regardless of epoch state: the served slot
+  // would otherwise silently re-bind onto a different line that happens to hold the same
+  // bytes (wrong line edited, exit 0).
+  //
+  // Why this must not be gated on `strictPos`: the pos-free path is REACHABLE on a normal
+  // session route. `epochSnapshotId` is pinned only by a FULL read
+  // (src/session-view.ts:311 sits inside `if (isFullRead)` at :307), `upsertEpochSnapshotId`
+  // has exactly one caller and `clearEpochSnapshotId` has none, and a WINDOWED read is
+  // never a full read (`isFullRead` requires `rows.length === full.hashes.length`). So a
+  // windowed read leaves `strictPos === false` permanently for that (session, path),
+  // whether or not the file changed. `curSnapshotId` can likewise stay undefined when the
+  // snapshot read throws at edit time (src/mutation.ts:148-151 swallows it).
+  //
+  // T3c DEBT: `strictPos` is now computed-but-unread here. Its parameter and the
+  // `epochSnapshotId`/`curSnapshotId` interface fields are the lease-resolve seam T3c
+  // consumes and is to delete. Session-level regression:
+  // test/core/deleted-twin-anchor.test.ts (the "WINDOWED read" case).
+  if (from !== startLine - 1) {
     throw new ServedRejectionError({
       code: "E_STALE_RANGE",
-      headline: `anchor was served at line ${from + 1} but now resolves to line ${startLine} (pos-restricted concurrency). Re-read.`,
+      headline: `anchor was served at line ${from + 1} but now resolves to line ${startLine}. Re-read.`,
       servedBlock: echo,
       reread: true,
       firstOffendingLine: startLine,

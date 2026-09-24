@@ -25,12 +25,13 @@ beforeAll(async () => {
  *
  * Case 1 — externally deleting the anchored line leaves the surviving byte-identical
  * twin holding the deleted line's anchor; the edit must reject and write nothing.
- * Refutability (a) `strictPos`: removing the `strictPos` branch in `verifyServedRange`
- * (src/hashline/anchor-pipeline.ts — `if (strictPos && from !== startLine - 1)`) lets
- * the edit apply to the surviving twin (no rejection, file changes), so this test goes
- * red. The surviving twin keeps the deleted line's hash (fresh allocation hands the
- * only remaining occurrence the base slot), the served canon still matches (identical
- * bytes), and only the served POSITION disagrees — exactly what `strictPos` pins.
+ * Refutability (a) position check: restoring the `strictPos &&` gate that used to guard
+ * it (src/hashline/anchor-pipeline.ts — the check `if (from !== startLine - 1)` is now
+ * UNCONDITIONAL) lets the edit apply to the surviving twin (no rejection, file changes),
+ * so this test goes red. The surviving twin keeps the deleted line's hash (fresh
+ * allocation hands the only remaining occurrence the base slot), the served canon still
+ * matches (identical bytes), and only the served POSITION disagrees — exactly what the
+ * position check pins.
  *
  * Case 2 — an orphaned serve (the same hash written at a new position while the old
  * served slot survives) makes the boundary anchor ambiguous; the span must reject with
@@ -40,7 +41,7 @@ beforeAll(async () => {
  * content-matching candidate and the span verifies clean — no rejection, test red.
  * That search IS the "heal and proceed" arm this contract removes.
  */
-describe("deleted twin anchor (strictPos lock)", () => {
+describe("deleted twin anchor (exact position lock)", () => {
   it("rejects E_STALE_RANGE and writes nothing when the anchored line was deleted externally", async () => {
     const initial =
       "export function alpha() {\n" +
@@ -146,34 +147,36 @@ describe("deleted twin anchor (strictPos lock)", () => {
     expect(message).toContain("was served at 2 positions");
   });
 
-  it("CHARACTERIZATION for T3c: the pos-free path re-binds onto the surviving twin", () => {
-    // NOT a contract — this records a KNOWN FAIL-OPEN for the lease-resolve seam (T3c).
-    // `strictPos` is conditional (src/mutation.ts:152-155): false whenever
-    // `epochSnapshotId` or `curSnapshotId` is undefined, i.e. a first edit with no epoch.
-    // On that path the served position is trusted without evidence, so the same rebind
-    // that case 1 rejects under `strictPos: true` is accepted here. Measured, not fixed.
+  it("rejects E_STALE_RANGE on the pos-free path too — the position check is unconditional", () => {
+    // The position check in `verifyServedRange` is UNCONDITIONAL. The pos-free path is
+    // reachable on a normal session route (`epochSnapshotId` is pinned only by a FULL read,
+    // and a windowed read is never a full read), so a moved span must reject rather than
+    // silently re-bind onto the line that now holds the same bytes.
+    // Refutability: restore `strictPos &&` on the guard -> `reject(false)` returns undefined
+    // instead of E_STALE_RANGE (green-with-a-write).
     const fileLines = ["twin", "other"];
     const fileHashes = lineHashesPure(fileLines.join("\n"));
     const hTwin = fileHashes[0]!;
     const hOther = fileHashes[1]!;
 
-    // Served when the twin sat at position 1 (a line preceded it). That predecessor
-    // was then deleted externally, so the twin's bytes now sit at position 0 while the
-    // served slot still points at 1.
+    // Served when the twin sat at position 1 (a line preceded it). That predecessor was
+    // then deleted externally, so the twin's bytes now sit at position 0 while the served
+    // slot still points at 1.
     const served = [hOther, hTwin];
     const servedCanons = [canon("other"), canon("twin")];
 
-    const reject = (strictPos: boolean): string | undefined => {
+    // No copies: the seam is pure, so rejecting must not mutate the caller's mirror.
+    const reject = (strictPos: boolean | undefined): string | undefined => {
       try {
         verifyServedRange({
-          served: [...served],
-          servedCanons: [...servedCanons],
+          served,
+          servedCanons,
           startHash: hTwin,
           endHash: hTwin,
           startLine: 1,
           endLine: 1,
-          fileHashes: [...fileHashes],
-          fileLines: [...fileLines],
+          fileHashes,
+          fileLines,
           strictPos,
         });
         return undefined;
@@ -183,11 +186,68 @@ describe("deleted twin anchor (strictPos lock)", () => {
       }
     };
 
-    // Pos-restricted (both epoch ids present): the position mismatch is caught.
+    // Pos-restricted (both epoch ids present) AND pos-free (ids undefined) all reject: the
+    // epoch state no longer decides whether a moved span is caught.
     expect(reject(true)).toBe("E_STALE_RANGE");
-    // Pos-free (epoch ids undefined): OBSERVED REBIND — the span is accepted and the
-    // served slot at 1 silently re-binds onto the file's line 0. T3c finding, not a
-    // T3a defect; do not "fix" this here.
-    expect(reject(false)).toBeUndefined();
+    expect(reject(false)).toBe("E_STALE_RANGE");
+    expect(reject(undefined)).toBe("E_STALE_RANGE");
+    // Rejecting is pure — no write reaches the caller's served mirror.
+    expect(served).toEqual([hOther, hTwin]);
+    expect(servedCanons).toEqual([canon("other"), canon("twin")]);
+  });
+
+  it("rejects E_STALE_RANGE when a WINDOWED read could not pin the epoch (reachable pos-free route)", async () => {
+    // The reachable route this pins: `epochSnapshotId` is written only inside
+    // `if (isFullRead)` (src/session-view.ts:307-311) and `isFullRead` requires
+    // `rows.length === full.hashes.length`, so a WINDOWED read never pins it — `strictPos`
+    // stays false for that (session, path) permanently, whether or not the file changed.
+    // Before the position check was made unconditional this edit silently applied to the
+    // surviving twin.
+    const initial =
+      "export function alpha() {\n" +
+      "  return compute(value);\n" +
+      "}\n" +
+      "\n" +
+      "export function beta() {\n" +
+      "  return compute(value);\n" +
+      "}\n";
+
+    await withTempFile("windowed-twin.ts", initial, async ({ cwd, path }) => {
+      const { readTool, editTool } = setupIntegrationTest(cwd);
+      // WINDOWED read (never a full read): serves lines 1-3, which includes the first
+      // occurrence of the duplicated line.
+      const read = await readTool.execute("windowed-route", {
+        path: "windowed-twin.ts",
+        offset: 1,
+        limit: 3,
+      });
+      const rows = getText(read).split("\n");
+      const twinRows = rows.filter((line) => line.endsWith("│  return compute(value);"));
+      expect(twinRows).toHaveLength(1);
+      const firstAnchor = extractHash(twinRows[0]!);
+
+      // Externally delete the FIRST occurrence (out-of-band; no serve recording). The
+      // survivor takes the base slot, so `firstAnchor` now resolves three lines lower
+      // while the served slot still points at line 2.
+      const external = initial.replace("  return compute(value);\n", "");
+      expect(external).not.toBe(initial);
+      await writeFile(path, external, "utf-8");
+
+      let error: unknown;
+      try {
+        await editTool.execute("windowed-route", {
+          path: "windowed-twin.ts",
+          anchor_from: firstAnchor,
+          anchor_to: firstAnchor,
+          replace_with: "  return changed;",
+        });
+      } catch (e) {
+        error = e;
+      }
+      expect(error).toBeDefined();
+      expect(String((error as Error).message)).toMatch(/E_STALE_RANGE/);
+      // Byte-identical: the edit never re-bound onto the surviving twin.
+      expect(await readFile(path, "utf-8")).toBe(external);
+    });
   });
 });

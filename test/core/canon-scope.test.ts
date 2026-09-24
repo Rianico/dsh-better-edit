@@ -33,7 +33,7 @@ function searchBase(target: number, prefix: string): string | undefined {
 }
 
 describe("canon scope is file-local, never process-global (#149 class)", () => {
-  it("a canon recorded while serving file A cannot decide file B's boundary heal", () => {
+  it("rejects E_UNSERVED_RANGE on an ambiguous boundary that file A's canon cannot decide", () => {
     const diskCanons = ["alpha", "beta", "gamma"];
     const T = (xxh32(canon("alpha")) >>> 14) % HASH_SPACE;
     // Decoy and foreign share alpha's base slot but carry foreign canons that
@@ -66,8 +66,8 @@ describe("canon scope is file-local, never process-global (#149 class)", () => {
     expect(aHashes[0]).toBe(hBase);
     expect(aHashes[1]).toBe(hShift);
 
-    // The trailing duplicate is the stale duplicate that forces the
-    // ambiguous-position branch and thus the boundary heal.
+    // The trailing duplicate is the stale duplicate that puts `hShift` at two served
+    // positions, so the boundary is ambiguous and rejects fail-closed.
     const served = [hBase, hShift, hBeta, hShift];
     const servedCanons = [canon(decoy!), canon("alpha"), canon("beta"), canon("alpha")];
 
@@ -174,6 +174,18 @@ describe("canon scope is file-local, never process-global (#149 class)", () => {
       // canons carry no entry for `hShift`, so exactly two outcomes are possible:
       // B records `null` (file-local, fail-closed) or B records a canon borrowed
       // from another file — the #149 defect.
+      //
+      // Refutability: the EFFECTIVE mutation has TWO parts, and part 1 ALONE CANNOT
+      // refute this test. `06961a0` deleted every reader of the global map, so
+      // reinstating only the seeding (`hashToCanon` + `rememberHashCanon`/
+      // `getCanonForHash` and the `rememberHashCanon(h, c)` call in `lineHashesPure`)
+      // writes to a map nothing reads and this test stays GREEN — that is not evidence
+      // the test is vacuous.
+      //   1. src/hashline/hash-assign.ts — reinstate `hashToCanon`,
+      //      `rememberHashCanon`/`getCanonForHash`, and the seeding in `lineHashesPure`.
+      //   2. src/session-view.ts:325 — the partial-canon lookup becomes
+      //      `canonByHash.get(row.hash) ?? getCanonForHash(row.hash) ?? null`.
+      // Observed RED with both parts: `expected 'foreign-533192' to be null`.
       await recordServed(
         "t3a-canon-scope",
         "/b.ts",
@@ -189,6 +201,12 @@ describe("canon scope is file-local, never process-global (#149 class)", () => {
       );
 
       const canons = await loadServedCanons("t3a-canon-scope", "/b.ts");
+      // Positive control: indices 0 and 2 resolve through the SAME lookup and DO find
+      // B's own canons, so the `null` at index 1 is a file-local MISS for `hShift`, not
+      // a lookup that is broken generally. Mutation: make the partial-canon lookup
+      // return `null` unconditionally -> both of these fail.
+      expect(canons[0]).toBe(canon("alpha"));
+      expect(canons[2]).toBe(canon("gamma"));
       expect(canons[1]).toBeNull();
     });
   });

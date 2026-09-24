@@ -14,8 +14,9 @@
  * hash-store persistence delegation (ServedPersistence).
  *
  * Ownership: This file OWNS the served-merge invariant
- * (_mergeServedRows with orphan healing per ADR-0008), the
- * position-reconstruction math, and the drift computation. Deleting
+ * (_mergeServedRows — exact-write: a hash written at a new position leaves the
+ * old slot intact, and a duplicate is rejected at verification rather than
+ * healed), the position-reconstruction math, and the drift computation. Deleting
  * it would scatter the served+drift invariant across 4 files — it
  * concentrates (deep).
  *
