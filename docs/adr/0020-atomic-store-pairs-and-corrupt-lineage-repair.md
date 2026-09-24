@@ -133,7 +133,10 @@ order / canon arm) or `undefined` when the family can be adopted as-is.
 **All four arms route into the same branch.** The canon arm is a fourth diagnosis, not a fourth repair:
 the family is discarded by `snapshot_id` and re-materialized fresh in the caller's unit, with exactly the
 properties below — so a canon-corrupt row is repaired on its next adoption rather than silently reused,
-and `line_id_counters` are still not reset.
+and `line_id_counters` are still not reset. The repair is **one-shot**: re-materialization leaves the
+family canon-consistent, so the next and every later adoption takes the healthy adopt path — no
+re-diagnosis, no re-materialization, no id churn — which `test/core/lineage-repair.test.ts`'s three-adopt
+cell pins with one warning across three consecutive adopts, unchanged ids and stable row counts.
 
 **The exact repair.** The adopt arm discards **that one** family by `snapshot_id` — `DELETE FROM
 line_lineage WHERE snapshot_id = ?` then `DELETE FROM file_snapshots WHERE snapshot_id = ?` — and falls
@@ -304,6 +307,7 @@ the mitigation until R5.
 - Two error surfaces moved: `E_UNDO_NOT_RECORDED` is new, and four tests that pinned the throw contract
   are reversed. No payload change; `src/contract.ts` is untouched.
 - Pinned by `test/core/undo-atomicity.test.ts` (7 cells — the pair, the post-unit serve claim and its
-  success-path twin), `test/core/lineage-repair.test.ts` (3 cells — the loop, `deleteByPath`'s four
-  families on both the interrupted and the successful path, and the canon arm), and the four rewritten
+  success-path twin), `test/core/lineage-repair.test.ts` (4 cells — the loop, `deleteByPath`'s four
+  families on both the interrupted and the successful path, the canon arm, and the three-adopt cell that
+  pins the repair's idempotence), and the four rewritten
   cells in `test/core/lineage-store.test.ts` and `test/core/hash-store.test.ts`.
