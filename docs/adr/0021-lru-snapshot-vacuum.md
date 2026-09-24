@@ -155,7 +155,7 @@ The pass never touches, each for a stated reason:
   that adds a session-teardown seam.
 - **the legacy `snapshots` row** — it "does not reclaim the legacy `snapshots` row: one per
   path, overwritten, and the upgrade fallback" read by `getSnapshot` when the v7 family has no
-  lineage (`hash-store.ts:811-823`). The legacy-`snapshots` ↔ `file_snapshots` pairing is a separate
+  lineage (`src/hash-store.ts:861`). The legacy-`snapshots` ↔ `file_snapshots` pairing is a separate
   invariant with its own owner. Interaction cell 14 asserts the row survives the pass _and_ that a
   read after a full v7 prune re-materializes the v7 family rather than silently serving from it.
 - **the legacy `served` table** — it already has a TTL pruner at store open.
@@ -214,7 +214,7 @@ The pass never touches, each for a stated reason:
   counts are unchanged (12 snapshots / 36 lineage rows in its shape) and then `orphanLineage === 0`.
   The mirror shape — a `file_snapshots` row with no lineage, the codebase's "orphan snapshot row" —
   is **not** repaired here: the adopt/serve path already detects, warns about and repairs it
-  (`src/hash-store.ts:838-851`, proven by `test/core/hash-store.test.ts:1665-1706`), and a second
+  (`src/hash-store.ts:849-861`, proven by `test/core/hash-store.test.ts:1665-1706`), and a second
   owner could disagree with the first while both appear to work. Predicate trigger: any sweep path
   that is not wrapped by `withTransaction`.
 - **An FK-ON opener masks the explicit pair delete.** Measured (P1 matrix): the explicit
@@ -224,7 +224,7 @@ The pass never touches, each for a stated reason:
   `enableForeignKeyConstraints` by default and `hash-store` sets `PRAGMA foreign_keys = ON`), so its
   post-state effect is masked there — recorded as a GREEN mutation with meaning 4 (T5M22/T5M26),
   never as evidence that the line is dead. Cell 21 asserts the invariant FK-mode-agnostically.
-- **A fail-closed serve grant can leave a served row without a lease.** `session-view.ts:253-257`
+- **A fail-closed serve grant can leave a served row without a lease.** `session-view.ts:267-268`
   returns early when the serve has no `content`/`hashes` (or a length mismatch), so no lease pins the
   snapshot those anchors came from; the sweep may evict it and the next edit then fails closed
   (measured `E_STALE_RANGE`). Predicate trigger: any served row whose anchor resolves with no lease.

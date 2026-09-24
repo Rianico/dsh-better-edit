@@ -314,7 +314,7 @@ export function vacuumSnapshots(db: DatabaseSync, options: VacuumOptions = {}): 
  *
  * Do NOT add a repair here for the mirror shape — a `file_snapshots` row with no `line_lineage`
  * rows, the codebase's "orphan snapshot row": the adopt/serve path already detects, warns about
- * and repairs it (the lineage adopt branch, `src/hash-store.ts:838-851`), proven by
+ * and repairs it (the lineage adopt branch, `src/hash-store.ts:849-861`), proven by
  * `test/core/hash-store.test.ts:1665-1706` ("keep the snapshot row, empty the lineage" → served
  * anchors + lease + `lineage: 2` + a "repairing corrupt lineage" warning). An eager repair in this
  * module would make a second owner that can disagree with the first while both appear to work.
