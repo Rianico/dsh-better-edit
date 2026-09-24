@@ -156,4 +156,4 @@ snapshots` / `DELETE FROM undo` that ADR-0016 left in place (pending CP4)
   T2b-scoped** — accepted conditional on that pin.
 - Follow-up trigger: _anchor history for same-string revival_ — needed before
   any consumer relies on pre-edit anchor strings surviving an undo (T3
-  verification or later); reference upstream `edit-undo.ts:188`.
+  verification or later); reference upstream `../pi-better-edit/src/edit-undo.ts:188`.

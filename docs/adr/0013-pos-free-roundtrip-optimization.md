@@ -87,8 +87,9 @@ Makes `shift==rebind` loud only when `changed` overlaps target, not when exterio
 > The strict/identity rejection is **not** a re-serve: it records nothing and grants
 > nothing (ADR-0018, T3f), its message says `Re-read.`, and a retry with the echoed
 > anchors is rejected again (measured). The `Retry with these anchors (no read needed)`
-> hint survives only on the non-`reread` arms (served-length mismatch, `E_UNSERVED_RANGE`),
-> where the echo rows are the current file's anchors.
+> hint survives only on the non-`reread` arms — served-length mismatch
+> (`src/hashline/anchor-pipeline.ts:802`), a line whose bytes differ from what was served
+> (`:883`), and every `E_UNSERVED_RANGE` (`:775`/`:790`). Those echo rows are the current file's anchors.
 
 We keep `pos-free` by default because line non-overlap ≈ semantic non-overlap for hash-anchored edits; strict would make every exterior `insert @0` abort `B`'s unrelated range, violating `CONTEXT.md:anchor philosophy` and `ADR-0004` healing. Concurrency fallback is automatic, no `supportConcurrency` flag — exterior drift stays `resist`, only overlapping concurrent goes `strict`.
 
@@ -105,4 +106,4 @@ We keep `pos-free` by default because line non-overlap ≈ semantic non-overlap 
 - `anchor-pipeline.ts:verifyServedRange` keeps candidate enumeration, adds `tombstone` filter and `servedCanons` check, `strict` pos via automatic `changed ∩ [L,R]` (no config).
 - Tests: `hashline-stable-mapping.test.ts` "reuses first removed hash" flips to `fresh hash`; new property `identical canon after removal gets ≠ removed hash`.
 
-- Round trips: single-thread exterior drift no longer aborts; a strict/identity rejection records nothing and grants nothing (ADR-0018, T3f), says `Re-read.`, and a retry with the echoed anchors is rejected again — the `Retry with these anchors (no read needed)` hint survives only on the non-`reread` arms (served-length mismatch, `E_UNSERVED_RANGE`), where the echo rows are the current file's anchors.
+- Round trips: single-thread exterior drift no longer aborts; a strict/identity rejection records nothing and grants nothing (ADR-0018, T3f), says `Re-read.`, and a retry with the echoed anchors is rejected again — the `Retry with these anchors (no read needed)` hint survives only on the non-`reread` arms — served-length mismatch (`src/hashline/anchor-pipeline.ts:802`), a line whose bytes differ from what was served (`:883`), and every `E_UNSERVED_RANGE` (`:775`/`:790`) — where the echo rows are the current file's anchors.

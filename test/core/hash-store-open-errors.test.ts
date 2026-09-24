@@ -1,4 +1,5 @@
 import { mkdtemp, rm } from "fs/promises";
+import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -72,6 +73,9 @@ vi.mock("fs/promises", async (importOriginal) => {
 let tmpHome: string;
 
 beforeAll(async () => {
+  // `.tmp/` is gitignored and nothing else guarantees it exists in a clean tree; the async
+  // `fs/promises` module is mocked in this file (no-op `mkdir`), so create the root synchronously.
+  mkdirSync(join(process.cwd(), ".tmp"), { recursive: true });
   tmpHome = await mkdtemp(join(process.cwd(), ".tmp", "hash-store-open-errors-"));
   vi.stubEnv("HOME", tmpHome);
   vi.stubEnv("DSH_HOME", join(tmpHome, ".dsh"));
