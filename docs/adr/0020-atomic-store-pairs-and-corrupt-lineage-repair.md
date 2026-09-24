@@ -104,6 +104,32 @@ follow-up edit using one is rejected.
 This is the same invariant read from the other side: an operation may not advertise a capability it did
 not acquire. The success path's message is unchanged, and a second cell pins it byte-for-byte.
 
+**The invariant, named.** _No user-visible claim about served anchors may be emitted before a successful
+serve write, and any tool that fails to serve must say so in its result rather than implying success._
+
+T3d applies it to the two paths where it was still violated — measured, through the real tools:
+
+- **`edit`** (`src/mutation.ts`) — `recordIfNeeded` discarded `recordServedTruncated`'s boolean, so under
+  a post-commit serve fault the tool returned `Successfully edited 1 file(s) — …` with a diff advertising
+  an anchor absent from `getAnchorReservations`, and the next edit on that anchor died with
+  `E_UNSERVED_RANGE` (wrapped in `E_BATCH_ABORT`). Nothing was surfaced.
+- **`read`** (`src/read-and-serve.ts` + `src/session-view.ts`) — `recordServed` swallowed its failure
+  with `console.error` and returned `void`, so `readAndServe` returned the rows anyway. Under a serve fault
+  a read returned rows with the served set **empty**, and the next edit using one died with
+  `E_UNSERVED_RANGE`; `READ_GUIDANCE`/`EDIT_GUIDANCE` presented those rows as the anchors.
+
+Both are **claim** defects, not atomicity defects. Now both recorders report whether the write landed and
+both surfaces downgrade the claim: `edit` appends a notice naming the partial failure and the recovery,
+`read` puts the same class of notice in its `text`. Neither operation fails — the edit stays committed
+and the read still shows its rows — so the boundary rule holds unchanged: the serve write remains outside
+the committed unit and cannot roll it back.
+
+The notice goes in `text` rather than `warning` because `tool-read` renders both but `src/write-hook.ts`
+renders `text` only; the boundary cell calls `readAndServe` directly, so a notice parked in `warning`
+cannot pass. The guidance no longer promises anchors unconditionally: the edit and undo bullets and
+`EDIT_DESCRIPTION` (783 → 794 chars, inside its 800-char bound) make the claim conditional on the result
+not reporting the rows were not recorded.
+
 ### CP2 — repair at detection, not explicit repair with an actionable error
 
 **What "corrupt" means, precisely.** A `file_snapshots` row exists for the adopted
@@ -266,19 +292,28 @@ the mitigation until R5.
    report success while persisting nothing now persists, and the following `edit` applies.
 3. An undo whose post-unit serve write fails now downgrades its message — no anchor promise, and a
    re-read is required before editing — instead of reporting full success.
+4. An edit whose post-unit serve write fails now downgrades its message — the edit stands, the result says
+   the rows were NOT recorded as served, and a re-read is required before the next edit — instead of
+   advertising the diff's anchors as usable.
+5. A read whose serve write fails now says so in its returned text — the rows are still shown, but their
+   anchors are not usable for editing until a re-read — instead of presenting them as usable anchors.
 
 ## Residuals (with triggers)
 
 - **R1** — `clearUndo`'s internal swallow (`src/undo-edit.ts:123`, `console.error`-and-continue).
   Reached only on the two `E_UNDO_STALE` branches, where the tool returns a typed stale error anyway.
   Trigger: "no store failure is ever silent" becoming a standing rule, or the read-result channel below.
-- **R2** — the serve-path `console.error` swallows in `src/session-view.ts` (`recordServed:330`,
-  `recordServedTruncated:395`, plus the reported-drift and wipe arms). They are no longer reachable from
-  a _permanent_ condition: the only permanent store failure reachable from the read path was the
-  unusable lineage, and `commitSnapshot` now repairs it instead of throwing. What remains is
-  environmental (locks, disk), the cause is logged, and the read's best-effort policy is deliberate — a
-  read must not fail because bookkeeping hiccuped. Trigger: "a read must fail closed on a store write"
-  becoming a requirement.
+- **R2** — the serve-path swallows that remain **silent** about their outcome: the drift write
+  (`src/session-view.ts:677`), the promotion/wipe arms (`src/read-and-serve.ts`, `clearRetiredAnchors` and
+  `clearCards`; each documented in place as a deliberate local fallback), and `recordEchoServes`
+  (`src/hashline/anchor-pipeline.ts:913`). `recordServed` and `recordServedTruncated` no longer belong
+  here — they report whether the write landed, and the read and edit paths downgrade their claim when it
+  did not. The remainder are no longer reachable from a _permanent_ condition: the only permanent store
+  failure reachable from the read path was the unusable lineage, and `commitSnapshot` now repairs it
+  instead of throwing. What remains is environmental (locks, disk), the cause is logged, and the read's
+  best-effort policy is deliberate — a read must not fail because bookkeeping hiccuped. Trigger: "a read
+  must fail closed on a store write" becoming a requirement, or the echo arm being audited (T4
+  echo-guard hardening).
 - **R3** — `upsertSnapshotFor` (`src/hash-store.ts:1238`) has no production caller since CP1's fix; the
   undo path uses the store face directly. Kept because it is an exported seam member
   (`src/store/index.ts`) consumed by `test/core/serve-leases.test.ts`. Trigger: the next seam-pruning
@@ -290,10 +325,6 @@ the mitigation until R5.
   becoming non-idempotent, or starting to gate re-serving.
 - **R5** — `LineageCorruptError` is an `Error` subclass that is never thrown. Rename it to a plain
   diagnosis type carrying a machine-readable arm. Trigger: the read-result channel above firing.
-- **R6** — the same class as the fixed undo claim, still live elsewhere: the edit path
-  (`src/mutation.ts:419`) discards the serve outcome, and `src/prompts.ts:31` / `:61` still promise fresh
-  anchors unconditionally for `edit` and `undo_last_edit`. Outside this task's allowlist. Trigger: the
-  edit path's served-anchor promise is audited.
 
 ## Consequences
 
