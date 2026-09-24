@@ -196,33 +196,59 @@ ServedRejectionError` through `collectAbortPart` (`engine.ts:512`, called at `:8
   production call site (`:895`) passes `item.index` (`:901`); `NoopLoopOptions.index?` (`:409`,
   "undefined = single-edit flavor") and `NoopLoopOptions.range?` (`:415`, "Single-edit flavor only")
   exist only for that dead flavor. Base `4efa43a` had exactly four `recordEchoServes` call sites:
-  `mutation.ts:179`, `engine.ts:443`, `:475`, `:549`. Do not read them as four live paths.
-- **Orphaned single-edit flavor — TRAP; owner T3h (after T3g).** `applySingle` (`src/mutation.ts:491`),
-  `execPipeline` (`:91`), `enforceNoopLoop`'s `index === undefined` branch, and the `range?` option
-  that exists only for it (`engine.ts:415`) are exported-but-uncalled, ~200 lines duplicating the live
-  path. This ADR's own first draft misnamed the live site _because_ of it, and an agent can "fix" the
-  dead path, watch it go green, and believe the live path was exercised. Trigger: delete the orphaned
-  flavor, the direct-call seam cells (C9/C10) that exist only for it, and the `NoopLoopOptions`
-  `range`/`index` plumbing only it uses.
-- **Mutation ledger** (reproduced at `735df10`; mutation = re-adding the write at one isolated site;
-  cells in `test/core/serve-leases.test.ts`). Legend — C1 twin records (`:764`), C2 twin grants
-  (`:771`), C3 twin read ≡ control (`:804`), C4 insert-only (`:813`), C5 windowed (`:827`),
-  C6 noop-loop (`:841`), C7 consecutive rejections (`:860`), C8 batch abort (`:872`), C9 sequential
-  direct call (`:883`), C10 single-edit noop flavor direct call (`:904`):
+  `mutation.ts:179`, `engine.ts:443`, `:475`, `:549`. Do not read them as four live paths. Both
+  orphaned symbols named in this bullet are deleted in T3h — see the closure below.
+- **Orphaned single-edit flavor — CLOSED by T3h.** Deleted from `src/`: `PipelineResult` and
+  `ExecPipelineOptions` (base `f3ffe7a` `src/mutation.ts:64`/`:84`), `execPipeline` (`:91`), and
+  `applySingle` (`:491`); `enforceNoopLoop`'s `index === undefined` branch (`engine.ts:444` at base) and
+  the `NoopLoopOptions` fields that existed only for it (`absolutePath`, `replaceWith`, `sessionKey`,
+  `range?`). Measured: `src/mutation.ts` −185 lines, `src/mutation/engine.ts` −40. Deleted from the
+  tests: the direct-call seam cells that pinned it by hand — base `serve-leases.test.ts:883`/`:904`,
+  `coverage-agent-a-mutation.test.ts:49`/`:85`/`:159`, `coverage-agent-g-mutation-sandbox.test.ts:32`,
+  `coverage-agent-c-edit-engine.test.ts:244`/`:261`/`:276`, `lease-resolve-seam.test.ts:155`,
+  `epoch-lifecycle.test.ts:81` — −461 test lines, plus one live replacement cell: a malformed anchor on
+  an existing file now rejects through the tool and writes nothing. The lesson stands and is _why_ this
+  ledger exists: an agent can "fix" a dead path, watch it go green, and believe the live path was
+  exercised. The trap that lesson warns about is code-free — the flavor is gone from `src/`, from
+  `test/`, and from `tests/`.
+- **Mutation ledger — historical measurement at `735df10`** (mutation = re-adding the write at one
+  isolated site; cells in `test/core/serve-leases.test.ts`). Legend at that revision — C1 twin records
+  (`:764`), C2 twin grants (`:771`), C3 twin read ≡ control (`:804`), C4 insert-only (`:813`), C5
+  windowed (`:827`), C6 noop-loop (`:841`), C7 consecutive rejections (`:860`), C8 batch abort
+  (`:872`). The `C9`/`C10` legend entries and the `M3`/`M5` rows are dropped from this table: T3h
+  deleted the orphaned single-edit flavor those two sites — and the two direct-call cells that pinned
+  them — belonged to, so neither has a subject at HEAD. Raw per-cell output:
+  `evidence/cp1r3-ledger-runs.txt`.
 
-  | mutation | site                                                                          | RED                  | GREEN (reason)                                                                                                   |
-  | -------- | ----------------------------------------------------------------------------- | -------------------- | ---------------------------------------------------------------------------------------------------------------- |
-  | M1       | `collectAbortPart` (`engine.ts:512`) — full write, rows + snapshot context    | 7: C1–C5, C7, C8     | C6, C9, C10 — site isolation (the collector is not their site)                                                   |
-  | M2       | same site — rows only, no snapshot context                                    | 6: C1, C3–C5, C7, C8 | **C2 — by design**: rows without the context grant nothing, so C2 pins the _grant_; C6, C9, C10 — site isolation |
-  | M3       | `enforceNoopLoop` `index === undefined` branch (`engine.ts:430`) — full write | 1: C10               | C1–C9 — site isolation (no tool path reaches this branch)                                                        |
-  | M4       | `enforceNoopLoop` batch branch (`engine.ts:457`) — full write                 | 1: C6                | C1–C5, C7–C10 — site isolation                                                                                   |
-  | M5       | `execPipeline` `onReject` arrow (`mutation.ts:170-172`) — full write          | 1: C9                | C1–C8, C10 — site isolation (no tool path reaches `execPipeline`)                                                |
-  | M6       | ≡ M1 — same site, same mutation, observed through the batch-abort driver C8   | (as M1)              | (as M1)                                                                                                          |
+  | mutation | site                                                                                    | RED                  | GREEN (reason)                                                                                          |
+  | -------- | --------------------------------------------------------------------------------------- | -------------------- | ------------------------------------------------------------------------------------------------------- |
+  | M1       | `collectAbortPart` (`engine.ts:512` at `735df10`) — full write, rows + snapshot context | 7: C1–C5, C7, C8     | C6 — site isolation                                                                                     |
+  | M2       | same site — rows only, no snapshot context                                              | 6: C1, C3–C5, C7, C8 | **C2 — by design**: rows without the context grant nothing, so C2 pins the _grant_; C6 — site isolation |
+  | M4       | `enforceNoopLoop` batch branch (`engine.ts:457` at `735df10`) — full write              | 1: C6                | C1–C5, C7, C8 — site isolation                                                                          |
+  | M6       | ≡ M1 — same site, same mutation, observed through the batch-abort driver C8             | (as M1)              | (as M1)                                                                                                 |
 
-  **M1 ≡ M6**: one measurement with two driver classes, not two mutations — the ledger has **five**
-  distinct sites. The five pre-existing happy-path cells (`read`, `diff`, `truncated`, `undo`, `bind`)
-  stay green under every mutation. M5 restores the original defect through the sequential arrow alone
-  (the served mirror regains `f9U` twice), which is why C9 exists as a seam pin on a dead branch.
+  **M1 ≡ M6**: one measurement with two driver classes, not two mutations. At `735df10` the ledger had
+  **five** distinct sites; three survive at HEAD (next bullet). The five pre-existing happy-path cells
+  (`read`, `diff`, `truncated`, `undo`, `bind`) stay green under every mutation.
+
+- **Current ledger at HEAD.** Same recipe (re-add the write at one isolated site, revert); line numbers
+  re-derived with `rg -n` at this revision rather than copied. Cells are `test/core/serve-leases.test.ts`.
+  The surviving pins this ledger is measured against are the live noop-loop cell (`:697`) and the
+  batch-abort cell (`:728`):
+  - **M1 ≡ M6 → `collectAbortPart`** (`src/mutation/engine.ts:493`; called from the pre-pass at `:787`
+    and from `applyOne`'s fail callback at `:832`). RED: the batch-abort cell (`:728`) and the other
+    live rejection cells the `735df10` run measured — C1 (`:620`), C3 (`:660`), C4 (`:669`), C5
+    (`:683`), C7 (`:716`). The noop-loop cell is **not** this site (the guard throws from the loop body,
+    outside `collectAbortPart`); T3h's CP2 ticket groups it with this row, and CP3's re-run is the
+    authority for the current RED set.
+  - **M2 → the same site, rows only, no snapshot context.** GREEN on C2
+    (`"twin rejection grants nothing — no grant field changes, no new lease appears"`, `:627`) **by
+    design**: rows without the context grant nothing, so that cell pins the _grant_, not the write.
+  - **M4 → the batch noop branch, now expressed at the guard's call site.** `enforceNoopLoop` is called
+    once, from `src/mutation/engine.ts:876`, passing `index: item.index` (`:880`); the branch it arms is
+    `:438`. The guard no longer receives a `sessionKey` or an `absolutePath` — both were orphan-only
+    fields, deleted by T3h — so the M4 recipe anchors at that call site instead of inside the guard.
+    RED on the live noop-loop cell (`:697`).
 
 - **Two commits were required for the defect to be observable — a lesson.** T2b `510af05` made
   the reject path _write_ served rows (the stale slot); T3a `b623aa8` removed the eager orphan
@@ -238,11 +264,15 @@ Both numeric claims in this ADR are re-derivable from the archived instruments. 
 identical across `735df10`, `998fd43` and `39351d9` (`mutation.ts` `c8b6c039…`, `engine.ts`
 `0dc0e78c…`), so every number below transfers across those revisions without re-running.
 
-**Mutation ledger** (the table above). Recipe: re-add the write at exactly one isolated site, run the
-contract file, revert. The five recipes are the scripted exact-string edits in
-`evidence/probes/mutate.py.txt` — `M1`/`M2` = `collectAbortPart` with and without the snapshot
-context, `M3` = `enforceNoopLoop`'s `index === undefined` branch, `M4` = its batch branch, `M5` = the
-`execPipeline` `onReject` arrow:
+**Mutation ledger** (the historical table plus the current ledger). Recipe: re-add the write at exactly
+one isolated site, run the contract file, revert. The recipes are the scripted exact-string edits in
+`evidence/probes/mutate.py.txt` — `M1`/`M2` = `collectAbortPart` with and without the snapshot context,
+`M4` = `enforceNoopLoop`'s batch branch. **`M3`/`M5` are historical**: their sites — the orphaned
+single-edit branch and the sequential arrow — were deleted by T3h, so those two recipes no longer apply
+to HEAD. `M4`'s site moved with the code: the guard is called once, at `src/mutation/engine.ts:876`,
+and no longer receives a `sessionKey`/`absolutePath`, so the recipe anchors at that call site. It was
+measured RED on C6 (`test/core/serve-leases.test.ts:697`) by the CP1 reviewer at `f3ffe7a`+deletion
+(`evidence/cp1-tm-mutant-logs/`); CP3 re-runs it.
 
 ```
 python3 evidence/probes/mutate.py.txt M4                    # one recipe; asserts exactly one match
@@ -250,9 +280,10 @@ pnpm exec vitest run test/core/serve-leases.test.ts --reporter=verbose
 git checkout -- src/mutation.ts src/mutation/engine.ts      # revert; git diff --quiet 998fd43 -- src/ must exit 0
 ```
 
-Revision `735df10`. Expected output shape: baseline `15 passed`; `M1` `7 failed`, `M2` `6 failed`,
+Historical, at `735df10`. Expected output shape: baseline `15 passed`; `M1` `7 failed`, `M2` `6 failed`,
 `M3`/`M4`/`M5` `1 failed` each, with the failing cell names matching the RED column above and the five
-happy-path cells green in every run. Raw per-cell output: `evidence/cp1r3-ledger-runs.txt`.
+happy-path cells green in every run. Raw per-cell output: `evidence/cp1r3-ledger-runs.txt`. At HEAD the
+contract file holds `14` cells (`rg -c '^  it\(' test/core/serve-leases.test.ts`).
 
 **`retiredAt` arms.** Probe `evidence/probes/tm-retiredat-control.test.ts.txt`; copy it to
 `.tmp/t3f/tm-retiredat-control.test.ts` (vitest collects `.tmp/**/*.test.ts`) and run from the worktree

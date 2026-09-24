@@ -12,7 +12,6 @@ import {
 } from "../../src/hashline/index.js";
 import { initHasher } from "../../src/hashline/hasher.js";
 import { loadHashStore, shutdownHashStore } from "../../src/hash-store.js";
-import { execPipeline } from "../../src/mutation.js";
 import { makeLeaseSource } from "../../src/mutation/engine.js";
 import { loadServed, loadServedCanons } from "../../src/session-view.js";
 import { hashStorePath } from "../../src/store-tenancy.js";
@@ -149,48 +148,6 @@ describe("lease-resolve seam — identity replaces the position check (obligatio
       expect(error).toBeDefined();
       expect(String((error as Error).message)).toMatch(/E_UNSERVED_RANGE/);
       expect(await readFile(path, "utf-8")).toBe(CONTENT);
-    });
-  });
-
-  it("keeps the position check when a preview edit carries no lease source", async () => {
-    await withTempFile("preview.txt", CONTENT, async ({ cwd, path }) => {
-      // Both the serve and the edit go through the ambient store (no workspace exec here), so the
-      // served mirror and its leases are visible to `execPipeline`.
-      const store = await loadHashStore();
-      const servedRead = await readAndServe(localIO(), "preview.txt", cwd, {
-        sessionKey: "test-session",
-      });
-      const anchor = servedRead.served[5]!.hash;
-      expect(servedRead.served[5]!.position).toBe(5);
-
-      await writeFile(path, INSERT_ABOVE, "utf-8");
-
-      const params = {
-        file: "preview.txt",
-        anchor_from: anchor,
-        anchor_to: anchor,
-        replace_with: "line 5 changed",
-      } as const;
-
-      // Preview (noPersist) builds no lease source, so the unconditional position check runs and
-      // the benign shift still rejects — the fallback is stricter, never weaker.
-      await expect(
-        execPipeline(localIO(), params, cwd, {
-          sessionKey: "test-session",
-          store,
-          noPersist: true,
-        }),
-      ).rejects.toThrow(/E_STALE_RANGE/);
-      expect(await readFile(path, "utf-8")).toBe(INSERT_ABOVE);
-
-      // Control: the same edit with a live store DOES build the source and applies. `execPipeline`
-      // computes the result without writing, so the assertion is on the returned buffer.
-      const applied = await execPipeline(localIO(), params, cwd, {
-        sessionKey: "test-session",
-        store,
-      });
-      expect(applied.result).toBe(INSERT_ABOVE.replace("line 5\n", "line 5 changed\n"));
-      expect(await readFile(path, "utf-8")).toBe(INSERT_ABOVE);
     });
   });
 });

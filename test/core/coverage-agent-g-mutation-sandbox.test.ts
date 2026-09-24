@@ -29,23 +29,6 @@ describe("coverage-agent-g mutation", () => {
     await rm(dir, { recursive: true, force: true });
   });
 
-  it("execPipeline abort", async () => {
-    const { execPipeline } = await import("../../src/mutation.js");
-    const { localIO } = await import("../../src/fs-bridge.js");
-    const io = localIO() as any;
-    const ctrl = new AbortController();
-    ctrl.abort();
-    await expect(
-      execPipeline(
-        io,
-        { file: "a.txt", anchor_from: "abc", anchor_to: "def", replace_with: "hi" } as any,
-        "/tmp",
-        { signal: ctrl.signal },
-      ),
-    ).rejects.toThrow();
-    expect(true).toBe(true);
-  });
-
   it("execute branches", async () => {
     const mod: any = await import("../../src/mutation.js");
     expect(mod.execute).toBeDefined();

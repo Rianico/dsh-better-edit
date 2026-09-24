@@ -415,19 +415,14 @@ export async function applyOne(
 // noop-loop guard
 
 export interface NoopLoopOptions {
-  absolutePath: string;
   anchorFrom: string;
   anchorTo: string;
-  replaceWith: string;
   displayPath: string;
-  /** Batch item index; undefined = single-edit flavor. */
-  index?: number;
+  /** Batch item index. */
+  index: number;
   count: number;
-  sessionKey: string;
   originalHashes: string[];
   originalNormalized: string;
-  /** Single-edit flavor only: the edit's range, for the echo rows. */
-  range?: ResolvedRange;
   /** Batch flavor: precomputed echo rows for the failed item (may be absent). */
   echoRows?: ServedRow[];
 }
@@ -439,36 +434,7 @@ export interface NoopLoopOptions {
  * with no change. Messages are byte-identical to the pre-engine tools.
  */
 export async function enforceNoopLoop(opts: NoopLoopOptions): Promise<string | undefined> {
-  const { anchorFrom, anchorTo, displayPath, index, count, originalHashes } = opts;
-
-  if (index === undefined) {
-    if (count >= NOOP_LOOP_THRESHOLD) {
-      const echoRows = buildRangeEcho(opts.range!.startLine, opts.range!.endLine, originalHashes);
-      const echo = fmtServedRows(echoRows, splitLines(opts.originalNormalized));
-      throw new DomainError("E_NOOP_LOOP", {
-        ref: displayPath,
-        anchorFrom,
-        anchorTo,
-        count,
-        batch: false,
-        servedBlock: echo,
-        path: displayPath,
-      });
-    }
-    if (count === 2) {
-      // Channel rule: applied-tier notices are human-observable → USER audience via the registry.
-      return formatWarning("W_NOOP", {
-        ref: displayPath,
-        anchorFrom,
-        anchorTo,
-        batch: false,
-        count,
-        path: displayPath,
-      });
-    }
-    return undefined;
-  }
-
+  const { anchorFrom, anchorTo, displayPath, index, count } = opts;
   if (count >= NOOP_LOOP_THRESHOLD) {
     const originalLines = splitLines(opts.originalNormalized);
     const echoRows = opts.echoRows;
@@ -908,14 +874,11 @@ export async function runFileEdits(
       );
       const count = trackNoopPayload(absolutePath, payload);
       const notice = await enforceNoopLoop({
-        absolutePath,
         anchorFrom: item.anchor_from,
         anchorTo: item.anchor_to,
-        replaceWith: item.replace_with,
         displayPath: item.file,
         index: item.index,
         count,
-        sessionKey: opts.sessionKey,
         originalHashes,
         originalNormalized,
         echoRows: echoRowsForItem(applied.edit, originalHashes),

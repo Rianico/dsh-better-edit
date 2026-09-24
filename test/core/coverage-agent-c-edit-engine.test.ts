@@ -241,65 +241,15 @@ describe("coverage: edit-engine applyOne", () => {
 
 describe("coverage: edit-engine enforceNoopLoop", () => {
   const hashes = ["h1", "h2", "h3"];
-  it("single-edit: throws at threshold", async () => {
-    const { NOOP_LOOP_THRESHOLD } = await import("../../src/constants.js");
-    await expect(
-      enforceNoopLoop({
-        absolutePath: "/tmp/a.txt",
-        anchorFrom: "aaa",
-        anchorTo: "aaa",
-        replaceWith: "x",
-        displayPath: "a.txt",
-        count: NOOP_LOOP_THRESHOLD,
-        sessionKey: "test",
-        originalHashes: hashes,
-        originalNormalized: "a\nb\nc",
-        range: { startLine: 1, endLine: 1, startHash: "h1", endHash: "h1", delta: 0 },
-      }),
-    ).rejects.toThrow(/E_NOOP_LOOP/);
-  });
-  it("single-edit: notice at count 2", async () => {
-    const notice = await enforceNoopLoop({
-      absolutePath: "/tmp/a.txt",
-      anchorFrom: "aaa",
-      anchorTo: "aaa",
-      replaceWith: "x",
-      displayPath: "a.txt",
-      count: 2,
-      sessionKey: "test",
-      originalHashes: hashes,
-      originalNormalized: "a\nb\nc",
-      range: { startLine: 1, endLine: 1, startHash: "h1", endHash: "h1", delta: 0 },
-    });
-    expect(notice).toMatch(/Notice/);
-  });
-  it("single-edit: undefined when count 1", async () => {
-    const notice = await enforceNoopLoop({
-      absolutePath: "/tmp/a.txt",
-      anchorFrom: "aaa",
-      anchorTo: "aaa",
-      replaceWith: "x",
-      displayPath: "a.txt",
-      count: 1,
-      sessionKey: "test",
-      originalHashes: hashes,
-      originalNormalized: "a\nb\nc",
-      range: { startLine: 1, endLine: 1, startHash: "h1", endHash: "h1", delta: 0 },
-    });
-    expect(notice).toBeUndefined();
-  });
   it("batch: throws at threshold and notice at 2", async () => {
     const { NOOP_LOOP_THRESHOLD } = await import("../../src/constants.js");
     await expect(
       enforceNoopLoop({
-        absolutePath: "/tmp/a.txt",
         anchorFrom: "aaa",
         anchorTo: "aaa",
-        replaceWith: "x",
         displayPath: "a.txt",
         index: 0,
         count: NOOP_LOOP_THRESHOLD,
-        sessionKey: "test",
         originalHashes: hashes,
         originalNormalized: "a\nb\nc",
         echoRows: [{ position: 0, hash: "h1" }],
@@ -307,28 +257,22 @@ describe("coverage: edit-engine enforceNoopLoop", () => {
     ).rejects.toThrow(/E_NOOP_LOOP/);
 
     const notice = await enforceNoopLoop({
-      absolutePath: "/tmp/a.txt",
       anchorFrom: "aaa",
       anchorTo: "aaa",
-      replaceWith: "x",
       displayPath: "a.txt",
       index: 0,
       count: 2,
-      sessionKey: "test",
       originalHashes: hashes,
       originalNormalized: "a\nb\nc",
     });
     expect(notice).toMatch(/Notice/);
 
     const none = await enforceNoopLoop({
-      absolutePath: "/tmp/a.txt",
       anchorFrom: "aaa",
       anchorTo: "aaa",
-      replaceWith: "x",
       displayPath: "a.txt",
       index: 0,
       count: 1,
-      sessionKey: "test",
       originalHashes: hashes,
       originalNormalized: "a\nb\nc",
     });
@@ -342,14 +286,11 @@ describe("coverage: edit-engine enforceNoopLoop", () => {
     let caught: Error | undefined;
     try {
       await enforceNoopLoop({
-        absolutePath: "/tmp/a.txt",
         anchorFrom: "aaa",
         anchorTo: "aaa",
-        replaceWith: "x",
         displayPath: "a.txt",
         index: 0,
         count: NOOP_LOOP_THRESHOLD,
-        sessionKey: "test",
         originalHashes: hashes,
         originalNormalized: "a\nb\nc",
         echoRows: [{ position: 0, hash: "h1" }],
@@ -369,14 +310,11 @@ describe("coverage: edit-engine enforceNoopLoop", () => {
     const { NOOP_LOOP_THRESHOLD } = await import("../../src/constants.js");
     await expect(
       enforceNoopLoop({
-        absolutePath: "/tmp/a.txt",
         anchorFrom: "aaa",
         anchorTo: "aaa",
-        replaceWith: "x",
         displayPath: "a.txt",
         index: 1,
         count: NOOP_LOOP_THRESHOLD,
-        sessionKey: "test",
         originalHashes: hashes,
         originalNormalized: "a\nb\nc",
       }),

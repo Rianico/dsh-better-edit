@@ -1,16 +1,12 @@
 import { describe, expect, it, beforeAll } from "vitest";
-import { join } from "node:path";
 import { readAndServe } from "../../src/read-and-serve.js";
 import { localIO } from "../../src/fs-bridge.js";
-import { execPipeline } from "../../src/mutation.js";
-import { loadHashStore, shutdownHashStore, type InternalHashStore } from "../../src/hash-store.js";
+import { loadHashStore, type InternalHashStore } from "../../src/hash-store.js";
 import { snapshotHashFor } from "../../src/snapshot-store/lineage-store.js";
-import { loadServed, markDriftReported, driftReported } from "../../src/session-view.js";
+import { markDriftReported, driftReported } from "../../src/session-view.js";
 import { sessionKeyFor } from "../../src/workspace-context.js";
-import { withTempFile, withHome, getWritableTempRoot } from "../support/fixtures.js";
+import { withTempFile } from "../support/fixtures.js";
 import { initHasher } from "../../src/hashline/hasher.js";
-import { mkdtemp } from "fs/promises";
-import { rm } from "fs/promises";
 
 beforeAll(async () => {
   await initHasher();
@@ -76,31 +72,5 @@ describe("epoch lifecycle belongs to full reads (#69)", () => {
       expect(after?.snapshotHash).toBe(snapshotHashFor(content));
       expect(after?.lineNumber).toBe(2);
     });
-  });
-
-  it("malformed-anchor edit throws before any serve write", async () => {
-    const home = await mkdtemp(join(await getWritableTempRoot(), "t4-preload-"));
-    const restore = withHome(home);
-    try {
-      const sessionKey = sessionKeyFor("t4-preload");
-      await expect(
-        execPipeline(
-          localIO(),
-          {
-            path: "nope.txt",
-            anchor_from: "MQX│const x = 1;",
-            anchor_to: "MQX",
-            replace_with: "y",
-          } as any,
-          home,
-          { sessionKey },
-        ),
-      ).rejects.toThrow(/\[E_MALFORMED_ANCHOR\]/);
-      expect(await loadServed(sessionKey, join(home, "nope.txt"))).toEqual([]);
-    } finally {
-      shutdownHashStore();
-      await rm(home, { recursive: true, force: true });
-      restore();
-    }
   });
 });

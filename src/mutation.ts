@@ -13,45 +13,30 @@
  *
  * Public surface:
  *   execute(io, items, {sessionKey, exec, sandbox, signal}) → string  — deep seam: ONE interface
- *   applySingle(io, params, cwd, opts) → PipelineResult               — single-edit helper
  *   applySequence(io, items, ctx) → FileEditResult                    — per-file sequencer
  *   commit(io, files, {exec, sandboxPolicy, signal}) → void           — transaction
  *
  * Depth: small interface (execute) with large implementation — locality and leverage.
  *
  * Internals (private): verifyServedRange, resToSpan, assemble, scanDrift,
- * boundaryDups, noopGuard. Tested via PipelineResult/FileEditResult, not via split e2e.
+ * boundaryDups, noopGuard. Tested via FileEditResult, not via split e2e.
  *
  * @module dsh-better-edit/mutation
  */
 
 import type { FileIO } from "./fs-bridge.js";
-import type { EditParams } from "./contract.js";
-import type { HashStore } from "./hash-store.js";
 import type { ToolExecution } from "@deepseek-ai/dsh-tools";
 import type { SandboxExecutionPolicy } from "@deepseek-ai/dsh-sandbox";
 import type { FsSandboxController } from "./sandbox.js";
 
 import { formatError } from "./domain-errors.js";
-import { loadConfig } from "./store-config.js";
 import { canon } from "./hashline/hash-assign.js";
-import { normFromText, fileSnap } from "./file-reader.js";
+import { fileSnap } from "./file-reader.js";
 import type { LineEnding } from "./edit-diff.js";
 import { toCwd } from "./paths.js";
-import { resEdit, type NEdit } from "./hashline/anchor-pipeline.js";
-import { MAX_HASH_LINES } from "./hashline/hash-assign.js";
-import type { ResolvedRange } from "./hashline/anchor-pipeline.js";
-import { sessionKeyFor } from "./workspace-context.js";
-import {
-  loadServed,
-  loadServedCanons,
-  loadRetiredAnchors,
-  scanDrift,
-  recordServedTruncated,
-} from "./session-view.js";
+import { recordServedTruncated, scanDrift } from "./session-view.js";
 import { abortIf, splitLines } from "./utils.js";
-import { applyOne } from "./mutation/engine.js";
-import { runFileEdits, resolveMissingPath, makeLeaseSource } from "./mutation/engine.js";
+import { runFileEdits, resolveMissingPath } from "./mutation/engine.js";
 import type { FileEditResult, PreparedItem } from "./mutation/engine.js";
 import { saveUndo } from "./undo-edit.js";
 import { restoreEndings } from "./edit-diff.js";
@@ -60,157 +45,6 @@ import type { RMeta, BatchSection } from "./edit-response.js";
 import { genDiff, toLF, stripBOM } from "./edit-diff.js";
 import { computeDrift } from "./session-view.js";
 import { trackNoopPayload, clearNoopLoop, noopPayloadKey } from "./noop-guard.js";
-
-export interface PipelineResult {
-  file: string;
-  absolutePath: string;
-  originalNormalized: string;
-  result: string;
-  bom: string;
-  originalEnding: LineEnding;
-  hadUtf8DecodeErrors: boolean;
-  warnings: string[];
-  noopEdit?: NEdit;
-  firstChangedLine?: number;
-  lastChangedLine?: number;
-  originalHashes: string[];
-  resultHashes: string[];
-  totalAddedLines: number;
-  totalRemovedLines: number;
-  driftNotice?: string;
-  range: ResolvedRange;
-}
-
-export interface ExecPipelineOptions {
-  signal?: AbortSignal;
-  store?: HashStore;
-  noPersist?: boolean;
-  sessionKey?: string;
-}
-
-export async function execPipeline(
-  io: FileIO,
-  params: EditParams,
-  cwd: string,
-  options?: ExecPipelineOptions,
-): Promise<PipelineResult> {
-  const file = params.file;
-
-  const editWarnings: string[] = [];
-  // Resolve the edit up front (before IO) so malformed anchors fail before
-  // any filesystem work, exactly as the tool always did.
-  const edit = resEdit(
-    {
-      anchor_from: params.anchor_from,
-      anchor_to: params.anchor_to,
-      replace_with: params.replace_with,
-    },
-    editWarnings,
-  );
-
-  const hashStore = options?.store;
-  const signal = options?.signal;
-
-  abortIf(signal);
-  const absolutePath = await io.resolve(file, cwd, signal);
-  const sessionKeyEarly = options?.sessionKey ?? sessionKeyFor(undefined);
-  const perSessionRetiredForNorm = await loadRetiredAnchors(sessionKeyEarly, absolutePath);
-  const rawText = await io.readText(absolutePath, signal);
-  const {
-    normalized: originalNormalized,
-    bom,
-    originalEnding,
-    fileHashes: originalHashes,
-    hadUtf8DecodeErrors,
-  } = await normFromText({
-    absolutePath,
-    rawText,
-    displayPath: file,
-    signal,
-    maxLines: MAX_HASH_LINES,
-    store: hashStore,
-    noPersist: options?.noPersist,
-    reservedHashes: perSessionRetiredForNorm,
-    retiredHashes: perSessionRetiredForNorm,
-  });
-
-  const sessionKey = options?.sessionKey ?? sessionKeyFor(undefined);
-  const served = await loadServed(sessionKey, absolutePath);
-  const servedCanons = await loadServedCanons(sessionKey, absolutePath);
-  const retiredPerSession = await loadRetiredAnchors(sessionKey, absolutePath);
-  // Obligation (c): identity replaces the position check only when a live store is present and the
-  // edit is not a preview. Preview / no store / no session key falls back to the unconditional
-  // position check — never to accept.
-  const leaseSource =
-    hashStore === undefined || options?.noPersist === true
-      ? undefined
-      : makeLeaseSource(hashStore, sessionKey, absolutePath, originalNormalized);
-
-  const applied = await applyOne(
-    {
-      content: originalNormalized,
-      hashes: originalHashes,
-      served,
-      anchorFrom: params.anchor_from,
-      anchorTo: params.anchor_to,
-      replaceWith: params.replace_with,
-      absolutePath,
-      displayPath: file,
-      signal,
-      warnings: editWarnings,
-      store: hashStore,
-      persist: options?.noPersist !== true,
-      reservedHashes: perSessionRetiredForNorm,
-      servedCanons,
-      retired: retiredPerSession,
-      edit,
-      mode: params.mode,
-      leaseSource,
-    },
-    async (error) => {
-      throw error;
-    },
-  );
-  const result = applied.result;
-  const isNoop = applied.noop;
-  const warnings = [...editWarnings, ...(applied.anchorWarnings ?? [])];
-
-  let driftNotice: string | undefined;
-  if (options?.noPersist !== true) {
-    try {
-      driftNotice = await scanDrift({
-        sessionKey,
-        served,
-        resultHashes: applied.hashes,
-        resultLines: splitLines(result),
-        range: applied.range,
-        path: absolutePath,
-      });
-    } catch (error) {
-      console.error("Failed to compute drift notice:", error);
-    }
-  }
-
-  return {
-    file,
-    absolutePath,
-    originalNormalized,
-    result,
-    bom,
-    originalEnding,
-    hadUtf8DecodeErrors,
-    warnings,
-    noopEdit: applied.noopEdit,
-    firstChangedLine: applied.firstChangedLine,
-    lastChangedLine: applied.lastChangedLine,
-    originalHashes,
-    resultHashes: applied.hashes,
-    totalAddedLines: applied.totalAddedLines,
-    totalRemovedLines: applied.totalRemovedLines,
-    driftNotice,
-    range: applied.range,
-  };
-}
 
 /** Resolve the display path a caller names against the session cwd. */
 export function resolveDisplayPath(path: string, cwd: string): string {
@@ -485,21 +319,6 @@ export async function execute(opts: {
   const built = buildBatchResult([toSection()]);
   const serveLanded = await recordIfNeeded(built);
   return withServeNotice(built.content[0]!.text, serveLanded);
-}
-
-/** Apply a single edit — owns read→normalize→loadServed→applyOne→stableRehash→drift. */
-export async function applySingle(
-  io: FileIO,
-  params: EditParams,
-  cwd: string,
-  opts?: {
-    sessionKey?: string;
-    signal?: AbortSignal;
-    store?: HashStore;
-    noPersist?: boolean;
-  },
-): Promise<PipelineResult> {
-  return execPipeline(io, params, cwd, opts);
 }
 
 /** Apply a per-file sequence (batch's group) — owns the loop + unionRange + counters. */
