@@ -105,9 +105,11 @@ describe("coverage-agent-d session-view", () => {
     // clearFrom
     // clearFrom with trailing null pop: ["aaa",null,null] pops to ["aaa"]
     expect(_mergeServedRows(["aaa", "bbb", "ccc"], [], { clearFrom: 1 })).toEqual(["aaa"]);
-    // heal duplicate
+    // duplicate: NOT healed — the old position keeps its hash and the new position
+    // records the same anchor. Verification rejects the ambiguity later
+    // (E_UNSERVED_RANGE "was served at 2 positions") instead of nulling a slot.
     const withDup = _mergeServedRows(["aaa", "bbb"], [{ position: 2, hash: "aaa" }]);
-    expect(withDup[0]).toBeNull();
+    expect(withDup[0]).toBe("aaa");
     expect(withDup[2]).toBe("aaa");
     // invalid position
     expect(() => _mergeServedRows([], [{ position: -1, hash: "aaa" }])).toThrow();

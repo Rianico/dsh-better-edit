@@ -28,7 +28,6 @@ import {
   ALPH_RE,
   canon,
   lineHashesPure,
-  canonDigest,
 } from "./hash-assign.js";
 import { recordServed, servedPositionsOf } from "../session-view.js";
 import { SERVED_ECHO_CAP } from "../constants.js";
@@ -602,7 +601,6 @@ export function verifyServedRange(args: {
   const strictPos = args.strictPos ?? false;
   const epochSnapshotId = args.epochSnapshotId;
   const curSnapshotId = args.curSnapshotId;
-  let isHealed = false;
   const echoRows = buildRangeEcho(startLine, endLine, fileHashes);
   const totalLen = endLine - startLine + 1;
   const tail =
@@ -641,280 +639,81 @@ export function verifyServedRange(args: {
   const currentLen = endLine - startLine + 1;
   let from: number | undefined;
   let to: number | undefined;
+  // Exact-boundary rule (ADR-0004 removal): each boundary anchor must have EXACTLY
+  // one served position. Anything else leaves `from`/`to` undefined and rejects below —
+  // there is no candidate-span search that could re-bind onto a look-alike line.
   if (startPositions.length === 1 && endPositions.length === 1) {
     from = Math.min(startPositions[0]!, endPositions[0]!);
     to = Math.max(startPositions[0]!, endPositions[0]!);
-  } else {
-    const candidates: Array<{ from: number; to: number }> = [];
-    for (const s of startPositions) {
-      for (const e of endPositions) {
-        const candFrom = Math.min(s, e);
-        const candTo = Math.max(s, e);
-        if (candTo - candFrom + 1 !== currentLen) continue;
-        let ok = true;
-        for (let k = 0; k < currentLen; k++) {
-          if (served[candFrom + k] !== fileHashes[startLine - 1 + k]) {
-            ok = false;
-            break;
-          }
-        }
-        if (ok) candidates.push({ from: candFrom, to: candTo });
-      }
-    }
-    if (candidates.length === 1) {
-      from = candidates[0]!.from;
-      to = candidates[0]!.to;
-    } else if (candidates.length > 1) {
-      candidates.sort(
-        (a, b) => Math.abs(a.from - (startLine - 1)) - Math.abs(b.from - (startLine - 1)),
-      );
-      from = candidates[0]!.from;
-      to = candidates[0]!.to;
-    }
   }
   if (from === undefined || to === undefined) {
-    let healed: { from: number; to: number } | undefined;
-    if (startPositions.length === 1 && endPositions.length === 1) {
-      const sPos = startPositions[0]!;
-      const ePos = endPositions[0]!;
-      const servedFrom = Math.min(sPos, ePos);
-      const servedTo = Math.max(sPos, ePos);
-      const servedLen = servedTo - servedFrom + 1;
-      if (servedLen === currentLen) {
-        const expectedCanons: string[] = [];
-        let canBuild = true;
-        for (let k = 0; k < servedLen; k++) {
-          const h = served[servedFrom + k];
-          if (h === null) {
-            canBuild = false;
-            break;
-          }
-          const c = servedCanons?.[servedFrom + k];
-          if (c === undefined || c === null) {
-            canBuild = false;
-            break;
-          }
-          expectedCanons.push(c);
-        }
-        if (canBuild) {
-          const matches: number[] = [];
-          for (let i = 0; i <= fileLines.length - servedLen; i++) {
-            let ok = true;
-            for (let k = 0; k < servedLen; k++) {
-              if (canonDigest(fileLines[i + k] ?? "") !== canonDigest(expectedCanons[k]!)) {
-                ok = false;
-                break;
-              }
-            }
-            if (ok) matches.push(i);
-            if (matches.length > 1) break;
-          }
-          if (matches.length === 1) {
-            healed = { from: matches[0]!, to: matches[0]! + servedLen - 1 };
-          }
-        }
-      }
+    const problems: string[] = [];
+    if (startPositions.length === 0) {
+      problems.push(`anchor_from "${startHash}" has no served position`);
+    } else if (startPositions.length > 1) {
+      problems.push(`anchor_from "${startHash}" was served at ${startPositions.length} positions`);
     }
-    if (!healed) {
-      const hasServed = served.some((h) => h !== null);
-      const startInFile = fileHashes.includes(startHash);
-      const endInFile = fileHashes.includes(endHash);
-      if (hasServed && (!startInFile || !endInFile)) {
-        const startCanon = servedCanons?.[startPositions[0] ?? -1];
-        const endCanon = servedCanons?.[endPositions[0] ?? -1];
-        if (
-          startCanon !== undefined &&
-          startCanon !== null &&
-          endCanon !== undefined &&
-          endCanon !== null
-        ) {
-          const startMatches: number[] = [];
-          const endMatches: number[] = [];
-          for (let i = 0; i < fileLines.length; i++) {
-            if (canonDigest(fileLines[i] ?? "") === canonDigest(startCanon)) startMatches.push(i);
-            if (canonDigest(fileLines[i] ?? "") === canonDigest(endCanon)) endMatches.push(i);
-            if (startMatches.length > 1 && endMatches.length > 1) break;
-          }
-          if (startMatches.length === 1 && endMatches.length === 1) {
-            const s = startMatches[0]!;
-            const e = endMatches[0]!;
-            const healedFrom = Math.min(s, e);
-            const healedTo = Math.max(s, e);
-            if (healedTo - healedFrom + 1 === currentLen) {
-              let interiorOk = true;
-              if (currentLen > 2) {
-                const healedCanons = [];
-                for (let k = 0; k < currentLen; k++)
-                  healedCanons.push(canon(fileLines[healedFrom + k] ?? ""));
-                let count = 0;
-                for (let i = 0; i <= fileLines.length - currentLen; i++) {
-                  let ok = true;
-                  for (let k = 0; k < currentLen; k++)
-                    if (canon(fileLines[i + k] ?? "") !== healedCanons[k]) {
-                      ok = false;
-                      break;
-                    }
-                  if (ok) count++;
-                  if (count > 1) break;
-                }
-                if (count !== 1) interiorOk = false;
-              }
-              if (interiorOk) healed = { from: healedFrom, to: healedTo };
-            }
-          }
-        }
-      }
+    if (endPositions.length === 0) {
+      problems.push(`anchor_to "${endHash}" has no served position`);
+    } else if (endPositions.length > 1) {
+      problems.push(`anchor_to "${endHash}" was served at ${endPositions.length} positions`);
     }
-    if (healed) {
-      from = healed.from;
-      to = healed.to;
-      isHealed = true;
-    } else {
-      const problems: string[] = [];
-      if (startPositions.length === 0) {
-        problems.push(`anchor_from "${startHash}" has no served position`);
-      } else if (startPositions.length > 1) {
-        problems.push(
-          `anchor_from "${startHash}" was served at ${startPositions.length} positions`,
-        );
-      }
-      if (endPositions.length === 0) {
-        problems.push(`anchor_to "${endHash}" has no served position`);
-      } else if (endPositions.length > 1) {
-        problems.push(`anchor_to "${endHash}" was served at ${endPositions.length} positions`);
-      }
+    throw new ServedRejectionError({
+      code: "E_UNSERVED_RANGE",
+      unservedKind: "boundary",
+      headline:
+        `cannot verify range against served state${where}: ${problems.join("; ")}. ` +
+        `Each boundary anchor must have exactly one served position — no served span is searched ` +
+        `for a look-alike line. A full read will re-sync the served mirror; the echoed range below ` +
+        `is current content.`,
+      servedBlock: echo,
+      servedRows: echoRows,
+    });
+  }
+
+  for (let i = from; i <= to; i++) {
+    if (served[i] === null) {
       throw new ServedRejectionError({
         code: "E_UNSERVED_RANGE",
-        unservedKind: "boundary",
-        headline:
-          `cannot verify range against served state${where}: ${problems.join("; ")}. ` +
-          `No served span matched the current range (${currentLen} lines). ` +
-          `A full read will re-sync the served mirror — the echoed range below is current content, ` +
-          `but retrying without re-reading cannot clear a stale duplicate outside the echoed window.`,
+        unservedKind: "interior",
+        headline: `line ${i + 1}${where} was never served.`,
         servedBlock: echo,
+        firstOffendingLine: i + 1,
         servedRows: echoRows,
       });
     }
   }
-
-  if (isHealed) {
-    for (let k = 0; k < currentLen; k++) {
-      const servedHash = served[from + k];
-      if (servedHash === null || servedHash === undefined) continue;
-      const mirrorIdx = fileHashes.indexOf(servedHash);
-      if (mirrorIdx < 0) continue; // pre-fix the map could not answer for a hash absent from the file
-      const expectedCanon = canon(fileLines[mirrorIdx] ?? "");
-      const actualCanon = canon(fileLines[from + k] ?? "");
-      if (canonDigest(expectedCanon) !== canonDigest(actualCanon)) {
-        const offendingLine = from + k + 1;
-        throw new ServedRejectionError({
-          code: "E_STALE_RANGE",
-          headline: `line ${offendingLine}${where} differs from what was served.`,
-          servedBlock: echo,
-          firstOffendingLine: offendingLine,
-          servedRows: echoRows,
-        });
-      }
-    }
-  } else {
-    for (let i = from; i <= to; i++) {
-      if (served[i] === null) {
-        throw new ServedRejectionError({
-          code: "E_UNSERVED_RANGE",
-          unservedKind: "interior",
-          headline: `line ${i + 1}${where} was never served.`,
-          servedBlock: echo,
-          firstOffendingLine: i + 1,
-          servedRows: echoRows,
-        });
-      }
-    }
-    const servedLen = to - from + 1;
-    if (servedLen !== currentLen) {
-      let lenHealed = false;
-      const expectedCanons: string[] = [];
-      let canBuild = true;
-      for (let k = 0; k < servedLen; k++) {
-        const h = served[from + k];
-        if (h === null) {
-          canBuild = false;
-          break;
-        }
-        const c = servedCanons?.[from + k];
-        if (c === undefined || c === null) {
-          canBuild = false;
-          break;
-        }
-        expectedCanons.push(c);
-      }
-      if (canBuild) {
-        let matches = 0;
-        for (let i = 0; i <= fileLines.length - servedLen; i++) {
-          let ok = true;
-          for (let k = 0; k < servedLen; k++)
-            if (canonDigest(fileLines[i + k] ?? "") !== canonDigest(expectedCanons[k]!)) {
-              ok = false;
-              break;
-            }
-          if (ok) matches++;
-          if (matches > 1) break;
-        }
-        if (matches === 1) lenHealed = true;
-      }
-      if (!lenHealed) {
-        throw new ServedRejectionError({
-          code: "E_STALE_RANGE",
-          headline: `served span (${servedLen} lines) no longer matches current range (${currentLen} lines)${where}.`,
-          servedBlock: echo,
-          firstOffendingLine: startLine,
-          servedRows: echoRows,
-        });
-      }
-    }
-    // Strict pos check for concurrency (pos-free vs strict)
-    if (strictPos && from !== startLine - 1) {
-      throw new ServedRejectionError({
-        code: "E_STALE_RANGE",
-        headline: `anchor was served at line ${from + 1} but now resolves to line ${startLine} (pos-restricted concurrency). Re-read.`,
-        servedBlock: echo,
-        reread: true,
-        firstOffendingLine: startLine,
-        servedRows: echoRows,
-      });
-    }
-    // Canon check for same-pos different content (collision)
-    if (servedCanons) {
-      for (let k = 0; k < servedLen; k++) {
-        const expected = servedCanons[from + k];
-        if (expected !== null && expected !== undefined) {
-          const actual = canon(fileLines[startLine - 1 + k] ?? "");
-          if (expected !== actual) {
-            throw new ServedRejectionError({
-              code: "E_STALE_RANGE",
-              headline: `line ${startLine + k}${where} canon differs from served (expected "${expected}" vs actual "${actual}").`,
-              servedBlock: echo,
-              reread: true,
-              firstOffendingLine: startLine + k,
-              servedRows: echoRows,
-            });
-          }
-        }
-      }
-    }
-    // Tombstone interior check (whole-span) — gated on canon inequality (fail-closed only for different canon)
+  const servedLen = to - from + 1;
+  if (servedLen !== currentLen) {
+    throw new ServedRejectionError({
+      code: "E_STALE_RANGE",
+      headline: `served span (${servedLen} lines) no longer matches current range (${currentLen} lines)${where}.`,
+      servedBlock: echo,
+      firstOffendingLine: startLine,
+      servedRows: echoRows,
+    });
+  }
+  // Strict pos check for concurrency (pos-free vs strict)
+  if (strictPos && from !== startLine - 1) {
+    throw new ServedRejectionError({
+      code: "E_STALE_RANGE",
+      headline: `anchor was served at line ${from + 1} but now resolves to line ${startLine} (pos-restricted concurrency). Re-read.`,
+      servedBlock: echo,
+      reread: true,
+      firstOffendingLine: startLine,
+      servedRows: echoRows,
+    });
+  }
+  // Canon check for same-pos different content (collision)
+  if (servedCanons) {
     for (let k = 0; k < servedLen; k++) {
-      const h = fileHashes[startLine - 1 + k];
-      if (h && retiredSet.has(h)) {
-        const expectedCanon = servedCanons?.[from + k] ?? undefined;
-        const actualCanon = canon(fileLines[startLine - 1 + k] ?? "");
-        if (
-          expectedCanon !== undefined &&
-          expectedCanon !== null &&
-          expectedCanon !== actualCanon
-        ) {
+      const expected = servedCanons[from + k];
+      if (expected !== null && expected !== undefined) {
+        const actual = canon(fileLines[startLine - 1 + k] ?? "");
+        if (expected !== actual) {
           throw new ServedRejectionError({
             code: "E_STALE_RANGE",
-            headline: `line ${startLine + k}${where} uses retired anchor "${h}" (freed since last full read, canon changed). Re-read.`,
+            headline: `line ${startLine + k}${where} canon differs from served (expected "${expected}" vs actual "${actual}").`,
             servedBlock: echo,
             reread: true,
             firstOffendingLine: startLine + k,
@@ -923,17 +722,35 @@ export function verifyServedRange(args: {
         }
       }
     }
-    for (let k = 0; k < servedLen; k++) {
-      if (served[from + k] !== fileHashes[startLine - 1 + k]) {
-        const offendingLine = startLine + k;
+  }
+  // Tombstone interior check (whole-span) — gated on canon inequality (fail-closed only for different canon)
+  for (let k = 0; k < servedLen; k++) {
+    const h = fileHashes[startLine - 1 + k];
+    if (h && retiredSet.has(h)) {
+      const expectedCanon = servedCanons?.[from + k] ?? undefined;
+      const actualCanon = canon(fileLines[startLine - 1 + k] ?? "");
+      if (expectedCanon !== undefined && expectedCanon !== null && expectedCanon !== actualCanon) {
         throw new ServedRejectionError({
           code: "E_STALE_RANGE",
-          headline: `line ${offendingLine}${where} differs from what was served.`,
+          headline: `line ${startLine + k}${where} uses retired anchor "${h}" (freed since last full read, canon changed). Re-read.`,
           servedBlock: echo,
-          firstOffendingLine: offendingLine,
+          reread: true,
+          firstOffendingLine: startLine + k,
           servedRows: echoRows,
         });
       }
+    }
+  }
+  for (let k = 0; k < servedLen; k++) {
+    if (served[from + k] !== fileHashes[startLine - 1 + k]) {
+      const offendingLine = startLine + k;
+      throw new ServedRejectionError({
+        code: "E_STALE_RANGE",
+        headline: `line ${offendingLine}${where} differs from what was served.`,
+        servedBlock: echo,
+        firstOffendingLine: offendingLine,
+        servedRows: echoRows,
+      });
     }
   }
 }

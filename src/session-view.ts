@@ -47,9 +47,11 @@ export type ServedEntry = { position: number; hash: string | null };
 /**
  * Merge served rows into a copy of the stored array. This single helper owns
  * the served-merge invariant shared by recordServed and recordServedTruncated.
- * Eagerly heals orphaned serves: if the same hash is written at a new position
- * the old position is nulled (O(n) scan, no extra I/O). This prevents a
- * partial re-serve from leaving a stale duplicate behind (ADR-0008).
+ *
+ * Exact-write rule (ADR-0004 removal): a hash written at a new position leaves the
+ * old position INTACT — the old slot is not nulled and no look-alike is rebound.
+ * A duplicate is detected at verification time (`verifyServedRange`) and rejects as
+ * `E_UNSERVED_RANGE` instead of being healed here.
  */
 export function _mergeServedRows(
   current: (string | null)[],
@@ -63,17 +65,6 @@ export function _mergeServedRows(
   if (options?.clearFrom !== undefined) {
     for (let i = options.clearFrom; i < updated.length; i++) updated[i] = null;
   }
-  // Build index of existing hashes and heal duplicates already in the array
-  const index = new Map<string, number>();
-  for (let i = 0; i < updated.length; i++) {
-    const h = updated[i];
-    if (h === null) continue;
-    const prev = index.get(h);
-    if (prev !== undefined) {
-      updated[prev] = null;
-    }
-    index.set(h, i);
-  }
   for (const entry of rows) {
     if (!Number.isInteger(entry.position) || entry.position < 0) {
       throw new TypeError(`Invalid served position: ${entry.position}`);
@@ -82,21 +73,6 @@ export function _mergeServedRows(
       throw new TypeError(`Invalid served hash: ${String(entry.hash)}`);
     }
     while (updated.length <= entry.position) updated.push(null);
-    if (entry.hash !== null) {
-      const existing = index.get(entry.hash);
-      if (existing !== undefined && existing !== entry.position) {
-        updated[existing] = null;
-        index.delete(entry.hash);
-      }
-      const oldAtPos = updated[entry.position];
-      if (oldAtPos !== null && oldAtPos !== entry.hash) {
-        index.delete(oldAtPos);
-      }
-      index.set(entry.hash, entry.position);
-    } else {
-      const oldAtPos = updated[entry.position];
-      if (oldAtPos !== null) index.delete(oldAtPos);
-    }
     updated[entry.position] = entry.hash;
   }
   while (updated.length > 0 && updated[updated.length - 1] === null) updated.pop();
