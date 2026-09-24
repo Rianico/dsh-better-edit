@@ -550,7 +550,10 @@ const MUTANTS = {
     edits: [
       {
         file: VACUUM,
-        old: "    stmts.listPinned(now - SERVED_TTL_MS, now - VACUUM_RETIRED_PIN_MS).map((row) => row.snapshot_id),",
+        old:
+          "    stmts\n" +
+          "      .listPinned(now - SERVED_TTL_MS, now - VACUUM_RETIRED_PIN_MS)\n" +
+          "      .map((row) => row.snapshot_id),",
         new: "    [],",
       },
     ],
@@ -575,7 +578,7 @@ const MUTANTS = {
       {
         file: VACUUM,
         old: '      "AND ((sl.retired_at IS NULL AND sl.updated_at >= ?) OR sl.retired_at >= ?)) " +',
-        new: '      "AND ((sl.retired_at IS NULL AND sl.updated_at >= ?) OR (sl.retired_at >= ? AND 0)) " +',
+        new: '      "AND ((sl.retired_at IS NULL AND sl.updated_at >= ?) OR (sl.retired_at >= ? AND 0))) " +',
       },
     ],
   },
