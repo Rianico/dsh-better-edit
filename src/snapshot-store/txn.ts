@@ -25,14 +25,26 @@
  * release; a busy COMMIT leaves the transaction open and is retryable). It does NOT
  * retry the body: statement-level retry belongs to the family that owns the
  * statement. `hash-store`'s `stmts` wrappers and `snapshot-store/index.ts` wrap each
- * `.run`, and `lineage-store.ts` wraps all ten of its own `.run` sites.
+ * `.run`, and `lineage-store.ts` wraps all ten of its own `.run` sites. Each
+ * acquisition point therefore gets up to 4 attempts (`BUSY_RETRIES = 3` in
+ * `store-retry.ts`) with the shared 100 ms backoff; the body is attempted once.
  * @module dsh-better-edit/snapshot-store/txn
  */
-import { DatabaseSync } from "node:sqlite";
 import { withBusyRetry } from "../store-retry.js";
 
+/**
+ * The port this owner needs — and nothing more. `DatabaseSync` satisfies it
+ * structurally, so every caller is unchanged. Narrowness is the point: the owner
+ * cannot prepare statements, read rows, or close handles, and the retry policy can
+ * be driven by a plain-object fake instead of a real handle.
+ */
+export interface TxnHandle {
+  readonly isTransaction: boolean;
+  exec(sql: string): void;
+}
+
 /** Run `fn` in one transaction on `db`, or join the transaction already open on it. */
-export function withTransaction(db: DatabaseSync, fn: () => void): void {
+export function withTransaction(db: TxnHandle, fn: () => void): void {
   if (db.isTransaction) {
     fn();
     return;
