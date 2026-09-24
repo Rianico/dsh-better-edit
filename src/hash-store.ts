@@ -81,6 +81,13 @@ export interface FileUndoRecord {
   updatedAt: number;
 }
 
+/**
+ * The v7 undo WRITE input: everything `writeUndoPair` stores except `updatedAt`.
+ * The pair's stamp is a pair property owned by the store clock (`writeUndoPairImpl`),
+ * so a caller-supplied timestamp would be a required field that is never read.
+ */
+export type FileUndoWrite = Omit<FileUndoRecord, "updatedAt">;
+
 /** A `file_undo` row exactly as selected (all columns non-nullable except the pin). */
 interface FileUndoRow {
   content: string;
@@ -90,6 +97,42 @@ interface FileUndoRow {
   result_content: string;
   snapshot_hash: string | null;
   updated_at: number;
+}
+
+/**
+ * Map a raw `file_undo` SELECT row to `FileUndoRow`, validating every column at the
+ * boundary. Replaces an `as unknown as FileUndoRow` double cast that the compiler cannot
+ * check (node:sqlite returns `Record<string, unknown>`): a SELECT/mapper drift used to
+ * surface as a silently `undefined` field instead of an error.
+ */
+function mapFileUndoRow(row: Record<string, unknown>): FileUndoRow {
+  const content = row["content"];
+  const bom = row["bom"];
+  const ending = row["ending"];
+  const hashes = row["hashes"];
+  const resultContent = row["result_content"];
+  const snapshotHash = row["snapshot_hash"];
+  const updatedAt = row["updated_at"];
+  if (
+    typeof content !== "string" ||
+    typeof bom !== "string" ||
+    typeof ending !== "string" ||
+    typeof hashes !== "string" ||
+    typeof resultContent !== "string" ||
+    !(snapshotHash === null || typeof snapshotHash === "string") ||
+    typeof updatedAt !== "number"
+  ) {
+    throw new TypeError("invalid file_undo row shape");
+  }
+  return {
+    content,
+    bom,
+    ending,
+    hashes,
+    result_content: resultContent,
+    snapshot_hash: snapshotHash,
+    updated_at: updatedAt,
+  };
 }
 
 // ---- the domain interface --------------------------------------------------
@@ -157,7 +200,7 @@ export interface HashStore {
   getUndo(path: string): UndoRecord | undefined;
   pruneUndoOlderThan(ts: number): void;
   /** The single undo writer: write-back-or-delete each side in one transaction. */
-  writeUndoPair(path: string, legacy: UndoRecord | undefined, v7: FileUndoRecord | undefined): void;
+  writeUndoPair(path: string, legacy: UndoRecord | undefined, v7: FileUndoWrite | undefined): void;
   /** Both undo rows in one transaction. */
   deleteUndoPair(path: string): void;
   /** The v7 undo row for a path, same healing contract as the legacy row. Sole consumer: undo-edit readFileUndo (rg-verified); kept on the store face beside getUndo because both readers share the pair-healing closures. */
@@ -611,8 +654,10 @@ function buildStore(db: DatabaseSync, storePath: string): { db: DatabaseSync; st
         fileUndoUpsertStmt.run(...params);
       });
     },
-    fileUndoGet: (...params) =>
-      fileUndoGetStmt.get(...params) as unknown as FileUndoRow | undefined,
+    fileUndoGet: (...params) => {
+      const row = fileUndoGetStmt.get(...params);
+      return row === undefined ? undefined : mapFileUndoRow(row);
+    },
     fileUndoDelete: (...params) => {
       withBusyRetry(() => {
         fileUndoDelStmt.run(...params);
@@ -719,11 +764,11 @@ function makeDomainStore(
   function writeUndoPairImpl(
     path: string,
     legacy: UndoRecord | undefined,
-    v7: FileUndoRecord | undefined,
+    v7: FileUndoWrite | undefined,
   ): void {
     // Contract: at least one side must be present (both-absent is deleteUndoPair's job).
     if (!legacy && !v7) {
-      throw new Error(
+      throw new TypeError(
         "writeUndoPair requires at least one side; use deleteUndoPair to clear the pair",
       );
     }
@@ -806,6 +851,13 @@ function makeDomainStore(
     leaseFor(sessionKey, path, anchor) {
       return lineageStore.leaseFor(sessionKey, path, anchor);
     },
+    /**
+     * The `LineageStore` seam member — LINEAGE FAMILY ONLY (file_snapshots, line_lineage,
+     * line_id_counters, served_leases). It is deliberately narrower than `pruneMissing`,
+     * which is the sole owner of whole-path deletion and calls the sub-stores directly.
+     * The name reads as "delete everything for this path"; it does not, and widening it
+     * here would duplicate pruneMissing's ownership.
+     */
     deleteByPath(path) {
       lineageStore.deleteByPath(path);
     },

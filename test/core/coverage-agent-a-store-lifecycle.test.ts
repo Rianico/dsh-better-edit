@@ -43,7 +43,6 @@ describe("store-lifecycle coverage agent-a", () => {
     let servedPruneArgs: number[] = [];
     const stmts = {
       servedPruneOlderThan: (ts: number) => servedPruneArgs.push(ts),
-      servedPruneOlderThan: (ts: number) => servedPruneArgs.push(ts),
     };
     // ensure config exists
     const cfgDir = join(dir, ".dsh", "plugins", "dsh-better-edit");

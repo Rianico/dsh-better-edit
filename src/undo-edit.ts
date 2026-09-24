@@ -28,7 +28,6 @@ async function writeUndo(path: string, entry: UndoRecord): Promise<void> {
     hashes: entry.hashes,
     resultContent: entry.resultContent,
     snapshotHash: snapshotHashFor(entry.content),
-    updatedAt: Date.now(),
   });
 }
 

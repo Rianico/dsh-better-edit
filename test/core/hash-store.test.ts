@@ -11,7 +11,7 @@ import {
   type HashStore,
   type InternalHashStore,
 } from "../../src/hash-store.js";
-import { recordServed, recordServedTruncated } from "../../src/session-view.js";
+import { loadServed, recordServed, recordServedTruncated } from "../../src/session-view.js";
 import { LineageCorruptError } from "../../src/snapshot-store/lineage-store.js";
 import { DomainError } from "../../src/domain-errors.js";
 import { HASH_STORE_VERSION } from "../../src/constants.js";
@@ -1750,8 +1750,8 @@ it("file_undo row mirrors the legacy undo row with the snapshot pin", async () =
   });
 });
 
-it("getFileUndo round-trips updatedAt as a number", async () => {
-  await withTempHome(async () => {
+it("getFileUndo maps updatedAt from the stored file_undo.updated_at", async () => {
+  await withTempHome(async (home) => {
     const { saveUndo } = await import("../../src/undo-edit.js");
     await saveUndo("/w.ts", {
       content: "a\n",
@@ -1762,7 +1762,22 @@ it("getFileUndo round-trips updatedAt as a number", async () => {
     });
     const internal = (await loadHashStore()) as unknown as InternalHashStore;
     const row = internal.getFileUndo("/w.ts");
-    expect(typeof row?.updatedAt).toBe("number");
+    expect(row).toBeDefined();
+    // Pin the MAPPER, not the type. `typeof updatedAt === "number"` would pass for any
+    // numeric column; read the stored column directly and require the record to carry
+    // exactly that value. No clock dependency, no flake.
+    const check = new DatabaseSync(sqlitePath(home));
+    const storedRow = check
+      .prepare("SELECT updated_at AS v FROM file_undo WHERE path = ?")
+      .get("/w.ts");
+    check.close();
+    // Runtime narrow, not a cast: a cast here would silence the compiler without
+    // proving the column is numeric at all.
+    const stored = storedRow?.["v"];
+    if (typeof stored !== "number") throw new Error("expected numeric file_undo.updated_at");
+    expect(Number.isInteger(stored)).toBe(true);
+    expect(stored).toBeGreaterThan(0);
+    expect(row?.updatedAt).toBe(stored);
   });
 });
 
@@ -2351,20 +2366,128 @@ it("reopen janitor keeps the pair when the v7 side is newer than the TTL", async
     });
     const raw = new DatabaseSync(sqlitePath(home));
     raw.prepare("UPDATE undo SET updated_at = ? WHERE path = ?").run(1000, splitPath);
-    // Young side stamped at setup: newer than the cutoff by an hour margin.
-    raw.prepare("UPDATE file_undo SET updated_at = ? WHERE path = ?").run(Date.now(), splitPath);
+    // Young side stamped explicitly: newer than the cutoff by an hour margin, and the
+    // exact value the row contract below is asserted against.
+    const youngStamp = Date.now();
+    raw.prepare("UPDATE file_undo SET updated_at = ? WHERE path = ?").run(youngStamp, splitPath);
     raw.close();
+    // Force the reopen: the janitor (and its newest-side TTL rule) runs on open.
     shutdownHashStore();
     const store = await loadHashStore();
     // Newest-side rule at open: the young v7 row keeps the legacy row alive.
     expect(store.getUndo(splitPath)).toBeDefined();
-    // Runtime proof of the v7 row, no cast: the row and its selected fields.
-    const check = new DatabaseSync(sqlitePath(home));
-    const row = check
-      .prepare("SELECT COUNT(*) AS n, MIN(snapshot_hash) AS sh FROM file_undo WHERE path = ?")
-      .get(splitPath) as { n: number; sh: string | null };
-    check.close();
-    expect(row.n).toBe(1);
-    expect(row.sh).toMatch(/^\d+:/);
+    // Row contract, field by field, with concrete expected values — no COUNT and no regex
+    // on a hash prefix. `getFileUndo` is on the public HashStore face, so proving the
+    // mapper needs no cast: every declared field is compared to its column's value.
+    const { snapshotHashFor } = await import("../../src/snapshot-store/lineage-store.js");
+    expect(store.getFileUndo(splitPath)).toEqual({
+      content: "a\n",
+      bom: "",
+      ending: "\n",
+      hashes: ["H01"],
+      resultContent: "b\n",
+      snapshotHash: snapshotHashFor("a\n"),
+      updatedAt: youngStamp,
+    });
+  });
+});
+
+it("writeUndoPair rejects both-absent with a TypeError and writes no rows", async () => {
+  await withTempHome(async () => {
+    const store = await loadHashStore();
+    const { saveUndo } = await import("../../src/undo-edit.js");
+    const path = "/both-absent.ts";
+    // Seed a real pair so "writes nothing" is observable as a row contract.
+    await saveUndo(path, {
+      content: "a\n",
+      bom: "",
+      originalEnding: "\n",
+      hashes: ["H01"],
+      resultContent: "b\n",
+    });
+    const beforeUndo = store.getUndo(path);
+    const beforeV7 = store.getFileUndo(path);
+    expect(beforeUndo).toBeDefined();
+    expect(beforeV7).toBeDefined();
+
+    // Typed error, not a bare Error: this face already uses TypeError for contract
+    // violations (the anchor-reservation and canons guards).
+    expect(() => store.writeUndoPair(path, undefined, undefined)).toThrow(TypeError);
+    expect(() => store.writeUndoPair(path, undefined, undefined)).toThrow(
+      "writeUndoPair requires at least one side; use deleteUndoPair to clear the pair",
+    );
+
+    // Row contract, not a COUNT: both sides are byte-identical to the seeded pair...
+    expect(store.getUndo(path)).toEqual(beforeUndo);
+    expect(store.getFileUndo(path)).toEqual(beforeV7);
+    // ...and a never-written path stays absent, so the guard ran before any write.
+    expect(store.getUndo("/never-written.ts")).toBeUndefined();
+    expect(store.getFileUndo("/never-written.ts")).toBeUndefined();
+  });
+});
+
+it("deleteByPath removes only the lineage family and leaves the other families intact", async () => {
+  await withTempHome(async (home) => {
+    const internal = (await loadHashStore()) as unknown as InternalHashStore;
+    const { saveUndo } = await import("../../src/undo-edit.js");
+    const { snapshotHashFor } = await import("../../src/snapshot-store/lineage-store.js");
+    const path = "/narrow.ts";
+    const content = "alpha\nbeta\n";
+    const hashes = ["AAA", "AAB"];
+
+    internal.upsertSnapshot(path, contentChecksum(content), 2, hashes);
+    internal.commitSnapshot({ path, content, hashes });
+    await saveUndo(path, {
+      content: "old\n",
+      bom: "",
+      originalEnding: "\n",
+      hashes: ["H01"],
+      resultContent: "new\n",
+    });
+    await recordServed("narrow-session", path, [{ position: 0, hash: "AAA" }], 2);
+
+    const beforeUndo = internal.getUndo(path);
+    const beforeV7 = internal.getFileUndo(path);
+    expect(internal.lineageFor(path, snapshotHashFor(content))).toHaveLength(2);
+    expect(beforeUndo).toBeDefined();
+    expect(beforeV7).toBeDefined();
+
+    // The face member is the LineageStore seam, LINEAGE FAMILY ONLY — it is not
+    // "delete everything for this path"; pruneMissing owns whole-path deletion.
+    internal.deleteByPath(path);
+
+    // Lineage family: gone.
+    expect(internal.lineageFor(path, snapshotHashFor(content))).toEqual([]);
+    // Every other family: byte-identical records.
+    expect(internal.getUndo(path)).toEqual(beforeUndo);
+    expect(internal.getFileUndo(path)).toEqual(beforeV7);
+    expect(await loadServed("narrow-session", path)).toEqual(["AAA"]);
+    // The legacy snapshot row survives, so getSnapshot falls back to it.
+    expect(internal.getSnapshot(path, content)).toEqual(hashes);
+  });
+});
+
+it("getSnapshot falls back to valid legacy anchors when the lineage family is corrupt", async () => {
+  await withTempHome(async (home) => {
+    const internal = (await loadHashStore()) as unknown as InternalHashStore;
+    const path = "/fallback.ts";
+    const content = "alpha\nbeta\n";
+    const hashes = ["AAA", "AAB"];
+    internal.upsertSnapshot(path, contentChecksum(content), 2, hashes);
+    internal.commitSnapshot({ path, content, hashes });
+
+    // Corrupt the lineage family: right row count, non-sequential line_number.
+    const db = new DatabaseSync(sqlitePath(home));
+    db.prepare(
+      "UPDATE line_lineage SET line_number = 99 WHERE line_number = 1 AND snapshot_id IN " +
+        "(SELECT snapshot_id FROM file_snapshots WHERE path = ?)",
+    ).run(path);
+    db.close();
+    shutdownHashStore();
+
+    const reopened = await loadHashStore();
+    // The shape guard rejects the corrupt lineage and falls through to snapshotStore.get,
+    // which returns the valid legacy anchors. No throw.
+    expect(reopened.getSnapshot(path, content)).toEqual(hashes);
   });
 });

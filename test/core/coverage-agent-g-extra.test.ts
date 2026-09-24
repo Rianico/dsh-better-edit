@@ -15,15 +15,47 @@ describe("extra store-lifecycle", () => {
     const sc: any = await import("../../src/store-config.js");
     const spy = vi
       .spyOn(sc, "loadConfig")
-      .mockReturnValue({ storeDir: "workspace", autoGitignore: true } as any);
+      .mockReturnValue({ storeDir: "workspace", autoGitignore: true, undo_ttl_s: 3600 } as any);
     const lc: any = await import("../../src/store-lifecycle.js");
     lc._resetLifecycleForTests();
+    // Stubs must carry the full shape the janitor actually calls: the undo prune routes
+    // through `store.pruneUndoOlderThan` (T2b), so a stale `undoPruneOlderThan` on the
+    // stmts stub plus a store stub missing it throws a TypeError that onStoreOpen's
+    // warn-catch swallows — the test then passes no matter what.
+    const servedPruneArgs: number[] = [];
+    const undoPruneArgs: number[] = [];
+    let pruneMissingCalls = 0;
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+
     await lc.onStoreOpen(
       storePath,
-      { servedPruneOlderThan: () => {}, undoPruneOlderThan: () => {} } as any,
-      { pruneMissing: async () => {} } as any,
+      {
+        servedPruneOlderThan: (ts: number) => {
+          servedPruneArgs.push(ts);
+        },
+      },
+      {
+        pruneUndoOlderThan: (ts: number) => {
+          undoPruneArgs.push(ts);
+        },
+        pruneMissing: async () => {
+          pruneMissingCalls += 1;
+        },
+      } as any,
     );
-    expect(true).toBe(true);
+
+    // The swallowed-warn path is the failure mode this pins: a stub missing a member the
+    // janitor calls throws a TypeError that onStoreOpen's warn-catch swallows, and the
+    // test would then pass no matter what.
+    expect(warn).not.toHaveBeenCalled();
+    // Effects, not a tautology: each janitor step ran exactly once with a numeric cutoff.
+    expect(servedPruneArgs).toHaveLength(1);
+    expect(Number.isFinite(servedPruneArgs[0])).toBe(true);
+    expect(undoPruneArgs).toHaveLength(1);
+    expect(Number.isFinite(undoPruneArgs[0])).toBe(true);
+    expect(pruneMissingCalls).toBe(1);
+
+    warn.mockRestore();
     spy.mockRestore();
     await rm(dir, { recursive: true, force: true });
   });

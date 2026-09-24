@@ -407,11 +407,11 @@ export function createLineageStore(db: DatabaseSync): LineageStore {
           withBusyRetry(() => {
             upsertCounterStmt.run(input.path, fresh + freshCount);
           });
-          // SAFETY: node:sqlite run() always returns { changes, lastInsertRowid };
-          // the unknown hop only satisfies the overlap check for lastInsertRowid's bigint union.
+          // node:sqlite run() returns StatementResultingChanges, which declares
+          // lastInsertRowid — no cast is needed to read it.
           const info = withBusyRetry(() =>
             insertSnapshotStmt.run(input.path, snapshotHash, lines.length, now),
-          ) as unknown as { lastInsertRowid: number | bigint };
+          );
           snapshotId = Number(info.lastInsertRowid);
           for (let index = 0; index < lines.length; index++) {
             let lineId = inherited[index];
