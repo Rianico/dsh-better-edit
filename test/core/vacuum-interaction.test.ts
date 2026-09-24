@@ -263,15 +263,21 @@ describe("vacuum — interaction with lineage, leases and the tools", () => {
       const db = new DatabaseSync(hashStorePath(cwd));
       try {
         ageLeases(db, path);
+        // The seeding vacuums already settled the path at its window, so the explicit sweep needs the
+        // global arm to reach the aged row: a synthetic bulk row on another path does it.
+        insertSnapshot(db, "/bulk-12.ts", "12:bulk", 2_000_000, Date.now() + 60_000);
         (await storeFace(cwd)).vacuumSnapshots();
-        // §8(3): the boundary really did remove the v7 row the rejected edit resolved against…
+        // §8(3): the boundary really did remove the v7 row the rejected edit was resolved against
+        // (the pre-edit content), so the cell cannot pass by leaving the rejected edit's referent
+        // in place; the re-materialization assertion below then covers the new on-disk content.
+        const staleHash = snapshotHashFor(DISK_CONTENT);
         const diskHash = snapshotHashFor(diskBytes);
         expect(
           count(
             db,
             "SELECT COUNT(*) AS count FROM file_snapshots WHERE path = ? AND snapshot_hash = ?",
             path,
-            diskHash,
+            staleHash,
           ),
         ).toBe(0);
         const after = await it.readTool.execute("c", { path });

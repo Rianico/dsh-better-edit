@@ -116,7 +116,10 @@ const T4R6 = {
 /**
  * T5 cell titles (LRU snapshot vacuum). Corpus: `docs/adr/0021-lru-snapshot-vacuum.md`.
  * Expected RED sets were measured at the T5 implementation revision; re-run to re-derive.
- */
+ * Expected RED sets were measured at the T5 implementation revision `4d1bedc`; re-run to re-derive.
+ * An `expected: []` entry is a measured GREEN mutant, diagnosed by one of: (1) a real gap, (2) the
+ * mutation did not apply, (3) the claim was too strong, (4) another mechanism covered the effect
+ * (T5M22/T5M26/T5M28: the FK cascade or the serve write's re-materialization, per the P1 matrix).
 const T5 = {
   window:
     "cell 01 per-path window: the oldest versions are evicted and their lineage goes with them",
@@ -166,6 +169,7 @@ const VACUUM = "src/snapshot-store/vacuum.ts";
 const LINEAGE_STORE = "src/snapshot-store/lineage-store.ts";
 const HASH_STORE = "src/hash-store.ts";
 const STORE_LIFECYCLE = "src/store-lifecycle.ts";
+const SESSION_VIEW = "src/session-view.ts";
 const VACUUM_UNIT = "test/core/vacuum.test.ts";
 const VACUUM_INTERACTION = "test/core/vacuum-interaction.test.ts";
 const ARCH_SCAN = "test/support/arch-scan.ts";
@@ -544,7 +548,17 @@ const MUTANTS = {
   T5M1: {
     what: "drop the per-path retention arm (global budget only)",
     scope: [VACUUM_UNIT],
-    expected: [T5.window, T5.activePin, T5.pinRecency],
+    expected: [
+      T5.window,
+      T5.activePin,
+      T5.pinRecency,
+      T5.deferral,
+      T5.idempotence,
+      T5.pairInvariant,
+      T5.pairOnRealOpener,
+      T5.crashMidPair,
+      T5.overBroadPin,
+    ],
     edits: [
       {
         file: VACUUM,
@@ -568,7 +582,15 @@ const MUTANTS = {
   T5M3: {
     what: "the pin probe returns nothing (no snapshot is ever pinned)",
     scope: [VACUUM_UNIT],
-    expected: [T5.activePin, T5.pinRecency, T5.retiredGrace, T5.undoPin, T5.loudDeferral],
+    expected: [
+      T5.activePin,
+      T5.pinRecency,
+      T5.retiredGrace,
+      T5.undoPin,
+      T5.loudDeferral,
+      T5.reportPayload,
+      T5.reportRearm,
+    ],
     edits: [
       {
         file: VACUUM,
@@ -741,7 +763,7 @@ const MUTANTS = {
   T5M16: {
     what: "the in-sweep deferral guard is removed (a joined sweep runs)",
     scope: [VACUUM_UNIT],
-    expected: [T5.deferral, T5.pairInvariant, T5.crashMidPair],
+    expected: [T5.deferral, T5.pairInvariant],
     edits: [
       {
         file: VACUUM,
@@ -888,7 +910,7 @@ const MUTANTS = {
   T5M27: {
     what: "the sweep's transaction wrapper is removed (same-file rollback lost)",
     scope: [VACUUM_UNIT],
-    expected: [T5.deferral, T5.pairInvariant, T5.pairOnRealOpener, T5.crashMidPair],
+    expected: [T5.deferral, T5.pairInvariant, T5.crashMidPair],
     edits: [
       {
         file: VACUUM,
@@ -910,12 +932,24 @@ const MUTANTS = {
   T5M28: {
     what: "`getSnapshot`'s lineage-first branch is disabled (the legacy row serves)",
     scope: [VACUUM_INTERACTION],
-    expected: [T5.crossTable],
+    expected: [], // GREEN: the serve write's re-materialization covers the disabled branch
     edits: [
       {
         file: HASH_STORE,
         old: "        lineage.length === splitLines(content).length &&",
         new: "        lineage.length === -1 &&",
+      },
+    ],
+  },
+  T5M29: {
+    what: "the serve write stops materializing the v7 family (cell 14's negative pin)",
+    scope: [VACUUM_INTERACTION],
+    expected: [],
+    edits: [
+      {
+        file: SESSION_VIEW,
+        old: "  internal.commitSnapshot({ path, content, hashes: [...hashes], leases: { sessionKey, rows } });",
+        new: "  // mutant: the serve write stops materializing the v7 family",
       },
     ],
   },
