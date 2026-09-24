@@ -703,7 +703,7 @@ interface SequentialRun {
 
 /**
  * Drives `applySingle` → `execPipeline`, i.e. the anonymous arrow callback passed as
- * `applyOne`'s `onReject` argument (`src/mutation.ts:169-171` post-fix; the base
+ * `applyOne`'s `onReject` argument (`src/mutation.ts:170-172` post-fix; the base
  * `recordEchoServes` call sat at `src/mutation.ts:179`). This callback is NOT on any
  * tool path (see the report), so the pin is a direct call, not a tool-path cell.
  */
