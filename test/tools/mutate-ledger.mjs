@@ -49,6 +49,8 @@ const DOMAIN_ERRORS = "src/domain-errors.ts";
 const VERIFIED_AT = "ba430557912b8b2934261654d3e09034188d8571";
 /** T4 (T4M1–T4M5) expected RED sets were measured at this revision. */
 const T4_VERIFIED_AT = "ddce82b333a2c6cc5854823de92264971f5e84f2";
+/** T4 CP1-r3 (M6–M9) expected RED sets were measured at this revision. */
+const R3_VERIFIED_AT = "09b4391a4a8c696860d5ed89c4f21641cbdbb2ed";
 
 const T = {
   twinRecords: "twin rejection records nothing — served rows byte-identical before/after",
@@ -83,6 +85,8 @@ const T4R3 = {
   backward: "totality backward: deferred codes name a ticket and a trigger",
   fields: "every registry field is rendered or declaration-only",
   deleted: "deleting a deferred code's producer *stays* deleted",
+  contextMessage:
+    "shows current context around the resolved anchor when only one anchor of a range is stale",
 };
 const ARCH_REGISTRY = "test/arch/domain-error-registry.test.ts";
 
@@ -290,10 +294,10 @@ const MUTANTS = {
       {
         file: DOMAIN_ERRORS,
         old:
-          'export const DEFERRED_PRODUCERS: Readonly<Record<string, { owner: string; trigger: string }>> = {\n' +
+          "export const DEFERRED_PRODUCERS: Readonly<Record<string, { owner: string; trigger: string }>> = {\n" +
           "  W_NEVER_SERVED_SHAPE: {",
         new:
-          'export const DEFERRED_PRODUCERS: Readonly<Record<string, { owner: string; trigger: string } | string>> = {\n' +
+          "export const DEFERRED_PRODUCERS: Readonly<Record<string, { owner: string; trigger: string } | string>> = {\n" +
           '  E_FOREIGN_ANCHOR: "range-family ticket (leases)",\n' +
           "  W_NEVER_SERVED_SHAPE: {",
       },
@@ -333,7 +337,7 @@ const MUTANTS = {
   M9: {
     what: "add a `remedy` reader (append it in staleAnchorFormat) without de-allowlisting it",
     scope: null, // full suite
-    expected: [T4R3.fields],
+    expected: [T4R3.fields, T4R3.contextMessage],
     edits: [
       {
         file: DOMAIN_ERRORS,
@@ -373,6 +377,7 @@ function listMutants() {
   const width = Math.max(...Object.keys(MUTANTS).map((id) => id.length));
   console.log(`T3h ledger measured at ${VERIFIED_AT}`);
   console.log(`T4 ledger measured at ${T4_VERIFIED_AT}`);
+  console.log(`T4 r3 ledger measured at ${R3_VERIFIED_AT}`);
   for (const [id, m] of Object.entries(MUTANTS)) {
     const scope = m.scope ? m.scope.join(",") : "--full (full suite)";
     console.log(`${id.padEnd(width)}  RED=${m.expected.length}  scope=${scope}  ${m.what}`);
