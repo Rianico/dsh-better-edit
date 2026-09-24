@@ -383,6 +383,13 @@ function storedVersion(db: DatabaseSync): number | undefined {
  * Idempotent column backfill: ALTER TABLE only when the column is missing.
  * Table/column/type ride an identifier allowlist (SQLite has no bind
  * parameters for DDL identifiers); every current caller passes constants.
+ *
+ * pi-lens's `sql-injection` rule (`inline_tier: blocking`) flags any `db.exec`/`db.prepare`
+ * that receives a template literal with a substitution, including the two DDL statements
+ * below. That finding is a false positive here: SCHEMA_IDENTIFIER_RE rejects anything that
+ * is not `[A-Za-z_][A-Za-z0-9_]*` before the SQL text is built, and the rule cannot see
+ * that guard. Trigger: re-open if a caller stops passing a literal, SCHEMA_IDENTIFIER_RE is
+ * relaxed or removed, or a non-constant reaches table/column/type.
  */
 const SCHEMA_IDENTIFIER_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
 function addColumnIfMissing(db: DatabaseSync, table: string, column: string, type: string): void {
@@ -556,12 +563,19 @@ function buildStore(db: DatabaseSync, storePath: string): { db: DatabaseSync; st
   // Pair-atomic age prune: a path's pair is pruned only when its NEWEST side is older
   // than the cutoff — a recently written side keeps the pair alive. Decide per path,
   // never one side alone (independent per-table deletes split the pair, F1 class).
-  const pairPrunePredicate =
-    "path IN (SELECT path FROM (SELECT path, MAX(updated_at) AS newest FROM (" +
-    "SELECT path, updated_at FROM undo UNION ALL SELECT path, updated_at FROM file_undo" +
-    ") GROUP BY path) WHERE newest < ?)";
-  const undoPrunePairStmt = db.prepare(`DELETE FROM undo WHERE ${pairPrunePredicate}`);
-  const fileUndoPrunePairStmt = db.prepare(`DELETE FROM file_undo WHERE ${pairPrunePredicate}`);
+  // Each statement is a complete SQL literal — the predicate text is duplicated on purpose:
+  // a shared constant would be interpolated back into the SQL, so no future edit can turn
+  // this into an interpolation hole.
+  const undoPrunePairStmt = db.prepare(
+    "DELETE FROM undo WHERE path IN (SELECT path FROM (SELECT path, MAX(updated_at) AS newest FROM (" +
+      "SELECT path, updated_at FROM undo UNION ALL SELECT path, updated_at FROM file_undo" +
+      ") GROUP BY path) WHERE newest < ?)",
+  );
+  const fileUndoPrunePairStmt = db.prepare(
+    "DELETE FROM file_undo WHERE path IN (SELECT path FROM (SELECT path, MAX(updated_at) AS newest FROM (" +
+      "SELECT path, updated_at FROM undo UNION ALL SELECT path, updated_at FROM file_undo" +
+      ") GROUP BY path) WHERE newest < ?)",
+  );
   const fileUndoUpsertStmt = db.prepare(
     "INSERT INTO file_undo (path, content, bom, ending, hashes, result_content, snapshot_hash, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?) " +
       "ON CONFLICT(path) DO UPDATE SET content = excluded.content, bom = excluded.bom, ending = excluded.ending, hashes = excluded.hashes, result_content = excluded.result_content, snapshot_hash = excluded.snapshot_hash, updated_at = excluded.updated_at",

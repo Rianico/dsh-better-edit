@@ -52,15 +52,29 @@ function promotionWarning(retiredSize: number, servedLen: number): string {
 async function clearRetiredForPromotion(
   sessionKey: string | undefined,
   absolutePath: string,
-): Promise<void> {
+): Promise<string | undefined> {
+  let store: ServedPersistence;
   try {
     const { loadServedStore } = await import("../hash-store.js");
-    const store = await loadServedStore();
+    store = await loadServedStore();
     store.clearRetiredAnchors(sessionKey ?? "", absolutePath);
-    try {
-      store.clearCards(sessionKey ?? "", absolutePath);
-    } catch {}
-  } catch {}
+  } catch (error) {
+    return (
+      `promotion could not clear retired anchors for ${absolutePath} ` +
+      `(${error instanceof Error ? error.message : String(error)}); ` +
+      "stale-anchor checks stay degraded until the next full read."
+    );
+  }
+  try {
+    store.clearCards(sessionKey ?? "", absolutePath);
+    return undefined;
+  } catch (error) {
+    return (
+      `promotion could not clear the reported cards for ${absolutePath} ` +
+      `(${error instanceof Error ? error.message : String(error)}); ` +
+      "the next read may still compare against the pre-promotion range."
+    );
+  }
 }
 
 async function retryLineHashesWithPromotion(
@@ -71,7 +85,8 @@ async function retryLineHashesWithPromotion(
   warnings: string[],
   fn: (reserved: Set<string>, retired: Set<string>) => Promise<string[]>,
 ): Promise<string[]> {
-  await clearRetiredForPromotion(sessionKey, absolutePath);
+  const clearWarning = await clearRetiredForPromotion(sessionKey, absolutePath);
+  if (clearWarning !== undefined) warnings.push(clearWarning);
   const servedLen = served?.filter((h): h is string => h !== null).length ?? 0;
   warnings.push(promotionWarning(retired?.size ?? 0, servedLen));
   const recomputed = new Set<string>(
@@ -97,7 +112,7 @@ import {
 import { DomainError, formatError, formatWarning } from "../domain-errors.js";
 import type { RangeCause } from "../domain-errors.js";
 import type { EditMode } from "../contract.js";
-import { findSnapshotPathsByHashes } from "../hash-store.js";
+import { findSnapshotPathsByHashes, type ServedPersistence } from "../hash-store.js";
 import { clearNoopLoop, noopPayloadKey, trackNoopPayload } from "../noop-guard.js";
 import { NOOP_LOOP_THRESHOLD } from "../constants.js";
 import { abortIf, splitLines } from "../utils.js";
