@@ -231,3 +231,43 @@ ServedRejectionError` through `collectAbortPart` (`engine.ts:512`, called at `:8
   by one change and become _reachable_ by a later, correct one; neither commit alone reproduces it.
 - `_mergeServedRows` becomes a pure merge with no disambiguation; the exact-write rule is now
   the only rule.
+
+## Reproduce
+
+Both numeric claims in this ADR are re-derivable from the archived instruments. `src/` blobs are
+identical across `735df10`, `998fd43` and `39351d9` (`mutation.ts` `c8b6c039…`, `engine.ts`
+`0dc0e78c…`), so every number below transfers across those revisions without re-running.
+
+**Mutation ledger** (the table above). Recipe: re-add the write at exactly one isolated site, run the
+contract file, revert. The five recipes are the scripted exact-string edits in
+`evidence/probes/mutate.py.txt` — `M1`/`M2` = `collectAbortPart` with and without the snapshot
+context, `M3` = `enforceNoopLoop`'s `index === undefined` branch, `M4` = its batch branch, `M5` = the
+`execPipeline` `onReject` arrow:
+
+```
+python3 evidence/probes/mutate.py.txt M4                    # one recipe; asserts exactly one match
+pnpm exec vitest run test/core/serve-leases.test.ts --reporter=verbose
+git checkout -- src/mutation.ts src/mutation/engine.ts      # revert; git diff --quiet 998fd43 -- src/ must exit 0
+```
+
+Revision `735df10`. Expected output shape: baseline `15 passed`; `M1` `7 failed`, `M2` `6 failed`,
+`M3`/`M4`/`M5` `1 failed` each, with the failing cell names matching the RED column above and the five
+happy-path cells green in every run. Raw per-cell output: `evidence/cp1r3-ledger-runs.txt`.
+
+**`retiredAt` arms.** Probe `evidence/probes/tm-retiredat-control.test.ts.txt`; copy it to
+`.tmp/t3f/tm-retiredat-control.test.ts` (vitest collects `.tmp/**/*.test.ts`) and run from the worktree
+root:
+
+```
+T3F_EVIDENCE_OUT=/tmp/retiredat.txt pnpm exec vitest run .tmp/t3f/tm-retiredat-control.test.ts
+```
+
+It drives the twin fixture through the real tool path and prints `RETIRED_BEFORE` /
+`RETIRED_AFTER_STEP` / `RETIRED_AFTER_READ2` per arm. Arms and outcomes (raw:
+`evidence/tm-retiredat-control-raw.txt`, the orchestrator's run on the same `src/` blobs — the raw file
+carries no revision header): **S1 reject** → `f9U.retiredAt 1790264335105`; **S2 accept** (an edit that
+applies) → `f9U` stays live and `EyS.retiredAt` flips instead; **S4 accept-delete-twin** → `f9U` flips
+too, from an accepted edit; **S3 no-edit** → nothing flips; **S5 norm-only** — no edit, no rejection,
+only the `normFromText` call (`src/mutation.ts:125`) — → `f9U.retiredAt 1790264335193`. S5 is the proof
+that the retirement is path-independent; S1 is observable only because nothing follows the
+normalization to revive the row.
