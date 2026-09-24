@@ -331,14 +331,15 @@ describe("range-family retry truth (T4)", () => {
         edits: [[window1[0], window3[0], "R"]],
       });
       expect(attempt.applied).toBe(false);
-      // The heading begins its own line (the engine's leading space is normalized).
+      // (ii) The heading begins its own line (the engine's leading space is normalized).
       expect(attempt.message).toMatch(/\n *Current on-disk range/);
-      // No rendered line carries both a row separator and the heading — a row that
-      // runs into following prose is an unparseable anchor for a row consumer.
+      // (i) No rendered line carries a row separator followed by the next fragment —
+      // a row that runs into following prose is an unparseable anchor for a row
+      // consumer. The joint pattern covers BOTH engine variants.
       const glued = attempt.message
         .split("\n")
-        .filter((line) => line.includes("│") && line.includes("Current on-disk range"));
-      expect(glued, `row glued to the on-disk heading: ${glued.join(" | ")}`).toEqual([]);
+        .filter((line) => /│.*(Current on-disk range|Call read\(\))/.test(line));
+      expect(glued, `row glued to the next fragment: ${glued.join(" | ")}`).toEqual([]);
       // Non-vacuity: this geometry really does render rows.
       expect(attempt.message).toContain("│");
     });
@@ -359,14 +360,18 @@ describe("range-family retry truth (T4)", () => {
       });
       expect(attempt.applied).toBe(false);
       expect(attempt.message).toContain("[E_STALE_ANCHOR]");
-      // The fallback fragment begins its own line.
+      // (ii) The fallback fragment begins its own line.
       expect(attempt.message).toMatch(/\n *Call read\(\) to get fresh anchors\./);
-      // Same shape rule as C11a. This geometry renders no rows, so this half is
-      // vacuous here — the load-bearing assertion is the line-start one above.
+      // (i) The same joint rule. Measured: the geometry that selects the fallback is
+      // exactly the geometry with no rows (G4 has rows and therefore renders the
+      // `Current on-disk range` block instead — see C4), so this half cannot be
+      // non-vacuous here. C11a carries the row-bearing half, and the assertion
+      // below pins that premise so a change to it cannot pass silently.
       const glued = attempt.message
         .split("\n")
-        .filter((line) => line.includes("│") && line.includes("Call read() to get fresh anchors"));
-      expect(glued, `row glued to the fallback: ${glued.join(" | ")}`).toEqual([]);
+        .filter((line) => /│.*(Current on-disk range|Call read\(\))/.test(line));
+      expect(glued, `row glued to the next fragment: ${glued.join(" | ")}`).toEqual([]);
+      expect(attempt.message).not.toContain("│");
     });
   });
 });
