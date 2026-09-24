@@ -25,7 +25,7 @@ Two adjacent mechanisms were measured and are **not** this retention tier:
   a different invariant with a different owner.
 - the legacy `served` table already has its own TTL pruner at store open.
 
-The pins existed as *data* but not as *predicates*: `served_leases` rows and
+The pins existed as _data_ but not as _predicates_: `served_leases` rows and
 `file_undo.snapshot_hash` were written and never read by any retention decision.
 
 ## Decision
@@ -35,15 +35,15 @@ The pins existed as *data* but not as *predicates*: `served_leases` rows and
 `src/snapshot-store/vacuum.ts` is the single owner of `file_snapshots` + `line_lineage` retention.
 Its budgets are module-level policy, never call-site configuration:
 
-| constant | value | meaning |
-| --- | --- | --- |
-| `VACUUM_GLOBAL_BUDGET_BYTES` | 50 MiB | global CAS budget, priced `40 B × line_count` per snapshot |
-| `VACUUM_SOFT_OVERFLOW_BYTES` | 100 MiB | tolerated soft-overflow window; governs the **report** only |
-| `VACUUM_PER_PATH_BUDGET_BYTES` | 10 MiB | per-path window budget |
-| `VACUUM_MAX_SNAPSHOTS_PER_PATH` | 10 | window ceiling |
-| `VACUUM_MIN_SNAPSHOTS_PER_PATH` | 2 | window floor |
-| `VACUUM_LINEAGE_BYTES_PER_LINE` | 40 | the lineage price constant |
-| `VACUUM_RETIRED_PIN_MS` | 1 h | retired-lease grace |
+| constant                        | value   | meaning                                                     |
+| ------------------------------- | ------- | ----------------------------------------------------------- |
+| `VACUUM_GLOBAL_BUDGET_BYTES`    | 50 MiB  | global CAS budget, priced `40 B × line_count` per snapshot  |
+| `VACUUM_SOFT_OVERFLOW_BYTES`    | 100 MiB | tolerated soft-overflow window; governs the **report** only |
+| `VACUUM_PER_PATH_BUDGET_BYTES`  | 10 MiB  | per-path window budget                                      |
+| `VACUUM_MAX_SNAPSHOTS_PER_PATH` | 10      | window ceiling                                              |
+| `VACUUM_MIN_SNAPSHOTS_PER_PATH` | 2       | window floor                                                |
+| `VACUUM_LINEAGE_BYTES_PER_LINE` | 40      | the lineage price constant                                  |
+| `VACUUM_RETIRED_PIN_MS`         | 1 h     | retired-lease grace                                         |
 
 Per-path retention is `min(10, max(2, floor(10 MiB / (40 × newestLineCount))))`, sized against the
 path's **newest** version. `vacuumSnapshots(db, options)` sweeps every committed snapshot
@@ -71,7 +71,7 @@ plus `options.protectSnapshotIds`. `activeCutoff = now − SERVED_TTL_MS` (7 day
 `src/constants.ts`), `graceCutoff = now − VACUUM_RETIRED_PIN_MS` (1 hour). The `updated_at` half
 **is** the LRU-on-access semantic the spec calls for: a re-serve upserts the lease with
 `updated_at = excluded.updated_at` (mvcc spec §3.1 items 2-3), which moves that version back out of
-the eviction window. Retention therefore follows *use*, not insertion.
+the eviction window. Retention therefore follows _use_, not insertion.
 
 `file_undo.snapshot_hash` is the second, independent referent: an undo restore target survives a
 pass that would otherwise evict it. That call is exercised end to end in interaction cell 13.
@@ -117,16 +117,16 @@ The pass never touches, each for a stated reason:
 
 - **`line_id_counters`** — the ID-reuse invariant (mvcc spec §3.6 item 3): a surviving lease must
   never have its `line_id` re-issued. Only `pruneMissing` / `deleteByPath` may drop a counter row,
-  and only together with the path's snapshots *and* leases.
-- **`served_leases`** — the pin set is *computed from* this table; the 7-day TTL and the 1-hour
+  and only together with the path's snapshots _and_ leases.
+- **`served_leases`** — the pin set is _computed from_ this table; the 7-day TTL and the 1-hour
   grace are **predicates, not pruners**. Consequence, stated as a limit: **`served_leases` rows are
   not reclaimed by the vacuum; that is a separate retention tier with no owner today.** Predicate
   trigger for owning it: the `served_leases` row count in a long-running store, or the first ticket
   that adds a session-teardown seam.
-- **the legacy `snapshots` row** — it **does not reclaim the legacy `snapshots` row: one per path,
-  overwritten, and the upgrade fallback** read by `getSnapshot` when the v7 family has no valid
+- **the legacy `snapshots` row** — it "does not reclaim the legacy `snapshots` row: one per
+  path, overwritten, and the upgrade fallback" read by `getSnapshot` when the v7 family has no
   lineage (`hash-store.ts:811-823`). The legacy-`snapshots` ↔ `file_snapshots` pairing is a separate
-  invariant with its own owner. Interaction cell 14 asserts the row survives the pass *and* that a
+  invariant with its own owner. Interaction cell 14 asserts the row survives the pass _and_ that a
   read after a full v7 prune re-materializes the v7 family rather than silently serving from it.
 - **the legacy `served` table** — it already has a TTL pruner at store open.
 - **no "always keep the newest" special case.** A path's newest version survives because the
@@ -188,7 +188,7 @@ not hold here and were replaced by the tree's actual behaviour:
 2. **Cell 13's "snapshot missing ⇒ loud undo failure" arm does not exist.** `undo_last_edit`
    restores from the content stored inline in the undo row; it never reads the snapshot
    (`rg -n 'snapshot_hash' src/tool-undo.ts` → 0 hits). A missing snapshot is therefore not a loud
-   undo failure. What the cell can and does prove is the pin's *purpose*: with the leases aged out
+   undo failure. What the cell can and does prove is the pin's _purpose_: with the leases aged out
    and the store over both budgets, the `file_undo` pin is the only thing that keeps the target, and
    the undo still restores. Dropping the pin clause makes that cell RED.
 3. **Cell 12 is a guard, not a refutable oracle.** It pins the T3f invariant (a rejected edit is a
@@ -211,23 +211,23 @@ node test/tools/mutate-ledger.mjs T5M4            # one mutant, both vacuum corp
 node test/tools/mutate-ledger.mjs T5M2 --keep     # keep the temp tree and the vitest log
 ```
 
-| id | site (one, in the mutated tree) | scope | expected RED |
-| --- | --- | --- | --- |
-| T5M1 | `vacuum.ts`: per-path arm dropped from the eviction condition | `test/core/vacuum.test.ts` | 01, 03, 04 |
-| T5M2 | `vacuum.ts`: global-budget arm dropped | unit | 02, 07, 08 |
-| T5M3 | `vacuum.ts`: the pin probe returns `[]` | unit | 03, 04, 05, 06, 09 |
-| T5M4 | `vacuum.ts`: the lease pin ignores `updated_at` | unit + interaction | 04, 08, 10, 11, 14 |
-| T5M5 | `vacuum.ts`: the retired-lease grace clause can never hold | unit | 05 |
-| T5M6 | `vacuum.ts`: the `file_undo` pin can never match | unit + interaction | 06, 13 |
-| T5M7 | `vacuum.ts`: `protectSnapshotIds` never applied | unit | 07 |
-| T5M8 | `vacuum.ts`: the sweep wipes `line_id_counters` | unit | 08 |
-| T5M9 | `vacuum.ts`: the soft-overflow report call deleted | unit | 09 |
-| T5M10 | `lineage-store.ts`: `next_id` reset to 1 | interaction | 10 |
-| T5M11 | `vacuum.ts`: lease pin ignores `updated_at` (other corpus) | interaction | 10, 11, 14 |
-| T5M12 | `vacuum.ts`: the sweep wipes `served_leases` | interaction | 11 |
-| T5M13 | `vacuum.ts`: the `file_undo` pin can never match (other corpus) | interaction | 13 |
-| T5M14 | `vacuum.ts`: the sweep also deletes the legacy `snapshots` row | interaction | 11, 14 |
-| T5M15 | `hash-store.ts`: the post-materialization catch swallows | interaction | 15 |
+| id    | site (one, in the mutated tree)                                 | scope                      | expected RED       |
+| ----- | --------------------------------------------------------------- | -------------------------- | ------------------ |
+| T5M1  | `vacuum.ts`: per-path arm dropped from the eviction condition   | `test/core/vacuum.test.ts` | 01, 03, 04         |
+| T5M2  | `vacuum.ts`: global-budget arm dropped                          | unit                       | 02, 07, 08         |
+| T5M3  | `vacuum.ts`: the pin probe returns `[]`                         | unit                       | 03, 04, 05, 06, 09 |
+| T5M4  | `vacuum.ts`: the lease pin ignores `updated_at`                 | unit + interaction         | 04, 08, 10, 11, 14 |
+| T5M5  | `vacuum.ts`: the retired-lease grace clause can never hold      | unit                       | 05                 |
+| T5M6  | `vacuum.ts`: the `file_undo` pin can never match                | unit + interaction         | 06, 13             |
+| T5M7  | `vacuum.ts`: `protectSnapshotIds` never applied                 | unit                       | 07                 |
+| T5M8  | `vacuum.ts`: the sweep wipes `line_id_counters`                 | unit                       | 08                 |
+| T5M9  | `vacuum.ts`: the soft-overflow report call deleted              | unit                       | 09                 |
+| T5M10 | `lineage-store.ts`: `next_id` reset to 1                        | interaction                | 10                 |
+| T5M11 | `vacuum.ts`: lease pin ignores `updated_at` (other corpus)      | interaction                | 10, 11, 14         |
+| T5M12 | `vacuum.ts`: the sweep wipes `served_leases`                    | interaction                | 11                 |
+| T5M13 | `vacuum.ts`: the `file_undo` pin can never match (other corpus) | interaction                | 13                 |
+| T5M14 | `vacuum.ts`: the sweep also deletes the legacy `snapshots` row  | interaction                | 11, 14             |
+| T5M15 | `hash-store.ts`: the post-materialization catch swallows        | interaction                | 15                 |
 
 Cell 12 is GREEN under every one of the fifteen mutants (see Void premise 3).
 
