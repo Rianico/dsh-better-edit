@@ -4,7 +4,7 @@ Date: 2026-08-20 (adapted for dsh-better-edit from pi-better-edit)
 
 ## Status
 
-accepted (adapted for dsh-better-edit — same hashline algorithm; tool layer is dsh plugin API)
+accepted (adapted for dsh-better-edit — same hashline algorithm; tool layer is dsh plugin API); superseded by [ADR-0018](0018-exact-position-served-span-verification.md)
 
 ## Context
 
