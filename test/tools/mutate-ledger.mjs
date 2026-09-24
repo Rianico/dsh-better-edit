@@ -38,9 +38,6 @@ const REPO = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const ENGINE = "src/mutation/engine.ts";
 const ANCHOR_PIPELINE = "src/hashline/anchor-pipeline.ts";
 const CONTRACT = "test/core/serve-leases.test.ts";
-const RETRY_TRUTH = "test/core/range-family-retry-truth.test.ts";
-const ARCH_SIGNAL = "test/arch/range-family-signal.test.ts";
-const ERROR_CODES = "test/core/error-codes.test.ts";
 const DOMAIN_ERRORS = "src/domain-errors.ts";
 
 /**
