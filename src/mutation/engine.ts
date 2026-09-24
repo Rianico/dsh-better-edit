@@ -13,7 +13,8 @@
  */
 
 import type { FileIO } from "../fs-bridge.js";
-import type { HashStore } from "../hash-store.js";
+import { loadHashStore, type HashStore, type InternalHashStore } from "../hash-store.js";
+import { snapshotHashFor } from "../snapshot-store/lineage-store.js";
 import type { LineEnding } from "../edit-diff.js";
 import { loadConfig } from "../store-config.js";
 import { canon } from "../hashline/hash-assign.js";
@@ -31,6 +32,7 @@ import {
   parseHashRef,
   type HEdit,
   type NEdit,
+  type LeaseSpanSource,
 } from "../hashline/anchor-pipeline.js";
 import { lineHashes } from "../hashline/hash.js";
 import { AnchorSpaceExhaustedError, HASH_SPACE } from "../hashline/hash-assign.js";
@@ -247,6 +249,11 @@ export interface ApplyOneInput {
   retired?: ReadonlySet<string>;
   /** Request-level edit mode ("general" default, "literal" bypasses served-echo). */
   mode?: EditMode;
+  /**
+   * The lease-identity source for this item's buffer. Present => the identity gate replaces the
+   * position check; absent => the unconditional position check (preview/no-store).
+   */
+  leaseSource?: LeaseSpanSource;
   sessionKey?: string;
   /** Pre-resolved edit (single path keeps resEdit before IO for error order). */
   edit?: HEdit;
@@ -312,6 +319,7 @@ export async function applyOne(
       input.servedCanons,
       retiredForApply,
       input.mode,
+      input.leaseSource,
     );
   } catch (error) {
     if (error instanceof AnchorMismatchError || error instanceof ServedRejectionError) {
@@ -598,6 +606,65 @@ function buildBatchAbort(file: string, parts: AbortPart[]): DomainError<"E_BATCH
 }
 
 /**
+ * The read-only lease-identity source for one buffer, or undefined when it cannot be built.
+ *
+ * Leases come from `served_leases`; the `line_id` -> current-line map comes from the store's
+ * `positionsByIdentity` over the buffer the edit is applied to. Nothing is written: the edit path
+ * never re-stamps a lease and never retires one.
+ *
+ * RESIDUAL (CP2-r2): for batch item k > 0 the buffer is in-memory and is not a committed snapshot,
+ * so `positionsByIdentity` pairs `S_latest` against the working buffer. Correct for shifted and
+ * moved lines, fail-closed (`E_STALE_RANGE`) for a row whose identity an earlier edit in the same
+ * batch created, or that a duplicate canon makes ambiguous. CP2-r2's explicit working-buffer
+ * identity map (`spliceWorkingBufferIds`) plus commit-from-map removes that conservative rejection.
+ *
+ * UPGRADE CONSEQUENCE: a session whose `served` rows predate lease granting (a pre-T2b store) holds
+ * no lease for those anchors, so its first edit rejects and needs one re-read. Fail-closed and
+ * one-time; it goes in the CP3 ADR and the T7 CHANGELOG note.
+ */
+export function makeLeaseSource(
+  store: HashStore,
+  sessionKey: string,
+  absolutePath: string,
+  content: string,
+): LeaseSpanSource | undefined {
+  try {
+    // SAFETY: `loadHashStore` and `options.store` return the `makeDomainStore` object, which
+    // implements `InternalHashStore`; `HashStore` is its narrowed public view (the same cast
+    // session-view.ts documents for its served view).
+    const internal = store as unknown as InternalHashStore;
+    const positions = internal.positionsByIdentity(absolutePath, content);
+    return {
+      currentSnapshotHash: snapshotHashFor(content),
+      leaseFor: (anchor) => {
+        const lease = internal.leaseFor(sessionKey, absolutePath, anchor);
+        if (lease === undefined) return undefined;
+        return {
+          lineId: lease.lineId,
+          servedLineNumber: lease.lineNumber,
+          servedSnapshotHash: lease.snapshotHash,
+          retiredAt: lease.retiredAt,
+        };
+      },
+      rebasedLineOf: (lineId) => positions.get(lineId),
+    };
+  } catch {
+    // Fail-closed: with no source the unconditional position check still guards the edit — the
+    // fallback is stricter, never weaker.
+    return undefined;
+  }
+}
+
+/** The ambient store for the lease source, or undefined when it cannot be opened. */
+async function loadLeaseStore(): Promise<HashStore | undefined> {
+  try {
+    return await loadHashStore();
+  } catch {
+    return undefined;
+  }
+}
+
+/**
  * Run a file's item list against freshly-read content with served
  * verification, evolving content/hashes, union range, noop tracking, and a
  * per-file drift notice. All-or-nothing is enforced by the caller's
@@ -634,6 +701,13 @@ export async function runFileEdits(
   const servedCanons = await loadServedCanons(opts.sessionKey, absolutePath);
   const warnings: string[] = [];
 
+  // The lease store is resolved once per file edit; the source itself is rebuilt per buffer (the
+  // pre-pass resolves against `originalNormalized`, each loop item against `currentContent`).
+  const leaseStore = await loadLeaseStore();
+  const originalLeaseSource =
+    leaseStore === undefined
+      ? undefined
+      : makeLeaseSource(leaseStore, opts.sessionKey, absolutePath, originalNormalized);
   let currentContent = originalNormalized;
   let currentHashes = originalHashes;
   let appliedCount = 0;
@@ -673,6 +747,7 @@ export async function runFileEdits(
         servedCanons,
         perSessionRetired,
         item.mode,
+        originalLeaseSource,
       );
     } catch (error) {
       if (!(error instanceof DomainError)) throw error;
@@ -693,6 +768,10 @@ export async function runFileEdits(
 
   for (const item of items) {
     abortIf(opts.signal);
+    const leaseSource =
+      leaseStore === undefined
+        ? undefined
+        : makeLeaseSource(leaseStore, opts.sessionKey, absolutePath, currentContent);
     const applied = await applyOne(
       {
         content: currentContent,
@@ -711,6 +790,7 @@ export async function runFileEdits(
         servedCanons,
         retired: new Set([...perSessionRetired, ...Array.from(newlyRetired)]),
         mode: item.mode,
+        leaseSource,
       },
       async (error, edit) => {
         // In-loop (state-dependent) failures keep single-failure envelopes.

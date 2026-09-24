@@ -80,6 +80,14 @@ export interface LineageStore {
   /** Create-or-adopt (path, snapshotHash) and grant leases in ONE BEGIN IMMEDIATE. */
   commitSnapshot(input: CommitSnapshotInput): void;
   lineageFor(path: string, snapshotHash: string): LineageRow[];
+  /**
+   * `line_id` -> current line number for `content` — the identity map the edit path resolves a
+   * leased line through (CP2-r1). Prefers the committed lineage of `content`; otherwise pairs the
+   * latest committed snapshot against `content` with the pairing engine, in memory. READ-ONLY: no
+   * snapshot row, no `served_leases` write, no retirement stamp — retirement belongs to
+   * materialization, never to resolution.
+   */
+  positionsByIdentity(path: string, content: string): Map<number, number>;
   leaseFor(sessionKey: string, path: string, anchor: string): LeaseRow | undefined;
   /** Delete a path's whole lineage family (snapshots, lineage, counters, leases). */
   deleteByPath(path: string): void;
@@ -421,6 +429,48 @@ export function createLineageStore(db: DatabaseSync): LineageStore {
           anchor: row.anchor,
         }),
       );
+    },
+
+    positionsByIdentity(path, content) {
+      const current = getSnapshotStmt.get(path, snapshotHashFor(content)) as
+        | { snapshot_id: number }
+        | undefined;
+      if (current !== undefined) {
+        const map = new Map<number, number>();
+        // SAFETY: SELECT list matches LineageRecord field-for-field (same statement as grantLeases).
+        for (const row of snapshotLineageStmt.all(
+          current.snapshot_id,
+        ) as unknown as LineageRecord[]) {
+          map.set(row.line_id, row.line_number);
+        }
+        return map;
+      }
+      const latest = latestSnapshotStmt.get(path) as SnapshotRow | undefined;
+      if (latest === undefined) return new Map();
+      // SAFETY: prevLineageStmt's SELECT list (line_number, line_id, canon_hash) matches this
+      // inline shape field-for-field; node:sqlite returns one record per row with those columns.
+      const previous = (
+        prevLineageStmt.all(latest.snapshot_id) as unknown as {
+          line_number: number;
+          line_id: number;
+          canon_hash: string;
+        }[]
+      ).map((row) => ({
+        lineNumber: row.line_number,
+        lineId: row.line_id,
+        canonHash: row.canon_hash,
+      }));
+      if (previous.length === 0) return new Map();
+      const inherited = pairLineIds(
+        previous,
+        splitLines(content).map((line) => canonDigest(line)),
+      );
+      const map = new Map<number, number>();
+      for (let index = 0; index < inherited.length; index++) {
+        const lineId = inherited[index];
+        if (lineId !== null) map.set(lineId, index + 1);
+      }
+      return map;
     },
 
     leaseFor(sessionKey, path, anchor) {

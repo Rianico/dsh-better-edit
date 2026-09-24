@@ -578,6 +578,111 @@ export function fmtServedRows(rows: ServedRow[], fileLines: string[]): string {
 function paginationHint(nextOffset: number, more: number): string {
   return `[... ${more} more — read offset=${nextOffset}]`;
 }
+/**
+ * SAFETY: the read-only identity seam the edit path resolves a served anchor through (CP2-r1,
+ * obligation (c)). Production wires it to `served_leases` + `line_lineage`; tests inject plain
+ * maps. Nothing here writes: the authoritative `retired_at` writer is materialization.
+ */
+export interface LeaseIdentityView {
+  lineId: number;
+  servedLineNumber: number;
+  servedSnapshotHash: string;
+  retiredAt: number | null;
+}
+
+/**
+ * The lease source a served span is verified against when identity is available.
+ * `leaseFor` is a per-anchor lookup; `rebasedLineOf` answers where a leased `line_id` lives in the
+ * buffer being edited (the store's `positionsByIdentity`).
+ */
+export interface LeaseSpanSource {
+  /** `snapshotHashFor(content)` of the buffer being edited. */
+  currentSnapshotHash: string;
+  leaseFor(anchor: string): LeaseIdentityView | undefined;
+  rebasedLineOf(lineId: number): number | undefined;
+}
+
+/**
+ * The identity gate for a served span (obligation (c)) — replaces the unconditional position check
+ * when a lease source is present.
+ *
+ * A **benign shift** — the intended line's bytes are unchanged and only its position moved (exterior
+ * drift above the served span) — passes: the served anchor's live lease resolves to the rebased
+ * coordinate the edit targets, so the edit applies there with no re-read. A **look-alike rebind** —
+ * the named line was deleted and a different line now holds the same bytes — rejects: the leased
+ * `line_id` no longer lives at the rebased coordinate, or is gone from the buffer's identity map
+ * entirely, so the anchor cannot be reconciled with the line it named.
+ *
+ * Fail-closed on every arm: an unleased served row (a serve predating lease granting), a retired
+ * lease, a coordinate no leased identity occupies, or a window length that changed because an
+ * external insert/delete landed strictly inside the span all reject with `E_STALE_RANGE` and the
+ * echo rows, so the retry story stays the position check's own. Throwing happens before any write,
+ * so a rejection leaves the file byte-identical.
+ */
+export function verifyRebasedSpan(args: {
+  served: (string | null)[];
+  servedStart: number;
+  servedEnd: number;
+  rebasedStart: number;
+  rebasedEnd: number;
+  leaseSource: LeaseSpanSource;
+  echo: string;
+  echoRows: ServedRow[];
+  where: string;
+}): void {
+  const { served, leaseSource, echo, echoRows, where } = args;
+  const servedLen = args.servedEnd - args.servedStart + 1;
+  const rebasedLen = args.rebasedEnd - args.rebasedStart + 1;
+  if (rebasedLen !== servedLen) {
+    throw new ServedRejectionError({
+      code: "E_STALE_RANGE",
+      headline: `served span (${servedLen} lines) no longer matches the rebased range (${rebasedLen} lines)${where}.`,
+      servedBlock: echo,
+      reread: true,
+      firstOffendingLine: args.rebasedStart,
+      servedRows: echoRows,
+    });
+  }
+  for (let k = 0; k < servedLen; k++) {
+    const servedAnchor = served[args.servedStart - 1 + k];
+    const currentLine = args.rebasedStart + k;
+    // The interior-null rule above already rejected every unserved row, and the two boundary
+    // positions ARE the named anchors, so this guard is unreachable; it keeps the type honest
+    // rather than asserting.
+    if (servedAnchor === null || servedAnchor === undefined) continue;
+    const lease = leaseSource.leaseFor(servedAnchor);
+    if (lease === undefined) {
+      throw new ServedRejectionError({
+        code: "E_STALE_RANGE",
+        headline: `line ${currentLine}${where} has no served line identity; re-read to lease it.`,
+        servedBlock: echo,
+        reread: true,
+        firstOffendingLine: currentLine,
+        servedRows: echoRows,
+      });
+    }
+    if (lease.retiredAt !== null) {
+      throw new ServedRejectionError({
+        code: "E_STALE_RANGE",
+        headline: `line ${currentLine}${where} was retired since it was served. Re-read.`,
+        servedBlock: echo,
+        reread: true,
+        firstOffendingLine: currentLine,
+        servedRows: echoRows,
+      });
+    }
+    if (leaseSource.rebasedLineOf(lease.lineId) !== currentLine) {
+      throw new ServedRejectionError({
+        code: "E_STALE_RANGE",
+        headline: `line ${currentLine}${where} no longer resolves to the line identity it was served with. Re-read.`,
+        servedBlock: echo,
+        reread: true,
+        firstOffendingLine: currentLine,
+        servedRows: echoRows,
+      });
+    }
+  }
+}
 
 export function verifyServedRange(args: {
   served: (string | null)[];
@@ -590,6 +695,12 @@ export function verifyServedRange(args: {
   filePath?: string;
   servedCanons?: (string | null)[];
   retired?: ReadonlySet<string>;
+  /**
+   * Present => the identity gate (`verifyRebasedSpan`) replaces the position check below
+   * (obligation (c)). Absent => the unconditional position check. Identity only, never a weaker
+   * position check.
+   */
+  leaseSource?: LeaseSpanSource;
 }): void {
   const { served, startHash, endHash, startLine, endLine, fileHashes, fileLines, filePath } = args;
   const where = filePath ? ` in ${filePath}` : "";
@@ -687,25 +798,30 @@ export function verifyServedRange(args: {
       servedRows: echoRows,
     });
   }
-  // Position check — UNCONDITIONAL. A boundary anchor whose served position no longer
-  // equals its resolved position is stale regardless of epoch state: the served slot
-  // would otherwise silently re-bind onto a different line that happens to hold the same
-  // bytes (wrong line edited, exit 0).
+  // Position check or identity gate — the seam is opt-in (obligation (c)).
   //
-  // Why this must not be gated on any epoch pin: the pos-free path is REACHABLE on a
-  // normal session route. A snapshot pin was only ever written by a FULL read (the write
-  // sat inside `if (isFullRead)`, and `isFullRead` requires
-  // `rows.length === full.hashes.length`), so a WINDOWED read never pinned it and any
-  // pin-gated check would stay off permanently for that (session, path), whether or not
-  // the file changed. The current snapshot could likewise be unavailable at edit time
-  // when the stat read throws.
+  // With a lease source, identity decides: `verifyRebasedSpan` checks the whole served window by
+  // the leases its anchors were served with, so a benign shift (same bytes, moved position —
+  // exterior drift above the span) applies at its rebased coordinate with no re-read, while a
+  // look-alike rebind (the named line was deleted and another line now holds its bytes) rejects.
   //
-  // CP1-r2 replaces this check with lease identity: a served lease's line id decides
-  // whether a moved anchor is the same line (benign shift) or a look-alike rebind, and
-  // only the latter rejects. Until that instrument lands, this position check IS the
-  // staleness instrument. Session-level regression:
-  // test/core/deleted-twin-anchor.test.ts (the "WINDOWED read" case).
-  if (from !== startLine - 1) {
+  // Without a lease source the unconditional position check below stands: identity only, never a
+  // weaker position check. The pos-free route is REACHABLE on a normal session route (a windowed
+  // read never pinned the epoch; a preview/no-store edit carries no leases), which is why this
+  // fallback cannot be dropped.
+  if (args.leaseSource !== undefined) {
+    verifyRebasedSpan({
+      served,
+      servedStart: from + 1,
+      servedEnd: to + 1,
+      rebasedStart: startLine,
+      rebasedEnd: endLine,
+      leaseSource: args.leaseSource,
+      echo,
+      echoRows,
+      where,
+    });
+  } else if (from !== startLine - 1) {
     throw new ServedRejectionError({
       code: "E_STALE_RANGE",
       headline: `anchor was served at line ${from + 1} but now resolves to line ${startLine}. Re-read.`,
@@ -918,6 +1034,7 @@ export function applyEdit(
   servedCanons?: (string | null)[],
   retired?: ReadonlySet<string>,
   mode?: EditMode,
+  leaseSource?: LeaseSpanSource,
 ): {
   content: string;
   firstChangedLine: number | undefined;
@@ -1034,6 +1151,7 @@ export function applyEdit(
       filePath,
       servedCanons,
       retired,
+      leaseSource,
     });
   }
 

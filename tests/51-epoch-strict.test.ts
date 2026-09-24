@@ -29,7 +29,7 @@ async function withShiftedFile(
   }
 }
 
-describe("51 exterior shift — the position check is unconditional", () => {
+describe("51 exterior shift — identity replaces the position check", () => {
   let tmpHome: string;
   beforeAll(async () => {
     await initHasher();
@@ -43,7 +43,7 @@ describe("51 exterior shift — the position check is unconditional", () => {
     await rm(tmpHome, { recursive: true, force: true });
   });
 
-  it("rejects a stale anchor after an exterior shift instead of re-binding", async () => {
+  it("applies at the rebased coordinate after an exterior insert (benign shift, no re-read)", async () => {
     await withShiftedFile(async ({ dir, name }) => {
       const { readTool, editTool } = setupIntegrationTest(dir);
       const read = await readTool.execute("read", { path: name });
@@ -55,22 +55,20 @@ describe("51 exterior shift — the position check is unconditional", () => {
 
       await writeFile(join(dir, name), SHIFTED, "utf-8");
 
-      let error: unknown;
-      try {
-        await editTool.execute("shift", {
-          path: name,
-          anchor_from: anchor,
-          anchor_to: anchor,
-          replace_with: "line 5 changed",
-        });
-      } catch (e) {
-        error = e;
-      }
-      // The served slot no longer equals the resolved slot, so the edit rejects — it never
-      // re-binds onto the line that now holds the same bytes (wrong line, exit 0).
-      expect(error).toBeDefined();
-      expect(String((error as Error).message)).toMatch(/E_STALE_RANGE/);
-      expect(await readFile(join(dir, name), "utf-8")).toBe(SHIFTED);
+      // The served anchor's leased line identity resolves to the rebased coordinate, so the edit
+      // applies there instead of rejecting: the line's bytes are unchanged and only its position
+      // moved, which is exactly what a benign shift is. A look-alike rebind still rejects — see
+      // test/core/deleted-twin-anchor.test.ts.
+      await editTool.execute("shift", {
+        path: name,
+        anchor_from: anchor,
+        anchor_to: anchor,
+        replace_with: "line 5 changed",
+      });
+
+      expect(await readFile(join(dir, name), "utf-8")).toBe(
+        `prepended\n${INITIAL.replace("line 5\n", "line 5 changed\n")}`,
+      );
     });
   });
 

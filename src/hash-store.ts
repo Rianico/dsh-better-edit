@@ -824,6 +824,9 @@ function makeDomainStore(
     lineageFor(path, snapshotHash) {
       return lineageStore.lineageFor(path, snapshotHash);
     },
+    positionsByIdentity(path, content) {
+      return lineageStore.positionsByIdentity(path, content);
+    },
     leaseFor(sessionKey, path, anchor) {
       return lineageStore.leaseFor(sessionKey, path, anchor);
     },

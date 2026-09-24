@@ -57,7 +57,7 @@ import {
 } from "./session-view.js";
 import { abortIf, splitLines } from "./utils.js";
 import { applyOne } from "./mutation/engine.js";
-import { runFileEdits, resolveMissingPath } from "./mutation/engine.js";
+import { runFileEdits, resolveMissingPath, makeLeaseSource } from "./mutation/engine.js";
 import type { FileEditResult, PreparedItem } from "./mutation/engine.js";
 import { saveUndo } from "./undo-edit.js";
 import { restoreEndings } from "./edit-diff.js";
@@ -144,6 +144,13 @@ export async function execPipeline(
   const served = await loadServed(sessionKey, absolutePath);
   const servedCanons = await loadServedCanons(sessionKey, absolutePath);
   const retiredPerSession = await loadRetiredAnchors(sessionKey, absolutePath);
+  // Obligation (c): identity replaces the position check only when a live store is present and the
+  // edit is not a preview. Preview / no store / no session key falls back to the unconditional
+  // position check — never to accept.
+  const leaseSource =
+    hashStore === undefined || options?.noPersist === true
+      ? undefined
+      : makeLeaseSource(hashStore, sessionKey, absolutePath, originalNormalized);
   const policy: ServeRecordPolicy = options?.noPersist === true ? "preview" : "live";
 
   const applied = await applyOne(
@@ -165,6 +172,7 @@ export async function execPipeline(
       retired: retiredPerSession,
       edit,
       mode: params.mode,
+      leaseSource,
     },
     async (error) => {
       if (error instanceof AnchorMismatchError || error instanceof ServedRejectionError) {
