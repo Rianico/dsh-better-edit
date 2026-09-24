@@ -1,11 +1,11 @@
+import { writeFile } from "node:fs/promises";
 import { describe, expect, it, beforeAll } from "vitest";
 import { readAndServe } from "../../src/read-and-serve.js";
 import { localIO } from "../../src/fs-bridge.js";
-import { recordServed, recordServedTruncated } from "../../src/session-view.js";
-import { recordEchoServes } from "../../src/hashline/anchor-pipeline.js";
+import { loadServed, recordServed, recordServedTruncated } from "../../src/session-view.js";
 import { loadHashStore, upsertSnapshotFor, type InternalHashStore } from "../../src/hash-store.js";
-import { sessionKeyFor } from "../../src/workspace-context.js";
-import { withTempFile } from "../support/fixtures.js";
+import { sessionKeyFor, withWorkspace } from "../../src/workspace-context.js";
+import { extractHash, getText, setupIntegrationTest, withTempFile } from "../support/fixtures.js";
 import { initHasher } from "../../src/hashline/hasher.js";
 import {
   canon,
@@ -76,31 +76,6 @@ describe("serve leases — diff (edit-response result through recordServedTrunca
       expect(lease?.snapshotHash).toBe(snapshotHashFor(content));
       const lineage = store.lineageFor(path, lease!.snapshotHash);
       expect(lineage.find((row) => row.anchor === hashes[1])?.lineId).toBe(lease?.lineId);
-    });
-  });
-});
-
-describe("serve leases — served-echo (recordEchoServes live vs preview)", () => {
-  it("live grants, preview grants nothing", async () => {
-    await withTempFile("serve-echo.txt", "one\ntwo", async ({ path }) => {
-      const store = await internalStore();
-      const content = "one\ntwo";
-      const hashes = lineHashesPure(content);
-      const rows = fullRows(hashes);
-      await recordEchoServes(sessionKeyFor("serve-echo-live"), path, rows, "live", 2, {
-        content,
-        hashes,
-      });
-      const live = store.leaseFor(sessionKeyFor("serve-echo-live"), path, hashes[0]!);
-      expect(live).toBeDefined();
-      expect(live?.lineId).toBe(1);
-      expect(live?.lineNumber).toBe(1);
-      expect(live?.snapshotHash).toBe(snapshotHashFor(content));
-      await recordEchoServes(sessionKeyFor("serve-echo-preview"), path, rows, "preview", 2, {
-        content,
-        hashes,
-      });
-      expect(store.leaseFor(sessionKeyFor("serve-echo-preview"), path, hashes[0]!)).toBeUndefined();
     });
   });
 });
@@ -211,5 +186,321 @@ describe("serve leases — bind to the named snapshot, never latest", () => {
       expect(lease?.lineNumber).toBe(2);
       expect(lease?.canonHash).toBe(canonDigest("beta"));
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// CONTRACT: a rejected edit is observably a no-op for the next read.
+//
+// After a rejected edit (any ServedRejectionError / AnchorMismatchError /
+// E_BATCH_ABORT / E_NOOP_LOOP):
+//   (a) `loadServed` is byte-identical to its value before the rejection;
+//   (b) no lease row is granted — no key appears and every grant field
+//       (snapshotHash, lineId, lineNumber, canonHash) is byte-identical;
+//   (c) the next fresh read's anchor list is byte-identical to the control that
+//       performs the same external change with no intervening rejected edit.
+//
+// Driven through the REAL tool path (`setupIntegrationTest` → readTool /
+// editTool). Store reads happen inside `withWorkspace(cwd)` exactly as the
+// tools do — outside it `storePathFor` resolves to a different store.
+//
+// The served-row write was the defect: `recordEchoServes` re-committed the
+// rejection's echo rows from the *current* content, leaving a stale slot that
+// the next read turned into a duplicate anchor (`f9U` twice in the twin
+// fixture). The write is gone; a rejection now records nothing.
+// ---------------------------------------------------------------------------
+
+const TWIN_FILE =
+  "export function alpha() {\n" +
+  "  return compute(value);\n" +
+  "}\n" +
+  "\n" +
+  "export function beta() {\n" +
+  "  return compute(value);\n" +
+  "}\n";
+const TWIN_LINE = "  return compute(value);";
+const EXTERNAL_DELETE = TWIN_FILE.replace("  return compute(value);\n", "");
+
+const INSERT_FILE = "alpha\nbeta\ngamma\ndelta\n";
+const WINDOW_FILE = "alpha\nbeta\ngamma\ndelta\nepsilon\n";
+
+interface Scenario {
+  file: string;
+  /** Windowed read before READ1 (offset, limit). */
+  window?: [number, number];
+  /** READ1 is a full read (false = the windowed read IS READ1). */
+  fullRead: boolean;
+  /** The out-of-band change written between READ1 and the edit. */
+  external: string;
+  /** Content of the served line whose anchor the rejected edit targets. */
+  anchorLine: string;
+  replacement: string;
+}
+
+const TWIN_SCENARIO: Scenario = {
+  file: TWIN_FILE,
+  fullRead: true,
+  external: EXTERNAL_DELETE,
+  anchorLine: TWIN_LINE,
+  replacement: "  return changed;",
+};
+// Non-twin (i): windowed-then-full read, then an insert-only exterior change
+// above the served span. The inserted line duplicates a served line — that is
+// the minimal insert-only change that makes the edit reject at all: a plain
+// new-content insert rebases through the lease identity and applies.
+const INSERT_SCENARIO: Scenario = {
+  file: INSERT_FILE,
+  window: [1, 3],
+  fullRead: true,
+  external: `beta\n${INSERT_FILE}`,
+  anchorLine: "beta",
+  replacement: "BETA",
+};
+// Non-twin (ii): a WINDOWED-only read (the served span is a proper subset of
+// the file), then a change outside that span.
+const WINDOW_SCENARIO: Scenario = {
+  file: WINDOW_FILE,
+  window: [1, 2],
+  fullRead: false,
+  external: `beta\n${WINDOW_FILE}`,
+  anchorLine: "beta",
+  replacement: "BETA",
+};
+
+type LeaseRow = {
+  snapshotHash: string;
+  lineId: number;
+  lineNumber: number;
+  canonHash: string;
+  retiredAt: number | null;
+};
+type LeaseDump = Record<string, LeaseRow | null>;
+
+interface ScenarioRun {
+  read1Anchors: string[];
+  read2Anchors: string[];
+  servedBefore: (string | null)[];
+  servedAfterReject: (string | null)[];
+  leasesBefore: LeaseDump;
+  leasesAfterReject: LeaseDump;
+  rejected: boolean;
+  message: string;
+}
+
+/** Parse the `HASH│content` read rows into the served anchor list. */
+function rowAnchors(readText: string): string[] {
+  const anchors: string[] = [];
+  for (const line of readText.split("\n")) {
+    const match = /^([A-Za-z0-9]{3})│/.exec(line);
+    if (match) anchors.push(match[1]!);
+  }
+  return anchors;
+}
+
+function duplicateAnchors(anchors: string[]): string[] {
+  const seen = new Set<string>();
+  const dupes = new Set<string>();
+  for (const anchor of anchors) {
+    if (seen.has(anchor)) dupes.add(anchor);
+    else seen.add(anchor);
+  }
+  return [...dupes];
+}
+
+function grantOf(row: LeaseRow): Omit<LeaseRow, "retiredAt"> {
+  return {
+    snapshotHash: row.snapshotHash,
+    lineId: row.lineId,
+    lineNumber: row.lineNumber,
+    canonHash: row.canonHash,
+  };
+}
+
+async function servedAt(
+  cwd: string,
+  sessionKey: string,
+  absolutePath: string,
+): Promise<(string | null)[]> {
+  return withWorkspace(cwd, () => loadServed(sessionKey, absolutePath));
+}
+
+async function leasesAt(
+  cwd: string,
+  sessionKey: string,
+  absolutePath: string,
+  anchors: string[],
+): Promise<LeaseDump> {
+  return withWorkspace(cwd, async () => {
+    const store = (await loadHashStore()) as InternalHashStore;
+    const dump: LeaseDump = {};
+    for (const anchor of [...new Set(anchors)].sort()) {
+      const lease = store.leaseFor(sessionKey, absolutePath, anchor);
+      dump[anchor] = lease
+        ? {
+            snapshotHash: lease.snapshotHash,
+            lineId: lease.lineId,
+            lineNumber: lease.lineNumber,
+            canonHash: lease.canonHash,
+            retiredAt: lease.retiredAt,
+          }
+        : null;
+    }
+    return dump;
+  });
+}
+
+/** One scenario run through the tool path. `withRejectedEdit` = TREATMENT. */
+async function runScenario(
+  scenario: Scenario,
+  withRejectedEdit: boolean,
+  /** Extra anchors to probe in the pre-READ2 lease dump (learned from a prior run). */
+  leaseProbeAnchors: string[] = [],
+): Promise<ScenarioRun> {
+  let run: ScenarioRun | undefined;
+  await withTempFile("scenario.txt", scenario.file, async ({ cwd, path }) => {
+    const { readTool, editTool, sessionKey } = setupIntegrationTest(cwd);
+    const fullKey = sessionKeyFor(sessionKey);
+
+    if (scenario.window) {
+      await readTool.execute("windowed", {
+        path: "scenario.txt",
+        offset: scenario.window[0],
+        limit: scenario.window[1],
+      });
+    }
+    const read1 = getText(
+      await readTool.execute(
+        "read",
+        scenario.fullRead
+          ? { path: "scenario.txt" }
+          : { path: "scenario.txt", offset: scenario.window![0], limit: scenario.window![1] },
+      ),
+    );
+    const read1Anchors = rowAnchors(read1);
+    const anchorRow = read1.split("\n").find((line) => line.endsWith(`│${scenario.anchorLine}`));
+    if (anchorRow === undefined) {
+      throw new Error(`scenario: no served row for ${JSON.stringify(scenario.anchorLine)}`);
+    }
+    const anchor = extractHash(anchorRow);
+    const servedBefore = await servedAt(cwd, fullKey, path);
+    const leasesBefore = await leasesAt(cwd, fullKey, path, read1Anchors);
+
+    await writeFile(path, scenario.external, "utf-8");
+
+    let rejected = false;
+    let message = "";
+    if (withRejectedEdit) {
+      try {
+        await editTool.execute("reject-scenario", {
+          path: "scenario.txt",
+          anchor_from: anchor,
+          anchor_to: anchor,
+          replace_with: scenario.replacement,
+        });
+      } catch (error) {
+        rejected = true;
+        message = String((error as Error).message);
+      }
+    }
+    const servedAfterReject = await servedAt(cwd, fullKey, path);
+    // Captured BEFORE READ2 — READ2 re-serves and would re-grant every lease.
+    const leasesAfterReject = await leasesAt(cwd, fullKey, path, [
+      ...read1Anchors,
+      ...leaseProbeAnchors,
+    ]);
+    const read2Anchors = rowAnchors(
+      getText(await readTool.execute("read", { path: "scenario.txt" })),
+    );
+    run = {
+      read1Anchors,
+      read2Anchors,
+      servedBefore,
+      servedAfterReject,
+      leasesBefore,
+      leasesAfterReject,
+      rejected,
+      message,
+    };
+  });
+  if (run === undefined) throw new Error("scenario did not run");
+  return run;
+}
+
+describe("serve leases — a rejected edit is a no-op for the next read", () => {
+  it("twin rejection records nothing — served rows byte-identical before/after", async () => {
+    const run = await runScenario(TWIN_SCENARIO, true);
+    expect(run.rejected).toBe(true);
+    expect(run.message).toMatch(/E_STALE_RANGE/);
+    expect(run.servedAfterReject).toEqual(run.servedBefore);
+  });
+
+  it("twin rejection grants nothing — no grant field changes, no new lease appears", async () => {
+    // First pass learns the fresh-read anchor set; the second pass probes those
+    // anchors in the pre-READ2 lease dump. The equality pin below keeps the
+    // widening sound (a diverging allocation would fail loudly, not pass empty).
+    const probe = await runScenario(TWIN_SCENARIO, true);
+    const run = await runScenario(TWIN_SCENARIO, true, probe.read2Anchors);
+    expect(run.read2Anchors).toEqual(probe.read2Anchors);
+    expect(run.rejected).toBe(true);
+    expect(Object.keys(run.leasesBefore).length).toBeGreaterThan(0);
+    for (const anchor of run.read1Anchors) {
+      const before = run.leasesBefore[anchor] ?? null;
+      const after = run.leasesAfterReject[anchor] ?? null;
+      if (before === null) {
+        expect(after).toBeNull();
+        continue;
+      }
+      expect(after).not.toBeNull();
+      expect(grantOf(after!)).toEqual(grantOf(before));
+    }
+    // No anchor that was not already leased gains a lease from the rejection.
+    for (const anchor of run.read2Anchors) {
+      if (run.read1Anchors.includes(anchor)) continue;
+      expect(run.leasesAfterReject[anchor] ?? null).toBeNull();
+    }
+    // `retiredAt` is deliberately NOT asserted byte-identical here. The delta is
+    // not the rejection: the edit pipeline's own file normalization commits a
+    // snapshot of the externally changed content, and `commitSnapshot` retires
+    // leases whose line_id left that snapshot — here, the deleted line's lease.
+    // The same rejection with an external change that preserves every served
+    // line_id (the insert-only and windowed cells below) leaves lease rows
+    // byte-identical INCLUDING `retiredAt`, which pins that attribution.
+  });
+
+  it("twin rejection → fresh read ≡ control (0 duplicates, no shifted labels)", async () => {
+    const control = await runScenario(TWIN_SCENARIO, false);
+    const treatment = await runScenario(TWIN_SCENARIO, true);
+    expect(treatment.rejected).toBe(true);
+    expect(duplicateAnchors(control.read2Anchors)).toEqual([]);
+    expect(duplicateAnchors(treatment.read2Anchors)).toEqual([]);
+    expect(treatment.read2Anchors).toEqual(control.read2Anchors);
+  });
+
+  it("non-twin insert-only exterior change → rejection → fresh read ≡ control", async () => {
+    const control = await runScenario(INSERT_SCENARIO, false);
+    const treatment = await runScenario(INSERT_SCENARIO, true);
+    expect(treatment.rejected).toBe(true);
+    expect(duplicateAnchors(control.read2Anchors)).toEqual([]);
+    expect(duplicateAnchors(treatment.read2Anchors)).toEqual([]);
+    expect(treatment.read2Anchors).toEqual(control.read2Anchors);
+    for (const anchor of treatment.read1Anchors) {
+      expect(treatment.leasesAfterReject[anchor] ?? null).toEqual(
+        treatment.leasesBefore[anchor] ?? null,
+      );
+    }
+  });
+
+  it("non-twin windowed read + change outside the served span → rejection → fresh read ≡ control", async () => {
+    const control = await runScenario(WINDOW_SCENARIO, false);
+    const treatment = await runScenario(WINDOW_SCENARIO, true);
+    expect(treatment.rejected).toBe(true);
+    expect(duplicateAnchors(control.read2Anchors)).toEqual([]);
+    expect(duplicateAnchors(treatment.read2Anchors)).toEqual([]);
+    expect(treatment.read2Anchors).toEqual(control.read2Anchors);
+    for (const anchor of treatment.read1Anchors) {
+      expect(treatment.leasesAfterReject[anchor] ?? null).toEqual(
+        treatment.leasesBefore[anchor] ?? null,
+      );
+    }
   });
 });

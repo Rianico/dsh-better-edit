@@ -41,12 +41,6 @@ import { toCwd } from "./paths.js";
 import { resEdit, type NEdit } from "./hashline/anchor-pipeline.js";
 import { MAX_HASH_LINES } from "./hashline/hash-assign.js";
 import type { ResolvedRange } from "./hashline/anchor-pipeline.js";
-import {
-  AnchorMismatchError,
-  ServedRejectionError,
-  recordEchoServes,
-  type ServeRecordPolicy,
-} from "./hashline/anchor-pipeline.js";
 import { sessionKeyFor } from "./workspace-context.js";
 import {
   loadServed,
@@ -151,7 +145,6 @@ export async function execPipeline(
     hashStore === undefined || options?.noPersist === true
       ? undefined
       : makeLeaseSource(hashStore, sessionKey, absolutePath, originalNormalized);
-  const policy: ServeRecordPolicy = options?.noPersist === true ? "preview" : "live";
 
   const applied = await applyOne(
     {
@@ -175,16 +168,6 @@ export async function execPipeline(
       leaseSource,
     },
     async (error) => {
-      if (error instanceof AnchorMismatchError || error instanceof ServedRejectionError) {
-        await recordEchoServes(
-          sessionKey,
-          absolutePath,
-          error.servedRows,
-          policy,
-          originalHashes.length,
-          { content: originalNormalized, hashes: originalHashes },
-        );
-      }
       throw error;
     },
   );

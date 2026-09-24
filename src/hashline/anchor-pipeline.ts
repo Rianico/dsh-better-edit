@@ -29,7 +29,7 @@ import {
   canon,
   lineHashesPure,
 } from "./hash-assign.js";
-import { recordServed, servedPositionsOf } from "../session-view.js";
+import { servedPositionsOf } from "../session-view.js";
 import { SERVED_ECHO_CAP } from "../constants.js";
 import { NEW_CONTENT_NOT_STRING_MSG, NEW_CONTENT_BODY } from "../constants.js";
 import { DomainError, formatWarning, numericAnchorNote } from "../domain-errors.js";
@@ -897,28 +897,6 @@ export interface ResolvedRange {
   startHash: string;
   endHash: string;
   delta: number;
-}
-
-export type ServeRecordPolicy = "live" | "preview";
-
-export async function recordEchoServes(
-  sessionKey: string,
-  path: string,
-  rows: ServedRow[],
-  policy: ServeRecordPolicy,
-  lineCount?: number,
-  serveSnapshot?: { content: string; hashes: readonly string[] },
-): Promise<void> {
-  if (policy !== "live") return;
-  await recordServed(
-    sessionKey,
-    path,
-    rows,
-    lineCount,
-    serveSnapshot === undefined
-      ? undefined
-      : { hashes: serveSnapshot.hashes, content: serveSnapshot.content },
-  );
 }
 
 type LIdx = {

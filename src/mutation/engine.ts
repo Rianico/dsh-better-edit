@@ -8,7 +8,7 @@
  *
  * The model-facing contract lives here unchanged: E_BATCH_ABORT,
  * E_NOOP_LOOP, E_UNDO_UNAVAILABLE carry byte-identical messages, and
- * reject-and-serve records the same echo serves.
+ * a rejection rethrows with the current-range echo and records/grants nothing.
  * @module dsh-better-edit/mutation/engine
  */
 
@@ -91,9 +91,7 @@ import {
   ServedRejectionError,
   buildRangeEcho,
   fmtServedRows,
-  recordEchoServes,
   type ResolvedRange,
-  type ServeRecordPolicy,
   type ServedRow,
 } from "../hashline/anchor-pipeline.js";
 import { DomainError, formatError, formatWarning } from "../domain-errors.js";
@@ -280,8 +278,9 @@ export interface ApplyOneResult {
  *
  * `onReject` owns the reject-and-serve policy: it receives resolve/verify
  * failures (and the edit that failed, when resolved) and MUST throw. The
- * single path rethrows the original anchor error after recording echo serves;
- * the batch path wraps with E_BATCH_ABORT plus the current-range echo.
+ * single path rethrows the original anchor error; the batch path wraps with
+ * E_BATCH_ABORT plus the current-range echo. A rejection records and grants
+ * nothing — the recovery is the re-read the message already instructs.
  */
 export async function applyOne(
   input: ApplyOneInput,
@@ -420,30 +419,17 @@ export interface NoopLoopOptions {
 
 /**
  * The shared noop-loop guard. Returns the "twice in a row" notice for the
- * caller to append to warnings, or throws E_NOOP_LOOP (after recording the
- * echo serves) once the payload has been submitted NOOP_LOOP_THRESHOLD times
+ * caller to append to warnings, or throws E_NOOP_LOOP (with the current-range
+ * echo) once the payload has been submitted NOOP_LOOP_THRESHOLD times
  * with no change. Messages are byte-identical to the pre-engine tools.
  */
 export async function enforceNoopLoop(opts: NoopLoopOptions): Promise<string | undefined> {
-  const {
-    absolutePath,
-    anchorFrom,
-    anchorTo,
-    displayPath,
-    index,
-    count,
-    sessionKey,
-    originalHashes,
-  } = opts;
+  const { anchorFrom, anchorTo, displayPath, index, count, originalHashes } = opts;
 
   if (index === undefined) {
     if (count >= NOOP_LOOP_THRESHOLD) {
       const echoRows = buildRangeEcho(opts.range!.startLine, opts.range!.endLine, originalHashes);
       const echo = fmtServedRows(echoRows, splitLines(opts.originalNormalized));
-      await recordEchoServes(sessionKey, absolutePath, echoRows, "live", originalHashes.length, {
-        content: opts.originalNormalized,
-        hashes: originalHashes,
-      });
       throw new DomainError("E_NOOP_LOOP", {
         ref: displayPath,
         anchorFrom,
@@ -471,12 +457,6 @@ export async function enforceNoopLoop(opts: NoopLoopOptions): Promise<string | u
   if (count >= NOOP_LOOP_THRESHOLD) {
     const originalLines = splitLines(opts.originalNormalized);
     const echoRows = opts.echoRows;
-    if (echoRows) {
-      await recordEchoServes(sessionKey, absolutePath, echoRows, "live", originalHashes.length, {
-        content: opts.originalNormalized,
-        hashes: originalHashes,
-      });
-    }
     throw new DomainError("E_NOOP_LOOP", {
       ref: `edits[${index}] (${displayPath})`,
       anchorFrom,
@@ -526,9 +506,8 @@ type AbortPart = {
 
 /**
  * Shared echo resolution for batch rejections: prefer the failure's own
- * rows, else the resolved edit's rows; record the same reject-and-serve
- * leases the sequential path records so a pre-pass rejection leaves
- * identical retry state.
+ * rows, else the resolved edit's rows. The rows are rendered into the
+ * envelope only — a rejection records and grants nothing.
  */
 async function collectAbortPart(opts: {
   sessionKey: string;
@@ -545,16 +524,6 @@ async function collectAbortPart(opts: {
       : opts.edit
         ? echoRowsForItem(opts.edit, opts.originalHashes)
         : undefined;
-  if (echoRows) {
-    await recordEchoServes(
-      opts.sessionKey,
-      opts.absolutePath,
-      echoRows,
-      "live",
-      opts.originalHashes.length,
-      { content: opts.originalNormalized, hashes: opts.originalHashes },
-    );
-  }
   const originalLines = splitLines(opts.originalNormalized);
   const fmtBlock = echoRows ? fmtServedRows(echoRows, originalLines) : "";
   const echoBlock = echoRows
