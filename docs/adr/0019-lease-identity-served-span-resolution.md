@@ -46,23 +46,34 @@ The gate's arms, all `E_STALE_RANGE` with the echo rows/block and `reread: true`
 changed, an unleased served row, a retired lease, a coordinate no leased identity occupies, and — since
 CP2-r2 — a null row inside the window (fail-closed; dsh does **not** adopt upstream ADR-0024's
 interior-`null` tolerance). Pinned by `test/core/lease-resolve-seam.test.ts`
-("verifyRebasedSpan — the gate's arms", 6 tests).
+("verifyRebasedSpan — the gate's arms", 8 tests: the 6 rejection arms, the benign-accept arm and
+the no-mirror-mutation arm).
 
 **Why the seam is opt-in.** No `LeaseSpanSource` ⇒ the unconditional position check, byte-identical.
-A store read that throws ⇒ no source ⇒ the position check — never to accept. Preview (`noPersist`)
-carries no source by decision. Pinned by `test/core/lease-resolve-seam.test.ts` ("is opt-in: without a
+If the **seed** read throws — `identityPositions`, `src/mutation/engine.ts:620-630` — there is no
+source and the position check stays. A **lease** read that throws inside the gate (`leaseFor`,
+`src/hashline/anchor-pipeline.ts:662`) propagates and aborts the edit: fail-closed too, but it is not a
+fallback to the position check. Preview (`noPersist`) carries no source by decision. Pinned by
+`test/core/lease-resolve-seam.test.ts` ("is opt-in: without a
 lease source the position check still rejects the shift", "keeps the position check when a preview
 edit carries no lease source").
 
 ## The pairing engine was a prerequisite, and this was measured
 
 On the two-rule FIFO pairing the deleted-twin contract fixture handed the surviving twin the
-**deleted** line's `line_id` — the lineage read `[1,3,4,5,2,7]` (measured on the real store path;
-observed on the real store path, and reproduced as a RED mutation by reverting the adapter to the FIFO
-rule). Identity resolution on that rule would have
-leaves the deleted line unpaired — `[1,3,4,5,6,7]` — so the lease retires instead. Pinned by
-`test/core/lineage-store.test.ts` ("the deleted twin does not inherit the deleted line's lineId
-(contract fixture)", which asserts the absent id, the twin's own id, and the full id vector).
+**deleted** line's `line_id`, so identity resolution on that rule would have re-bound the lease onto the
+look-alike line — RES-1 under a new instrument. The patience/LIS engine instead leaves the deleted line
+unpaired, so the lease retires. That engine-side half is pinned by `test/core/lineage-store.test.ts`
+("the deleted twin does not inherit the deleted line's lineId (contract fixture)", which asserts the
+absent id, the twin's own id, and the full id vector).
+
+The FIFO half is a **historical observation, not tree-reproducible**. Its vectors — `[1,3,4,5,2,7]` for
+the contract fixture, `[2,1]` for a bare swap, `[2]` for an ambiguous duplicate canon — have 0 hits in
+the tree (`rg -n '\[1,3,4,5,2,7\]' test/ tests/ src/` → 0 hits), because the comparison was made by
+reverting the `pairLineIds` adapter to the two-rule FIFO form and running the fixture; `5a0b495^` is
+that pre-port adapter. To re-run it: restore that form and run the contract fixture. The engine's values
+for the same three fixtures ARE committed — `[1,3,4,5,6,7]`, `[3,4]`, `[4]` — in
+`test/core/lineage-store.test.ts`.
 
 The engine is `src/snapshot-store/pairing.ts`, a verbatim port of upstream
 `pi-better-edit@00f8c34 src/hashline/patience-pairing.ts` — `diff -u` against upstream reports only the
@@ -136,6 +147,13 @@ earlier item **created** still rejects — fail-closed, pinned by `test/core/bat
 5. Preview keeps the position check — a deliberate boundary, not an oversight: the seam is opt-in and
    `noPersist: true` has no production call site (`rg -n 'noPersist: true' src/` → 0 hits; the only
    occurrence in the tree is the boundary test itself).
+6. A null row inside the served window now rejects `E_STALE_RANGE` fail-closed, where the gate previously
+   skipped it. Pinned by `test/core/lease-resolve-seam.test.ts` ("fails closed on a null row inside the
+   window").
+7. A batch item whose anchor targets a line an **earlier item created** still rejects (`E_BATCH_ABORT`) —
+   the residual the working-buffer identity map does not close. Pinned by
+   `test/core/batch-identity.test.ts` ("an item targeting a line an earlier item created still
+   rejects").
 
 ## Consequences
 
