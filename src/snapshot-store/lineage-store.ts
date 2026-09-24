@@ -14,21 +14,14 @@
  * wrappers and `snapshot-store/index.ts`. A transient SQLITE_BUSY on any lineage
  * statement retries instead of aborting the unit.
  *
- * Pairing rule (deterministic): a new snapshot's lines inherit `line_id`s from
- * the path's latest committed snapshot —
- * 1. same line number AND same `canon_hash` → inherit that `line_id`;
- * 2. then, for remaining new lines, if a `canon_hash` matches still-unclaimed
- *    previous lines → inherit one (a moved line keeps its identity);
- * 3. ambiguous/duplicate matches: lowest unclaimed previous line number wins
- *    (rules 2+3 unify: each canon holds a line-number-ordered queue of the
- *    still-unclaimed previous lines; take the head);
- * 4. everything else (inserted lines) → fresh ids, assigned in line order;
- * 5. no previous snapshot for the path → every line fresh.
- *
- * Divergence from upstream: this rule is canonical-form keyed (compares
- * `canonDigest` values), while upstream pairs by patience LCS (see
- * `upstream/main:src/hashline/patience-pairing.ts`). T7 reconciles
- * numbering/parity work; the patience engine is deliberately not ported here.
+ * Pairing rule (deterministic): a new snapshot's lines inherit `line_id`s from the path's
+ * latest committed snapshot via the scaled recursive patience engine in `./pairing.js` —
+ * locally unique canons pin, the minimal-displacement LIS backbone pairs, pinless rigid
+ * runs zip positionally, and a bounded leaf interval pairs only on a UNIQUE optimal LCS
+ * embedding. Anything the engine cannot prove moved — a duplicate canon, a contested
+ * reorder, an over-budget interval — pairs nothing and takes a fresh id. That is
+ * fail-closed on purpose: a guessed inheritance would rebind a lease onto a look-alike
+ * line. No previous snapshot for the path → every line fresh.
  *
  * @module dsh-better-edit/snapshot-store/lineage-store
  */
@@ -36,6 +29,7 @@ import { DatabaseSync } from "node:sqlite";
 import { CANON_VERSION, canonDigest, contentChecksum } from "../hashline/hash-assign.js";
 import { splitLines } from "../utils.js";
 import { withBusyRetry } from "../store-retry.js";
+import { pairSnapshots } from "./pairing.js";
 import { withTransaction } from "./txn.js";
 
 export function snapshotHashFor(content: string): string {
@@ -189,51 +183,25 @@ export function ensureLineageTables(db: DatabaseSync): void {
 }
 
 /**
- * Pair current canon digests against the previous snapshot's lineage.
- * Returns the inherited line_id per current line, or null for fresh ids.
- * Pure: no I/O, deterministic (no iteration-order dependence — queues are
- * line-number ordered).
+ * Adapter: the patience/LIS engine (`./pairing.js`) in the shape `commitSnapshot` needs.
+ * Returns the inherited `line_id` per current line, or null for a fresh id. A current line
+ * the engine left unpaired takes a fresh id, which is what retires the identity of a line
+ * it could not prove moved — the fail-closed direction.
  */
 function pairLineIds(prev: PrevLine[], curCanons: string[]): (number | null)[] {
-  const assigned: (number | null)[] = curCanons.map(() => null);
-  const claimed = new Set<number>();
-  const prevByNumber = new Map<number, number>();
-  prev.forEach((line, index) => {
-    if (!prevByNumber.has(line.lineNumber)) prevByNumber.set(line.lineNumber, index);
+  const prevById = new Map<number, number>();
+  for (const line of prev) prevById.set(line.lineNumber, line.lineId);
+  const pairing = pairSnapshots(
+    prev.map((line) => ({ lineNumber: line.lineNumber, canonHash: line.canonHash })),
+    curCanons.map((canonHash, index) => ({ lineNumber: index + 1, canonHash })),
+  );
+  const prevByCurr = new Map<number, number>();
+  for (const [prevLine, currLine] of pairing) prevByCurr.set(currLine, prevLine);
+  return curCanons.map((_, index) => {
+    const prevLine = prevByCurr.get(index + 1);
+    if (prevLine === undefined) return null;
+    return prevById.get(prevLine) ?? null;
   });
-  // Rule 1: same line number and same canon.
-  curCanons.forEach((canonHash, index) => {
-    const prevIndex = prevByNumber.get(index + 1);
-    if (
-      prevIndex !== undefined &&
-      !claimed.has(prevIndex) &&
-      prev[prevIndex]!.canonHash === canonHash
-    ) {
-      assigned[index] = prev[prevIndex]!.lineId;
-      claimed.add(prevIndex);
-    }
-  });
-  // Rules 2+3: per-canon queues of still-unclaimed previous lines, ordered by
-  // previous line number; take the head (exactly-one matches and ambiguous
-  // matches resolve identically: lowest unclaimed previous line wins).
-  const byCanon = new Map<string, number[]>();
-  prev.forEach((line, index) => {
-    if (claimed.has(index)) return;
-    const queue = byCanon.get(line.canonHash);
-    if (queue) queue.push(index);
-    else byCanon.set(line.canonHash, [index]);
-  });
-  for (const queue of byCanon.values()) {
-    queue.sort((a, b) => prev[a]!.lineNumber - prev[b]!.lineNumber);
-  }
-  curCanons.forEach((canonHash, index) => {
-    if (assigned[index] !== null) return;
-    const queue = byCanon.get(canonHash);
-    if (!queue || queue.length === 0) return;
-    const prevIndex = queue.shift()!;
-    assigned[index] = prev[prevIndex]!.lineId;
-  });
-  return assigned;
 }
 
 export function createLineageStore(db: DatabaseSync): LineageStore {

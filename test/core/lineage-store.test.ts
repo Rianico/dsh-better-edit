@@ -66,8 +66,8 @@ describe("lineage-store — first snapshot and lineage shape", () => {
   });
 });
 
-describe("lineage-store — pairing rules", () => {
-  it("rule 1+4: pure edit inherits, changed line takes a fresh id, counter continues", () => {
+describe("lineage-store — patience pairing engine", () => {
+  it("pure edit inherits, changed line takes a fresh id, counter continues", () => {
     const { lineage } = open();
     commit(lineage, "/a.ts", "alpha\nbeta\ngamma", "A");
     commit(lineage, "/a.ts", "alpha\nBETA\ngamma", "B");
@@ -77,41 +77,112 @@ describe("lineage-store — pairing rules", () => {
     expect(idsOf(lineage, "/a.ts", "alpha\nBETA\ngamma\ndelta")).toEqual([1, 4, 3, 5]);
   });
 
-  it("rule 1: whitespace-only edit inherits every id", () => {
+  it("whitespace-only edit inherits every id", () => {
     const { lineage } = open();
     commit(lineage, "/a.ts", "alpha\nbeta\ngamma", "A");
     commit(lineage, "/a.ts", "alpha\n  beta\t\ngamma", "B");
     expect(idsOf(lineage, "/a.ts", "alpha\n  beta\t\ngamma")).toEqual([1, 2, 3]);
   });
 
-  it("rule 2: moved lines keep their identity through unique canon matches", () => {
+  it("an unambiguous rotation keeps the moved lines' identity, retires the displaced one", () => {
     const { lineage } = open();
-    commit(lineage, "/m.ts", "alpha\nbeta", "A");
-    commit(lineage, "/m.ts", "beta\nalpha", "B");
-    expect(idsOf(lineage, "/m.ts", "beta\nalpha")).toEqual([2, 1]);
+    commit(lineage, "/m.ts", "alpha\nbeta\ngamma", "A");
+    // gamma is displaced past the alpha/beta run: the only maximum-LCS embedding pairs
+    // alpha and beta, so they keep their ids at their shifted coordinates while gamma,
+    // which no embedding can place, takes a fresh id. A *bare* symmetric swap has no
+    // unique embedding and pairs nothing (next test).
+    commit(lineage, "/m.ts", "gamma\nalpha\nbeta", "B");
+    expect(idsOf(lineage, "/m.ts", "gamma\nalpha\nbeta")).toEqual([4, 1, 2]);
   });
 
-  it("rule 4: inserted line takes a fresh id, neighbours inherit", () => {
+  it("inserted line takes a fresh id, neighbours inherit", () => {
     const { lineage } = open();
     commit(lineage, "/i.ts", "alpha\ngamma", "A");
     commit(lineage, "/i.ts", "alpha\nbeta\ngamma", "B");
     expect(idsOf(lineage, "/i.ts", "alpha\nbeta\ngamma")).toEqual([1, 3, 2]);
   });
 
-  it("rule 2 over shifted numbers: deleted line, survivors inherit", () => {
+  it("deleted line, survivors inherit", () => {
     const { lineage } = open();
     commit(lineage, "/d.ts", "alpha\nbeta\ngamma", "A");
     commit(lineage, "/d.ts", "alpha\ngamma", "B");
     expect(idsOf(lineage, "/d.ts", "alpha\ngamma")).toEqual([1, 3]);
   });
 
-  it("rule 3: duplicate canon resolves to the lowest unclaimed previous line", () => {
+  it("duplicate canon pairs nothing — the current line takes a fresh id", () => {
     const { lineage } = open();
     commit(lineage, "/t.ts", "b\na\na", "A");
-    // Rule 1 cannot fire (previous line 1 is "b"); both previous "a" lines
-    // are unclaimed, so the lowest (line 2, id 2) wins.
+    // `a` is not locally unique in prev, so it is not a candidate pin; the leaf interval
+    // [a] vs [a] has two optimal embeddings and the engine pairs nothing. The current line
+    // takes a FRESH id (4) instead of the lowest unclaimed previous one (2). Fail-closed on
+    // purpose: the deleted-twin fixture below has the same shape, and guessing here would
+    // rebind a lease onto a look-alike line.
     commit(lineage, "/t.ts", "a", "B");
-    expect(idsOf(lineage, "/t.ts", "a")).toEqual([2]);
+    expect(idsOf(lineage, "/t.ts", "a")).toEqual([4]);
+  });
+
+  it("a bare symmetric swap retires both lines (no unique LCS embedding)", () => {
+    const { lineage } = open();
+    commit(lineage, "/s.ts", "alpha\nbeta", "A");
+    commit(lineage, "/s.ts", "beta\nalpha", "B");
+    // {1->2, 2->1} and {1->1, 2->2} are equally optimal, so neither line can be proven to
+    // have moved; both take fresh ids.
+    expect(idsOf(lineage, "/s.ts", "beta\nalpha")).toEqual([3, 4]);
+  });
+
+  it("the deleted twin does not inherit the deleted line's lineId (contract fixture)", () => {
+    const { lineage } = open();
+    const contentA =
+      "export function alpha() {\n" +
+      "  return compute(value);\n" +
+      "}\n" +
+      "\n" +
+      "export function beta() {\n" +
+      "  return compute(value);\n" +
+      "}\n";
+    const contentB = contentA.replace("  return compute(value);\n", "");
+    commit(lineage, "/twins.ts", contentA, "A");
+    const before = lineage.lineageFor("/twins.ts", snapshotHashFor(contentA));
+    const deletedId = before[1]!.lineId;
+    const survivingId = before[5]!.lineId;
+    commit(lineage, "/twins.ts", contentB, "B");
+    const after = lineage.lineageFor("/twins.ts", snapshotHashFor(contentB));
+    // The anchored line (A line 2) was deleted externally and a byte-identical twin
+    // survives at B line 5. The old FIFO rule handed the twin the DELETED line's id — a
+    // look-alike rebind. The engine leaves the deleted line unpaired, so its id is absent
+    // from B's lineage and the twin keeps its own identity.
+    expect(after.map((row) => row.lineId)).not.toContain(deletedId);
+    expect(after[4]!.lineId).toBe(survivingId);
+    expect(after.map((row) => row.lineId)).toEqual([1, 3, 4, 5, 6, 7]);
+  });
+
+  it("an exterior insert preserves every served line's lineId at its shifted coordinate", () => {
+    const { lineage } = open();
+    commit(lineage, "/shift.ts", "alpha\nbeta\ngamma", "A");
+    const shifted = "inserted\nalpha\nbeta\ngamma";
+    commit(lineage, "/shift.ts", shifted, "B");
+    expect(
+      lineage
+        .lineageFor("/shift.ts", snapshotHashFor(shifted))
+        .map((row) => [row.lineNumber, row.lineId]),
+    ).toEqual([
+      [1, 4],
+      [2, 1],
+      [3, 2],
+      [4, 3],
+    ]);
+  });
+
+  it("a duplicate exterior insert leaves the duplicated identity unpaired", () => {
+    const { lineage } = open();
+    commit(lineage, "/dup.ts", "alpha\nbeta\ngamma", "A");
+    const duplicated = "alpha\nalpha\nbeta\ngamma";
+    commit(lineage, "/dup.ts", duplicated, "B");
+    // The inserted line duplicates a served line, so `alpha` is not locally unique in the
+    // new snapshot and cannot pin. The leaf interval [alpha] vs [alpha, alpha] has two
+    // optimal embeddings, so BOTH occurrences take fresh ids (4, 5) — the conservative
+    // direction: no occurrence is guessed to be the original.
+    expect(idsOf(lineage, "/dup.ts", duplicated)).toEqual([4, 5, 2, 3]);
   });
 });
 
