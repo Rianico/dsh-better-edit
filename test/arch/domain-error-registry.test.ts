@@ -1,25 +1,46 @@
-import { readdirSync, readFileSync, statSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import {
+  ADDRESSABLE_OWNER_RE,
+  DECLARATION_ONLY_FIELDS,
   DEFERRED_PRODUCERS,
   ERROR_REGISTRY,
   WARNING_REGISTRY,
   isDomainErrorCode,
   isDomainWarningCode,
 } from "../../src/domain-errors.js";
+import {
+  listSources,
+  namesInCode,
+  producedCodes,
+  stripComments,
+  unionMembers,
+} from "../support/arch-scan.js";
 
 /**
- * Arch oracle for the domain-error registry (T1 contract ticket).
+ * Arch oracle for the domain-error registry (T1 contract ticket; guards hardened
+ * in T4 CP1-r5).
  *
- * Method: read `src/**` with node:fs and match with precise regexes (no
- * imports of the scanned modules, so the oracle cannot be fooled by runtime
- * shape). Runtime registry imports are used only where the ticket names them
- * (union membership via isDomainErrorCode / isDomainWarningCode, remedy and
- * audience declarations).
+ * Method: the shared scanner (`test/support/arch-scan.ts`) reads `src/**` and
+ * matches precise regexes (no imports of the scanned modules, so the oracle
+ * cannot be fooled by runtime shape). Runtime registry imports are used only
+ * where a ticket names them (union membership via `isDomainErrorCode` /
+ * `isDomainWarningCode`, the allowlists, audience declarations).
  *
- * Producer positions counted (per code):
+ * The scanner's own method, naming rules, errno exclusion, the **CEILING —
+ * DEFERRED** item (a text scanner cannot establish “every registry code has a
+ * producer”; the durable form is observational, via a construction-recording
+ * factory; trigger = the next evasion class or the next ticket that touches
+ * domain-error construction; owner unassigned post-map; NOT built in T4) and the
+ * **TWO INDEPENDENT REFERENTS** rule (every guard compares a `src/` source of
+ * truth against the test's own expectation — one referent is a tautology wearing
+ * a test's clothes) all live in that file's header. Read it before adding a
+ * guard here; the two DECLARED LIMIT cells in `registry-scan-controls.test.ts`
+ * are the honest floor under this oracle's claims.
+ *
+ * Producer positions counted (per code), all quote-style aware and digits-legal:
  * - `new DomainError("<CODE>"`, `formatError("<CODE>"`
  * - `formatWarning("<CODE>"` (warnings)
  * - subclass constructions with a fixed code: `new EditHashEchoError(` →
@@ -28,12 +49,6 @@ import {
  * - subclass constructions with a literal code argument:
  *   `new AnchorMismatchError("<CODE>", …)`,
  *   `new ServedRejectionError({ code: "<CODE>", … })`
- *
- * Errno exclusion: every producer regex requires a quoted literal starting
- * `E_`/`W_` followed by `[A-Z_]+`. Errno-style codes (ENOENT, EACCES, EPERM,
- * ELOOP) have no underscore after the E and never match; moreover only
- * registry-call positions are scanned, so errno comparisons elsewhere
- * (`code === "ENOENT"`) are outside the scan by construction.
  */
 
 // Vitest runs with the package root as cwd; the oracle scans the source tree
@@ -41,111 +56,12 @@ import {
 const SRC_ROOT = join(process.cwd(), "src");
 const REGISTRY_FILE = join(SRC_ROOT, "domain-errors.ts");
 
-function listSources(root: string): string[] {
-  const out: string[] = [];
-  const walk = (dir: string): void => {
-    for (const entry of readdirSync(dir)) {
-      const full = join(dir, entry);
-      if (statSync(full).isDirectory()) {
-        walk(full);
-      } else if (full.endsWith(".ts")) {
-        out.push(full);
-      }
-    }
-  };
-  walk(root);
-  return out.sort();
-}
-
-function unionMembers(source: string, name: string): string[] {
-  // Strip comments first: a `;` inside prose must not terminate the union
-  // block early and silently drop trailing members. `stripComments` is the
-  // string-literal-aware scanner (N2) — the naive regex version could also
-  // delete real source when a string held `//`.
-  const bare = stripComments(source);
-  const block = new RegExp(`export type ${name} =([\\s\\S]*?);`).exec(bare);
-  expect(block?.[1], `${name} union block parses`).toBeDefined();
-  const members = [...block![1].matchAll(/"([EW]_[A-Z_]+)"/g)].map((m) => m[1]!);
-  expect(new Set(members).size).toBe(members.length);
-  return members;
-}
-
-const PRODUCER_PATTERNS: Array<{ re: RegExp; code: (m: RegExpMatchArray) => string }> = [
-  { re: /new\s+DomainError\(\s*"([EW]_[A-Z_]+)"/g, code: (m) => m[1]! },
-  { re: /formatError\(\s*"([EW]_[A-Z_]+)"/g, code: (m) => m[1]! },
-  { re: /formatWarning\(\s*"([EW]_[A-Z_]+)"/g, code: (m) => m[1]! },
-  { re: /new\s+EditHashEchoError\(/g, code: () => "E_SUSPICIOUS_TEXT" },
-  { re: /new\s+BadAnchorError\(/g, code: () => "E_MALFORMED_ANCHOR" },
-  { re: /new\s+AnchorSpaceExhaustedError\(/g, code: () => "E_LARGE_FILE" },
-  { re: /new\s+AnchorMismatchError\(\s*"([EW]_[A-Z_]+)"/g, code: (m) => m[1]! },
-  { re: /new\s+ServedRejectionError\(\s*\{\s*code:\s*"([EW]_[A-Z_]+)"/g, code: (m) => m[1]! },
-];
-
-function producedCodes(files: string[]): Set<string> {
-  const found = new Set<string>();
-  for (const file of files) {
-    const text = readFileSync(file, "utf-8");
-    for (const { re, code } of PRODUCER_PATTERNS) {
-      re.lastIndex = 0;
-      for (const m of text.matchAll(re)) found.add(code(m));
-    }
-  }
-  return found;
-}
-
-// F3 (strengthened): ANY [E_*]/[W_*] header literal is forbidden — audience
-// or not. Comments/docblocks are stripped before scanning (prose may name
-// codes), and src/utils.ts's CODED_RE is allowlisted by name: it is the
-// legacy header *reader* (message-convention fallback), not a producer.
-const RAW_HEADER_RE = /\[(E|W)_[A-Z_]+\]/;
-
-// N2: string-literal-aware comment stripper. The naive regex version
-// treated a `/*` (or `//`) inside a string literal — e.g. a glob like
-// "src/**/*.ts" — as a comment opener and silently deleted real source
-// from the scan. This scanner tracks ', ", ` (with backslash escapes) and
-// only strips // and /* … */ outside a string. Newlines inside block
-// comments are preserved so reported line numbers stay stable.
-function stripComments(text: string): string {
-  let out = "";
-  let i = 0;
-  let quote: string | undefined;
-  while (i < text.length) {
-    const ch = text[i]!;
-    if (quote !== undefined) {
-      out += ch;
-      if (ch === "\\") {
-        if (i + 1 < text.length) out += text[i + 1];
-        i += 2;
-        continue;
-      }
-      if (ch === quote) quote = undefined;
-      i += 1;
-      continue;
-    }
-    if (ch === "'" || ch === '"' || ch === "`") {
-      quote = ch;
-      out += ch;
-      i += 1;
-      continue;
-    }
-    if (ch === "/" && text[i + 1] === "/") {
-      while (i < text.length && text[i] !== "\n") i += 1;
-      continue;
-    }
-    if (ch === "/" && text[i + 1] === "*") {
-      i += 2;
-      while (i < text.length && !(text[i] === "*" && text[i + 1] === "/")) {
-        if (text[i] === "\n") out += "\n";
-        i += 1;
-      }
-      i += 2;
-      continue;
-    }
-    out += ch;
-    i += 1;
-  }
-  return out;
-}
+// F3 (strengthened, T4 CP1-r5 G3): ANY [E_*]/[W_*] header literal is forbidden —
+// audience or not, digits included. Comments/docblocks are stripped before
+// scanning (prose may name codes), and src/utils.ts's CODED_RE is allowlisted by
+// name: it is the legacy header *reader* (message-convention fallback), not a
+// producer.
+const RAW_HEADER_RE = /\[(E|W)_[A-Z0-9_]+\]/;
 
 /** Per-file raw-header scan; factored for the N2 self-check below. */
 function findRawHeaders(file: string, text: string): string[] {
@@ -160,33 +76,49 @@ function findRawHeaders(file: string, text: string): string[] {
   return hits;
 }
 
-// A2′ (F10): the deferral is pinned BY IDENTITY, not by shape. An owner that
-// changes must touch this test, which makes the change deliberate instead of
-// silent.
+/**
+ * C7/C16 (A2′, T4 CP1-r5 G6/G7): the allowlists pinned BY IDENTITY — the test's
+ * own copy of the data half. `owner` values are addressable identities
+ * (`ADDRESSABLE_OWNER_RE`), never bare lane letters: `T6` alone is ambiguous
+ * (`docs/absorption-plan.md:35` = README+CONTEXT merge; the T4 brief = multi-
+ * window read), so the deferred owners carry `Q-T6` plus the disambiguating
+ * content. The predicates are asserted separately (see the cells) so they are
+ * never recycled as their own referent.
+ */
 const DEFERRED_OWNERS = {
   W_NEVER_SERVED_SHAPE: {
-    owner: "T6 (multi-window read / region-scoped serves)",
-    trigger: "region-scoped serves land",
+    owner: "Q-T6 (multi-window read — brief.md:70; NOT absorption-plan.md:35's T6)",
+    trigger: { text: "Q-T6" },
   },
   W_SERVED_PREFIX_MISMATCH: {
-    owner: "T6 (multi-window read / region-scoped serves)",
-    trigger: "region-scoped serves land",
+    owner: "Q-T6 (multi-window read — brief.md:70; NOT absorption-plan.md:35's T6)",
+    trigger: { text: "Q-T6" },
+  },
+} as const;
+
+const FIELD_OWNERS = {
+  remedy: {
+    owner: "src/domain-errors.ts",
+    trigger: { text: "src/domain-errors.ts" },
   },
 } as const;
 
 // A3′ (F10): the keys the renderer actually reads. `formatError`/`formatWarning`
 // compose `[${spec.audience}] [${code}] ${spec.format(payload)}` and no other
 // field is touched (measured at `3f4aca6`: `.audience` → 3 readers, `.format`
-// → 2, `.remedy` → 0). Every other declared key must be listed below with an
-// owner and a trigger, so a NEW unrendered field fails immediately.
+// → 2, `.remedy` → 0). Every other declared key must be in the src allowlist.
 const RENDERED_FIELDS = new Set(["audience", "format"]);
-const DECLARATION_ONLY_FIELDS = {
-  remedy: {
-    owner: "registry header — declaration-only (the WHY `remedy` is never rendered note)",
-    trigger:
-      "removed when remedy gains a renderer (then delete the entry), or the field itself is deleted",
-  },
-} as const;
+
+/** Data half of an allowlist map: `{ key: { owner, trigger: { text } } }`. */
+function dataHalf(map: Readonly<Record<string, { owner: string; trigger: { text: string } }>>) {
+  return Object.fromEntries(
+    Object.entries(map).map(([key, entry]) => [
+      key,
+      { owner: entry.owner, trigger: { text: entry.trigger.text } },
+    ]),
+  );
+}
+
 describe("arch: domain-error registry", () => {
   const files = listSources(SRC_ROOT);
   const registrySource = readFileSync(REGISTRY_FILE, "utf-8");
@@ -203,21 +135,31 @@ describe("arch: domain-error registry", () => {
   });
 
   it("totality backward: deferred codes name a ticket and a trigger", () => {
-    // Identity FIRST: every entry is pinned by value, so an owner change must
+    // Identity FIRST: the data half is pinned by value, so an owner change must
     // touch this test. Shape checks are secondary — `/ticket/i` could not fail
     // while a rot-marker string was present (decision-r1 §1), which is how
     // "range-family ticket (leases)" survived a whole lane.
-    expect(DEFERRED_PRODUCERS).toEqual(DEFERRED_OWNERS);
+    expect(dataHalf(DEFERRED_PRODUCERS)).toEqual(DEFERRED_OWNERS);
     for (const code of deferred) {
+      // REFERENT 1 (src): the entry's own predicate over live objects.
+      expect(
+        DEFERRED_PRODUCERS[code]!.trigger.holds(),
+        `${code} trigger no longer holds — the entry must be removed or reconciled`,
+      ).toBe(true);
+      // REFERENT 2 (test): the producer scan, recomputed here — never read back
+      // out of the entry it is checking.
       expect(
         produced.has(code),
         `${code} gained a producer — remove it from DEFERRED_PRODUCERS`,
       ).toBe(false);
-      expect(DEFERRED_PRODUCERS[code]!.owner, `${code} owner is ticket-shaped`).toMatch(/^T\d+/);
       expect(
-        DEFERRED_PRODUCERS[code]!.trigger.trim().length,
-        `${code} trigger is non-empty`,
-      ).toBeGreaterThan(0);
+        ADDRESSABLE_OWNER_RE.test(DEFERRED_PRODUCERS[code]!.owner),
+        `${code} owner "${DEFERRED_PRODUCERS[code]!.owner}" is not an addressable identity — a bare lane letter is ambiguous (T6 collides)`,
+      ).toBe(true);
+      expect(
+        ADDRESSABLE_OWNER_RE.test(DEFERRED_PRODUCERS[code]!.trigger.text),
+        `${code} trigger text "${DEFERRED_PRODUCERS[code]!.trigger.text}" is not an addressable artifact`,
+      ).toBe(true);
     }
   });
 
@@ -232,14 +174,9 @@ describe("arch: domain-error registry", () => {
       "E_TARGET_LOST",
       "E_UNVERIFIED_RANGE",
     ] as const;
-    const offenders: string[] = [];
-    for (const file of files) {
-      const code = stripComments(readFileSync(file, "utf-8"));
-      for (const name of deleted) {
-        if (code.includes(name)) offenders.push(`${file}:${name}`);
-      }
-    }
-    expect(offenders, `re-declared without a producer: ${offenders.join(", ")}`).toEqual([]);
+    expect(namesInCode(files, deleted), "re-declared without a producer (code, not prose)").toEqual(
+      [],
+    );
     for (const name of deleted) {
       expect(
         isDomainErrorCode(name),
@@ -255,6 +192,25 @@ describe("arch: domain-error registry", () => {
         `${code} is produced but not a declared union member`,
       ).toBe(true);
     }
+  });
+
+  // C15 (T4 CP1-r5 G4): the other direction — every declared union member (and
+  // every warning member) must have a registry entry, so a code cannot be
+  // declared with no spec. Measured at HEAD: errors 24/24, warnings 6/6, no
+  // leaks in either direction for either union.
+  it("union and registry agree in both directions", () => {
+    const errorKeys = new Set(Object.keys(ERROR_REGISTRY));
+    const warningKeys = new Set(Object.keys(WARNING_REGISTRY));
+    const declaredWithoutSpec = [
+      ...errorMembers.filter((c) => !errorKeys.has(c)),
+      ...warningMembers.filter((c) => !warningKeys.has(c)),
+    ];
+    expect(declaredWithoutSpec, `union members with no registry entry`).toEqual([]);
+    const specWithoutMember = [
+      ...[...errorKeys].filter((c) => !errorMembers.includes(c)),
+      ...[...warningKeys].filter((c) => !warningMembers.includes(c)),
+    ];
+    expect(specWithoutMember, `registry entries with no union member`).toEqual([]);
   });
 
   it("header uniqueness: no raw [E_*]/[W_*] literal outside domain-errors.ts", () => {
@@ -276,10 +232,9 @@ describe("arch: domain-error registry", () => {
     }
   });
 
-  // A3′/A4 (F10): FORWARD — every declared field is rendered or allowlisted
-  // with an owner+trigger; SHRINK-ONLY — an allowlisted field that gains a
-  // reader must leave the list. `remedy` is the only such field today
-  // (measured: `git grep -n -E '\.remedy' 3f4aca6 -- src` → 0 reads).
+  // C8 (A3′/A4, F10 + T4 CP1-r5 G6): FORWARD — every declared field is rendered
+  // or in the src allowlist; SHRINK-ONLY — an allowlisted field that gains a
+  // reader must leave the list. The reader scan is the oracle's own referent.
   it("every registry field is rendered or declaration-only", () => {
     const entries = [...Object.entries(ERROR_REGISTRY), ...Object.entries(WARNING_REGISTRY)];
     for (const [code, spec] of entries) {
@@ -290,21 +245,36 @@ describe("arch: domain-error registry", () => {
         ).toBe(true);
       }
     }
-    for (const [field, entry] of Object.entries(DECLARATION_ONLY_FIELDS)) {
-      expect(entry.owner.trim().length, `${field} allowlist entry needs an owner`).toBeGreaterThan(
-        0,
-      );
-      expect(
-        entry.trigger.trim().length,
-        `${field} allowlist entry needs a trigger`,
-      ).toBeGreaterThan(0);
-      const readers = files.filter((file) =>
-        new RegExp(`\\.${field}\\b`).test(stripComments(readFileSync(file, "utf-8"))),
-      );
+    for (const field of Object.keys(DECLARATION_ONLY_FIELDS)) {
+      const readers = readersOfField(files, field);
       expect(
         readers,
         `${field} gained a reader (${readers.join(", ")}) — remove it from DECLARATION_ONLY_FIELDS`,
       ).toEqual([]);
+    }
+  });
+
+  // C16 (T4 CP1-r5 G6/G7): the field allowlist pinned by identity, with the owner
+  // and trigger as ADDRESSABLE identities, and BOTH referents asserted: the
+  // src-side predicate and the oracle's independent recomputation.
+  it("the field allowlist is pinned by identity and its predicates hold", () => {
+    expect(dataHalf(DECLARATION_ONLY_FIELDS)).toEqual(FIELD_OWNERS);
+    for (const [field, entry] of Object.entries(DECLARATION_ONLY_FIELDS)) {
+      expect(
+        ADDRESSABLE_OWNER_RE.test(entry.owner),
+        `${field} owner "${entry.owner}" is not an addressable identity (a bare lane letter or a sentence must fail)`,
+      ).toBe(true);
+      expect(
+        ADDRESSABLE_OWNER_RE.test(entry.trigger.text),
+        `${field} trigger text "${entry.trigger.text}" is not an addressable artifact`,
+      ).toBe(true);
+      // REFERENT 1 (src): the entry's own predicate over live objects.
+      expect(
+        entry.trigger.holds(),
+        `${field} trigger no longer holds — the entry must be removed or reconciled`,
+      ).toBe(true);
+      // REFERENT 2 (test): the reader scan, recomputed here.
+      expect(readersOfField(files, field), `${field} is no longer declaration-only`).toEqual([]);
     }
   });
 
@@ -321,6 +291,7 @@ describe("arch: domain-error registry", () => {
       expect(WARNING_REGISTRY[code].audience).toBe("MODEL");
     }
   });
+
   // N2 self-check (planted evidence): a `/*` inside a string literal must
   // not swallow the real header on the next line. With the naive regex
   // stripper this reported [] (blind); the string-aware scanner reports line 2.
@@ -337,3 +308,10 @@ describe("arch: domain-error registry", () => {
     );
   });
 });
+
+/** The oracle's own referent for "this field is declaration-only". */
+function readersOfField(files: string[], field: string): string[] {
+  return files.filter((file) =>
+    new RegExp(`\\.${field}\\b`).test(stripComments(readFileSync(file, "utf-8"))),
+  );
+}

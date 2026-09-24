@@ -94,6 +94,16 @@ const T4R4 = {
   glueRows: "the rendered envelope never glues a row to the on-disk heading (C11a)",
   glueFallback: "the contextless fallback starts its own line in the rendered envelope (C11b)",
 };
+
+/** T4 CP1-r5 cell titles (scanner controls, union/registry parity, allowlist identity). */
+const T4R5 = {
+  commentFake: "a producer-shaped line inside a comment is not a producer",
+  singleQuote: "single-quoted union members and producers are recognised",
+  digits: "digit-bearing code names are recognised",
+  parity: "union and registry agree in both directions",
+  fieldIdentity: "the field allowlist is pinned by identity and its predicates hold",
+};
+const ARCH_SCAN = "test/support/arch-scan.ts";
 const ARCH_REGISTRY = "test/arch/domain-error-registry.test.ts";
 
 /** Shared pre-edit for the three `recordServed` mutants. */
@@ -300,10 +310,10 @@ const MUTANTS = {
       {
         file: DOMAIN_ERRORS,
         old:
-          "export const DEFERRED_PRODUCERS: Readonly<Record<string, { owner: string; trigger: string }>> = {\n" +
+          "export const DEFERRED_PRODUCERS: Readonly<Record<string, AllowlistEntry>> = {\n" +
           "  W_NEVER_SERVED_SHAPE: {",
         new:
-          "export const DEFERRED_PRODUCERS: Readonly<Record<string, { owner: string; trigger: string } | string>> = {\n" +
+          "export const DEFERRED_PRODUCERS: Readonly<Record<string, AllowlistEntry | string>> = {\n" +
           '  E_FOREIGN_ANCHOR: "range-family ticket (leases)",\n' +
           "  W_NEVER_SERVED_SHAPE: {",
       },
@@ -324,19 +334,21 @@ const MUTANTS = {
   M8: {
     what: "delete DECLARATION_ONLY_FIELDS while `remedy` still has no reader",
     scope: null, // full suite
-    expected: [T4R3.fields],
+    expected: [T4R3.fields, T4R5.fieldIdentity],
     edits: [
       {
         file: ARCH_REGISTRY,
         old:
-          "const DECLARATION_ONLY_FIELDS = {\n" +
+          "export const DECLARATION_ONLY_FIELDS: Readonly<Record<string, AllowlistEntry>> = {\n" +
           "  remedy: {\n" +
-          '    owner: "registry header — declaration-only (the WHY `remedy` is never rendered note)",\n' +
-          "    trigger:\n" +
-          '      "removed when remedy gains a renderer (then delete the entry), or the field itself is deleted",\n' +
+          '    owner: "src/domain-errors.ts",\n' +
+          "    trigger: {\n" +
+          '      text: "src/domain-errors.ts",\n' +
+          '      holds: () => Object.values(ERROR_REGISTRY).some((spec) => "remedy" in spec),\n' +
+          "    },\n" +
           "  },\n" +
-          "} as const;",
-        new: "const DECLARATION_ONLY_FIELDS = {} as const;",
+          "};",
+        new: "export const DECLARATION_ONLY_FIELDS: Readonly<Record<string, AllowlistEntry>> = {};",
       },
     ],
   },
@@ -365,6 +377,76 @@ const MUTANTS = {
         file: DOMAIN_ERRORS,
         old: "    `edits[${payload.index}] (${payload.path}) failed: ${payload.inner}\\n${payload.echoBlock.trimStart()}\\n` +",
         new: "    `edits[${payload.index}] (${payload.path}) failed: ${payload.inner}${payload.echoBlock}\\n` +",
+      },
+    ],
+  },
+  M11: {
+    what: "revert G1: scan producers without stripping comments",
+    scope: null, // full suite
+    expected: [T4R5.commentFake],
+    edits: [
+      {
+        file: ARCH_SCAN,
+        old: "export function producedCodesInText(text: string): string[] {\n  const bare = stripComments(text);",
+        new: "export function producedCodesInText(text: string): string[] {\n  const bare = text;",
+      },
+    ],
+  },
+  M12: {
+    what: "revert G2: accept double quotes only",
+    scope: null, // full suite
+    expected: [T4R5.singleQuote],
+    edits: [
+      {
+        file: ARCH_SCAN,
+        old: "export const QUOTED_CODE = `[\"'](${CODE_SHAPE})[\"']`;",
+        new: 'export const QUOTED_CODE = `"(${CODE_SHAPE})"`;',
+      },
+      {
+        file: ARCH_SCAN,
+        old: "  const members = [...block![1]!.matchAll(/[\"']([EW]_[A-Z0-9_]+)[\"']/g)].map((m) => m[1]!);",
+        new: '  const members = [...block![1]!.matchAll(/"([EW]_[A-Z0-9_]+)"/g)].map((m) => m[1]!);',
+      },
+    ],
+  },
+  M13: {
+    what: "revert G3: exclude digits from the code shape",
+    scope: null, // full suite
+    expected: [T4R5.digits],
+    edits: [
+      {
+        file: ARCH_SCAN,
+        old: 'export const CODE_SHAPE = "[EW]_[A-Z0-9_]+";',
+        new: 'export const CODE_SHAPE = "[EW]_[A-Z_]+";',
+      },
+      {
+        file: ARCH_SCAN,
+        old: "  const members = [...block![1]!.matchAll(/[\"']([EW]_[A-Z0-9_]+)[\"']/g)].map((m) => m[1]!);",
+        new: "  const members = [...block![1]!.matchAll(/[\"']([EW]_[A-Z_]+)[\"']/g)].map((m) => m[1]!);",
+      },
+    ],
+  },
+  M14: {
+    what: "add a union member with no registry entry",
+    scope: null, // full suite
+    expected: [T4R5.parity, T4R3.forward],
+    edits: [
+      {
+        file: DOMAIN_ERRORS,
+        old: '  | "E_STALE_RANGE"\n  | "E_MALFORMED_ANCHOR"',
+        new: '  | "E_STALE_RANGE"\n  | "E_ORPHAN"\n  | "E_MALFORMED_ANCHOR"',
+      },
+    ],
+  },
+  M15: {
+    what: "field allowlist owner is a bare lane letter (not an addressable identity)",
+    scope: null, // full suite
+    expected: [T4R5.fieldIdentity],
+    edits: [
+      {
+        file: DOMAIN_ERRORS,
+        old: '    owner: "src/domain-errors.ts",\n    trigger: {\n      text: "src/domain-errors.ts",',
+        new: '    owner: "T6",\n    trigger: {\n      text: "src/domain-errors.ts",',
       },
     ],
   },

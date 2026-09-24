@@ -43,7 +43,9 @@
  *
  * WHY `remedy` is declaration-only and never rendered into the message: the
  * `format` strings already carry their own retry prose where the evidence pins
- * it. Do not "fix" this by appending `remedy` to the rendered text.
+ * it. Do not "fix" this by appending `remedy` to the rendered text. The
+ * declaration is owned by `DECLARATION_ONLY_FIELDS` below, which the arch oracle
+ * pins by identity AND checks for readers (0 today) — so it cannot rot quietly.
  *
  * @module dsh-better-edit/domain-errors
  */
@@ -808,6 +810,50 @@ export function isDomainWarningCode(code: unknown): code is DomainWarningCode {
 }
 
 /**
+ * A trigger must be CHECKABLE, not a phrase. `text` names the artifact whose
+ * change makes this entry actionable — a queue line (`Q-T<n>`), an issue
+ * (`#NN`), an absorb branch (`absorb/<branch>`), or a `src/` path — and
+ * `holds()` is a src-side predicate over live objects that must remain true
+ * while the entry exists. The arch oracle recomputes its own, independent
+ * predicate and asserts both (`AllowlistEntry` is the two-referents rule in
+ * type form; see `test/support/arch-scan.ts`).
+ */
+export interface AllowlistTrigger {
+  readonly text: string;
+  readonly holds: () => boolean;
+}
+
+/**
+ * An allowlist entry. `owner` must be an ADDRESSABLE identity — **a bare `T6` is
+ * not an identity**: `docs/absorption-plan.md:35` gives T6 to the README+CONTEXT
+ * merge while the T4 brief gives it to multi-window read, so the id collides
+ * across lanes (T4 CP1-r5 G7).
+ */
+export interface AllowlistEntry {
+  readonly owner: string;
+  readonly trigger: AllowlistTrigger;
+}
+
+/** Owners and trigger texts must start with one of these addressable forms. */
+export const ADDRESSABLE_OWNER_RE = /^(#\d{1,5}|Q-T\d+|absorb\/[a-z0-9-]+|src\/[a-z0-9./-]+)\b/;
+
+/**
+ * Registry fields that are declared but never rendered, keyed by field name.
+ * `owner`/`trigger` are identities (see `AllowlistEntry`); the arch oracle pins
+ * this map by identity against its own copy **and** independently computes the
+ * "still declaration-only" predicate (0 readers of `.<field>` across `src/`).
+ */
+export const DECLARATION_ONLY_FIELDS: Readonly<Record<string, AllowlistEntry>> = {
+  remedy: {
+    owner: "src/domain-errors.ts",
+    trigger: {
+      text: "src/domain-errors.ts",
+      holds: () => Object.values(ERROR_REGISTRY).some((spec) => "remedy" in spec),
+    },
+  },
+};
+
+/**
  * Codes declared by the contract but produced by a later ticket. Shrink-only:
  * a code that gains a producer MUST be removed from this map (the arch oracle
  * fails otherwise).
@@ -833,17 +879,28 @@ export function isDomainWarningCode(code: unknown): code is DomainWarningCode {
  * `E_STALE_ANCHOR`). `docs/absorption-plan.md` ("Debt — T4 …") carries the
  * same record for the next absorb.
  *
- * The `owner`/`trigger` values below are pinned BY IDENTITY in
- * `test/arch/domain-error-registry.test.ts` (A2′), so changing an owner is a
- * deliberate edit that must touch the test — never a silent one.
+ * ── IDENTITY, NOT SHAPE (T4 CP1-r4/r5) ──
+ * `owner` and `trigger.text` below are pinned BY IDENTITY in
+ * `test/arch/domain-error-registry.test.ts` (C7/C16), so changing one is a
+ * deliberate edit that must touch the test — never a silent one. A bare `T6`
+ * must never be used again: `docs/absorption-plan.md:35` gives T6 to the
+ * README+CONTEXT merge while the T4 brief (`brief.md:70`) gives it to
+ * multi-window read, so the id names two different lanes. `trigger.holds()` is
+ * a src-side predicate; the oracle recomputes its own and asserts both.
  */
-export const DEFERRED_PRODUCERS: Readonly<Record<string, { owner: string; trigger: string }>> = {
+export const DEFERRED_PRODUCERS: Readonly<Record<string, AllowlistEntry>> = {
   W_NEVER_SERVED_SHAPE: {
-    owner: "T6 (multi-window read / region-scoped serves)",
-    trigger: "region-scoped serves land",
+    owner: "Q-T6 (multi-window read — brief.md:70; NOT absorption-plan.md:35's T6)",
+    trigger: {
+      text: "Q-T6",
+      holds: () => isDomainWarningCode("W_NEVER_SERVED_SHAPE"),
+    },
   },
   W_SERVED_PREFIX_MISMATCH: {
-    owner: "T6 (multi-window read / region-scoped serves)",
-    trigger: "region-scoped serves land",
+    owner: "Q-T6 (multi-window read — brief.md:70; NOT absorption-plan.md:35's T6)",
+    trigger: {
+      text: "Q-T6",
+      holds: () => isDomainWarningCode("W_SERVED_PREFIX_MISMATCH"),
+    },
   },
 };
