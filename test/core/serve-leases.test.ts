@@ -1,4 +1,4 @@
-import { writeFile } from "node:fs/promises";
+import { readFile, writeFile } from "node:fs/promises";
 import { describe, expect, it, beforeAll } from "vitest";
 import { readAndServe } from "../../src/read-and-serve.js";
 import { localIO } from "../../src/fs-bridge.js";
@@ -15,6 +15,9 @@ import {
 } from "../../src/hashline/hash-assign.js";
 import { splitLines } from "../../src/utils.js";
 import { snapshotHashFor } from "../../src/snapshot-store/lineage-store.js";
+import { applySingle } from "../../src/mutation.js";
+import { enforceNoopLoop } from "../../src/mutation/engine.js";
+import { NOOP_LOOP_THRESHOLD } from "../../src/constants.js";
 
 beforeAll(async () => {
   await initHasher();
@@ -285,6 +288,8 @@ interface ScenarioRun {
   leasesAfterReject: LeaseDump;
   rejected: boolean;
   message: string;
+  /** One entry per attempted rejection: true = it rejected. */
+  rejections: boolean[];
 }
 
 /** Parse the `HASH│content` read rows into the served anchor list. */
@@ -355,6 +360,8 @@ async function runScenario(
   withRejectedEdit: boolean,
   /** Extra anchors to probe in the pre-READ2 lease dump (learned from a prior run). */
   leaseProbeAnchors: string[] = [],
+  /** How many identical rejections to attempt (0 = control, default 1 for a treatment). */
+  rejectionCount?: number,
 ): Promise<ScenarioRun> {
   let run: ScenarioRun | undefined;
   await withTempFile("scenario.txt", scenario.file, async ({ cwd, path }) => {
@@ -383,25 +390,35 @@ async function runScenario(
     }
     const anchor = extractHash(anchorRow);
     const servedBefore = await servedAt(cwd, fullKey, path);
-    const leasesBefore = await leasesAt(cwd, fullKey, path, read1Anchors);
+    // Same anchor set as the post-rejection dump, so the comparison also pins
+    // "no new lease appeared" (a probe anchor with no lease must stay null).
+    const leasesBefore = await leasesAt(cwd, fullKey, path, [
+      ...read1Anchors,
+      ...leaseProbeAnchors,
+    ]);
 
     await writeFile(path, scenario.external, "utf-8");
 
-    let rejected = false;
-    let message = "";
-    if (withRejectedEdit) {
+    const attempts = rejectionCount ?? (withRejectedEdit ? 1 : 0);
+    const rejections: boolean[] = [];
+    const messages: string[] = [];
+    for (let attempt = 0; attempt < attempts; attempt += 1) {
       try {
-        await editTool.execute("reject-scenario", {
+        await editTool.execute(`reject-scenario-${attempt}`, {
           path: "scenario.txt",
           anchor_from: anchor,
           anchor_to: anchor,
           replace_with: scenario.replacement,
         });
+        rejections.push(false);
+        messages.push("");
       } catch (error) {
-        rejected = true;
-        message = String((error as Error).message);
+        rejections.push(true);
+        messages.push(String((error as Error).message));
       }
     }
+    const rejected = rejections.includes(true);
+    const message = messages.find((text) => text !== "") ?? "";
     const servedAfterReject = await servedAt(cwd, fullKey, path);
     // Captured BEFORE READ2 — READ2 re-serves and would re-grant every lease.
     const leasesAfterReject = await leasesAt(cwd, fullKey, path, [
@@ -420,9 +437,326 @@ async function runScenario(
       leasesAfterReject,
       rejected,
       message,
+      rejections,
     };
   });
   if (run === undefined) throw new Error("scenario did not run");
+  return run;
+}
+
+const NOOP_LOOP_FILE = "one\ntwo\n";
+// An insert BELOW the payload's range: every served line_id survives (nothing is
+// retired) and the file grows, so the guard's `lineCount` differs from the served
+// array — which is what makes a reject-path write observable here.
+const NOOP_LOOP_EXTERNAL = "one\ntwo\nthree\n";
+
+interface NoopLoopRun {
+  read1Anchors: string[];
+  read2Anchors: string[];
+  servedBefore: (string | null)[];
+  servedAfterReject: (string | null)[];
+  leasesBefore: LeaseDump;
+  leasesAfterReject: LeaseDump;
+  rejected: boolean;
+  message: string;
+  fileAfter: string;
+}
+
+/**
+ * Two applied no-op submissions, an out-of-band insert below the payload's range,
+ * then the submission that trips `E_NOOP_LOOP`. `withThirdSubmission` false is the
+ * control (same external change, no rejection).
+ *
+ * `leaseProbeAnchors` widens the pre-READ2 lease dump; the payload's own range is
+ * already covered by `read1Anchors`, so this only matters for proving that no
+ * *other* anchor gained a lease.
+ */
+async function runNoopLoop(
+  withThirdSubmission: boolean,
+  leaseProbeAnchors: string[] = [],
+): Promise<NoopLoopRun> {
+  let run: NoopLoopRun | undefined;
+  await withTempFile("noop-loop.txt", NOOP_LOOP_FILE, async ({ cwd, path }) => {
+    const { readTool, editTool, sessionKey } = setupIntegrationTest(cwd);
+    const fullKey = sessionKeyFor(sessionKey);
+    const read1Text = getText(await readTool.execute("read", { path: "noop-loop.txt" }));
+    const read1Anchors = rowAnchors(read1Text);
+    const anchorRow = read1Text.split("\n").find((line) => line.endsWith("│one"));
+    if (anchorRow === undefined) throw new Error("noop-loop: no served row for `one`");
+    const anchor = extractHash(anchorRow);
+    const noop = {
+      path: "noop-loop.txt",
+      anchor_from: anchor,
+      anchor_to: anchor,
+      replace_with: "one",
+    };
+
+    await editTool.execute("noop-1", noop);
+    const second = getText(await editTool.execute("noop-2", noop));
+    expect(second).toMatch(/\[USER\] \[W_NOOP\]/);
+
+    await writeFile(path, NOOP_LOOP_EXTERNAL, "utf-8");
+
+    const servedBefore = await servedAt(cwd, fullKey, path);
+    // Same anchor set as the post-rejection dump, so the comparison also pins
+    // "no new lease appeared" (a probe anchor with no lease must stay null).
+    const leasesBefore = await leasesAt(cwd, fullKey, path, [
+      ...read1Anchors,
+      ...leaseProbeAnchors,
+    ]);
+
+    let rejected = false;
+    let message = "";
+    if (withThirdSubmission) {
+      try {
+        await editTool.execute("noop-3", noop);
+      } catch (error) {
+        rejected = true;
+        message = String((error as Error).message);
+      }
+    }
+    const servedAfterReject = await servedAt(cwd, fullKey, path);
+    // Captured BEFORE READ2 — READ2 re-serves and would re-grant every lease.
+    const leasesAfterReject = await leasesAt(cwd, fullKey, path, [
+      ...read1Anchors,
+      ...leaseProbeAnchors,
+    ]);
+    const read2Anchors = rowAnchors(
+      getText(await readTool.execute("read", { path: "noop-loop.txt" })),
+    );
+    run = {
+      read1Anchors,
+      read2Anchors,
+      servedBefore,
+      servedAfterReject,
+      leasesBefore,
+      leasesAfterReject,
+      rejected,
+      message,
+      fileAfter: await readFile(path, "utf-8"),
+    };
+  });
+  if (run === undefined) throw new Error("noop-loop scenario did not run");
+  return run;
+}
+
+const BATCH_FILE = "alpha\nbeta\ngamma\ndelta\n";
+// The same insert-only exterior change as INSERT_SCENARIO: the `beta` anchor goes
+// stale, so batch item 0 aborts while item 1 still resolves.
+const BATCH_EXTERNAL = `beta\n${BATCH_FILE}`;
+
+interface BatchAbortRun {
+  read2Anchors: string[];
+  servedBefore: (string | null)[];
+  servedAfterAbort: (string | null)[];
+  leasesBefore: LeaseDump;
+  leasesAfterAbort: LeaseDump;
+  aborted: boolean;
+  message: string;
+}
+
+/**
+ * Two-item batch through `batch_edit`: item 0 (stale `beta`) aborts, item 1
+ * (`gamma`) resolves. `withBatch` false is the control (same external change, no
+ * batch call). Drives `collectAbortPart` in `runFileEdits`.
+ */
+async function runBatchAbort(withBatch: boolean): Promise<BatchAbortRun> {
+  let run: BatchAbortRun | undefined;
+  await withTempFile("batch.txt", BATCH_FILE, async ({ cwd, path }) => {
+    const { readTool, getTool, sessionKey } = setupIntegrationTest(cwd);
+    const fullKey = sessionKeyFor(sessionKey);
+    const read1Text = getText(await readTool.execute("read", { path: "batch.txt" }));
+    const read1Anchors = rowAnchors(read1Text);
+    const anchorOf = (needle: string): string => {
+      const row = read1Text.split("\n").find((line) => line.endsWith(`│${needle}`));
+      if (row === undefined) throw new Error(`batch: no served row for ${needle}`);
+      return extractHash(row);
+    };
+    const beta = anchorOf("beta");
+    const gamma = anchorOf("gamma");
+
+    await writeFile(path, BATCH_EXTERNAL, "utf-8");
+
+    const servedBefore = await servedAt(cwd, fullKey, path);
+    const leasesBefore = await leasesAt(cwd, fullKey, path, read1Anchors);
+
+    let aborted = false;
+    let message = "";
+    if (withBatch) {
+      const batch = getTool("batch_edit") as {
+        execute: (callId: string, params: unknown) => Promise<unknown>;
+      };
+      try {
+        await batch.execute("batch-abort", {
+          edits: [
+            { path: "batch.txt", anchor_from: beta, anchor_to: beta, replace_with: "BETA" },
+            { path: "batch.txt", anchor_from: gamma, anchor_to: gamma, replace_with: "GAMMA" },
+          ],
+        });
+      } catch (error) {
+        aborted = true;
+        message = String((error as Error).message);
+      }
+    }
+    const servedAfterAbort = await servedAt(cwd, fullKey, path);
+    const leasesAfterAbort = await leasesAt(cwd, fullKey, path, read1Anchors);
+    const read2Anchors = rowAnchors(getText(await readTool.execute("read", { path: "batch.txt" })));
+    run = {
+      read2Anchors,
+      servedBefore,
+      servedAfterAbort,
+      leasesBefore,
+      leasesAfterAbort,
+      aborted,
+      message,
+    };
+  });
+  if (run === undefined) throw new Error("batch-abort scenario did not run");
+  return run;
+}
+
+// The TWIN geometry: the failure has to reach `applyOne`'s verification (a resolvable
+// anchor whose served position/retirement no longer holds) — a plain deleted-anchor
+// geometry throws in `resEdit` *before* `applyOne`, so it never reaches `onReject`.
+const SINGLE_FILE = TWIN_FILE;
+const SINGLE_EXTERNAL = EXTERNAL_DELETE;
+
+const GUARD_FILE = "one\ntwo\n";
+const GUARD_EXTERNAL = "one\ntwo\nthree\n";
+
+interface GuardRun {
+  anchors: string[];
+  servedBefore: (string | null)[];
+  servedAfter: (string | null)[];
+  leasesBefore: LeaseDump;
+  leasesAfter: LeaseDump;
+  threw: boolean;
+  message: string;
+}
+
+/**
+ * Direct call of `enforceNoopLoop`'s SINGLE-EDIT flavor (`index === undefined`) — the
+ * branch `runFileEdits` never takes, because `PreparedItem.index` is required and the
+ * only production call site (`src/mutation/engine.ts:901`) passes `item.index`. Drives
+ * the M3 site; the file grows out of band so the guard's `lineCount` (3) differs from
+ * the served array (2), making a reject-path write observable.
+ */
+async function runSingleFlavorGuard(): Promise<GuardRun> {
+  let run: GuardRun | undefined;
+  await withTempFile("guard.txt", GUARD_FILE, async ({ cwd, path }) => {
+    const io = localIO();
+    const sessionKey = sessionKeyFor("enforce-noop-single");
+    const preview = await withWorkspace(cwd, () =>
+      readAndServe(io, "guard.txt", cwd, { sessionKey }),
+    );
+    const anchors = preview.served.map((row) => row.hash);
+    await writeFile(path, GUARD_EXTERNAL, "utf-8");
+    const servedBefore = await servedAt(cwd, sessionKey, path);
+    const leasesBefore = await leasesAt(cwd, sessionKey, path, anchors);
+    const currentHashes = lineHashesPure(GUARD_EXTERNAL);
+    let threw = false;
+    let message = "";
+    try {
+      await withWorkspace(cwd, () =>
+        enforceNoopLoop({
+          absolutePath: path,
+          anchorFrom: anchors[0]!,
+          anchorTo: anchors[0]!,
+          replaceWith: "one",
+          displayPath: "guard.txt",
+          index: undefined,
+          count: NOOP_LOOP_THRESHOLD,
+          sessionKey,
+          originalHashes: currentHashes,
+          originalNormalized: GUARD_EXTERNAL,
+          range: {
+            startLine: 1,
+            endLine: 1,
+            startHash: currentHashes[0]!,
+            endHash: currentHashes[0]!,
+            delta: 0,
+          },
+        }),
+      );
+    } catch (error) {
+      threw = true;
+      message = String((error as Error).message);
+    }
+    const servedAfter = await servedAt(cwd, sessionKey, path);
+    const leasesAfter = await leasesAt(cwd, sessionKey, path, anchors);
+    run = { anchors, servedBefore, servedAfter, leasesBefore, leasesAfter, threw, message };
+  });
+  if (run === undefined) throw new Error("single-flavor guard scenario did not run");
+  return run;
+}
+
+interface SequentialRun {
+  servedAnchors: string[];
+  read2Anchors: string[];
+  servedBefore: (string | null)[];
+  servedAfterReject: (string | null)[];
+  leasesBefore: LeaseDump;
+  leasesAfterReject: LeaseDump;
+  rejected: boolean;
+  message: string;
+}
+
+/**
+ * Drives `applySingle` → `execPipeline`, i.e. the anonymous arrow callback passed as
+ * `applyOne`'s `onReject` argument (`src/mutation.ts:169-171` post-fix; the base
+ * `recordEchoServes` call sat at `src/mutation.ts:179`). This callback is NOT on any
+ * tool path (see the report), so the pin is a direct call, not a tool-path cell.
+ */
+async function runSequentialReject(withReject: boolean): Promise<SequentialRun> {
+  let run: SequentialRun | undefined;
+  await withTempFile("single.txt", SINGLE_FILE, async ({ cwd, path }) => {
+    const io = localIO();
+    const sessionKey = sessionKeyFor("exec-pipeline-reject");
+    const preview = await withWorkspace(cwd, () =>
+      readAndServe(io, "single.txt", cwd, { sessionKey }),
+    );
+    const servedAnchors = preview.served.map((row) => row.hash);
+    const stale = preview.served[1]!.hash;
+
+    await writeFile(path, SINGLE_EXTERNAL, "utf-8");
+
+    const servedBefore = await servedAt(cwd, sessionKey, path);
+    const leasesBefore = await leasesAt(cwd, sessionKey, path, servedAnchors);
+
+    let rejected = false;
+    let message = "";
+    if (withReject) {
+      try {
+        await withWorkspace(cwd, () =>
+          applySingle(
+            io,
+            { file: path, anchor_from: stale, anchor_to: stale, replace_with: "TWO" } as never,
+            cwd,
+            { sessionKey },
+          ),
+        );
+      } catch (error) {
+        rejected = true;
+        message = String((error as Error).message);
+      }
+    }
+    const servedAfterReject = await servedAt(cwd, sessionKey, path);
+    const leasesAfterReject = await leasesAt(cwd, sessionKey, path, servedAnchors);
+    const read2 = await withWorkspace(cwd, () =>
+      readAndServe(io, "single.txt", cwd, { sessionKey }),
+    );
+    run = {
+      servedAnchors,
+      read2Anchors: read2.served.map((row) => row.hash),
+      servedBefore,
+      servedAfterReject,
+      leasesBefore,
+      leasesAfterReject,
+      rejected,
+      message,
+    };
+  });
+  if (run === undefined) throw new Error("sequential scenario did not run");
   return run;
 }
 
@@ -502,5 +836,76 @@ describe("serve leases — a rejected edit is a no-op for the next read", () => 
         treatment.leasesBefore[anchor] ?? null,
       );
     }
+  });
+
+  it("noop-loop rejection records nothing — served rows and grants byte-identical, next read ≡ control", async () => {
+    // The control learns the fresh-read anchor set; the treatment probes those
+    // anchors too, and the equality pin below keeps that widening sound.
+    const control = await runNoopLoop(false);
+    const treatment = await runNoopLoop(true, control.read2Anchors);
+    expect(treatment.rejected).toBe(true);
+    expect(treatment.message).toMatch(/E_NOOP_LOOP/);
+    expect(treatment.fileAfter).toBe(NOOP_LOOP_EXTERNAL);
+    expect(treatment.read2Anchors).toEqual(control.read2Anchors);
+    // (a) served rows — byte-identical. The guard's `lineCount` (3) differs from
+    // the served array's length (2), so a reject-path write is observable here.
+    expect(treatment.servedAfterReject).toEqual(treatment.servedBefore);
+    // (b) grants — byte-identical INCLUDING `retiredAt`: an insert below the range
+    // preserves every served line_id, so nothing is retired by normalization.
+    expect(treatment.leasesAfterReject).toEqual(treatment.leasesBefore);
+    // (c) the next fresh read is the control's, with no duplicate anchors.
+    expect(duplicateAnchors(control.read2Anchors)).toEqual([]);
+    expect(duplicateAnchors(treatment.read2Anchors)).toEqual([]);
+  });
+  it("consecutive rejections compose — reject → reject leaves served rows and grants byte-identical", async () => {
+    const control = await runScenario(INSERT_SCENARIO, false);
+    const treatment = await runScenario(INSERT_SCENARIO, true, control.read2Anchors, 2);
+    expect(treatment.rejections).toEqual([true, true]);
+    expect(treatment.read2Anchors).toEqual(control.read2Anchors);
+    // (a)+(b) byte-identical to immediately before the FIRST rejection. The
+    // insert-only geometry keeps `retiredAt` clean, so this is the full row.
+    expect(treatment.servedAfterReject).toEqual(treatment.servedBefore);
+    expect(treatment.leasesAfterReject).toEqual(treatment.leasesBefore);
+    expect(duplicateAnchors(treatment.read2Anchors)).toEqual([]);
+  });
+
+  it("batch abort (one part rejecting) records nothing — served rows and grants byte-identical", async () => {
+    const control = await runBatchAbort(false);
+    const treatment = await runBatchAbort(true);
+    expect(treatment.aborted).toBe(true);
+    expect(treatment.message).toMatch(/E_BATCH_ABORT/);
+    expect(treatment.read2Anchors).toEqual(control.read2Anchors);
+    expect(treatment.servedAfterAbort).toEqual(treatment.servedBefore);
+    expect(treatment.leasesAfterAbort).toEqual(treatment.leasesBefore);
+    expect(duplicateAnchors(treatment.read2Anchors)).toEqual([]);
+  });
+
+  it("sequential execPipeline rejection (direct call) records nothing — served rows byte-identical", async () => {
+    const control = await runSequentialReject(false);
+    const treatment = await runSequentialReject(true);
+    expect(treatment.rejected).toBe(true);
+    expect(treatment.message).toMatch(/E_STALE_(RANGE|ANCHOR)/);
+    expect(treatment.servedAfterReject).toEqual(treatment.servedBefore);
+    // Grant fields only: the deleted line's lease is retired by the edit's own file
+    // normalization (see the `retiredAt` note in the twin cell).
+    for (const anchor of treatment.servedAnchors) {
+      const before = treatment.leasesBefore[anchor] ?? null;
+      const after = treatment.leasesAfterReject[anchor] ?? null;
+      if (before === null) {
+        expect(after).toBeNull();
+        continue;
+      }
+      expect(grantOf(after!)).toEqual(grantOf(before));
+    }
+    expect(duplicateAnchors(treatment.read2Anchors)).toEqual([]);
+    expect(treatment.read2Anchors).toEqual(control.read2Anchors);
+  });
+
+  it("enforceNoopLoop single-edit flavor (direct call) records nothing — served rows and grants byte-identical", async () => {
+    const run = await runSingleFlavorGuard();
+    expect(run.threw).toBe(true);
+    expect(run.message).toMatch(/E_NOOP_LOOP/);
+    expect(run.servedAfter).toEqual(run.servedBefore);
+    expect(run.leasesAfter).toEqual(run.leasesBefore);
   });
 });
