@@ -366,12 +366,16 @@ real tools:
 
 ```
 pnpm exec vitest run test/core/range-family-retry-truth.test.ts --reporter=verbose
-node test/tools/mutate-ledger.mjs M1    # drop reread at @802 → span-length cell + arch guard RED
-node test/tools/mutate-ledger.mjs M2    # drop reread at @790 → interior cell + arch guard RED
-node test/tools/mutate-ledger.mjs M3    # render the hint unconditionally → formatter cell RED
-node test/tools/mutate-ledger.mjs M4    # restore the read-free E_STALE_ANCHOR remedy → C3 RED
-node test/tools/mutate-ledger.mjs M5    # remove the payload-map field → arch guard RED (+ typecheck)
+node test/tools/mutate-ledger.mjs T4M1    # drop reread at @802 → span-length cell + arch guard RED
+node test/tools/mutate-ledger.mjs T4M2    # drop reread at @790 → interior cell + arch guard RED
+node test/tools/mutate-ledger.mjs T4M3    # render the hint unconditionally → formatter cell RED
+node test/tools/mutate-ledger.mjs T4M4    # restore the read-free E_STALE_ANCHOR remedy → C3 RED
+node test/tools/mutate-ledger.mjs T4M5    # remove the payload-map field → typecheck + arch guard RED
 ```
+
+The T4 ids are prefixed `T4M*` because the T3h ledger above already owns `M1`/`M2`/`M4`; each
+T4 run is the full suite. `T4M5` is reported as typecheck RED first: the runtime payload still
+carries the key (types are erased), so only the declaration oracle and `tsc` can see it.
 
 Line numbers above are scoped to `3f4aca6` (the pre-fix revision the CP0 sweep measured);
 `node test/tools/mutate-ledger.mjs --list` prints the live anchors and expected RED sets.

@@ -43,8 +43,15 @@ const ARCH_SIGNAL = "test/arch/range-family-signal.test.ts";
 const ERROR_CODES = "test/core/error-codes.test.ts";
 const DOMAIN_ERRORS = "src/domain-errors.ts";
 
-/** Revision the expected RED sets below were measured at (see ADR-0018's T3h subsection). */
+/**
+ * Revisions the expected RED sets below were measured at:
+ *  - T3h (`M1`/`M2`/`M4`/`N1`/`Z3b`, contract file): see ADR-0018's T3h subsection.
+ *  - T4 (`T4M1`–`T4M5`, full suite): see ADR-0018's "T4 ledger" subsection.
+ * The T4 ids are prefixed because the T3h ledger already owns `M1`/`M2`/`M4`.
+ */
 const VERIFIED_AT = "ba430557912b8b2934261654d3e09034188d8571";
+/** T4 (T4M1–T4M5) expected RED sets were measured at this revision. */
+const T4_VERIFIED_AT = "ddce82b333a2c6cc5854823de92264971f5e84f2";
 
 const T = {
   twinRecords: "twin rejection records nothing — served rows byte-identical before/after",
@@ -178,7 +185,7 @@ const MUTANTS = {
       },
     ],
   },
-  M1: {
+  T4M1: {
     what: "drop the retry signal at the span-length arm (CP0 G3, SR@802)",
     scope: null, // full suite
     expected: [T4.spanLength, T4.archSites],
@@ -196,7 +203,7 @@ const MUTANTS = {
       },
     ],
   },
-  M2: {
+  T4M2: {
     what: "drop the retry signal at the unserved-interior arm (CP0 H1, SR@790)",
     scope: null, // full suite
     expected: [T4.unservedInterior, T4.archSites],
@@ -214,7 +221,7 @@ const MUTANTS = {
       },
     ],
   },
-  M3: {
+  T4M3: {
     what: "unservedRangeFormat renders the retry hint unconditionally again",
     scope: null, // full suite
     expected: [T4.unservedRule, T4.unservedInterior],
@@ -222,13 +229,24 @@ const MUTANTS = {
       {
         file: DOMAIN_ERRORS,
         old:
+          'function unservedRangeFormat(payload: ErrorPayloadMap["E_UNSERVED_RANGE"]): string {\n' +
+          "  // F7 + T4: heading only when rows exist (all current producers carry a block);\n" +
+          "  // the retry hint obeys `payload.reread` exactly as `staleRangeFormat` does —\n" +
+          "  // one rule for both range codes.\n" +
+          "  if (!payload.servedBlock) return payload.headline;\n" +
           "  const base = `${payload.headline}\\nCurrent range:\\n${payload.servedBlock}`;\n" +
           "  return payload.reread === true ? base : `${base}\\n${RETRY_HINT}`;",
-        new: "  return `${payload.headline}\\nCurrent range:\\n${payload.servedBlock}\\n${RETRY_HINT}`;",
+        new:
+          'function unservedRangeFormat(payload: ErrorPayloadMap["E_UNSERVED_RANGE"]): string {\n' +
+          "  // F7 + T4: heading only when rows exist (all current producers carry a block);\n" +
+          "  // the retry hint obeys `payload.reread` exactly as `staleRangeFormat` does —\n" +
+          "  // one rule for both range codes.\n" +
+          "  if (!payload.servedBlock) return payload.headline;\n" +
+          "  return `${payload.headline}\\nCurrent range:\\n${payload.servedBlock}\\n${RETRY_HINT}`;",
       },
     ],
   },
-  M4: {
+  T4M4: {
     what: "restore the read-free E_STALE_ANCHOR remedy string",
     scope: null, // full suite
     expected: [T4.staleAnchorReread],
@@ -240,7 +258,7 @@ const MUTANTS = {
       },
     ],
   },
-  M5: {
+  T4M5: {
     what: "remove reread?: boolean from ErrorPayloadMap.E_UNSERVED_RANGE only",
     scope: null, // full suite
     expected: [T4.archFields],
@@ -277,13 +295,14 @@ function usage() {
   console.log("");
   console.log(`ids: ${Object.keys(MUTANTS).join(", ")}`);
   console.log("");
-  console.log(`expected RED sets were measured at ${VERIFIED_AT}; anchors assert exactly-once,`);
+  console.log(`T3h expected RED sets measured at ${VERIFIED_AT}; T4 (T4M*) at ${T4_VERIFIED_AT};`);
   console.log("so a drifted tree fails at the anchor check rather than silently mis-running.");
 }
 
 function listMutants() {
   const width = Math.max(...Object.keys(MUTANTS).map((id) => id.length));
-  console.log(`ledger measured at ${VERIFIED_AT}`);
+  console.log(`T3h ledger measured at ${VERIFIED_AT}`);
+  console.log(`T4 ledger measured at ${T4_VERIFIED_AT}`);
   for (const [id, m] of Object.entries(MUTANTS)) {
     const scope = m.scope ? m.scope.join(",") : "--full (full suite)";
     console.log(`${id.padEnd(width)}  RED=${m.expected.length}  scope=${scope}  ${m.what}`);

@@ -17,11 +17,11 @@ import { describe, expect, it } from "vitest";
  * have).
  *
  * NEGATIVE CONTROL (named, per ticket §2 F5): deleting one `reread: true` from a single
- * arm, or one payload-map field, must turn this file RED. That is M1/M2/M5's second
+ * arm, or one payload-map field, must turn this file RED. That is T4M1/T4M2/T4M5's second
  * assertion — run it:
- *   node test/tools/mutate-ledger.mjs M1   # drop the flag at the span-length arm
- *   node test/tools/mutate-ledger.mjs M2   # drop the flag at the unserved-interior arm
- *   node test/tools/mutate-ledger.mjs M5   # remove the payload-map field
+ *   node test/tools/mutate-ledger.mjs T4M1   # drop the flag at the span-length arm
+ *   node test/tools/mutate-ledger.mjs T4M2   # drop the flag at the unserved-interior arm
+ *   node test/tools/mutate-ledger.mjs T4M5   # remove the payload-map field
  *
  * If an arm is ever made retryable, this guard is where the evidence must land.
  */

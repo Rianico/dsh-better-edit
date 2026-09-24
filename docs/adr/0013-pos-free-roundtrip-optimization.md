@@ -132,12 +132,15 @@ The tombstone and the reconciliation are re-derivable from the committed tree:
 
 ```
 pnpm exec vitest run test/core/range-family-retry-truth.test.ts test/arch/range-family-signal.test.ts --reporter=verbose
-node test/tools/mutate-ledger.mjs M1   # span-length arm (CP0 G3 → SR@802): C1 + arch guard RED
-node test/tools/mutate-ledger.mjs M2   # unserved-interior arm (CP0 H1 → SR@790): C2 + arch guard RED
-node test/tools/mutate-ledger.mjs M3   # unconditional hint: C5 (+ C2) RED
-node test/tools/mutate-ledger.mjs M4   # read-free E_STALE_ANCHOR remedy: C3 RED
-node test/tools/mutate-ledger.mjs M5   # payload-map field removed: arch guard RED (+ typecheck)
+node test/tools/mutate-ledger.mjs T4M1   # span-length arm (CP0 G3 → SR@802): C1 + arch guard RED
+node test/tools/mutate-ledger.mjs T4M2   # unserved-interior arm (CP0 H1 → SR@790): C2 + arch guard RED
+node test/tools/mutate-ledger.mjs T4M3   # unconditional hint: C5 + C2 RED
+node test/tools/mutate-ledger.mjs T4M4   # read-free E_STALE_ANCHOR remedy: C3 RED
+node test/tools/mutate-ledger.mjs T4M5   # payload-map field removed: typecheck + arch guard RED
 ```
+
+The T4 ids are prefixed `T4M*` because the T3h ledger already owns `M1`/`M2`/`M4`. Each T4
+run is the full suite; the ledger prints both summary lines and asserts the expected RED set.
 
 The raw G3/H1 tool-path sweeps that measured the echo-retry rejection are the handoff
 evidence `.lsz/tmp/handoff/T4/evidence/CP1-sweep-G1-G10-HEAD.txt` (G3) and
