@@ -4,7 +4,14 @@ Date: 2026-09-01
 
 ## Status
 
-accepted; **partially superseded by [ADR-0018](0018-exact-position-served-span-verification.md)** — §1 (epoch not pos), §3 (concurrency fallback) and §4 (non-overlapping forever is pos-free) are **reversed**: the position check is now unconditional and `strictPos` is read by nothing. §2 (tombstone, allocation invariant) **survives**. This ADR's `## Considered Options` rejected "strict pos always" for its re-read tax, which is what shipped; see ADR-0018's "Behaviour change" for the measured cost and for the routes that are unchanged.
+accepted; **partially superseded by [ADR-0018](0018-exact-position-served-span-verification.md) and [ADR-0019](0019-lease-identity-served-span-resolution.md)**.
+
+- **§1 (epoch not pos) — dead.** The epoch pin (`served.snapshotId`, `loadEpochSnapshotId`, its writer and readers) was deleted in T3c CP1-r1 (`6272e09`) as write-only state; position trust now comes from line identity, not from an epoch comparison. Backing: `rg -n 'strictPos|EpochSnapshotId|epochSnapshotId|curSnapshotId' src/ test/ tests/` → 0 hits.
+- **§2 (tombstone / allocation invariant) — survives.**
+- **§3 (concurrency fallback) — never shipped in dsh, now removed.** The automatic `changed ∩ [L,R]` strictness existed only as the unread `strictPos`; ADR-0018 measured that the position check was already unconditional.
+- **§4 (non-overlapping forever is pos-free) — the outcome is restored via identity**: exterior drift no longer aborts a non-overlapping edit, by a stronger instrument rather than by dropping the position check. Backing: `tests/51-epoch-strict.test.ts` and `test/core/lease-resolve-seam.test.ts` (a benign shift applies at its rebased coordinate, asserting the exact resulting bytes).
+
+This ADR's `## Considered Options` rejected "strict pos always" for its re-read tax, which is what ADR-0018 shipped; ADR-0019 removes that tax on the benign-shift route. See ADR-0018's "Behaviour change" for the measured cost and for the routes that are unchanged.
 
 ## Context
 

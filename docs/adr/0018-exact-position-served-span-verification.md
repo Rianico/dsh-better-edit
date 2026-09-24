@@ -1,7 +1,7 @@
 # ADR-0018 — Exact-position served-span verification, fail closed
 
 Date: 2026-09-24
-Status: accepted; supersedes [ADR-0004](0004-orphaned-serve-healing.md)
+Status: accepted; supersedes [ADR-0004](0004-orphaned-serve-healing.md); amended by [ADR-0019](0019-lease-identity-served-span-resolution.md)
 Related: `src/hashline/anchor-pipeline.ts` (`verifyServedRange`), `src/session-view.ts`
 (`_mergeServedRows`), `src/domain-errors.ts` (`E_STALE_RANGE`, `E_UNSERVED_RANGE`),
 `docs/adr/0004-orphaned-serve-healing.md`, upstream ADR `content-addressed-line-identity-mvcc`
@@ -115,6 +115,13 @@ checkpoint that widens it. That is the affirmative reason the unconditional posi
   lease-derived position trust, and to resolve the `epochSnapshotId`/`curSnapshotId` interface
   fields (`anchor-pipeline.ts:593-594`) and their `applyEdit` passthrough (`:1043-1045`).
   **Anything still computed-but-unread after T3c is a blocking finding for T3c.**
+
+  **Discharged in T3c.** `strictPos` and the `epochSnapshotId`/`curSnapshotId` interface fields were
+  deleted in CP1-r1 (`6272e09`) — `rg -n 'strictPos|EpochSnapshotId|epochSnapshotId|curSnapshotId' src/ test/ tests/`
+  → 0 hits — and the position check is no longer the sole staleness instrument on
+  the live edit path: [ADR-0019](0019-lease-identity-served-span-resolution.md) replaces it with line
+  identity wherever a `LeaseSpanSource` exists, and keeps it as the fallback everywhere else. The
+  paragraph above is left as written.
 
 ## Relationship to upstream
 

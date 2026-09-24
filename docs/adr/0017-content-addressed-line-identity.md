@@ -1,7 +1,7 @@
 # ADR-0017 — Content-Addressed Line Identity
 
 Date: 2026-09-23
-Status: accepted
+Status: accepted; **superseded in part by [ADR-0019](0019-lease-identity-served-span-resolution.md)** — the pairing rule, see the Amendment below
 Related: `src/snapshot-store/lineage-store.ts`, `src/hash-store.ts`
 (`getSnapshot`, `buildStore`), `docs/adr/0016-store-version-flap-guard.md`
 
@@ -12,7 +12,7 @@ a lease that names only an anchor cannot survive the edit it is supposed to
 track. Upstream solves this with content-addressed line identity plus MVCC
 (upstream ADR `content-addressed-line-identity-mvcc`, and the
 upstream ADR-0016/0022/0023 lineage); T7 reconciles numbering/parity work —
-the patience engine itself is deliberately not ported here (see Decision).
+the patience engine itself is deliberately not ported here (see Decision). **[False as of T3c CP1-r2 — see the Amendment below.]**
 
 ## Decision
 
@@ -39,6 +39,9 @@ Line identity is content-addressed and append-only:
   upsert. Divergence from upstream is deliberate: upstream pairs by patience
   LCS, we pair by canonical form — simpler, deterministic, no
   iteration-order dependence.
+  **[Superseded by [ADR-0019](0019-lease-identity-served-span-resolution.md) — see the Amendment
+  below: the patience/LIS engine is ported, and an ambiguous interval pairs nothing.]** The text above
+  is left as written.
 - **One digest definition.** `canonDigest(line) = String(xxh32(canon(line)))`
   is the single definition of `served_leases.canon_hash` /
   `line_lineage.canon_hash`; leases carry the digest, and every canon
@@ -61,6 +64,29 @@ Line identity is content-addressed and append-only:
   applies to the fallback only). Lineage-first is correct only because the adopt
   refresh keeps it live; the legacy row overwrites per hash and cannot serve as the
   identity source. Cross-path scans stay on the legacy table this round.
+
+## Amendment (2026-09-24) — the patience engine is ported; ambiguous intervals pair nothing
+
+Superseded in part by [ADR-0019](0019-lease-identity-served-span-resolution.md). The historical text
+above is annotated, not rewritten.
+
+- **`:15` is false now.** The patience engine **is** ported: `src/snapshot-store/pairing.ts` is a
+  verbatim port of upstream `pi-better-edit@00f8c34 src/hashline/patience-pairing.ts` — `diff -u`
+  against upstream reports only the added `@module` tag. Its 30 upstream oracles
+  live in `test/core/pairing.test.ts`.
+- **Rule (3) is superseded.** An ambiguous/duplicate interval pairs **nothing**; the current line takes
+  a fresh id. Pinned by `test/core/lineage-store.test.ts`: "duplicate canon pairs nothing — the current
+  line takes a fresh id" (`[4]`, where the FIFO rule produced `[2]`), "a bare symmetric swap retires
+  both lines" (`[3,4]`), "a duplicate exterior insert leaves the duplicated identity unpaired"
+  (`[4,5,2,3]`).
+- **Why it had to change, measured.** On the two-rule FIFO pairing the deleted-twin contract fixture
+  handed the surviving twin the deleted line's `line_id` (lineage `[1,3,4,5,2,7]`); the engine leaves it
+  unpaired (`[1,3,4,5,6,7]`). Pinned by `test/core/lineage-store.test.ts` ("the deleted twin does not
+  inherit the deleted line's lineId (contract fixture)"). That difference is what makes ADR-0019's
+  look-alike-rebind rejection hold.
+- **What did not change.** Tables, key derivation, the adopt-no-allocate rule, the anchor refresh, the
+  named-snapshot binding and the one-digest definition above all stand; the engine replaced only the
+  pairing rule.
 
 ## Non-changes recorded
 
