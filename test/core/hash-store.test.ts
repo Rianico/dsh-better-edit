@@ -1850,6 +1850,94 @@ it("edits to a shape-corrupt path keep succeeding after the row heals", async ()
   });
 });
 
+it("getFileUndo propagates infrastructure failures instead of healing the pair away", async () => {
+  await withTempHome(async (home) => {
+    const { saveUndo } = await import("../../src/undo-edit.js");
+    const path = "/busy-undone.ts";
+
+    // Fault injection with no production seam: wrap `prepare` and give ONLY the
+    // `file_undo` SELECT a throwing `get`. A blanket `StatementSync.prototype.get` spy
+    // would not discriminate — `saveUndo` reads the legacy pair first (`readUndo` before
+    // `readFileUndo`), so it would fail before ever reaching `getFileUndo`.
+    const realPrepare = DatabaseSync.prototype.prepare;
+    let failFileUndoGet = false;
+    const busy = () => Object.assign(new Error("database is locked"), { errcode: 5 });
+    const prepareSpy = vi.spyOn(DatabaseSync.prototype, "prepare").mockImplementation(function (
+      this: DatabaseSync,
+      sql: string,
+    ) {
+      const stmt = realPrepare.call(this, sql);
+      if (/FROM file_undo WHERE path = \?/.test(sql)) {
+        const realGet = stmt.get.bind(stmt);
+        stmt.get = (...args: Parameters<typeof realGet>) => {
+          if (failFileUndoGet) throw busy();
+          return realGet(...args);
+        };
+      }
+      return stmt;
+    });
+
+    try {
+      expect(
+        (
+          await saveUndo(path, {
+            content: "a\n",
+            bom: "",
+            originalEnding: "\n",
+            hashes: ["H01"],
+            resultContent: "b\n",
+          })
+        ).persisted,
+      ).toBe(true);
+      const internal = (await loadHashStore()) as unknown as InternalHashStore;
+      expect(internal.getFileUndo(path)).toBeDefined();
+
+      // Collect all three consequences into ONE assertion so a regression reports every
+      // symptom at once instead of aborting on the first.
+      failFileUndoGet = true;
+      let threw = false;
+      let value: unknown;
+      try {
+        value = internal.getFileUndo(path);
+      } catch {
+        threw = true;
+      }
+
+      // The heal must NOT have run — a live pair is still on disk. A blanket catch would
+      // have deleted both sides here.
+      failFileUndoGet = false;
+      const check = new DatabaseSync(sqlitePath(home));
+      const count = (table: string) =>
+        check.prepare(`SELECT COUNT(*) AS n FROM ${table} WHERE path = ?`).get(path)?.["n"];
+      const pair = { fileUndo: count("file_undo"), undo: count("undo") };
+      check.close();
+
+      // Through the real route the edit aborts rather than reporting a write whose prior
+      // state it could not durably determine.
+      failFileUndoGet = true;
+      const after = (
+        await saveUndo(path, {
+          content: "b\n",
+          bom: "",
+          originalEnding: "\n",
+          hashes: ["H02"],
+          resultContent: "c\n",
+        })
+      ).persisted;
+
+      expect({ threw, value, pair, after }).toEqual({
+        threw: true,
+        value: undefined,
+        pair: { fileUndo: 1, undo: 1 },
+        after: false,
+      });
+    } finally {
+      failFileUndoGet = false;
+      prepareSpy.mockRestore();
+    }
+  });
+});
+
 it("restore puts the prior v7 row back content-identical with a fresh pair stamp", async () => {
   await withTempHome(async (home) => {
     const { saveUndo } = await import("../../src/undo-edit.js");

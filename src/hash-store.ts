@@ -917,6 +917,13 @@ function makeDomainStore(
           updatedAt: row.updated_at,
         };
       } catch (error) {
+        // Shape corruption (`mapFileUndoRow` throws `TypeError`) and payload corruption
+        // (`JSON.parse` throws `SyntaxError`) heal; infrastructure failures (BUSY, IO)
+        // must propagate, because swallowing one would delete a live pair and let
+        // `saveUndo` report `persisted: true` — undo silently destroyed, caller told it
+        // succeeded. Fail loud, never fail silent.
+        const healable = error instanceof TypeError || error instanceof SyntaxError;
+        if (!healable) throw error;
         undoPairDeleteImpl(path);
         return undefined;
       }
