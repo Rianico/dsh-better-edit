@@ -412,11 +412,21 @@ export async function execute(opts: {
     totalRemovedLines: fileResult.totalRemovedLines,
   });
 
-  const recordIfNeeded = async (built: ReturnType<typeof buildBatchResult>) => {
+  // The serve write is a SECOND unit, deliberately outside the committed pair: a fault there must
+  // not roll the edit back. But it decides whether the diff's anchors are usable, so the claim is
+  // made only when the serve landed. Same vocabulary as the undo warning (src/tool-undo.ts).
+  const serveNotRecordedNotice =
+    "WARNING: the edit applied and stands \u2014 nothing was rolled back \u2014 but the edited rows " +
+    "were NOT recorded as served. The diff's `HASH\u2502` rows above are NOT usable anchors and no " +
+    "edit can be based on them. Re-read the file before the next edit.";
+  const withServeNotice = (text: string, serveLanded: boolean): string =>
+    serveLanded ? text : `${text}\n\n${serveNotRecordedNotice}`;
+
+  const recordIfNeeded = async (built: ReturnType<typeof buildBatchResult>): Promise<boolean> => {
     if (built.details.servedRows && built.details.servedRows.length > 0) {
       const entry = built.details.servedByPath?.[0];
       if (entry) {
-        await recordServedTruncated(
+        return recordServedTruncated(
           sessionKey,
           fileResult.absolutePath,
           entry.servedRows,
@@ -427,6 +437,8 @@ export async function execute(opts: {
         );
       }
     }
+    // Nothing to record, so nothing can fail: vacuously landed.
+    return true;
   };
 
   const isSingleCall = items.length === 1 && fileResult.appliedCount + fileResult.noopCount === 1;
@@ -434,8 +446,8 @@ export async function execute(opts: {
   if (isSingleCall) {
     if (fileResult.appliedCount === 0) {
       const built = buildBatchResult([toSection()]);
-      await recordIfNeeded(built);
-      return built.content[0]!.text;
+      const serveLanded = await recordIfNeeded(built);
+      return withServeNotice(built.content[0]!.text, serveLanded);
     }
     await commitSingle({
       io,
@@ -458,8 +470,8 @@ export async function execute(opts: {
         formatError("E_UNDO_UNAVAILABLE", { path: displayPath }),
     });
     const built = buildBatchResult([toSection()]);
-    await recordIfNeeded(built);
-    return built.content[0]!.text;
+    const serveLanded = await recordIfNeeded(built);
+    return withServeNotice(built.content[0]!.text, serveLanded);
   }
 
   if (fileResult.appliedCount === 0 && fileResult.noopCount > 0) {
@@ -488,8 +500,8 @@ export async function execute(opts: {
   }
 
   const built = buildBatchResult([toSection()]);
-  await recordIfNeeded(built);
-  return built.content[0]!.text;
+  const serveLanded = await recordIfNeeded(built);
+  return withServeNotice(built.content[0]!.text, serveLanded);
 }
 
 /** Apply a single edit — owns read→normalize→loadServed→applyOne→stableRehash→drift. */

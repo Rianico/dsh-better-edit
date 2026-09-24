@@ -2,6 +2,14 @@ import { describe, expect, it, vi } from "vitest";
 import { readFile } from "node:fs/promises";
 import { withTempFile, setupIntegrationTest, getText } from "../support/fixtures.js";
 import { loadHashStore, type InternalHashStore } from "../../src/hash-store.js";
+import { readAndServe } from "../../src/read-and-serve.js";
+import { withWorkspace } from "../../src/workspace-context.js";
+import {
+  EDIT_DESCRIPTION,
+  EDIT_GUIDANCE,
+  UNDO_GUIDANCE,
+  type ToolGuidance,
+} from "../../src/prompts.js";
 
 /**
  * The edit path's serve claim (T3d CP1).
@@ -181,6 +189,163 @@ describe("edit serve claim — the anchors the result advertises", () => {
         toolPromisesFreshAnchors: true,
         fileAfter: "a\nB\nc\n",
       });
+    });
+  });
+});
+
+/** The one guidance bullet that carries `needle`, or a loud failure when it moved. */
+function guidanceLine(guidance: ToolGuidance, needle: string): string {
+  const line = guidance.lines.find((candidate) => candidate.includes(needle));
+  if (line === undefined) throw new Error(`no guidance line containing ${needle}`);
+  return line;
+}
+
+/** The anchors a read served: its `HASH│content` rows. */
+function shownAnchorsFromReadText(text: string): string[] {
+  const anchors: string[] = [];
+  for (const line of text.split("\n")) {
+    const match = /^([A-Za-z0-9]{3})│/.exec(line);
+    if (match?.[1] !== undefined) anchors.push(match[1]);
+  }
+  return anchors;
+}
+
+describe("guidance — the anchor claim is conditional on the serve", () => {
+  it("makes the edit guidance and description conditional", () => {
+    // Asserted on the guidance string itself: the result cell's fields are derived from the
+    // notice, so they cannot prove the guidance stopped promising unconditionally.
+    const line = guidanceLine(EDIT_GUIDANCE, "fresh anchors");
+    expect({
+      namesNotRecorded: /NOT recorded as served/.test(line),
+      namesReread: /[Rr]e-read/.test(line),
+      promisesNoReread: /no need to re-read/.test(line),
+      conditionalMarker: /unless|if the result/.test(line),
+      descriptionWithinBound: EDIT_DESCRIPTION.length < 800,
+      descriptionNamesNotRecorded: /NOT recorded as served/.test(EDIT_DESCRIPTION),
+      descriptionNamesReread: /[Rr]e-read/.test(EDIT_DESCRIPTION),
+    }).toEqual({
+      namesNotRecorded: true,
+      namesReread: true,
+      promisesNoReread: false,
+      conditionalMarker: true,
+      descriptionWithinBound: true,
+      descriptionNamesNotRecorded: true,
+      descriptionNamesReread: true,
+    });
+  });
+
+  it("makes the undo guidance conditional", () => {
+    const line = guidanceLine(UNDO_GUIDANCE, "fresh anchors for follow-up edits");
+    expect({
+      namesNotRecorded: /NOT recorded as served/.test(line),
+      namesReread: /[Rr]e-read/.test(line),
+      conditionalMarker: /unless/.test(line),
+    }).toEqual({ namesNotRecorded: true, namesReread: true, conditionalMarker: true });
+  });
+});
+
+describe("read serve claim — the anchors the result shows", () => {
+  it("downgrades the anchor claim when the serve write fails", async () => {
+    await withTempFile("t.txt", "a\nb\nc\n", async ({ cwd, path }) => {
+      const harness = setupIntegrationTest(cwd);
+      const abs = await harness.io.resolve("t.txt", cwd, new AbortController().signal);
+      const store = (await loadHashStore(cwd)) as InternalHashStore;
+
+      // The fault is installed BEFORE the first read: this is the read's only serve write.
+      const upsert = vi.spyOn(store, "upsertServed").mockImplementation(() => {
+        throw new Error("injected: read serve fault");
+      });
+      let text: string;
+      try {
+        text = getText(await harness.readTool.execute("read", { path: "t.txt" }));
+      } finally {
+        upsert.mockRestore();
+      }
+
+      const shown = shownAnchorsFromReadText(text);
+      const servedAnchors = store.getAnchorReservations(harness.sessionKey, abs).reservedHashes;
+      const endState = {
+        shownRows: shown.length,
+        shownAnchorsServed:
+          shown.length === 0 ? "n/a" : shown.every((anchor) => servedAnchors.has(anchor)),
+        warnsNotRecorded: namesPartialFailure(text),
+        fileAfter: await readFile(path, "utf-8"),
+        followUpEdit: "not-attempted" as string,
+      };
+      if (shown[0] !== undefined) endState.followUpEdit = await editOutcome(harness, shown[0]);
+
+      expect(endState).toEqual({
+        shownRows: 3,
+        // The serve really did fail — the shown anchors are not in the served set.
+        shownAnchorsServed: false,
+        warnsNotRecorded: true,
+        // A read never fails on a bookkeeping fault: the rows are still shown.
+        fileAfter: "a\nb\nc\n",
+        followUpEdit: "rejected",
+      });
+    });
+  });
+
+  it("keeps the anchor claim intact when the serve write lands", async () => {
+    await withTempFile("t.txt", "a\nb\nc\n", async ({ cwd }) => {
+      const harness = setupIntegrationTest(cwd);
+      const abs = await harness.io.resolve("t.txt", cwd, new AbortController().signal);
+      const store = (await loadHashStore(cwd)) as InternalHashStore;
+      const text = getText(await harness.readTool.execute("read", { path: "t.txt" }));
+      const shown = shownAnchorsFromReadText(text);
+      const servedAnchors = store.getAnchorReservations(harness.sessionKey, abs).reservedHashes;
+
+      expect({
+        shownRows: shown.length,
+        shownAnchorsServed: shown.length > 0 && shown.every((anchor) => servedAnchors.has(anchor)),
+        warnsNotRecorded: namesPartialFailure(text),
+      }).toEqual({ shownRows: 3, shownAnchorsServed: true, warnsNotRecorded: false });
+    });
+  });
+});
+
+describe("readAndServe boundary — the notice must reach the text channel", () => {
+  // `tool-read` renders `warning` and `text`; `src/write-hook.ts` renders `text` only and is
+  // frozen. So the tool-level cells above cannot see a notice parked in `warning` — these do.
+  it("puts the notice in the returned text when the serve write fails", async () => {
+    await withTempFile("t.txt", "a\nb\nc\n", async ({ cwd }) => {
+      const harness = setupIntegrationTest(cwd);
+      const store = (await loadHashStore(cwd)) as InternalHashStore;
+      const upsert = vi.spyOn(store, "upsertServed").mockImplementation(() => {
+        throw new Error("injected: read serve fault");
+      });
+      let result: Awaited<ReturnType<typeof readAndServe>>;
+      try {
+        // `withWorkspace` mirrors what the tool wrapper does around `execute`: `recordServed`
+        // resolves its store from the active workspace, so a bare call would hit another store
+        // and the fault would never reach it.
+        result = await withWorkspace(cwd, () =>
+          readAndServe(harness.io, "t.txt", cwd, { sessionKey: harness.sessionKey }),
+        );
+      } finally {
+        upsert.mockRestore();
+      }
+
+      expect({
+        textNamesNotRecorded: /NOT recorded as served/.test(result.text),
+        textNamesReread: /[Rr]e-read/.test(result.text),
+        shownRows: shownAnchorsFromReadText(result.text).length,
+      }).toEqual({ textNamesNotRecorded: true, textNamesReread: true, shownRows: 3 });
+    });
+  });
+
+  it("keeps the returned text clean when the serve write lands", async () => {
+    await withTempFile("t.txt", "a\nb\nc\n", async ({ cwd }) => {
+      const harness = setupIntegrationTest(cwd);
+      const result = await withWorkspace(cwd, () =>
+        readAndServe(harness.io, "t.txt", cwd, { sessionKey: harness.sessionKey }),
+      );
+
+      expect({
+        textNamesNotRecorded: /NOT recorded as served/.test(result.text),
+        textNamesReread: /[Rr]e-read/.test(result.text),
+        shownRows: shownAnchorsFromReadText(result.text).length,
+      }).toEqual({ textNamesNotRecorded: false, textNamesReread: false, shownRows: 3 });
     });
   });
 });

@@ -29,6 +29,15 @@ import type { ServedRow } from "./hashline/anchor-pipeline.js";
 export const UTF8_REWRITE_NOTE =
   "[Non-UTF-8 bytes shown as U+FFFD; editing rewrites the file as UTF-8.]";
 
+/**
+ * Appended when the read's serve write did not land: the rows are shown, but their anchors are not
+ * usable for editing. Goes in `text`, not `warning` — `tool-read` renders both, but the write hook
+ * (`src/write-hook.ts`) renders `text` only, and both consumers must see the downgrade.
+ */
+const SERVE_NOT_RECORDED_NOTE =
+  "WARNING: the rows above were NOT recorded as served — their `HASH│` anchors are NOT " +
+  "usable for editing. Re-read the file to re-sync before editing.";
+
 export interface ReadAndServeOptions {
   encoding?: string;
   /** The session whose served rows these lines belong to. */
@@ -125,8 +134,13 @@ export async function readAndServe(
         store.clearRetiredAnchors(sessionKey, absolutePath);
         try {
           store.clearCards(sessionKey, absolutePath);
-        } catch {}
-      } catch {}
+        } catch {
+          // Best-effort: card state is a cache; the promotion retry below proceeds without it.
+        }
+      } catch {
+        // Best-effort: a store fault here must not fail the read — the retry proceeds on the
+        // in-memory reservation state (ADR-0020 R2, promotion/wipe arm).
+      }
       // Soft promotion notice: plain non-header text (no [E_] code, no audience).
       promotionWarning = `Anchor space exhausted (retired ${retiredCount} + served ${servedCount} = ${reservedCount} of ${HASH_SPACE}); promotion cleared retired — re-read recommended, stale-anchor checks degraded until next full read.`;
       // Retry ignoring retired (served only) — also drop removedHashes from previous
@@ -147,6 +161,7 @@ export async function readAndServe(
       throw e;
     }
   }
+  let servedLanded = true;
   if (view.served.length > 0) {
     const canons = splitLines(view.normalized).map((l) => canon(l));
     const canonServed = canons.map((canonText) => canonText as string | null);
@@ -155,11 +170,17 @@ export async function readAndServe(
     for (let i = 0; i < view.hashes.length; i++) {
       fullCanons.push(canons[i] ?? null);
     }
-    await recordServed(sessionKey, view.absolutePath, view.served, view.hashes.length, {
-      hashes: view.hashes,
-      canons: fullCanons,
-      content: view.normalized,
-    });
+    servedLanded = await recordServed(
+      sessionKey,
+      view.absolutePath,
+      view.served,
+      view.hashes.length,
+      {
+        hashes: view.hashes,
+        canons: fullCanons,
+        content: view.normalized,
+      },
+    );
   }
   // #69: epoch lifecycle belongs to full reads — a partial (paged or
   // truncated) read merges window rows only and must not clear the
@@ -178,7 +199,11 @@ export async function readAndServe(
       ? `${promotionWarning}\n${autoWarning}`
       : promotionWarning
     : autoWarning;
-  const text = view.hadUtf8DecodeErrors ? `${view.text}\n\n${UTF8_REWRITE_NOTE}` : view.text;
+  const baseText = view.hadUtf8DecodeErrors ? `${view.text}\n\n${UTF8_REWRITE_NOTE}` : view.text;
+  // The serve write is a second unit: a fault there must not fail the read, but it does decide
+  // whether the anchors above are usable — so the claim is downgraded in the one channel both
+  // consumers render.
+  const text = servedLanded ? baseText : `${baseText}\n\n${SERVE_NOT_RECORDED_NOTE}`;
   return {
     text,
     served: view.served,

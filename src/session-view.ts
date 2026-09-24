@@ -272,14 +272,23 @@ function grantServeLeases(
   internal.commitSnapshot({ path, content, hashes: [...hashes], leases: { sessionKey, rows } });
 }
 
+/**
+ * Record a serve — the `served` row merge and the lease grant derived from it — as ONE unit, and
+ * report whether it landed.
+ *
+ * `false` means the write rolled back and no lease was granted, so the caller must not advertise
+ * the rows' anchors as usable: that is a partial failure of the caller's operation, not a failed
+ * operation. The best-effort contract is unchanged — this never throws.
+ */
 export async function recordServed(
   sessionKey: string,
   path: string,
   rows: ServedEntry[],
   lineCount?: number,
   full?: FullReadContext,
-): Promise<void> {
-  if (rows.length === 0) return;
+): Promise<boolean> {
+  // Nothing to record, so nothing can fail: vacuously landed.
+  if (rows.length === 0) return true;
   try {
     const store = await loadServedStore();
     const isFullRead =
@@ -326,8 +335,10 @@ export async function recordServed(
       // Pair #6: the lease grant and the `served` row it derives from are ONE unit.
       grantServeLeases(store, sessionKey, path, rows, full?.hashes, full?.content);
     });
+    return true;
   } catch (error) {
     console.error("Failed to record served rows:", error);
+    return false;
   }
 }
 
@@ -337,8 +348,8 @@ export async function recordServed(
  *
  * `false` means the write rolled back and no lease was granted, so the caller must not advertise
  * the rows' anchors as usable: that is a partial failure of the caller's operation, not a failed
- * operation. The best-effort contract is unchanged — this never throws, and the read/edit callers
- * ignore the value.
+ * operation. The best-effort contract is unchanged — this never throws; the callers decide what
+ * to advertise.
  */
 export async function recordServedTruncated(
   sessionKey: string,
