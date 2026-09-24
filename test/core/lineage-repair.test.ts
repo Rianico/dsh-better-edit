@@ -305,4 +305,55 @@ describe("CP2 — corrupt lineage", () => {
       snapshotRows: 1,
     });
   });
+  it("keeps the canon repair one-shot: the next two adopts are no-ops", () => {
+    const db = new DatabaseSync(":memory:");
+    const lineage: LineageStore = createLineageStore(db);
+    const content = "alpha\nbeta";
+    const hash = snapshotHashFor(content);
+    const trueCanons = splitLines(content).map((line) => canonDigest(line));
+
+    // 1. Commit (ids 1,2), then corrupt the stored canon out of band — count and numbering
+    //    stay intact, so only the canon arm can tell this family is unusable.
+    lineage.commitSnapshot({ path: "/i.ts", content, hashes: ["A0", "A1"] });
+    db.exec("UPDATE line_lineage SET canon_hash = 'deadbeef'");
+
+    // 2. Adopt the same (path, content) three times in a row, counting the warnings per
+    //    adopt. A repair that wrote the DISCARDED canon instead of the fresh one would
+    //    diagnose and repair again on every adopt: a silent repair loop.
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    lineage.commitSnapshot({ path: "/i.ts", content, hashes: ["A0", "A1"] });
+    const firstAdoptWarns = warn.mock.calls.length;
+    lineage.commitSnapshot({ path: "/i.ts", content, hashes: ["A0", "A1"] });
+    const secondAdoptWarns = warn.mock.calls.length - firstAdoptWarns;
+    lineage.commitSnapshot({ path: "/i.ts", content, hashes: ["A0", "A1"] });
+    const thirdAdoptWarns = warn.mock.calls.length - firstAdoptWarns - secondAdoptWarns;
+    warn.mockRestore();
+
+    // State is read AFTER the spy is restored, as the neighbouring canon cell does.
+    const after = lineage.lineageFor("/i.ts", hash);
+    expect({
+      firstAdoptWarns,
+      secondAdoptWarns,
+      thirdAdoptWarns,
+      canonsOk: after.every((row, index) => row.canonHash === trueCanons[index]),
+      // Adopts 2 and 3 are no-ops: they must not re-materialize, so the ids do not move.
+      ids: after.map((row) => row.lineId),
+      numbering: after.map((row) => row.lineNumber),
+      snapshotRows: countRows(
+        db,
+        "SELECT COUNT(*) AS n FROM file_snapshots WHERE path = ?",
+        "/i.ts",
+      ),
+      lineageRows: after.length,
+    }).toEqual({
+      firstAdoptWarns: 1,
+      secondAdoptWarns: 0,
+      thirdAdoptWarns: 0,
+      canonsOk: true,
+      ids: [3, 4],
+      numbering: [1, 2],
+      snapshotRows: 1,
+      lineageRows: 2,
+    });
+  });
 });
