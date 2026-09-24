@@ -14,7 +14,6 @@
 
 import type { FileIO } from "../fs-bridge.js";
 import { loadHashStore, type HashStore, type InternalHashStore } from "../hash-store.js";
-import { snapshotHashFor } from "../snapshot-store/lineage-store.js";
 import type { LineEnding } from "../edit-diff.js";
 import { loadConfig } from "../store-config.js";
 import { canon } from "../hashline/hash-assign.js";
@@ -635,7 +634,6 @@ export function makeLeaseSource(
     const internal = store as unknown as InternalHashStore;
     const positions = internal.positionsByIdentity(absolutePath, content);
     return {
-      currentSnapshotHash: snapshotHashFor(content),
       leaseFor: (anchor) => {
         const lease = internal.leaseFor(sessionKey, absolutePath, anchor);
         if (lease === undefined) return undefined;

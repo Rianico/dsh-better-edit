@@ -1,19 +1,24 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { DatabaseSync } from "node:sqlite";
 import { join } from "node:path";
 import {
   canon,
   lineHashesPure,
   ServedRejectionError,
   verifyServedRange,
+  verifyRebasedSpan,
   type LeaseSpanSource,
 } from "../../src/hashline/index.js";
 import { initHasher } from "../../src/hashline/hasher.js";
 import { loadHashStore, shutdownHashStore } from "../../src/hash-store.js";
 import { execPipeline } from "../../src/mutation.js";
+import { makeLeaseSource } from "../../src/mutation/engine.js";
+import { loadServed, loadServedCanons } from "../../src/session-view.js";
+import { hashStorePath } from "../../src/store-tenancy.js";
 import { readAndServe } from "../../src/read-and-serve.js";
 import { localIO } from "../../src/fs-bridge.js";
-import { codeOf } from "../../src/utils.js";
+import { codeOf, splitLines } from "../../src/utils.js";
 import { extractHash, getText, setupIntegrationTest, withTempFile } from "../support/fixtures.js";
 
 beforeAll(async () => {
@@ -33,6 +38,17 @@ const CONTENT = LINES.join("\n") + "\n";
 const INSERT_ABOVE = `prepended\n${CONTENT}`;
 /** The served span shifted up: the line above it was deleted out of band. */
 const DELETE_ABOVE = `gone\n${CONTENT}`;
+
+/** The T3a contract fixture: two byte-identical lines, the first externally deleted. */
+const TWIN_CONTENT_A =
+  "export function alpha() {\n" +
+  "  return compute(value);\n" +
+  "}\n" +
+  "\n" +
+  "export function beta() {\n" +
+  "  return compute(value);\n" +
+  "}\n";
+const TWIN_CONTENT_B = TWIN_CONTENT_A.replace("  return compute(value);\n", "");
 
 function anchorOfRendered(text: string, line: string): string {
   return extractHash(
@@ -200,7 +216,6 @@ describe("verifyRebasedSpan — the gate's arms", () => {
       [12, 2],
     ]);
     return {
-      currentSnapshotHash: "C",
       leaseFor: (anchor) => {
         const lineId = lineIds[anchor];
         if (lineId === undefined) return undefined;
@@ -253,7 +268,6 @@ describe("verifyRebasedSpan — the gate's arms", () => {
 
   it("rejects when the served row holds no lease (a serve predating lease granting)", () => {
     const unleased: LeaseSpanSource = {
-      currentSnapshotHash: "C",
       leaseFor: () => undefined,
       rebasedLineOf: () => 1,
     };
@@ -270,5 +284,190 @@ describe("verifyRebasedSpan — the gate's arms", () => {
     expect(codeOfCall(() => verify(leaseSource({ retired: true })))).toBe("E_STALE_RANGE");
     expect(SERVED).toEqual(before);
     expect(SERVED_CANONS).toEqual([canon("gone"), ...FILE_LINES.map((line) => canon(line))]);
+  });
+
+  it("fails closed on a null row inside the window — the gate is directly callable", () => {
+    // A three-row window whose middle row is null. The other two hold valid leases that resolve to
+    // their own coordinates, so the null row is the ONLY rejecting condition — with `continue` the
+    // call returns undefined and this goes red.
+    const holed: (string | null)[] = [
+      "hGone",
+      FILE_HASHES[0]!,
+      null,
+      FILE_HASHES[2]!,
+      FILE_HASHES[3]!,
+    ];
+    const holedIds: Record<string, number> = { [FILE_HASHES[0]!]: 11, [FILE_HASHES[2]!]: 13 };
+    const holedPositions = new Map([
+      [11, 1],
+      [13, 3],
+    ]);
+    const holedSource: LeaseSpanSource = {
+      leaseFor: (anchor) => {
+        const lineId = holedIds[anchor];
+        if (lineId === undefined) return undefined;
+        return {
+          lineId,
+          servedLineNumber: lineId - 9,
+          servedSnapshotHash: "S",
+          retiredAt: null,
+        };
+      },
+      rebasedLineOf: (lineId) => holedPositions.get(lineId),
+    };
+    let thrown: unknown;
+    try {
+      verifyRebasedSpan({
+        served: holed,
+        servedStart: 2,
+        servedEnd: 4,
+        rebasedStart: 1,
+        rebasedEnd: 3,
+        leaseSource: holedSource,
+        echo: "echo-block",
+        echoRows: [{ position: 0, hash: FILE_HASHES[0]! }],
+        where: " in x.ts",
+      });
+    } catch (error) {
+      thrown = error;
+    }
+    // Falsifier: restore `continue` in the guard and this goes RED (the call returns undefined).
+    expect(thrown).toBeInstanceOf(ServedRejectionError);
+    const error = thrown as ServedRejectionError;
+    expect(codeOf(error)).toBe("E_STALE_RANGE");
+    expect(error.servedRows.length).toBeGreaterThan(0);
+    expect(String(error.message)).not.toContain("Retry with these anchors");
+  });
+
+  it("rejects a window whose served and rebased lengths disagree", () => {
+    let thrown: unknown;
+    try {
+      verifyRebasedSpan({
+        served: SERVED,
+        servedStart: 2,
+        servedEnd: 2,
+        rebasedStart: 1,
+        rebasedEnd: 2,
+        leaseSource: leaseSource(),
+        echo: "echo-block",
+        echoRows: [{ position: 0, hash: FILE_HASHES[0]! }],
+        where: " in x.ts:1-2",
+      });
+    } catch (error) {
+      thrown = error;
+    }
+    // Unreachable through `verifyServedRange` (its own outer length check throws first), which is
+    // exactly why it needs a direct call: the gate is exported and callable on its own.
+    expect(thrown).toBeInstanceOf(ServedRejectionError);
+    const error = thrown as ServedRejectionError;
+    expect(codeOf(error)).toBe("E_STALE_RANGE");
+    expect(error.servedRows.length).toBeGreaterThan(0);
+    // `reread: true` suppresses the retry hint; its presence would mean the arm dropped it.
+    expect(String(error.message)).not.toContain("Retry with these anchors");
+  });
+});
+
+describe("resolution is read-only (runtime)", () => {
+  const LEASE_COLUMNS =
+    "SELECT session_id, file_path, anchor, line_id, canon_hash, served_snapshot_hash, " +
+    "served_line_number, updated_at, retired_at FROM served_leases ORDER BY anchor";
+  const MIRROR_COLUMNS =
+    "SELECT session_id, path, hashes, reported, retired, canons, cards FROM served " +
+    "ORDER BY session_id, path";
+
+  /** Raw rows, read through this test's own handle — concrete columns, no row-shape cast. */
+  function storeRows(): string {
+    const db = new DatabaseSync(hashStorePath());
+    try {
+      return JSON.stringify({
+        leases: db.prepare(LEASE_COLUMNS).all(),
+        mirror: db.prepare(MIRROR_COLUMNS).all(),
+      });
+    } finally {
+      db.close();
+    }
+  }
+
+  it("writes nothing when the gate accepts a benign shift", async () => {
+    await withTempFile("ro-accept.txt", CONTENT, async ({ cwd }) => {
+      const sessionKey = "test-session";
+      const absolutePath = join(cwd, "ro-accept.txt");
+      const servedRead = await readAndServe(localIO(), "ro-accept.txt", cwd, { sessionKey });
+      const anchor = servedRead.served[5]!.hash;
+
+      const before = storeRows();
+
+      // The served span shifted down one line; resolution must accept and write nothing.
+      const shiftedLines = ["prepended", ...LINES];
+      const shiftedContent = shiftedLines.join("\n");
+      const shiftedHashes = lineHashesPure(shiftedContent);
+      expect(shiftedHashes[6]).toBe(anchor);
+
+      const source = makeLeaseSource(
+        await loadHashStore(),
+        sessionKey,
+        absolutePath,
+        shiftedContent,
+      );
+      expect(source).toBeDefined();
+      const served = await loadServed(sessionKey, absolutePath);
+      const servedCanons = await loadServedCanons(sessionKey, absolutePath);
+      expect(
+        codeOfCall(() =>
+          verifyServedRange({
+            served,
+            servedCanons,
+            startHash: anchor,
+            endHash: anchor,
+            startLine: 7,
+            endLine: 7,
+            fileHashes: shiftedHashes,
+            fileLines: shiftedLines,
+            leaseSource: source,
+          }),
+        ),
+      ).toBeUndefined();
+
+      expect(storeRows()).toBe(before);
+    });
+  });
+
+  it("writes nothing when the gate rejects a look-alike rebind", async () => {
+    await withTempFile("ro-reject.txt", TWIN_CONTENT_A, async ({ cwd }) => {
+      const sessionKey = "test-session";
+      const absolutePath = join(cwd, "ro-reject.txt");
+      const servedRead = await readAndServe(localIO(), "ro-reject.txt", cwd, { sessionKey });
+      const anchor = servedRead.served[1]!.hash;
+
+      const before = storeRows();
+
+      const rebindLines = splitLines(TWIN_CONTENT_B);
+      const source = makeLeaseSource(
+        await loadHashStore(),
+        sessionKey,
+        absolutePath,
+        TWIN_CONTENT_B,
+      );
+      expect(source).toBeDefined();
+      const served = await loadServed(sessionKey, absolutePath);
+      const servedCanons = await loadServedCanons(sessionKey, absolutePath);
+      expect(
+        codeOfCall(() =>
+          verifyServedRange({
+            served,
+            servedCanons,
+            startHash: anchor,
+            endHash: anchor,
+            startLine: 5,
+            endLine: 5,
+            fileHashes: lineHashesPure(TWIN_CONTENT_B),
+            fileLines: rebindLines,
+            leaseSource: source,
+          }),
+        ),
+      ).toBe("E_STALE_RANGE");
+
+      expect(storeRows()).toBe(before);
+    });
   });
 });

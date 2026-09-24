@@ -596,8 +596,6 @@ export interface LeaseIdentityView {
  * buffer being edited (the store's `positionsByIdentity`).
  */
 export interface LeaseSpanSource {
-  /** `snapshotHashFor(content)` of the buffer being edited. */
-  currentSnapshotHash: string;
   leaseFor(anchor: string): LeaseIdentityView | undefined;
   rebasedLineOf(lineId: number): number | undefined;
 }
@@ -646,10 +644,21 @@ export function verifyRebasedSpan(args: {
   for (let k = 0; k < servedLen; k++) {
     const servedAnchor = served[args.servedStart - 1 + k];
     const currentLine = args.rebasedStart + k;
-    // The interior-null rule above already rejected every unserved row, and the two boundary
-    // positions ARE the named anchors, so this guard is unreachable; it keeps the type honest
-    // rather than asserting.
-    if (servedAnchor === null || servedAnchor === undefined) continue;
+    // Fail-closed guard: a null row inside the window is an unserved line, and this gate is
+    // exported and directly callable, so it must not skip one. Through `verifyServedRange` the
+    // interior-null rule already rejected this and the two boundary positions ARE the named
+    // anchors — but a future caller can reach it, so it rejects like every other arm (dsh's own
+    // interior rule; we deliberately do not adopt upstream's ADR-0024 tolerance).
+    if (servedAnchor === null || servedAnchor === undefined) {
+      throw new ServedRejectionError({
+        code: "E_STALE_RANGE",
+        headline: `line ${currentLine}${where} is not served; re-read to serve it.`,
+        servedBlock: echo,
+        reread: true,
+        firstOffendingLine: currentLine,
+        servedRows: echoRows,
+      });
+    }
     const lease = leaseSource.leaseFor(servedAnchor);
     if (lease === undefined) {
       throw new ServedRejectionError({
