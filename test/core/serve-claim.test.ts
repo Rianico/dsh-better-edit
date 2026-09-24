@@ -123,6 +123,9 @@ describe("edit serve claim — the anchors the result advertises", () => {
         threw: fault !== undefined,
         toolClaimedSuccess: text.includes("Successfully edited"),
         toolWarnsNotRecorded: namesPartialFailure(text),
+        // The invariant's "rather than implying success" half: the notice must also set the anchor
+        // claim straight, not merely flag the bookkeeping failure.
+        noticeNamesNotUsable: /NOT usable anchors/.test(text),
         toolPromisesFreshAnchors: promisesFreshAnchors(text, advertised),
         advertisedAnchorsServed:
           advertised.length === 0 ? "n/a" : advertised.every((anchor) => servedAnchors.has(anchor)),
@@ -144,6 +147,7 @@ describe("edit serve claim — the anchors the result advertises", () => {
         toolClaimedSuccess: true,
         // Post-fix contract: the result says so and names the recovery...
         toolWarnsNotRecorded: true,
+        noticeNamesNotUsable: true,
         // ...instead of presenting the unserved diff anchors as usable.
         toolPromisesFreshAnchors: false,
         // The serve really did fail — pinned so the cell cannot pass by accident.
@@ -269,6 +273,7 @@ describe("read serve claim — the anchors the result shows", () => {
         shownAnchorsServed:
           shown.length === 0 ? "n/a" : shown.every((anchor) => servedAnchors.has(anchor)),
         warnsNotRecorded: namesPartialFailure(text),
+        noticeNamesNotUsable: /NOT usable for editing/.test(text),
         fileAfter: await readFile(path, "utf-8"),
         followUpEdit: "not-attempted" as string,
       };
@@ -279,6 +284,7 @@ describe("read serve claim — the anchors the result shows", () => {
         // The serve really did fail — the shown anchors are not in the served set.
         shownAnchorsServed: false,
         warnsNotRecorded: true,
+        noticeNamesNotUsable: true,
         // A read never fails on a bookkeeping fault: the rows are still shown.
         fileAfter: "a\nb\nc\n",
         followUpEdit: "rejected",
