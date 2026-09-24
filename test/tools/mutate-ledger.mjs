@@ -88,6 +88,12 @@ const T4R3 = {
   contextMessage:
     "shows current context around the resolved anchor when only one anchor of a range is stale",
 };
+
+/** T4 CP1-r4 cell titles (the envelope separator). */
+const T4R4 = {
+  glueRows: "the rendered envelope never glues a row to the on-disk heading (C11a)",
+  glueFallback: "the contextless fallback starts its own line in the rendered envelope (C11b)",
+};
 const ARCH_REGISTRY = "test/arch/domain-error-registry.test.ts";
 
 /** Shared pre-edit for the three `recordServed` mutants. */
@@ -347,6 +353,18 @@ const MUTANTS = {
         new:
           "  if (!payload.servedBlock) return payload.headline;\n" +
           '  return `${payload.headline}\\n\\n${payload.servedBlock}\\n${ERROR_REGISTRY.E_STALE_ANCHOR.remedy ?? ""}`;\n}',
+      },
+    ],
+  },
+  M10: {
+    what: "revert F12: glue the echo block back onto the inner message",
+    scope: null, // full suite
+    expected: [T4R4.glueRows, T4R4.glueFallback],
+    edits: [
+      {
+        file: DOMAIN_ERRORS,
+        old: "    `edits[${payload.index}] (${payload.path}) failed: ${payload.inner}\\n${payload.echoBlock.trimStart()}\\n` +",
+        new: "    `edits[${payload.index}] (${payload.path}) failed: ${payload.inner}${payload.echoBlock}\\n` +",
       },
     ],
   },

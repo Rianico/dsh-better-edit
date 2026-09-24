@@ -453,7 +453,7 @@ function batchAbortFormat(payload: ErrorPayloadMap["E_BATCH_ABORT"]): string {
     );
   }
   const base =
-    `edits[${payload.index}] (${payload.path}) failed: ${payload.inner}${payload.echoBlock}\n` +
+    `edits[${payload.index}] (${payload.path}) failed: ${payload.inner}\n${payload.echoBlock.trimStart()}\n` +
     BATCH_ATOMICITY_TRAILER;
   // WHY: echoBlock is empty exactly when no range context exists (non-anchor
   // WHY: failures carry no echo), and only a ranged failure can name the edit
@@ -470,7 +470,7 @@ function noopLoopFormat(payload: ErrorPayloadMap["E_NOOP_LOOP"]): string {
     return (
       `${payload.ref}: identical edit (${payload.anchorFrom} → ${payload.anchorTo}) submitted ${payload.count}×, no changes each time. ` +
       `Range already contains this text; resend will reject the batch.` +
-      (payload.servedBlock ? ` Current on-disk range:\n${payload.servedBlock}` : "")
+      (payload.servedBlock ? `\nCurrent on-disk range:\n${payload.servedBlock}` : "")
     );
   }
   if (payload.path !== undefined) {

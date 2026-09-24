@@ -296,7 +296,7 @@ describe("coverage: edit-engine enforceNoopLoop", () => {
     expect(caught).toBeDefined();
     expect(caught!.message).toBe(
       "[MODEL] [E_NOOP_LOOP] edits[0] (a.txt): identical edit (aaa → aaa) submitted 3×, no changes each time. " +
-        "Range already contains this text; resend will reject the batch. Current on-disk range:\nh1│a",
+        "Range already contains this text; resend will reject the batch.\nCurrent on-disk range:\nh1│a",
     );
     expect(caught!.message.match(/Current on-disk range:/g)).toHaveLength(1);
   });

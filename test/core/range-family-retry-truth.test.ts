@@ -36,10 +36,12 @@ function rowAnchors(text: string): string[] {
  * Anchors of the rows inside the first `Current range:` block of a rejection message.
  * The batch-abort envelope concatenates its own on-disk range block onto the inner
  * message, so cut there first — otherwise the last inner row and the outer rows merge
- * into one list.
+ * into one list. The split key has no leading space: the renderer normalizes the
+ * engine's `" Current on-disk range…"` separator (T4 CP1-r4 F12), and a
+ * separator-agnostic key survives both sides of that fix.
  */
 function rangeBlockAnchors(message: string): string[] {
-  const inner = message.split(" Current on-disk range for edits[")[0]!;
+  const inner = message.split("Current on-disk range for edits[")[0]!;
   const lines = inner.split("\n");
   const start = lines.findIndex((line) => line.trim() === "Current range:");
   if (start === -1) return [];
@@ -302,6 +304,69 @@ describe("range-family retry truth (T4)", () => {
       });
       expect(retry.applied).toBe(true);
       expect(await readFile(path, "utf-8")).toBe("R\ngamma\n");
+    });
+  });
+
+  // C11a/C11b (T4 CP1-r4 F12): the envelope's separator is a RENDER concern, so
+  // these cells assert on the whole message the model receives — line by line —
+  // not on `formatError(...)` or a helper's return. The glue they catch was
+  // invisible to every helper-level test that existed before, which is how it
+  // survived four tickets.
+  it("the rendered envelope never glues a row to the on-disk heading (C11a)", async () => {
+    await withTempFile("t4-c11a.txt", "alpha\nbeta\ngamma\n", async ({ cwd }) => {
+      const harness = setupIntegrationTest(cwd);
+      // The H1 geometry: two disjoint windowed reads leave line 2 unserved.
+      const window1 = rowAnchors(
+        getText(
+          await harness.readTool.execute("read", { path: "t4-c11a.txt", offset: 1, limit: 1 }),
+        ),
+      );
+      const window3 = rowAnchors(
+        getText(
+          await harness.readTool.execute("read", { path: "t4-c11a.txt", offset: 3, limit: 1 }),
+        ),
+      );
+      const attempt = await attemptEdit(harness, {
+        path: "t4-c11a.txt",
+        edits: [[window1[0], window3[0], "R"]],
+      });
+      expect(attempt.applied).toBe(false);
+      // The heading begins its own line (the engine's leading space is normalized).
+      expect(attempt.message).toMatch(/\n *Current on-disk range/);
+      // No rendered line carries both a row separator and the heading — a row that
+      // runs into following prose is an unparseable anchor for a row consumer.
+      const glued = attempt.message
+        .split("\n")
+        .filter((line) => line.includes("│") && line.includes("Current on-disk range"));
+      expect(glued, `row glued to the on-disk heading: ${glued.join(" | ")}`).toEqual([]);
+      // Non-vacuity: this geometry really does render rows.
+      expect(attempt.message).toContain("│");
+    });
+  });
+
+  it("the contextless fallback starts its own line in the rendered envelope (C11b)", async () => {
+    await withTempFile("t4-c11b.txt", "alpha\nbeta\ngamma\ndelta\n", async ({ cwd, path }) => {
+      const harness = setupIntegrationTest(cwd);
+      // The G7 geometry: whole-file rewrite → contextless E_STALE_ANCHOR → the
+      // engine's `Call read()…` fallback (no rows at all in this envelope).
+      const served = rowAnchors(
+        getText(await harness.readTool.execute("read", { path: "t4-c11b.txt" })),
+      );
+      await writeFile(path, "TOTALLY\nDIFFERENT\n", "utf-8");
+      const attempt = await attemptEdit(harness, {
+        path: "t4-c11b.txt",
+        edits: [[served[0], served[3], "R"]],
+      });
+      expect(attempt.applied).toBe(false);
+      expect(attempt.message).toContain("[E_STALE_ANCHOR]");
+      // The fallback fragment begins its own line.
+      expect(attempt.message).toMatch(/\n *Call read\(\) to get fresh anchors\./);
+      // Same shape rule as C11a. This geometry renders no rows, so this half is
+      // vacuous here — the load-bearing assertion is the line-start one above.
+      const glued = attempt.message
+        .split("\n")
+        .filter((line) => line.includes("│") && line.includes("Call read() to get fresh anchors"));
+      expect(glued, `row glued to the fallback: ${glued.join(" | ")}`).toEqual([]);
     });
   });
 });
