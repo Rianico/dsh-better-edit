@@ -681,7 +681,7 @@ const MUTANTS = {
   T5M14: {
     what: "the sweep also deletes the legacy `snapshots` row (D2 breached)",
     scope: [VACUUM_INTERACTION],
-    expected: [T5.crossTable],
+    expected: [T5.crossTable, T5.evictedTarget],
     edits: [
       {
         file: VACUUM,
