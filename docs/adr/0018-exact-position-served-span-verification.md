@@ -267,8 +267,8 @@ identical across `735df10`, `998fd43` and `39351d9` (`mutation.ts` `c8b6c039…`
 `0dc0e78c…`), so every number below transfers across those revisions without re-running.
 
 **Mutation ledger** (the historical table plus the current ledger). Recipe: re-add the write at exactly
-one isolated site, run the contract file, revert. The recipes are the scripted exact-string edits in
-`evidence/probes/mutate.py.txt` — `M1`/`M2` = `collectAbortPart` with and without the snapshot context,
+one isolated site, run the contract file, revert. The recipes are the committed exact-string edits in
+`test/tools/mutate-ledger.mjs` (T3h subsection below) — `M1`/`M2` = `collectAbortPart` with and
 `M4` = `enforceNoopLoop`'s batch branch. **`M3`/`M5` are historical**: their sites — the orphaned
 single-edit branch and the sequential arrow — were deleted by T3h, so those two recipes no longer apply
 to HEAD. `M4`'s site moved with the code: the guard is called once, at `src/mutation/engine.ts:875`,
@@ -286,6 +286,46 @@ Historical, at `735df10`. Expected output shape: baseline `15 passed`; `M1` `7 f
 `M3`/`M4`/`M5` `1 failed` each, with the failing cell names matching the RED column above and the five
 happy-path cells green in every run. Raw per-cell output: `evidence/cp1r3-ledger-runs.txt`. At HEAD the
 contract file holds `14` cells (`rg -c '^  it\(' test/core/serve-leases.test.ts`).
+
+### T3h ledger — re-run it from the tree
+
+`test/tools/mutate-ledger.mjs` is the committed applier and runner (T3h CP3-r4). It archives HEAD into a
+temp tree, mutates the **copy** — the worktree is never written to — asserts every anchor occurs exactly
+once, prints `applied <id>`, greps the inserted line back out of the mutated file, runs vitest there, and
+compares the failing cells against the expected set below (`RED SET MATCH`, or `MISMATCH` + the diff and a
+non-zero exit). It refuses to run when `git status --porcelain -- src test docs` is non-empty.
+
+```
+node test/tools/mutate-ledger.mjs --list     # ids, scopes, expected RED counts
+node test/tools/mutate-ledger.mjs M4         # one mutant, contract file
+node test/tools/mutate-ledger.mjs Z3b        # full suite
+node test/tools/mutate-ledger.mjs N1 --keep  # keep the temp tree and the vitest log
+```
+
+| id  | file                              | anchor (old)                                                                                               | new                                                                                                                                                                             | scope                            | expected RED |
+| --- | --------------------------------- | ---------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------- | ------------ |
+| M1  | `src/mutation/engine.ts`          | `        : undefined;` + `  const originalLines = splitLines(opts.originalNormalized);`                    | same, with `await recordServed(opts.sessionKey, opts.absolutePath, echoRows ?? [], opts.originalHashes.length, { content, hashes });` inserted after `: undefined;`             | `test/core/serve-leases.test.ts` | 7            |
+| M2  | same                              | same                                                                                                       | M1 without the snapshot context (rows and hash count only)                                                                                                                      | same                             | 6            |
+| M4  | same                              | `      const notice = await enforceNoopLoop({`                                                             | `await recordServed(opts.sessionKey, absolutePath, echoRowsForItem(applied.edit, originalHashes) ?? [], originalHashes.length, { content, hashes });` inserted before that line | same                             | 1            |
+| N1  | `src/hashline/anchor-pipeline.ts` | `if (trimmed.length === ANCHOR_LEN && ALPH_RE.test(trimmed)) {`                                            | the same line with the two conditions OR-ed                                                                                                                                     | same                             | 1            |
+| Z3b | `src/mutation/engine.ts`          | `  if (count >= NOOP_LOOP_THRESHOLD) {` + `    const originalLines = splitLines(opts.originalNormalized);` | `throw new Error("Z3b");` inserted between them                                                                                                                                 | full suite                       | 6            |
+
+`M1`/`M2`/`M4` each begin with the shared import pre-edit (`  retireAnchors,` → `  retireAnchors,` +
+`  recordServed,` in the `../session-view.js` import). Expected RED sets, by exact title, are the
+`test/core/serve-leases.test.ts` cells `M1` `:620`, `:627`, `:660`, `:669`, `:683`, `:716`, `:728` (`M2`
+is that set minus `:627`), the live noop-loop cell (`:697`) for `M4`, the malformed cell (`:739`) for
+`N1`, and the three `coverage-agent-c` batch cells plus three live cells for `Z3b`.
+
+**N1 does not prove the nothing-written asserts.** Under N1 the RED is the _cause_ assertion — `:758`
+(`/E_BATCH_ABORT/`) **passes** because the envelope survives, `:759` (`/E_MALFORMED_ANCHOR/`) **fails** on
+the received `[E_STALE_ANCHOR]`, and the two nothing-written asserts (`:760-761`) are **not reached**. N1
+proves the envelope-and-cause assertion is refutable; it says nothing about the nothing-written semantics.
+
+**Scope note (Z3b).** The pre-deletion full-suite Z3b from CP1 lives in the handoff's
+`evidence/cp1-tm-mutant-logs/` — see its `PRE-DELETION.md`, which scopes every log in that directory to
+`f3ffe7a` — and must not be cited as deletion-safe evidence. The post-deletion full-suite Z3b is the
+handoff's `evidence/cp3-tm-runs/log-Z3b-FULL-HEAD.txt` → `Test Files 4 failed | 137 passed (141)` /
+`Tests 6 failed | 1497 passed (1503)`; `node test/tools/mutate-ledger.mjs Z3b` re-derives it.
 
 **`retiredAt` arms.** Probe `evidence/probes/tm-retiredat-control.test.ts.txt`; copy it to
 `.tmp/t3f/tm-retiredat-control.test.ts` (vitest collects `.tmp/**/*.test.ts`) and run from the worktree
