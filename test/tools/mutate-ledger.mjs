@@ -605,7 +605,14 @@ const MUTANTS = {
   T5M4: {
     what: "the lease pin ignores `updated_at` (no LRU-on-access)",
     scope: [VACUUM_UNIT, VACUUM_INTERACTION],
-    expected: [T5.pinRecency, T5.countersLeases, T5.rematerialize, T5.evictedTarget, T5.crossTable],
+    expected: [
+      T5.pinRecency,
+      T5.countersLeases,
+      T5.rematerialize,
+      T5.evictedTarget,
+      T5.rejectNoop,
+      T5.crossTable,
+    ],
     edits: [
       {
         file: VACUUM,
@@ -695,7 +702,7 @@ const MUTANTS = {
   T5M11: {
     what: "the lease pin ignores `updated_at`, measured in the interaction corpus",
     scope: [VACUUM_INTERACTION],
-    expected: [T5.rematerialize, T5.evictedTarget, T5.crossTable],
+    expected: [T5.rematerialize, T5.evictedTarget, T5.rejectNoop, T5.crossTable],
     edits: [
       {
         file: VACUUM,
@@ -942,9 +949,9 @@ const MUTANTS = {
     ],
   },
   T5M29: {
-    what: "the serve write stops materializing the v7 family (cell 14's negative pin)",
+    what: "the serve write stops materializing the v7 family (serve-write dependency)",
     scope: [VACUUM_INTERACTION],
-    expected: [],
+    expected: [T5.rematerialize, T5.evictedTarget, T5.undoPinSurvives, T5.reportAtMaterialization],
     edits: [
       {
         file: SESSION_VIEW,
