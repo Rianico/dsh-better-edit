@@ -1,24 +1,18 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
-import {
-  listSources,
-  producedCodesInText,
-  stripComments,
-  unionMembers,
-} from "../support/arch-scan.js";
+import { producedCodesInText, stripComments, unionMembers } from "../support/arch-scan.js";
 
 /**
  * Negative controls for the shared scanner (T4 CP1-r5 G5).
  *
  * Each cell plants an evasion on a FIXTURE STRING (not the live tree) and asserts
  * the scanner's answer, so the guard's reach is measured instead of assumed. The
- * last two cells are **DECLARED LIMITS**: they assert what the scanner *cannot*
- * see, so the blind spot is recorded rather than hidden. The durable fix for both
- * is the observational factory described in `test/support/arch-scan.ts`'s
- * CEILING — DEFERRED paragraph; it is deliberately not built here.
+ * DECLARED LIMITS live in the oracle now: C19 plants each undetectable producer
+ * into a temp `src/` tree and asserts the **full oracle's** answer, so the blind
+ * spot is recorded where it bites (a LOUD false “undeclared producer”) rather
+ * than hidden. The durable fix for all three is the observational factory in
+ * `test/support/arch-scan.ts`'s CEILING — DEFERRED paragraph; it is deliberately
+ * not built here.
  *
  * Mutants M11–M13 revert the fixes these cells pin.
  */
@@ -69,32 +63,5 @@ describe("arch: registry scanner negative controls", () => {
     expect(
       producedCodesInText('throw new ServedRejectionError({ code: "W_SHAPE2", headline: "h" });\n'),
     ).toEqual(["W_SHAPE2"]);
-  });
-
-  // C15a — DECLARED LIMIT. Not a defect to fix by scanning harder: the value is
-  // not in the text. The observational factory is the durable form (see the
-  // scanner's CEILING paragraph).
-  it("DECLARED LIMIT: a variable-held producer is not detectable (by construction)", () => {
-    const planted =
-      'const code = "E_HELD";\nconst x = () => new DomainError(code, { cause: "x" });\n';
-    expect(producedCodesInText(planted)).toEqual([]);
-    expect(planted).toContain("E_HELD"); // the name IS in the text: a text scan cannot join the two
-  });
-
-  // C15b — DECLARED LIMIT. `listSources` keeps `*.ts` by design, so a producer in
-  // a `.mjs` (or any non-.ts) file is out of the scan's reach.
-  it("DECLARED LIMIT: a .mjs producer is outside the scan (it covers *.ts by design)", () => {
-    const dir = mkdtempSync(join(tmpdir(), "arch-scan-limit-"));
-    try {
-      writeFileSync(join(dir, "producer.ts"), 'new DomainError("E_TS_FILE", { cause: "x" });\n');
-      writeFileSync(join(dir, "producer.mjs"), 'new DomainError("E_MJS_FILE", { cause: "x" });\n');
-      const sources = listSources(dir);
-      expect(sources.map((f) => f.slice(dir.length + 1))).toEqual(["producer.ts"]);
-      expect(producedCodesInText('new DomainError("E_MJS_FILE", { cause: "x" });\n')).toEqual([
-        "E_MJS_FILE",
-      ]);
-    } finally {
-      rmSync(dir, { recursive: true, force: true });
-    }
   });
 });

@@ -103,6 +103,16 @@ const T4R5 = {
   parity: "union and registry agree in both directions",
   fieldIdentity: "the field allowlist is pinned by identity and its predicates hold",
 };
+
+/** T4 CP1-r6 cell titles (predicate pins, shape derivation, full-oracle limits). */
+const T4R6 = {
+  holdsPins: "`holds` predicates are pinned by source text, both allowlists (C17)",
+  shapeDerivation: "every shape literal derives from CODE_SHAPE/QUOTED_CODE (C18)",
+  limitHeld: "DECLARED LIMIT (full oracle): a variable-held producer reports LOUD",
+  limitMjs: "DECLARED LIMIT (full oracle): a .mjs producer reports LOUD",
+  limitRegex: "DECLARED LIMIT (full oracle): a regex-literal `//` hides a producer LOUDLY",
+  stripperPremise: "the stripper's doc comment states the well-formed-input premise (C20)",
+};
 const ARCH_SCAN = "test/support/arch-scan.ts";
 
 /** Shared pre-edit for the three `recordServed` mutants. */
@@ -401,27 +411,17 @@ const MUTANTS = {
         old: "export const QUOTED_CODE = `[\"'](${CODE_SHAPE})[\"']`;",
         new: 'export const QUOTED_CODE = `"(${CODE_SHAPE})"`;',
       },
-      {
-        file: ARCH_SCAN,
-        old: "  const members = [...block![1]!.matchAll(/[\"']([EW]_[A-Z0-9_]+)[\"']/g)].map((m) => m[1]!);",
-        new: '  const members = [...block![1]!.matchAll(/"([EW]_[A-Z0-9_]+)"/g)].map((m) => m[1]!);',
-      },
     ],
   },
   M13: {
     what: "revert G3: exclude digits from the code shape",
     scope: null, // full suite
-    expected: [T4R5.digits],
+    expected: [T4R5.digits, T4R6.shapeDerivation],
     edits: [
       {
         file: ARCH_SCAN,
         old: 'export const CODE_SHAPE = "[EW]_[A-Z0-9_]+";',
         new: 'export const CODE_SHAPE = "[EW]_[A-Z_]+";',
-      },
-      {
-        file: ARCH_SCAN,
-        old: "  const members = [...block![1]!.matchAll(/[\"']([EW]_[A-Z0-9_]+)[\"']/g)].map((m) => m[1]!);",
-        new: "  const members = [...block![1]!.matchAll(/[\"']([EW]_[A-Z_]+)[\"']/g)].map((m) => m[1]!);",
       },
     ],
   },
@@ -446,6 +446,42 @@ const MUTANTS = {
         file: DOMAIN_ERRORS,
         old: '    owner: "src/domain-errors.ts",\n    trigger: {\n      text: "src/domain-errors.ts",',
         new: '    owner: "T6",\n    trigger: {\n      text: "src/domain-errors.ts",',
+      },
+    ],
+  },
+  M16: {
+    what: "holds: () => true in a DECLARATION_ONLY_FIELDS entry (unrefutable predicate)",
+    scope: null, // full suite
+    expected: [T4R6.holdsPins],
+    edits: [
+      {
+        file: DOMAIN_ERRORS,
+        old: '      holds: () => Object.values(ERROR_REGISTRY).some((spec) => "remedy" in spec),',
+        new: "      holds: () => true,",
+      },
+    ],
+  },
+  M17: {
+    what: "holds: () => true in a DEFERRED_PRODUCERS entry",
+    scope: null, // full suite
+    expected: [T4R6.holdsPins],
+    edits: [
+      {
+        file: DOMAIN_ERRORS,
+        old: '      holds: () => isDomainWarningCode("W_NEVER_SERVED_SHAPE"),',
+        new: "      holds: () => true,",
+      },
+    ],
+  },
+  M18: {
+    what: "reintroduce a private shape literal in unionMembers (no knob change)",
+    scope: null, // full suite
+    expected: [T4R6.shapeDerivation],
+    edits: [
+      {
+        file: ARCH_SCAN,
+        old: '  const members = [...block![1]!.matchAll(new RegExp(QUOTED_CODE, "g"))].map((m) => m[1]!);',
+        new: "  const members = [...block![1]!.matchAll(/[\"']([EW]_[A-Z0-9_]+)[\"']/g)].map((m) => m[1]!);",
       },
     ],
   },
