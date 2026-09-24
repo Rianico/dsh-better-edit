@@ -94,6 +94,18 @@ snapshots` / `DELETE FROM undo` that ADR-0016 left in place (pending CP4)
   non-destructive; this ADR makes the upgrade path non-destructive too. The
   two store ADRs are a deliberate divergence from upstream as a pair.
 
+## Restore and pair-age semantics
+
+- `restore` puts the prior v7 row back **content-identical with a fresh pair
+  stamp**: the bytes are the pre-edit content, but `undo.updated_at` and
+  `file_undo.updated_at` are rewritten together from the store's single clock
+  (`writeUndoPairImpl`'s one `stamp`). Pinned by `test/core/hash-store.test.ts`
+  "restore puts the prior v7 row back content-identical with a fresh pair stamp".
+- The pair's age is a **pair property**, not a per-row one: `pruneUndoOlderThan`
+  prunes a path only when its **newest** side is older than the cutoff, so a
+  recently written side keeps the whole pair alive. Splitting the pair across two
+  independent per-table deletes is the F1 class this rule exists to prevent.
+
 ## Named deviation (T2b-scoped): fresh anchors after undo, not same-string revival
 
 - Upstream consumes `file_undo.snapshot_hash` via `anchorsForSnapshotHash`
