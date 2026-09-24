@@ -180,19 +180,50 @@ identical lines, so position is the only discriminator. This ADR keeps upstream'
   and windowed cells — nothing is retired at all and the byte-identity above holds _including_
   `retiredAt`; those two cells are the contrast that makes the attribution visible. Assert
   observable equivalence, not global immutability.
-- **Every reject site is pinned by a cell that fails when the write returns** (T3f). The cells in
-  `test/core/serve-leases.test.ts` cover the in-loop/batch collector `collectAbortPart` (twin,
-  insert-only, windowed, consecutive-rejection and batch-abort drivers) and the batch branch of
-  `enforceNoopLoop` (the noop-loop cell). The remaining two sites are reached by no tool path —
-  `enforceNoopLoop`'s single-edit flavor (`PreparedItem.index` is required and the only production
-  call site, `src/mutation/engine.ts:895`, passes `item.index`) and the anonymous arrow callback
-  passed as `applyOne`'s `onReject` argument (`src/mutation/engine.ts:287`, invoked `:303`/`:324`)
-  inside `execPipeline` (`src/mutation.ts:91`; the callback is `src/mutation.ts:170-172` post-fix,
-  and held the `recordEchoServes` call at `:179` at base `4efa43a`) — `tool-edit.ts:166` → `execute`
-  (`src/mutation.ts:371`) → `applySequence` (`:382`) → `runFileEdits` (`:511` → `engine.ts:711`),
-  while `execPipeline` is reached only from the uncalled `applySingle` wrapper (`src/mutation.ts:491`;
-  no `src/` file calls it) — so those two are pinned by direct-call cells instead of tool-path cells.
-  Re-adding the write at any of the sites turns at least one cell RED, measured per site.
+- **The live writer was the in-loop collector, not the sequential arrow** (T3f, corrected
+  attribution). The tool path is `src/tool-edit.ts:166` → `execute` (`src/mutation.ts:371`) →
+  `applySequence` (`:382`, defined `:506`) → `runFileEdits` (`:511` → `src/mutation/engine.ts:711`),
+  whose `applyOne` (`engine.ts:285`) fail callback routes `AnchorMismatchError |
+ServedRejectionError` through `collectAbortPart` (`engine.ts:512`, called at `:806` and `:851`)
+  and rethrows a batch-abort envelope — so a **single**-edit rejection was the live producer of the
+  stale slot. Its pre-fix `recordEchoServes` call sat at `engine.ts:549` at base `4efa43a`.
+- **Two of the four removed sites were dead on arrival**, belonging to an orphaned single-edit
+  flavor: `src/mutation.ts:179` at base `4efa43a` — the anonymous arrow passed as `applyOne`'s
+  `onReject` argument (`engine.ts:287`, invoked `:303`/`:324`) inside `execPipeline`
+  (`src/mutation.ts:91`), reached only via `applySingle` (`:491` → `:502`), which has **zero** `src/`
+  callers — and `enforceNoopLoop`'s `index === undefined` branch (base `engine.ts:443`;
+  `engine.ts:429` today), because `PreparedItem.index` is **required** (`engine.ts:109`) and the sole
+  production call site (`:895`) passes `item.index` (`:901`); `NoopLoopOptions.index?` (`:409`,
+  "undefined = single-edit flavor") and `NoopLoopOptions.range?` (`:415`, "Single-edit flavor only")
+  exist only for that dead flavor. Base `4efa43a` had exactly four `recordEchoServes` call sites:
+  `mutation.ts:179`, `engine.ts:443`, `:475`, `:549`. Do not read them as four live paths.
+- **Orphaned single-edit flavor — TRAP; owner T3h (after T3g).** `applySingle` (`src/mutation.ts:491`),
+  `execPipeline` (`:91`), `enforceNoopLoop`'s `index === undefined` branch, and the `range?` option
+  that exists only for it (`engine.ts:415`) are exported-but-uncalled, ~200 lines duplicating the live
+  path. This ADR's own first draft misnamed the live site _because_ of it, and an agent can "fix" the
+  dead path, watch it go green, and believe the live path was exercised. Trigger: delete the orphaned
+  flavor, the direct-call seam cells (C9/C10) that exist only for it, and the `NoopLoopOptions`
+  `range`/`index` plumbing only it uses.
+- **Mutation ledger** (reproduced at `735df10`; mutation = re-adding the write at one isolated site;
+  cells in `test/core/serve-leases.test.ts`). Legend — C1 twin records (`:764`), C2 twin grants
+  (`:771`), C3 twin read ≡ control (`:804`), C4 insert-only (`:813`), C5 windowed (`:827`),
+  C6 noop-loop (`:841`), C7 consecutive rejections (`:860`), C8 batch abort (`:872`), C9 sequential
+  direct call (`:883`), C10 single-edit noop flavor direct call (`:904`):
+
+  | mutation | site                                                                          | RED                  | GREEN (reason)                                                                                                   |
+  | -------- | ----------------------------------------------------------------------------- | -------------------- | ---------------------------------------------------------------------------------------------------------------- |
+  | M1       | `collectAbortPart` (`engine.ts:512`) — full write, rows + snapshot context    | 7: C1–C5, C7, C8     | C6, C9, C10 — site isolation (the collector is not their site)                                                   |
+  | M2       | same site — rows only, no snapshot context                                    | 6: C1, C3–C5, C7, C8 | **C2 — by design**: rows without the context grant nothing, so C2 pins the _grant_; C6, C9, C10 — site isolation |
+  | M3       | `enforceNoopLoop` `index === undefined` branch (`engine.ts:430`) — full write | 1: C10               | C1–C9 — site isolation (no tool path reaches this branch)                                                        |
+  | M4       | `enforceNoopLoop` batch branch (`engine.ts:457`) — full write                 | 1: C6                | C1–C5, C7–C10 — site isolation                                                                                   |
+  | M5       | `execPipeline` `onReject` arrow (`mutation.ts:170-172`) — full write          | 1: C9                | C1–C8, C10 — site isolation (no tool path reaches `execPipeline`)                                                |
+  | M6       | ≡ M1 — same site, same mutation, observed through the batch-abort driver C8   | (as M1)              | (as M1)                                                                                                          |
+
+  **M1 ≡ M6**: one measurement with two driver classes, not two mutations — the ledger has **five**
+  distinct sites. The five pre-existing happy-path cells (`read`, `diff`, `truncated`, `undo`, `bind`)
+  stay green under every mutation. M5 restores the original defect through the sequential arrow alone
+  (the served mirror regains `f9U` twice), which is why C9 exists as a seam pin on a dead branch.
+
 - **Two commits were required for the defect to be observable — a lesson.** T2b `510af05` made
   the reject path _write_ served rows (the stale slot); T3a `b623aa8` removed the eager orphan
   heal that had been nulling it. At T2b's head the heal masked the slot — labels churned, no
