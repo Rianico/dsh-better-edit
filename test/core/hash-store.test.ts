@@ -478,7 +478,6 @@ describe("hash-store — schema versioning", () => {
         "reported",
         "retired",
         "canons",
-        "snapshotId",
         "cards",
         "updated_at",
       ]);
@@ -558,7 +557,7 @@ describe("hash-store — schema versioning", () => {
       expect(JSON.parse(undoRow.hashes)).toEqual(["UVW"]);
       const servedRow = db
         .prepare(
-          "SELECT hashes, reported, retired, canons, snapshotId, cards FROM served WHERE session_id = ? AND path = ?",
+          "SELECT hashes, reported, retired, canons, cards FROM served WHERE session_id = ? AND path = ?",
         )
         .get("sessionA", "/p.ts") as { hashes: string };
       expect(JSON.parse(servedRow.hashes)).toEqual(["XYZ"]);
@@ -588,14 +587,13 @@ describe("hash-store — schema versioning", () => {
       ).run("sessionB", "/v.ts", JSON.stringify(["CCC"]), now);
       const vServed = db
         .prepare(
-          "SELECT hashes, reported, retired, canons, snapshotId, cards FROM served WHERE session_id = ? AND path = ?",
+          "SELECT hashes, reported, retired, canons, cards FROM served WHERE session_id = ? AND path = ?",
         )
         .get("sessionB", "/v.ts") as {
         hashes: string;
         reported: null;
         retired: null;
         canons: null;
-        snapshotId: null;
         cards: null;
       };
       expect(JSON.parse(vServed.hashes)).toEqual(["CCC"]);
@@ -603,7 +601,6 @@ describe("hash-store — schema versioning", () => {
         reported: null,
         retired: null,
         canons: null,
-        snapshotId: null,
         cards: null,
       });
 

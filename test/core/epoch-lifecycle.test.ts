@@ -3,14 +3,9 @@ import { join } from "node:path";
 import { readAndServe } from "../../src/read-and-serve.js";
 import { localIO } from "../../src/fs-bridge.js";
 import { execPipeline } from "../../src/mutation.js";
-import { shutdownHashStore } from "../../src/hash-store.js";
-import {
-  loadServed,
-  loadEpochSnapshotId,
-  recordServed,
-  markDriftReported,
-  driftReported,
-} from "../../src/session-view.js";
+import { loadHashStore, shutdownHashStore, type InternalHashStore } from "../../src/hash-store.js";
+import { snapshotHashFor } from "../../src/snapshot-store/lineage-store.js";
+import { loadServed, markDriftReported, driftReported } from "../../src/session-view.js";
 import { sessionKeyFor } from "../../src/workspace-context.js";
 import { withTempFile, withHome, getWritableTempRoot } from "../support/fixtures.js";
 import { initHasher } from "../../src/hashline/hasher.js";
@@ -20,7 +15,9 @@ import { rm } from "fs/promises";
 beforeAll(async () => {
   await initHasher();
 });
-
+async function internalStore(): Promise<InternalHashStore> {
+  return (await loadHashStore()) as InternalHashStore;
+}
 describe("epoch lifecycle belongs to full reads (#69)", () => {
   it("partial read merges window rows but preserves drift-reported", async () => {
     await withTempFile("p.txt", "one\ntwo\nthree\nfour\n", async ({ cwd, path }) => {
@@ -48,43 +45,37 @@ describe("epoch lifecycle belongs to full reads (#69)", () => {
     });
   });
 
-  it("recordServed advances epoch snapshotId on full reads only", async () => {
-    const home = await mkdtemp(join(await getWritableTempRoot(), "t4-epoch-"));
-    const restore = withHome(home);
-    try {
-      const sessionKey = sessionKeyFor("t4-epoch");
-      const path = join(home, "e.txt");
-      await recordServed(
-        sessionKey,
-        path,
-        [
-          { position: 0, hash: "aaa" },
-          { position: 1, hash: "bbb" },
-        ],
-        2,
-        {
-          hashes: ["aaa", "bbb"],
-          canons: ["a", "b"],
-          snapshotId: "snap-full",
-        },
-      );
-      expect(await loadEpochSnapshotId(sessionKey, path)).toBe("snap-full");
+  it("serve leases stamp the served snapshot hash and a windowed read does not re-stamp it", async () => {
+    await withTempFile("e.txt", "one\ntwo\nthree\nfour", async ({ cwd, path }) => {
+      const sessionKey = sessionKeyFor("t4-epoch-successor");
+      const content = "one\ntwo\nthree\nfour";
 
-      await markDriftReported(sessionKey, path, ["bbb"]);
-      await recordServed(sessionKey, path, [{ position: 1, hash: "BBB" }], 2, {
-        hashes: ["aaa", "BBB"],
-        canons: ["a", "b"],
-        snapshotId: "snap-partial",
+      // Full read: the serve path grants a lease per served anchor, stamped with the
+      // served snapshot's content hash.
+      const full = await readAndServe(localIO(), "e.txt", cwd, { sessionKey });
+      expect(full.served).toHaveLength(4);
+      const anchor = full.served[1]!.hash;
+
+      const store = await internalStore();
+      const lease = store.leaseFor(sessionKey, path, anchor);
+      expect(lease).toBeDefined();
+      expect(lease?.snapshotHash).toBe(snapshotHashFor(content));
+      expect(lease?.lineNumber).toBe(2);
+
+      // A WINDOWED read serves part of the file. The lease it re-grants must keep the
+      // served snapshot's hash — not a window-scoped one — and the served line number.
+      const windowed = await readAndServe(localIO(), "e.txt", cwd, {
+        sessionKey,
+        offset: 1,
+        limit: 2,
       });
-      const stored = await loadServed(sessionKey, path);
-      expect(stored).toEqual(["aaa", "BBB"]);
-      expect(await loadEpochSnapshotId(sessionKey, path)).toBe("snap-full");
-      expect(await driftReported(sessionKey, path)).toEqual(new Set(["bbb"]));
-    } finally {
-      shutdownHashStore();
-      await rm(home, { recursive: true, force: true });
-      restore();
-    }
+      expect(windowed.served.map((row) => row.hash)).toContain(anchor);
+
+      const after = store.leaseFor(sessionKey, path, anchor);
+      expect(after).toBeDefined();
+      expect(after?.snapshotHash).toBe(snapshotHashFor(content));
+      expect(after?.lineNumber).toBe(2);
+    });
   });
 
   it("malformed-anchor edit throws before any serve write", async () => {

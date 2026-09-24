@@ -51,7 +51,6 @@ import { sessionKeyFor } from "./workspace-context.js";
 import {
   loadServed,
   loadServedCanons,
-  loadEpochSnapshotId,
   loadRetiredAnchors,
   scanDrift,
   recordServedTruncated,
@@ -144,15 +143,6 @@ export async function execPipeline(
   const sessionKey = options?.sessionKey ?? sessionKeyFor(undefined);
   const served = await loadServed(sessionKey, absolutePath);
   const servedCanons = await loadServedCanons(sessionKey, absolutePath);
-  const epochSnapshotId = await loadEpochSnapshotId(sessionKey, absolutePath);
-  let curSnapshotId: string | undefined;
-  try {
-    curSnapshotId = (await fileSnap(absolutePath)).snapshotId;
-  } catch {}
-  const strictPos =
-    epochSnapshotId !== undefined &&
-    curSnapshotId !== undefined &&
-    epochSnapshotId !== curSnapshotId; // automatic: strict when epoch mismatch (conservative, future: changed∩[L,R] refined)
   const retiredPerSession = await loadRetiredAnchors(sessionKey, absolutePath);
   const policy: ServeRecordPolicy = options?.noPersist === true ? "preview" : "live";
 
@@ -173,9 +163,6 @@ export async function execPipeline(
       reservedHashes: perSessionRetiredForNorm,
       servedCanons,
       retired: retiredPerSession,
-      epochSnapshotId,
-      curSnapshotId,
-      strictPos,
       edit,
       mode: params.mode,
     },

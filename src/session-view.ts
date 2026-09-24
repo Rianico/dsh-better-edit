@@ -102,13 +102,6 @@ export async function loadServedCanons(
   return store.getServedCanons(sessionKey, path);
 }
 
-export async function loadEpochSnapshotId(
-  sessionKey: string,
-  path: string,
-): Promise<string | undefined> {
-  const store = await loadServedStore();
-  return store.getEpochSnapshotId(sessionKey, path);
-}
 export async function loadRetiredAnchors(sessionKey: string, path: string): Promise<Set<string>> {
   const store = await loadServedStore();
   return store.getRetiredAnchors(sessionKey, path);
@@ -241,7 +234,6 @@ export async function retireAnchors(
 export interface FullReadContext {
   hashes: readonly string[];
   canons?: readonly (string | null)[];
-  snapshotId?: string;
   /**
    * Full content the hashes were computed from. When present (with `hashes`),
    * recordServed also materializes-or-adopts the serve snapshot and grants
@@ -308,7 +300,6 @@ export async function recordServed(
         store.clearRetiredAnchors(sessionKey, path);
         store.clearCards(sessionKey, path);
         if (full?.canons) store.upsertServedCanons(sessionKey, path, JSON.stringify(full.canons));
-        if (full?.snapshotId) store.upsertEpochSnapshotId(sessionKey, path, full.snapshotId);
       } else {
         // For partial reads, update canons for the served rows via hash-to-canon map (robust for partial views)
         if (full?.canons && full.hashes) {

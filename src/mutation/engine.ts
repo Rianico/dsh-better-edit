@@ -17,13 +17,11 @@ import type { HashStore } from "../hash-store.js";
 import type { LineEnding } from "../edit-diff.js";
 import { loadConfig } from "../store-config.js";
 import { canon } from "../hashline/hash-assign.js";
-import { fileSnap } from "../file-view.js";
 import { normFromText } from "../file-reader.js";
 import {
   scanDrift,
   loadServed,
   loadServedCanons,
-  loadEpochSnapshotId,
   loadRetiredAnchors,
   retireAnchors,
 } from "../session-view.js";
@@ -247,9 +245,6 @@ export interface ApplyOneInput {
   reservedHashes?: ReadonlySet<string>;
   servedCanons?: (string | null)[];
   retired?: ReadonlySet<string>;
-  epochSnapshotId?: string;
-  curSnapshotId?: string;
-  strictPos?: boolean;
   /** Request-level edit mode ("general" default, "literal" bypasses served-echo). */
   mode?: EditMode;
   sessionKey?: string;
@@ -316,9 +311,6 @@ export async function applyOne(
       input.served,
       input.servedCanons,
       retiredForApply,
-      input.epochSnapshotId,
-      input.curSnapshotId,
-      input.strictPos,
       input.mode,
     );
   } catch (error) {
@@ -640,15 +632,6 @@ export async function runFileEdits(
 
   const served = await loadServed(opts.sessionKey, absolutePath);
   const servedCanons = await loadServedCanons(opts.sessionKey, absolutePath);
-  const epochSnapshotId = await loadEpochSnapshotId(opts.sessionKey, absolutePath);
-  let curSnapshotId: string | undefined;
-  try {
-    curSnapshotId = (await fileSnap(absolutePath)).snapshotId;
-  } catch {}
-  const strictPos =
-    epochSnapshotId !== undefined &&
-    curSnapshotId !== undefined &&
-    epochSnapshotId !== curSnapshotId; // automatic: strict when epoch mismatch (conservative, future: changed∩[L,R] refined)
   const warnings: string[] = [];
 
   let currentContent = originalNormalized;
@@ -689,9 +672,6 @@ export async function runFileEdits(
         served,
         servedCanons,
         perSessionRetired,
-        epochSnapshotId,
-        curSnapshotId,
-        strictPos,
         item.mode,
       );
     } catch (error) {
@@ -730,9 +710,6 @@ export async function runFileEdits(
         reservedHashes,
         servedCanons,
         retired: new Set([...perSessionRetired, ...Array.from(newlyRetired)]),
-        epochSnapshotId,
-        curSnapshotId,
-        strictPos,
         mode: item.mode,
       },
       async (error, edit) => {

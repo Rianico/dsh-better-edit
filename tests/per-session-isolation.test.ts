@@ -31,7 +31,6 @@ describe("per-session anchor reservations isolation (ADR-0013)", () => {
     await SessionView.recordServed("sessionA", path, [{ position: 0, hash: "AAA" }], 1, {
       hashes: ["AAA"],
       canons: ["a"],
-      snapshotId: "snap1",
     });
     const store: any = await loadServedStore();
     store.upsertRetiredAnchors("sessionA", path, JSON.stringify([{ hash: "BBB", deathPos: 0 }]));
@@ -39,7 +38,6 @@ describe("per-session anchor reservations isolation (ADR-0013)", () => {
     await SessionView.recordServed("sessionB", path, [{ position: 0, hash: "CCC" }], 1, {
       hashes: ["CCC"],
       canons: ["c"],
-      snapshotId: "snap2",
     });
     store.upsertRetiredAnchors("sessionB", path, JSON.stringify([{ hash: "DDD", deathPos: 0 }]));
 

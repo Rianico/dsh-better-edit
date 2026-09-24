@@ -25,13 +25,12 @@ beforeAll(async () => {
  *
  * Case 1 — externally deleting the anchored line leaves the surviving byte-identical
  * twin holding the deleted line's anchor; the edit must reject and write nothing.
- * Refutability (a) position check: restoring the `strictPos &&` gate that used to guard
- * it (src/hashline/anchor-pipeline.ts — the check `if (from !== startLine - 1)` is now
- * UNCONDITIONAL) lets the edit apply to the surviving twin (no rejection, file changes),
- * so this test goes red. The surviving twin keeps the deleted line's hash (fresh
- * allocation hands the only remaining occurrence the base slot), the served canon still
- * matches (identical bytes), and only the served POSITION disagrees — exactly what the
- * position check pins.
+ * Refutability (a) position check: deleting the unconditional check
+ * `if (from !== startLine - 1)` in src/hashline/anchor-pipeline.ts lets the edit apply to
+ * the surviving twin (no rejection, file changes), so this test goes red. The surviving
+ * twin keeps the deleted line's hash (fresh allocation hands the only remaining occurrence
+ * the base slot), the served canon still matches (identical bytes), and only the served
+ * POSITION disagrees — exactly what the position check pins.
  *
  * Case 2 — an orphaned serve (the same hash written at a new position while the old
  * served slot survives) makes the boundary anchor ambiguous; the span must reject with
@@ -149,11 +148,11 @@ describe("deleted twin anchor (exact position lock)", () => {
 
   it("rejects E_STALE_RANGE on the pos-free path too — the position check is unconditional", () => {
     // The position check in `verifyServedRange` is UNCONDITIONAL. The pos-free path is
-    // reachable on a normal session route (`epochSnapshotId` is pinned only by a FULL read,
+    // reachable on a normal session route (the epoch pin was written only by a FULL read,
     // and a windowed read is never a full read), so a moved span must reject rather than
     // silently re-bind onto the line that now holds the same bytes.
-    // Refutability: restore `strictPos &&` on the guard -> `reject(false)` returns undefined
-    // instead of E_STALE_RANGE (green-with-a-write).
+    // Refutability: delete the `if (from !== startLine - 1)` rejection -> `reject()` returns
+    // undefined instead of E_STALE_RANGE (green-with-a-write).
     const fileLines = ["twin", "other"];
     const fileHashes = lineHashesPure(fileLines.join("\n"));
     const hTwin = fileHashes[0]!;
@@ -166,7 +165,7 @@ describe("deleted twin anchor (exact position lock)", () => {
     const servedCanons = [canon("other"), canon("twin")];
 
     // No copies: the seam is pure, so rejecting must not mutate the caller's mirror.
-    const reject = (strictPos: boolean | undefined): string | undefined => {
+    const reject = (): string | undefined => {
       try {
         verifyServedRange({
           served,
@@ -177,7 +176,6 @@ describe("deleted twin anchor (exact position lock)", () => {
           endLine: 1,
           fileHashes,
           fileLines,
-          strictPos,
         });
         return undefined;
       } catch (error) {
@@ -186,23 +184,20 @@ describe("deleted twin anchor (exact position lock)", () => {
       }
     };
 
-    // Pos-restricted (both epoch ids present) AND pos-free (ids undefined) all reject: the
-    // epoch state no longer decides whether a moved span is caught.
-    expect(reject(true)).toBe("E_STALE_RANGE");
-    expect(reject(false)).toBe("E_STALE_RANGE");
-    expect(reject(undefined)).toBe("E_STALE_RANGE");
+    // The epoch state no longer decides whether a moved span is caught: the unconditional
+    // position check rejects it outright.
+    expect(reject()).toBe("E_STALE_RANGE");
     // Rejecting is pure — no write reaches the caller's served mirror.
     expect(served).toEqual([hOther, hTwin]);
     expect(servedCanons).toEqual([canon("other"), canon("twin")]);
   });
 
   it("rejects E_STALE_RANGE when a WINDOWED read could not pin the epoch (reachable pos-free route)", async () => {
-    // The reachable route this pins: `epochSnapshotId` is written only inside
-    // `if (isFullRead)` (src/session-view.ts:307-311) and `isFullRead` requires
-    // `rows.length === full.hashes.length`, so a WINDOWED read never pins it — `strictPos`
-    // stays false for that (session, path) permanently, whether or not the file changed.
-    // Before the position check was made unconditional this edit silently applied to the
-    // surviving twin.
+    // The reachable route this pins: the epoch pin was written only inside
+    // `if (isFullRead)` and `isFullRead` requires `rows.length === full.hashes.length`, so a
+    // WINDOWED read never pinned it for that (session, path), whether or not the file
+    // changed. Before the position check was made unconditional this edit silently applied
+    // to the surviving twin.
     const initial =
       "export function alpha() {\n" +
       "  return compute(value);\n" +

@@ -47,7 +47,6 @@ describe("51 hazard GC", () => {
       {
         hashes: realHashes,
         canons: Array.from({ length: N }, (_, i) => `line${i}`),
-        snapshotId: "snap1",
       },
     );
     const toRetire = realHashes.slice(0, 6);
@@ -66,7 +65,6 @@ describe("51 hazard GC", () => {
     await SessionView.recordServed(sessionKey, path, rows, N, {
       hashes: newHashes,
       canons: Array.from({ length: N }, (_, i) => (i < 6 ? `changed${i}` : `line${i}`)),
-      snapshotId: "snap1",
     });
     const after = store.getRetiredEntries(sessionKey, path);
     expect(after.length).toBe(0);
@@ -119,7 +117,7 @@ describe("51 hazard GC", () => {
       path,
       hashes.map((h, i) => ({ position: i, hash: h })),
       N,
-      { hashes, canons: Array.from({ length: N }, (_, i) => `line${i}`), snapshotId: "snap1" },
+      { hashes, canons: Array.from({ length: N }, (_, i) => `line${i}`) },
     );
     const store = await (await import("../src/hash-store.js")).loadServedStore();
     const fakeCount = 5000; // reduced for speed but still demonstrates promotion via hazard GC - use smaller than HASH_SPACE to avoid super heavy DB
@@ -155,7 +153,6 @@ describe("51 hazard GC", () => {
       {
         hashes: hashesForFile,
         canons: Array.from({ length: N }, (_, i) => `line${i}`),
-        snapshotId: "snap1",
       },
     );
     // Re-apply fake retired after recordServed cleared it (if full read clears)
@@ -216,7 +213,7 @@ describe("51 hazard GC", () => {
       path,
       hashes.map((h, i) => ({ position: i, hash: h })),
       N,
-      { hashes, canons: Array.from({ length: N }, (_, i) => `line${i}`), snapshotId: "snap1" },
+      { hashes, canons: Array.from({ length: N }, (_, i) => `line${i}`) },
     );
     const store = await (await import("../src/hash-store.js")).loadServedStore();
     // Manually set retired: mix of -1 and 0..4
@@ -235,7 +232,6 @@ describe("51 hazard GC", () => {
     await SessionView.recordServed(sessionKey, path, rows, N, {
       hashes: newHashes,
       canons: Array.from({ length: N }, (_, i) => `line${i}`),
-      snapshotId: "snap1",
     });
     const afterPartial = store.getRetiredEntries(sessionKey, path);
     const afterHashes = new Set(afterPartial.map((e) => e.hash));
@@ -252,7 +248,6 @@ describe("51 hazard GC", () => {
     await SessionView.recordServed(sessionKey, path, fullRows, N, {
       hashes: newHashes,
       canons: Array.from({ length: N }, (_, i) => `line${i}`),
-      snapshotId: "snap2",
     });
     const afterFull = store.getRetiredEntries(sessionKey, path);
     expect(afterFull.length).toBe(0);
@@ -273,7 +268,6 @@ describe("51 hazard GC", () => {
       {
         hashes,
         canons: Array.from({ length: N }, (_, i) => `line${i}`),
-        snapshotId: "snap-cards-1",
       },
     );
     const store = await (await import("../src/hash-store.js")).loadServedStore();
@@ -299,7 +293,6 @@ describe("51 hazard GC", () => {
     await SessionView.recordServed(sessionKey, path, rowsFirst, N, {
       hashes,
       canons: Array.from({ length: N }, (_, i) => `line${i}`),
-      snapshotId: "snap-cards-1",
     });
     const afterFirst = store.getRetiredEntries(sessionKey, path);
     expect(afterFirst.length).toBe(500);
@@ -318,7 +311,6 @@ describe("51 hazard GC", () => {
     await SessionView.recordServed(sessionKey, path, rowsSecond, N, {
       hashes,
       canons: Array.from({ length: N }, (_, i) => `line${i}`),
-      snapshotId: "snap-cards-1",
     });
     const afterSecond = store.getRetiredEntries(sessionKey, path);
     expect(afterSecond.length).toBe(0);
@@ -330,7 +322,6 @@ describe("51 hazard GC", () => {
     await SessionView.recordServed(sessionKey, path, fullRows, N, {
       hashes,
       canons: Array.from({ length: N }, (_, i) => `line${i}`),
-      snapshotId: "snap-cards-2",
     });
     const cardsAfterFull = store.getCards(sessionKey, path);
     expect(cardsAfterFull.size).toBe(0);

@@ -158,8 +158,6 @@ interface Prepared {
   servedRetiredClear: (...params: SqlParams) => void;
   servedCanonsUpsert: (...params: SqlParams) => void;
   servedCanonsClear: (...params: SqlParams) => void;
-  servedSnapshotUpsert: (...params: SqlParams) => void;
-  servedSnapshotClear: (...params: SqlParams) => void;
   servedCardsUpsert: (...params: SqlParams) => void;
   servedCardsClear: (...params: SqlParams) => void;
   servedDelete: (...params: SqlParams) => void;
@@ -221,7 +219,6 @@ export interface ServedPersistence {
   getRetiredAnchors(sessionKey: string, path: string): Set<string>;
   getRetiredEntries(sessionKey: string, path: string): RetiredEntry[];
   getServedCanons(sessionKey: string, path: string): (string | null)[];
-  getEpochSnapshotId(sessionKey: string, path: string): string | undefined;
   getCards(sessionKey: string, path: string): Set<number>;
   upsertCards(sessionKey: string, path: string, cardsJson: string): void;
   clearCards(sessionKey: string, path: string): void;
@@ -232,8 +229,6 @@ export interface ServedPersistence {
   clearRetiredAnchors(sessionKey: string, path: string): void;
   upsertServedCanons(sessionKey: string, path: string, canonsJson: string): void;
   clearServedCanons(sessionKey: string, path: string): void;
-  upsertEpochSnapshotId(sessionKey: string, path: string, snapshotId: string): void;
-  clearEpochSnapshotId(sessionKey: string, path: string): void;
   deleteServed(sessionKey: string, path: string): void;
   deleteServedByPath(path: string): void;
   wipeServed(sessionKey: string): void;
@@ -473,14 +468,12 @@ function ensureSchema(db: DatabaseSync): void {
       "reported TEXT, " +
       "retired TEXT, " +
       "canons TEXT, " +
-      "snapshotId TEXT, " +
       "cards TEXT, " +
       "updated_at INTEGER NOT NULL, " +
       "PRIMARY KEY (session_id, path)" +
       ")",
   );
   addColumnIfMissing(db, "served", "canons", "TEXT");
-  addColumnIfMissing(db, "served", "snapshotId", "TEXT");
   addColumnIfMissing(db, "served", "cards", "TEXT");
 }
 
@@ -578,7 +571,7 @@ function buildStore(db: DatabaseSync, storePath: string): { db: DatabaseSync; st
   );
   const fileUndoDelStmt = db.prepare("DELETE FROM file_undo WHERE path = ?");
   const servedGetStmt = db.prepare(
-    "SELECT hashes, reported, retired, canons, snapshotId, cards FROM served WHERE session_id = ? AND path = ?",
+    "SELECT hashes, reported, retired, canons, cards FROM served WHERE session_id = ? AND path = ?",
   );
   const servedAllForPathStmt = db.prepare(
     "SELECT session_id, hashes, retired FROM served WHERE path = ?",
@@ -607,13 +600,6 @@ function buildStore(db: DatabaseSync, storePath: string): { db: DatabaseSync; st
   );
   const servedCanonsClearStmt = db.prepare(
     "UPDATE served SET canons = NULL, updated_at = ? WHERE session_id = ? AND path = ?",
-  );
-  const servedSnapshotUpsertStmt = db.prepare(
-    "INSERT INTO served (session_id, path, hashes, snapshotId, updated_at) VALUES (?, ?, '[]', ?, ?) " +
-      "ON CONFLICT(session_id, path) DO UPDATE SET snapshotId = excluded.snapshotId, updated_at = excluded.updated_at",
-  );
-  const servedSnapshotClearStmt = db.prepare(
-    "UPDATE served SET snapshotId = NULL, updated_at = ? WHERE session_id = ? AND path = ?",
   );
   const servedCardsUpsertStmt = db.prepare(
     "INSERT INTO served (session_id, path, hashes, cards, updated_at) VALUES (?, ?, '[]', ?, ?) " +
@@ -699,16 +685,6 @@ function buildStore(db: DatabaseSync, storePath: string): { db: DatabaseSync; st
     servedCanonsClear: (...params) => {
       withBusyRetry(() => {
         servedCanonsClearStmt.run(params[1], params[0], params[2]);
-      });
-    },
-    servedSnapshotUpsert: (...params) => {
-      withBusyRetry(() => {
-        servedSnapshotUpsertStmt.run(...params);
-      });
-    },
-    servedSnapshotClear: (...params) => {
-      withBusyRetry(() => {
-        servedSnapshotClearStmt.run(params[1], params[0], params[2]);
       });
     },
     servedCardsUpsert: (...params) => {
@@ -1034,22 +1010,11 @@ function makeDomainStore(
         return [];
       }
     },
-    getEpochSnapshotId(sessionKey, path) {
-      const row = stmts.servedGet(sessionKey, path);
-      if (!row || row.snapshotId === null || row.snapshotId === undefined) return undefined;
-      return row.snapshotId as string;
-    },
     upsertServedCanons(sessionKey, path, canonsJson) {
       stmts.servedCanonsUpsert(sessionKey, path, canonsJson, Date.now());
     },
     clearServedCanons(sessionKey, path) {
       stmts.servedCanonsClear(sessionKey, Date.now(), path);
-    },
-    upsertEpochSnapshotId(sessionKey, path, snapshotId) {
-      stmts.servedSnapshotUpsert(sessionKey, path, snapshotId, Date.now());
-    },
-    clearEpochSnapshotId(sessionKey, path) {
-      stmts.servedSnapshotClear(sessionKey, Date.now(), path);
     },
     getCards(sessionKey, path) {
       const row = stmts.servedGet(sessionKey, path);

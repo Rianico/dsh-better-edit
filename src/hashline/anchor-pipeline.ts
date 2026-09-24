@@ -590,9 +590,6 @@ export function verifyServedRange(args: {
   filePath?: string;
   servedCanons?: (string | null)[];
   retired?: ReadonlySet<string>;
-  epochSnapshotId?: string;
-  curSnapshotId?: string;
-  strictPos?: boolean;
 }): void {
   const { served, startHash, endHash, startLine, endLine, fileHashes, fileLines, filePath } = args;
   const where = filePath ? ` in ${filePath}` : "";
@@ -695,18 +692,18 @@ export function verifyServedRange(args: {
   // would otherwise silently re-bind onto a different line that happens to hold the same
   // bytes (wrong line edited, exit 0).
   //
-  // Why this must not be gated on `strictPos`: the pos-free path is REACHABLE on a normal
-  // session route. `epochSnapshotId` is pinned only by a FULL read
-  // (src/session-view.ts:311 sits inside `if (isFullRead)` at :307), `upsertEpochSnapshotId`
-  // has exactly one caller and `clearEpochSnapshotId` has none, and a WINDOWED read is
-  // never a full read (`isFullRead` requires `rows.length === full.hashes.length`). So a
-  // windowed read leaves `strictPos === false` permanently for that (session, path),
-  // whether or not the file changed. `curSnapshotId` can likewise stay undefined when the
-  // snapshot read throws at edit time (src/mutation.ts:148-151 swallows it).
+  // Why this must not be gated on any epoch pin: the pos-free path is REACHABLE on a
+  // normal session route. A snapshot pin was only ever written by a FULL read (the write
+  // sat inside `if (isFullRead)`, and `isFullRead` requires
+  // `rows.length === full.hashes.length`), so a WINDOWED read never pinned it and any
+  // pin-gated check would stay off permanently for that (session, path), whether or not
+  // the file changed. The current snapshot could likewise be unavailable at edit time
+  // when the stat read throws.
   //
-  // T3c DEBT: `strictPos` is now computed-but-unread here. Its parameter and the
-  // `epochSnapshotId`/`curSnapshotId` interface fields are the lease-resolve seam T3c
-  // consumes and is to delete. Session-level regression:
+  // CP1-r2 replaces this check with lease identity: a served lease's line id decides
+  // whether a moved anchor is the same line (benign shift) or a look-alike rebind, and
+  // only the latter rejects. Until that instrument lands, this position check IS the
+  // staleness instrument. Session-level regression:
   // test/core/deleted-twin-anchor.test.ts (the "WINDOWED read" case).
   if (from !== startLine - 1) {
     throw new ServedRejectionError({
@@ -920,9 +917,6 @@ export function applyEdit(
   served?: (string | null)[],
   servedCanons?: (string | null)[],
   retired?: ReadonlySet<string>,
-  epochSnapshotId?: string,
-  curSnapshotId?: string,
-  strictPos?: boolean,
   mode?: EditMode,
 ): {
   content: string;
@@ -1040,9 +1034,6 @@ export function applyEdit(
       filePath,
       servedCanons,
       retired,
-      epochSnapshotId,
-      curSnapshotId,
-      strictPos,
     });
   }
 

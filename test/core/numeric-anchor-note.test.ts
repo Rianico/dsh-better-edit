@@ -54,20 +54,7 @@ describe("numeric-anchor diagnosis", () => {
     const edit = resEdit({ anchor_from: "833", anchor_to: "833", replace_with: "x" });
     let message = "";
     try {
-      applyEdit(
-        content,
-        edit,
-        undefined,
-        hashes,
-        "a.py",
-        [],
-        undefined,
-        undefined,
-        undefined,
-        undefined,
-        undefined,
-        undefined,
-      );
+      applyEdit(content, edit, undefined, hashes, "a.py", [], undefined, undefined, undefined);
     } catch (error) {
       message = String((error as Error).message);
     }
@@ -82,20 +69,7 @@ describe("numeric-anchor diagnosis", () => {
     const edit = resEdit({ anchor_from: "ZZZ", anchor_to: "ZZZ", replace_with: "x" });
     let message = "";
     try {
-      applyEdit(
-        content,
-        edit,
-        undefined,
-        hashes,
-        "a.py",
-        [],
-        undefined,
-        undefined,
-        undefined,
-        undefined,
-        undefined,
-        undefined,
-      );
+      applyEdit(content, edit, undefined, hashes, "a.py", [], undefined, undefined, undefined);
     } catch (error) {
       message = String((error as Error).message);
     }
