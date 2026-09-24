@@ -266,10 +266,12 @@ describe("vacuum — pins", () => {
       hashes: h1,
       leases: { sessionKey: "s", rows: h1.map((hash, position) => ({ position, hash })) },
     });
-    // Retired now, updated outside the active TTL: pinned by the grace clause alone.
-    db.prepare(
-      "UPDATE served_leases SET retired_at = ?, updated_at = ? WHERE file_path = ? AND anchor = ?",
-    ).run(Date.now(), Date.now() - SERVED_TTL_MS - 60_000, path, h1[0]!);
+    // Retired now, updated outside the active TTL: the grace clause is the only pin left.
+    db.prepare("UPDATE served_leases SET retired_at = ?, updated_at = ? WHERE file_path = ?").run(
+      Date.now(),
+      Date.now() - SERVED_TTL_MS - 60_000,
+      path,
+    );
     for (let index = 2; index <= 12; index++) {
       commit(lineage, path, `one\ntwo\nthree\nversion ${index}`, `V${index}`);
     }

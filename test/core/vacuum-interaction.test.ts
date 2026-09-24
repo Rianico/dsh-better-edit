@@ -247,7 +247,9 @@ describe("vacuum — interaction with lineage, leases and the tools", () => {
           | undefined;
         expect(pin?.snapshot_hash).toBe(pinned);
 
-        // Over the per-path window and the global budget: only the undo pin protects the target.
+        // Over the per-path window and the global budget, with the leases aged out: the undo pin
+        // is the only thing left protecting the target.
+        ageLeases(db, path);
         db.prepare(
           "INSERT INTO file_snapshots (path, snapshot_hash, line_count, created_at, committed) " +
             "VALUES ('/bulk.ts', '13:bulk', 2000000, ?, 1)",
