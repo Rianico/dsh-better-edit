@@ -4,7 +4,7 @@ Date: 2026-09-01
 
 ## Status
 
-accepted
+accepted; **partially superseded by [ADR-0018](0018-exact-position-served-span-verification.md)** — §1 (epoch not pos), §3 (concurrency fallback) and §4 (non-overlapping forever is pos-free) are **reversed**: the position check is now unconditional and `strictPos` is read by nothing. §2 (tombstone, allocation invariant) **survives**. This ADR's `## Considered Options` rejected "strict pos always" for its re-read tax, which is what shipped; see ADR-0018's "Behaviour change" for the measured cost and for the routes that are unchanged.
 
 ## Context
 

@@ -62,6 +62,27 @@ ADR-0004 is **superseded** by this ADR.
 > After a **windowed** read (`offset`/`limit` on a file not yet fully read in that session), an
 > edit whose anchor has moved now **rejects with `E_STALE_RANGE` and requires a re-read**, where
 > it previously silently re-bound onto a content-identical line.
+>
+> More generally: the position check is **unconditional**, so _every_ pos-free route now fails
+> closed, while a **strict** session (epoch pinned, file changed) already rejected before this
+> ADR. An exterior shift that moves the served span therefore now costs a **re-read** rather
+> than passing silently — that is ADR-0013's withdrawn promise, and the cost is deliberate.
+
+### Measured: session-level A/B through the real tools
+
+Three cells, driving `read`/`edit` rather than `verifyServedRange` with hand-set `strictPos`:
+
+| #   | route                                                                             | base `ecdf997`             | this revision `3ed4323`    |
+| --- | --------------------------------------------------------------------------------- | -------------------------- | -------------------------- |
+| A   | full read → exterior insert `@0` → edit the originally-served range               | **REJECT** `E_STALE_RANGE` | **REJECT** `E_STALE_RANGE` |
+| B   | windowed read (`offset`/`limit`, never a full read) → same exterior insert → edit | **PASS** (silent re-bind)  | **REJECT** `E_STALE_RANGE` |
+| C   | control: full read, no external change → edit                                     | PASS                       | PASS                       |
+
+The full-read route is **unchanged**, which is worth stating because it is easy to infer
+otherwise from synthetic parameters: a full read pins the epoch, the exterior write makes
+`epoch !== curSnapshotId` (`mutation.ts:152-155`), so `strictPos` was already `true` at base and
+the old `strictPos &&` gate already rejected — the base message even reads `(pos-restricted
+concurrency)`. The behaviour change is exactly cell B, the epoch-unpinned route.
 
 Why the windowed case is the reachable one: the epoch snapshot id is pinned only on a full read
 — `session-view.ts:307`/`:311`, inside `if (isFullRead)`; `upsertEpochSnapshotId` has one caller
@@ -73,7 +94,8 @@ A second route reaches the same state: `curSnapshotId` stays `undefined` when `f
 (`mutation.ts:148-151`).
 
 The position check was made **unconditional** rather than left behind a `strictPos` flag
-precisely because this path is reachable with no flag set.
+precisely because the unpinned route is reachable with no flag set — which is the route cell B
+measures.
 
 ## Why this closed in T3a rather than T3c (T6 timing)
 
