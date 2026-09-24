@@ -305,15 +305,16 @@ the mitigation until R5.
   Trigger: "no store failure is ever silent" becoming a standing rule, or the read-result channel below.
 - **R2** — the serve-path swallows that remain **silent** about their outcome: the drift write
   (`src/session-view.ts:677`), the promotion/wipe arms (`src/read-and-serve.ts`, `clearRetiredAnchors` and
-  `clearCards`; each documented in place as a deliberate local fallback), and `recordEchoServes`
-  (`src/hashline/anchor-pipeline.ts:913`). `recordServed` and `recordServedTruncated` no longer belong
+  `clearCards`; each documented in place as a deliberate local fallback). `recordServed` and
+  `recordServedTruncated` no longer belong
   here — they report whether the write landed, and the read and edit paths downgrade their claim when it
   did not. The remainder are no longer reachable from a _permanent_ condition: the only permanent store
   failure reachable from the read path was the unusable lineage, and `commitSnapshot` now repairs it
   instead of throwing. What remains is environmental (locks, disk), the cause is logged, and the read's
   best-effort policy is deliberate — a read must not fail because bookkeeping hiccuped. Trigger: "a read
-  must fail closed on a store write" becoming a requirement, or the echo arm being audited (T4
-  echo-guard hardening).
+  must fail closed on a store write" becoming a requirement, or the remaining arms being audited (T4
+  echo-guard hardening). The reject path's `recordEchoServes` arm is gone — T3f deleted the symbol
+  rather than hardening it.
 - **R3** — `upsertSnapshotFor` (`src/hash-store.ts:1238`) has no production caller since CP1's fix; the
   undo path uses the store face directly. Kept because it is an exported seam member
   (`src/store/index.ts`) consumed by `test/core/serve-leases.test.ts`. Trigger: the next seam-pruning

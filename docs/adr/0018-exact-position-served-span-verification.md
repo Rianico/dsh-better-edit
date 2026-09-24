@@ -48,7 +48,10 @@ and rejects when the span does not line up.
 Both of ADR-0004's arms, and its tolerance:
 
 - the **eager heal** in `_mergeServedRows` — a hash written at a new position now leaves the old
-  slot INTACT; the duplicate surfaces at verification as `E_UNSERVED_RANGE`;
+  slot INTACT — and the duplicate is then **served by the next read**, not merely detected at
+  verification. Half-true as first written: an _edit_ built from that ambiguous read rejects
+  (`E_STALE_RANGE` / `E_UNSERVED_RANGE`), but the read output the user copies anchors from is
+  already ambiguous. T3f removed the reject path's own contribution to that slot (Consequences).
 - the **lazy content disambiguation** in `verifyServedRange` — the candidate `(s,e)` enumeration
   filtered by length + content equality and ranked by proximity to `startLine - 1` is gone;
 - `lenHealed` — the multi-line length-mismatch tolerance (`hashline` `f94fb88`).
@@ -150,6 +153,27 @@ identical lines, so position is the only discriminator. This ADR keeps upstream'
 - `E_UNSERVED_RANGE` gains a second producer (duplicate served positions) and stays a live code
   rather than the retiring one it was expected to become.
 - The served mirror can hold a stale slot indefinitely — nothing nulls it. That is deliberate:
-  the duplicate is the evidence, and deleting it here is the heal this ADR removes.
+  the duplicate is the evidence, and deleting it here is the heal this ADR removes. Two
+  producers can leave that slot. An **out-of-band file write** still does — the exact-write rule
+  leaves the old slot intact when the _file_ changes behind the served mirror, and the next read
+  serves the duplicate. The **reject path's echo write** did, and T3f removed it: `recordEchoServes`
+  re-committed the rejection's current-range rows, which is what left the slot that the next read
+  turned into a duplicate anchor.
+- **A rejected edit is observably a no-op for the next read** (T3f, the invariant the
+  fail-closed contract above needed). A rejection rethrows with the current-range echo and
+  records/grants nothing: the served rows are byte-identical before and after, no lease row
+  appears, and every grant field (`snapshotHash`, `lineId`, `lineNumber`, `canonHash`) is
+  unchanged. The next fresh read's anchor list is byte-identical to the control that performs the
+  same external change with no intervening rejected edit. The one measured lease delta is not the
+  rejection: the edit pipeline's own file normalization commits a snapshot of the externally
+  changed content, and `commitSnapshot` retires leases whose line left it (`retiredAt`); an
+  external change that preserves every served line's identity leaves lease rows byte-identical
+  including `retiredAt`. The recovery is the re-read the message already instructs; the reject
+  sites now only render the echo into the error message.
+- **Two commits were required for the defect to be observable — a lesson.** T2b `510af05` made
+  the reject path _write_ served rows (the stale slot); T3a `b623aa8` removed the eager orphan
+  heal that had been nulling it. At T2b's head the heal masked the slot — labels churned, no
+  duplicate — so the duplicate is observable only with **both** present. A defect can be created
+  by one change and become _reachable_ by a later, correct one; neither commit alone reproduces it.
 - `_mergeServedRows` becomes a pure merge with no disambiguation; the exact-write rule is now
   the only rule.

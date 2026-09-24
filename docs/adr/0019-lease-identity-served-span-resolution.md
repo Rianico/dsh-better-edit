@@ -26,11 +26,12 @@ identity map (`positionsByIdentity`), to that row's rebased coordinate (`verifyR
 position check remains the fallback where no `LeaseSpanSource` exists.
 
 Resolution is **read-only**: it never re-stamps a lease and never writes `retired_at`. This ADR pins
-the **resolution boundary**, not the edit path — the edit path legitimately re-serves echo rows and
-retires anchors, which is pre-existing T2b behaviour and was measured
-(measured on the real tool path: a passing edit re-stamps every lease row and adds rows, a rejecting
-edit re-grants the served anchor's row — both from `src/mutation.ts:419` `recordServedTruncated` and
-the tombstone path, not from resolution).
+the **resolution boundary**, not the edit path — a _passing_ edit legitimately re-serves echo rows and
+retires anchors, which is pre-existing T2b behaviour and was measured (measured on the real tool path: a
+passing edit re-stamps every lease row and adds rows). A **rejecting** edit is now a no-op for served
+state: T3f removed the reject path's `recordEchoServes` write, so a rejection rethrows with the
+current-range echo and records/grants nothing. Both edit-path effects come from `recordServedTruncated`
+and the tombstone path, not from resolution.
 
 - **Benign shift** — the intended line's content is unchanged, its position moved → resolves →
   applies. Pinned by `test/core/lease-resolve-seam.test.ts` ("applies a benign exterior insert above
@@ -77,8 +78,9 @@ for the same three fixtures ARE committed — `[1,3,4,5,6,7]`, `[3,4]`, `[4]` �
 
 The engine is `src/snapshot-store/pairing.ts`, a verbatim port of upstream
 `pi-better-edit@00f8c34 src/hashline/patience-pairing.ts` — `diff -u` against upstream reports only the
-added `@module` tag. Its 30 upstream oracles are ported to
-`test/core/pairing.test.ts`.
+added `@module` tag. All **22** of its upstream oracles are ported verbatim to
+`test/core/pairing.test.ts`, which holds **30** tests — those 22 plus **8 local-only**
+additions (not upstream ports).
 
 ## Pairing consequences
 
