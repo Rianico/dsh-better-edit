@@ -181,13 +181,43 @@ describe("CP2 — corrupt lineage", () => {
       });
     });
   });
+  /** The four row families `deleteByPath` owns, counted for one path. */
+  function familyCounts(
+    db: DatabaseSync,
+    lineage: LineageStore,
+    path: string,
+    content: string,
+  ): { snapshotRows: number; lineageRows: number; counterRows: number; leaseRows: number } {
+    return {
+      snapshotRows: countRows(db, "SELECT COUNT(*) AS n FROM file_snapshots WHERE path = ?", path),
+      lineageRows: lineage.lineageFor(path, snapshotHashFor(content)).length,
+      counterRows: countRows(db, "SELECT COUNT(*) AS n FROM line_id_counters WHERE path = ?", path),
+      leaseRows: countRows(db, "SELECT COUNT(*) AS n FROM served_leases WHERE file_path = ?", path),
+    };
+  }
 
   it("deleteByPath is one unit: an interrupted delete cannot split the family", () => {
     const db = new DatabaseSync(":memory:");
     const lineage: LineageStore = createLineageStore(db);
     const content = "a\nb\nc\n";
-    lineage.commitSnapshot({ path: "t.txt", content, hashes: ["aaa", "bbb", "ccc"] });
-    expect(lineage.lineageFor("t.txt", snapshotHashFor(content)).length).toBe(3);
+
+    // Seed ALL FOUR families: the snapshot + its lineage, the per-path id counter, and two
+    // `served_leases` rows (two, so a partial delete of the lease family is observable).
+    lineage.commitSnapshot({
+      path: "t.txt",
+      content,
+      hashes: ["aaa", "bbb", "ccc"],
+      leases: {
+        sessionKey: "cp3",
+        rows: [
+          { position: 0, hash: "aaa" },
+          { position: 1, hash: "bbb" },
+        ],
+      },
+    });
+
+    // The seed is confirmed at runtime, never assumed.
+    const seeded = familyCounts(db, lineage, "t.txt", content);
 
     // Deterministic fault BETWEEN the four statements: the first (lineage delete) runs,
     // the second (snapshot delete) aborts. `withBusyRetry` rethrows non-busy errors.
@@ -203,15 +233,26 @@ describe("CP2 — corrupt lineage", () => {
     }
     db.exec("DROP TRIGGER block_snapshot_delete");
 
-    expect({
-      faulted,
-      snapshotRows: countRows(
-        db,
-        "SELECT COUNT(*) AS n FROM file_snapshots WHERE path = ?",
-        "t.txt",
-      ),
-      lineageRows: lineage.lineageFor("t.txt", snapshotHashFor(content)).length,
-    }).toEqual({ faulted: true, snapshotRows: 1, lineageRows: 3 });
+    const interrupted = familyCounts(db, lineage, "t.txt", content);
+
+    // With the trigger gone the same delete runs to completion on the family the rollback
+    // restored. This is the only way to observe the counters and leases statements at all:
+    // the interrupted path rolls them back, so it cannot tell whether they ever ran.
+    lineage.deleteByPath("t.txt");
+    const successful = familyCounts(db, lineage, "t.txt", content);
+
+    // One object compare: any single family diverging fails loudly.
+    expect({ seeded, interrupted: { faulted, ...interrupted }, successful }).toEqual({
+      seeded: { snapshotRows: 1, lineageRows: 3, counterRows: 1, leaseRows: 2 },
+      interrupted: {
+        faulted: true,
+        snapshotRows: 1,
+        lineageRows: 3,
+        counterRows: 1,
+        leaseRows: 2,
+      },
+      successful: { snapshotRows: 0, lineageRows: 0, counterRows: 0, leaseRows: 0 },
+    });
   });
   it("repairs a canon-inconsistent lineage instead of reusing its ids", () => {
     const db = new DatabaseSync(":memory:");
