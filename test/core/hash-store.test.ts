@@ -12,7 +12,7 @@ import {
   type InternalHashStore,
 } from "../../src/hash-store.js";
 import { loadServed, recordServed, recordServedTruncated } from "../../src/session-view.js";
-import { LineageCorruptError } from "../../src/snapshot-store/lineage-store.js";
+import { snapshotHashFor } from "../../src/snapshot-store/lineage-store.js";
 import { DomainError } from "../../src/domain-errors.js";
 import { HASH_STORE_VERSION } from "../../src/constants.js";
 import { CANON_VERSION } from "../../src/hashline/hash-assign.js";
@@ -1471,7 +1471,7 @@ describe("hash-store — v7 snapshot materialization", () => {
     });
   });
 
-  it("partially-corrupt lineage throws instead of serving a stale mix", async () => {
+  it("partially-corrupt lineage repairs instead of serving a stale mix", async () => {
     await withTempHome(async (home) => {
       const internal = (await loadHashStore()) as unknown as InternalHashStore;
       const content = "alpha\nbeta\n";
@@ -1483,11 +1483,18 @@ describe("hash-store — v7 snapshot materialization", () => {
       raw.prepare("DELETE FROM line_lineage WHERE line_number = ?").run(2);
       raw.close();
       const reopened = (await loadHashStore()) as unknown as InternalHashStore;
-      expect(() =>
-        reopened.commitSnapshot({ path: "/c.ts", content, hashes: ["AAa", "AAb"] }),
-      ).toThrow("stored lineage has 1 rows for 2 lines");
-      // Read half: the partial lineage is not served as a truncated array.
-      expect(reopened.getSnapshot("/c.ts", content)).toBeUndefined();
+
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      reopened.commitSnapshot({ path: "/c.ts", content, hashes: ["AAa", "AAb"] });
+      const warned = warn.mock.calls.map((call) => String(call[0])).join(" ");
+      warn.mockRestore();
+
+      // Read half: the partial family is replaced, never served as a truncated mix — the
+      // snapshot now resolves to exactly one row per line, with the anchors just adopted.
+      expect({
+        snapshot: reopened.getSnapshot("/c.ts", content),
+        warned: /stored lineage has 1 rows for 2 lines/.test(warned),
+      }).toEqual({ snapshot: ["AAa", "AAb"], warned: true });
     });
   });
 
@@ -1655,7 +1662,7 @@ it("#6 truncated served ↔ served_leases: a lease fault leaves the served row a
   });
 });
 
-it("adopt on an orphan snapshot row throws; serve paths fail closed without repair", async () => {
+it("adopt on an orphan snapshot row repairs it; the serve path grants leases again", async () => {
   await withTempHome(async (home) => {
     const internal = (await loadHashStore()) as unknown as InternalHashStore;
     const content = "alpha\nbeta\n";
@@ -1668,12 +1675,10 @@ it("adopt on an orphan snapshot row throws; serve paths fail closed without repa
     } as any);
     cut.exec("DELETE FROM line_lineage");
     cut.close();
-    const reopened = (await loadHashStore()) as unknown as InternalHashStore;
-    // Direct call fails loud: the orphan can never be adopted silently.
-    expect(() => reopened.commitSnapshot({ path: "/o.ts", content, hashes })).toThrow(
-      LineageCorruptError,
-    );
-    // Serve path: no lease, no crash, and no silent repair of the lineage.
+
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    // Serve path: the repair is what stops the read → edit → reject loop — the read
+    // persists its leases instead of rolling the served row back forever.
     await recordServed(
       "cp3-orphan",
       "/o.ts",
@@ -1684,21 +1689,18 @@ it("adopt on an orphan snapshot row throws; serve paths fail closed without repa
       2,
       { hashes, content },
     );
-    expect(reopened.leaseFor("cp3-orphan", "/o.ts", "AAa")).toBeUndefined();
-    // Throw-arm contract (#6): a `commitSnapshot` that throws rolls the `served` row
-    // back with it. A served row claiming a verification whose lease grant failed IS
-    // the split the pair contract removes; `recordServed` only logs the error, so the
-    // rollback — not the log — is what must be pinned here.
-    expect(reopened.getServed("cp3-orphan", "/o.ts")).toEqual([]);
-    shutdownHashStore();
-    const check = new DatabaseSync(sqlitePath(home), {
-      defensive: false,
-    } as any);
-    const linCount = (
-      check.prepare("SELECT COUNT(*) AS n FROM line_lineage").get() as { n: number }
-    ).n;
-    expect(linCount).toBe(0);
-    check.close();
+    const warned = warn.mock.calls.map((call) => String(call[0])).join(" ");
+    warn.mockRestore();
+
+    const reopened = (await loadHashStore()) as unknown as InternalHashStore;
+    expect({
+      // Pair #6 still holds: the lease grant and the `served` row it derives from commit
+      // together. The repair removes the failure that used to roll both back.
+      served: reopened.getServed("cp3-orphan", "/o.ts"),
+      lease: reopened.leaseFor("cp3-orphan", "/o.ts", "AAa") !== undefined,
+      lineage: reopened.lineageFor("/o.ts", snapshotHashFor(content)).length,
+      warned: /repairing corrupt lineage/.test(warned) && /no lineage/.test(warned),
+    }).toEqual({ served: ["AAa", "AAb"], lease: true, lineage: 2, warned: true });
   });
 });
 

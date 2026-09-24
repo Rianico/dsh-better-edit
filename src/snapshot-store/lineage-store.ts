@@ -37,8 +37,9 @@ export function snapshotHashFor(content: string): string {
 }
 
 /**
- * A snapshot row whose lineage is missing or malformed. Thrown (never silently
- * repaired) so a corrupt snapshot can never pin a path into a lease-less state.
+ * A snapshot row whose lineage is missing or malformed. The adopt arm *diagnoses* with this
+ * (CP2): an unusable family is discarded and re-materialized fresh, observably, instead of
+ * throwing — a permanent throw is what pinned a path into a lease-less state.
  */
 export class LineageCorruptError extends Error {
   constructor(message: string) {
@@ -212,6 +213,39 @@ function pairLineIds(prev: PrevLine[], curCanons: string[]): (number | null)[] {
   });
 }
 
+/**
+ * Classify a stored lineage family against the content being adopted. Returns the diagnosis
+ * when the family is unusable — empty, wrong row count, or numbering that is not contiguous
+ * from line 1 — or undefined when it can be adopted as-is.
+ *
+ * Unusable is no longer thrown: the adopt arm repairs it (see the `unusable` branch below).
+ * The diagnosis is still built so the repair warning carries the precise arm, and so a future
+ * caller that must refuse has one place to ask.
+ */
+function diagnoseUnusableLineage(
+  stored: readonly LineageRecord[],
+  lineCount: number,
+  path: string,
+): LineageCorruptError | undefined {
+  if (stored.length === 0) {
+    return new LineageCorruptError(`commitSnapshot(${path}): snapshot row has no lineage`);
+  }
+  if (stored.length !== lineCount) {
+    return new LineageCorruptError(
+      `commitSnapshot(${path}): stored lineage has ${stored.length} rows for ${lineCount} lines`,
+    );
+  }
+  for (let index = 0; index < lineCount; index++) {
+    const row = stored[index];
+    if (row === undefined || row.line_number !== index + 1) {
+      return new LineageCorruptError(
+        `commitSnapshot(${path}): lineage row out of order at index ${index}`,
+      );
+    }
+  }
+  return undefined;
+}
+
 export function createLineageStore(db: DatabaseSync): LineageStore {
   ensureLineageTables(db);
   const getSnapshotStmt = db.prepare(
@@ -267,6 +301,9 @@ export function createLineageStore(db: DatabaseSync): LineageStore {
   );
   const deleteCountersByPathStmt = db.prepare("DELETE FROM line_id_counters WHERE path = ?");
   const deleteLeasesByPathStmt = db.prepare("DELETE FROM served_leases WHERE file_path = ?");
+  // Repair-at-detection (CP2): a targeted discard of ONE unusable snapshot, never its siblings.
+  const deleteLineageBySnapshotStmt = db.prepare("DELETE FROM line_lineage WHERE snapshot_id = ?");
+  const deleteSnapshotByIdStmt = db.prepare("DELETE FROM file_snapshots WHERE snapshot_id = ?");
   function retireAbsentLeases(snapshotId: number, path: string, now: number): void {
     withBusyRetry(() => {
       retireAbsentLeasesStmt.run(now, path, snapshotId);
@@ -324,57 +361,69 @@ export function createLineageStore(db: DatabaseSync): LineageStore {
         const existing = getSnapshotStmt.get(input.path, snapshotHash) as
           | { snapshot_id: number }
           | undefined;
-        let snapshotId: number;
+        let snapshotId: number | undefined;
         if (existing !== undefined) {
-          // Adopt-if-exists: allocate nothing — but refresh the anchor column to the live
-          // assignment (compare-then-update, diffs only). Anchor assignment is not
-          // content-determined (retire/reservation-dependent), so stored anchors go
-          // archaeological without this; identity (line_id, canon_hash) stays first-wins.
-          snapshotId = existing.snapshot_id;
           // SAFETY: SELECT list matches LineageRecord field-for-field (same statement shape
           // as grantLeases/lineageFor).
-          const stored = snapshotLineageStmt.all(snapshotId) as unknown as LineageRecord[];
-          if (stored.length === 0) {
-            throw new LineageCorruptError(
-              `commitSnapshot(${input.path}): snapshot row has no lineage`,
-            );
-          }
-          if (stored.length !== lines.length) {
-            throw new LineageCorruptError(
-              `commitSnapshot(${input.path}): stored lineage has ${stored.length} rows ` +
-                `for ${lines.length} lines`,
-            );
-          }
-          for (let index = 0; index < lines.length; index++) {
-            if (stored[index]!.line_number !== index + 1) {
-              throw new LineageCorruptError(
-                `commitSnapshot(${input.path}): lineage row out of order at index ${index}`,
-              );
+          const stored = snapshotLineageStmt.all(
+            existing.snapshot_id,
+          ) as unknown as LineageRecord[];
+          const unusable = diagnoseUnusableLineage(stored, lines.length, input.path);
+          if (unusable === undefined) {
+            // Adopt-if-exists: allocate nothing — but refresh the anchor column to the live
+            // assignment (compare-then-update, diffs only). Anchor assignment is not
+            // content-determined (retire/reservation-dependent), so stored anchors go
+            // archaeological without this; identity (line_id, canon_hash) stays first-wins.
+            const adoptedId = existing.snapshot_id;
+            snapshotId = adoptedId;
+            for (let index = 0; index < lines.length; index++) {
+              if (stored[index]!.anchor !== input.hashes[index]) {
+                withBusyRetry(() => {
+                  updateLineageAnchorStmt.run(input.hashes[index], adoptedId, index + 1);
+                });
+              }
             }
-            if (stored[index]!.anchor !== input.hashes[index]) {
-              withBusyRetry(() => {
-                updateLineageAnchorStmt.run(input.hashes[index], snapshotId, index + 1);
+          } else {
+            // Repair-at-detection (CP2): the (path, snapshot_hash) row exists but its lineage
+            // is unusable, so the stored identity is unrecoverable by definition. Discard THIS
+            // snapshot's lineage family and re-materialize it fresh below, inside the caller's
+            // unit so a failure rolls the repair back with everything else. Siblings are
+            // untouched and `line_id_counters` is not reset — fresh ids stay globally unique —
+            // and the leases bound to the discarded identities retire at the end of this unit
+            // (fail closed). Observable by construction: never a silent repair.
+            console.warn(
+              `dsh-better-edit: repairing corrupt lineage for ${input.path} ` +
+                `(snapshot ${snapshotHash}): ${unusable.message} — discarded the unusable ` +
+                `family and re-materialized it fresh; leases on discarded identities retire.`,
+            );
+            withBusyRetry(() => {
+              deleteLineageBySnapshotStmt.run(existing.snapshot_id);
+            });
+            withBusyRetry(() => {
+              deleteSnapshotByIdStmt.run(existing.snapshot_id);
+            });
+          }
+        }
+        if (snapshotId === undefined) {
+          const latest = latestSnapshotStmt.get(input.path) as SnapshotRow | undefined;
+          const prev: PrevLine[] = [];
+          if (latest !== undefined) {
+            // SAFETY: prevLineageStmt's SELECT list (line_number, line_id, canon_hash) matches
+            // this inline shape field-for-field; node:sqlite returns one record per row with
+            // exactly those columns.
+            const stored = prevLineageStmt.all(latest.snapshot_id) as unknown as {
+              line_number: number;
+              line_id: number;
+              canon_hash: string;
+            }[];
+            for (const row of stored) {
+              prev.push({
+                lineNumber: row.line_number,
+                lineId: row.line_id,
+                canonHash: row.canon_hash,
               });
             }
           }
-        } else {
-          const latest = latestSnapshotStmt.get(input.path) as SnapshotRow | undefined;
-          const prev: PrevLine[] =
-            latest === undefined
-              ? []
-              : // SAFETY: SELECT list (line_number, line_id, canon_hash) matches the inline
-                // record shape; node:sqlite returns one record per row with exactly those columns.
-                (
-                  prevLineageStmt.all(latest.snapshot_id) as unknown as {
-                    line_number: number;
-                    line_id: number;
-                    canon_hash: string;
-                  }[]
-                ).map((row) => ({
-                  lineNumber: row.line_number,
-                  lineId: row.line_id,
-                  canonHash: row.canon_hash,
-                }));
           const inherited = pairLineIds(prev, curCanons);
           // ONE counter upsert for the whole fresh block.
           const counter = getCounterStmt.get(input.path) as CounterRow | undefined;
@@ -388,7 +437,8 @@ export function createLineageStore(db: DatabaseSync): LineageStore {
           const info = withBusyRetry(() =>
             insertSnapshotStmt.run(input.path, snapshotHash, lines.length, now),
           );
-          snapshotId = Number(info.lastInsertRowid);
+          const insertedId = Number(info.lastInsertRowid);
+          snapshotId = insertedId;
           for (let index = 0; index < lines.length; index++) {
             let lineId = inherited[index];
             if (lineId === null) {
@@ -397,7 +447,7 @@ export function createLineageStore(db: DatabaseSync): LineageStore {
             }
             withBusyRetry(() => {
               insertLineageStmt.run(
-                snapshotId,
+                insertedId,
                 index + 1,
                 lineId,
                 curCanons[index]!,
@@ -438,9 +488,8 @@ export function createLineageStore(db: DatabaseSync): LineageStore {
       if (current !== undefined) {
         const map = new Map<number, number>();
         // SAFETY: SELECT list matches LineageRecord field-for-field (same statement as grantLeases).
-        for (const row of snapshotLineageStmt.all(
-          current.snapshot_id,
-        ) as unknown as LineageRecord[]) {
+        const records = snapshotLineageStmt.all(current.snapshot_id) as unknown as LineageRecord[];
+        for (const row of records) {
           map.set(row.line_id, row.line_number);
         }
         return map;
@@ -485,19 +534,26 @@ export function createLineageStore(db: DatabaseSync): LineageStore {
       };
     },
     deleteByPath(path) {
-      // Explicit lineage delete first: the FK cascade covers FK-on openers, but
-      // deleteByPath must hold for any opener (e.g. :memory: test DBs).
-      withBusyRetry(() => {
-        deleteLineageByPathStmt.run(path);
-      });
-      withBusyRetry(() => {
-        deleteSnapshotsByPathStmt.run(path);
-      });
-      withBusyRetry(() => {
-        deleteCountersByPathStmt.run(path);
-      });
-      withBusyRetry(() => {
-        deleteLeasesByPathStmt.run(path);
+      // One unit: these four statements are one logical mutation, so an interrupted delete
+      // must never leave a `file_snapshots` row whose lineage family is already gone (the
+      // empty arm this module's adopt path repairs). Nested inside `pruneMissing`'s
+      // `withStore` unit this joins the outer transaction instead of raising
+      // "cannot start a transaction within a transaction".
+      withTransaction(db, () => {
+        // Explicit lineage delete first: the FK cascade covers FK-on openers, but
+        // deleteByPath must hold for any opener (e.g. :memory: test DBs).
+        withBusyRetry(() => {
+          deleteLineageByPathStmt.run(path);
+        });
+        withBusyRetry(() => {
+          deleteSnapshotsByPathStmt.run(path);
+        });
+        withBusyRetry(() => {
+          deleteCountersByPathStmt.run(path);
+        });
+        withBusyRetry(() => {
+          deleteLeasesByPathStmt.run(path);
+        });
       });
     },
   };

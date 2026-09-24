@@ -1,4 +1,4 @@
-import { describe, expect, it, beforeAll } from "vitest";
+import { describe, expect, it, beforeAll, vi } from "vitest";
 import { DatabaseSync } from "node:sqlite";
 import { splitLines } from "../../src/utils.js";
 import {
@@ -11,7 +11,6 @@ import {
   createLineageStore,
   snapshotHashFor,
   type LineageStore,
-  LineageCorruptError,
 } from "../../src/snapshot-store/lineage-store.js";
 
 beforeAll(async () => {
@@ -384,14 +383,40 @@ describe("lineage-store — adopt refreshes anchors, never identity", () => {
     expect(changes() - before).toBe(1);
   });
 
-  it("adopt with emptied lineage throws instead of silently no-oping", () => {
+  it("adopt with emptied lineage repairs it instead of silently no-oping", () => {
     const { db, lineage } = open();
     const content = "alpha\nbeta";
     lineage.commitSnapshot({ path: "/e.ts", content, hashes: ["A0", "A1"] });
+    const before = lineage.lineageFor("/e.ts", snapshotHashFor(content));
     db.exec("DELETE FROM line_lineage");
-    expect(() => lineage.commitSnapshot({ path: "/e.ts", content, hashes: ["B0", "B1"] })).toThrow(
-      LineageCorruptError,
-    );
+    expect(lineage.lineageFor("/e.ts", snapshotHashFor(content))).toEqual([]);
+
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    lineage.commitSnapshot({ path: "/e.ts", content, hashes: ["B0", "B1"] });
+    const repaired = lineage.lineageFor("/e.ts", snapshotHashFor(content));
+    const warned = warn.mock.calls.map((call) => String(call[0])).join(" ");
+    warn.mockRestore();
+
+    expect({
+      lines: repaired.map((row) => row.lineNumber),
+      anchors: repaired.map((row) => row.anchor),
+      // The discarded identity is unrecoverable: every line takes a fresh id and none
+      // reuses a corrupt row's id — the fail-closed direction.
+      idsAreFresh: repaired.every((row) => before.every((old) => old.lineId !== row.lineId)),
+      // Only THIS snapshot is discarded; no sibling row is deleted.
+      snapshotRows: (
+        db.prepare("SELECT COUNT(*) AS n FROM file_snapshots WHERE path = ?").get("/e.ts") as {
+          n: number;
+        }
+      ).n,
+      warned: /repairing corrupt lineage/.test(warned) && /no lineage/.test(warned),
+    }).toEqual({
+      lines: [1, 2],
+      anchors: ["B0", "B1"],
+      idsAreFresh: true,
+      snapshotRows: 1,
+      warned: true,
+    });
   });
 
   it("leases granted with reassignment resolve by anchor through the refreshed lineage", () => {
@@ -421,16 +446,24 @@ describe("lineage-store — adopt refreshes anchors, never identity", () => {
     // The stale H1 row was attempted in this very batch and granted nothing.
     expect(lineage.leaseFor("s", "/h.ts", "A1")).toBeUndefined();
   });
-
-  it("sparse stored lineage throws instead of silently no-oping", () => {
+  it("sparse stored lineage repairs it instead of silently no-oping", () => {
     const { db, lineage } = open();
     const content = "alpha\nbeta";
     lineage.commitSnapshot({ path: "/s.ts", content, hashes: ["A0", "A1"] });
     // Corrupt out-of-band: keep the row count but shift numbering (1,2 -> 11,12).
     db.exec("UPDATE line_lineage SET line_number = line_number + 10");
-    expect(() => lineage.commitSnapshot({ path: "/s.ts", content, hashes: ["B0", "B1"] })).toThrow(
-      "out of order",
-    );
+
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    lineage.commitSnapshot({ path: "/s.ts", content, hashes: ["B0", "B1"] });
+    const repaired = lineage.lineageFor("/s.ts", snapshotHashFor(content));
+    const warned = warn.mock.calls.map((call) => String(call[0])).join(" ");
+    warn.mockRestore();
+
+    expect({
+      lines: repaired.map((row) => row.lineNumber),
+      anchors: repaired.map((row) => row.anchor),
+      warned: /out of order/.test(warned),
+    }).toEqual({ lines: [1, 2], anchors: ["B0", "B1"], warned: true });
   });
 });
 
