@@ -636,9 +636,9 @@ export function verifyServedRange(args: {
   const currentLen = endLine - startLine + 1;
   let from: number | undefined;
   let to: number | undefined;
-  // Exact-boundary rule (ADR-0004 removal): each boundary anchor must have EXACTLY
-  // one served position. Anything else leaves `from`/`to` undefined and rejects below —
-  // there is no candidate-span search that could re-bind onto a look-alike line.
+  // Exact-boundary rule (ADR-0018, superseding ADR-0004): each boundary anchor must have
+  // EXACTLY one served position. Anything else leaves `from`/`to` undefined and rejects
+  // below — there is no candidate-span search that could re-bind onto a look-alike line.
   if (startPositions.length === 1 && endPositions.length === 1) {
     from = Math.min(startPositions[0]!, endPositions[0]!);
     to = Math.max(startPositions[0]!, endPositions[0]!);

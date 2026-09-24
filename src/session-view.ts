@@ -49,10 +49,10 @@ export type ServedEntry = { position: number; hash: string | null };
  * Merge served rows into a copy of the stored array. This single helper owns
  * the served-merge invariant shared by recordServed and recordServedTruncated.
  *
- * Exact-write rule (ADR-0004 removal): a hash written at a new position leaves the
- * old position INTACT — the old slot is not nulled and no look-alike is rebound.
- * A duplicate is detected at verification time (`verifyServedRange`) and rejects as
- * `E_UNSERVED_RANGE` instead of being healed here.
+ * Exact-write rule (ADR-0018, superseding ADR-0004): a hash written at a new position
+ * leaves the old position INTACT — the old slot is not nulled and no look-alike is
+ * rebound. A duplicate is detected at verification time (`verifyServedRange`) and
+ * rejects as `E_UNSERVED_RANGE` instead of being healed here.
  */
 export function _mergeServedRows(
   current: (string | null)[],
