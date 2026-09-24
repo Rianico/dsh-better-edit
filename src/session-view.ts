@@ -266,9 +266,9 @@ function grantServeLeases(
 ): void {
   if (content === undefined || hashes === undefined) return;
   if (splitLines(content).length !== hashes.length) return;
-  const internal = store as unknown as InternalHashStore;
   // SAFETY: loadServedStore returns the makeDomainStore object, which implements
   // InternalHashStore; ServedPersistence is its narrowed public view.
+  const internal = store as unknown as InternalHashStore;
   internal.commitSnapshot({ path, content, hashes: [...hashes], leases: { sessionKey, rows } });
 }
 
@@ -331,6 +331,15 @@ export async function recordServed(
   }
 }
 
+/**
+ * Record a truncated serve — the `served` row merge and the lease grant derived from it — as ONE
+ * unit, and report whether it landed.
+ *
+ * `false` means the write rolled back and no lease was granted, so the caller must not advertise
+ * the rows' anchors as usable: that is a partial failure of the caller's operation, not a failed
+ * operation. The best-effort contract is unchanged — this never throws, and the read/edit callers
+ * ignore the value.
+ */
 export async function recordServedTruncated(
   sessionKey: string,
   path: string,
@@ -339,8 +348,9 @@ export async function recordServedTruncated(
   clearFrom = 0,
   fullCanons?: readonly (string | null)[],
   serveSnapshot?: ServeSnapshot,
-): Promise<void> {
-  if (rows.length === 0) return;
+): Promise<boolean> {
+  // Nothing to record, so nothing can fail: vacuously landed.
+  if (rows.length === 0) return true;
   try {
     const store = await loadServedStore();
     withStore(() => {
@@ -380,8 +390,10 @@ export async function recordServedTruncated(
         serveSnapshot?.content,
       );
     });
+    return true;
   } catch (error) {
     console.error("Failed to record truncated served rows:", error);
+    return false;
   }
 }
 

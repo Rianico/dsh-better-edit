@@ -180,12 +180,12 @@ export function buildUndoTool(io: FileIO, sandbox: FsSandboxController) {
             `Removed ${linesAddedByEdit} line(s) that were added and restored ${linesRemovedByEdit} line(s) that were removed.`,
           );
         }
-        parts.push(
-          "File reverted to previous state. The post-edit diff rows carry the restored file\u2019s fresh anchors for follow-up edits.",
-        );
-
+        // The serve write is a SECOND unit, deliberately outside the committed pair: a fault
+        // here must not roll the revert back. But it decides whether the anchors below are
+        // usable, so the claim is made only when the serve landed.
+        let serveLanded = true;
         if (undoDenseRows.length > 0) {
-          await recordServedTruncated(
+          serveLanded = await recordServedTruncated(
             sessionKey,
             absolutePath,
             undoDenseRows,
@@ -195,6 +195,12 @@ export function buildUndoTool(io: FileIO, sandbox: FsSandboxController) {
             { content: undo.content, hashes: restoredHashes },
           );
         }
+
+        parts.push(
+          serveLanded
+            ? "File reverted to previous state. The post-edit diff rows carry the restored file\u2019s fresh anchors for follow-up edits."
+            : "File reverted to previous state. WARNING: the restored file\u2019s fresh anchors were NOT recorded as served — the diff rows below are NOT usable anchors and no edit can be based on them. Re-read the file before editing it.",
+        );
 
         return [parts.join("\n"), "", "Diff of the revert:", "", undoDiff].join("\n");
       });

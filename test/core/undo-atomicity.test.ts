@@ -278,4 +278,98 @@ describe("undo atomicity — the snapshot adopt and the undo-pair clear", () => 
       });
     });
   });
+  it("downgrades the success claim when the post-unit serve write fails", async () => {
+    await withTempFile("t.txt", "a\nb\nc\n", async ({ cwd, path }) => {
+      const harness = setupIntegrationTest(cwd);
+      await applyOneEdit(harness);
+      expect(await readFile(path, "utf-8")).toBe("a\nB\nc\n");
+      const p = await probe(cwd, harness);
+
+      // ONLY the post-unit serve write faults (`upsertServed` alone): the pair unit
+      // (`upsertSnapshot` + `deleteUndoPair`) still commits, so the undo itself succeeds
+      // and only the advertised anchors are missing.
+      const serve = vi.spyOn(p.store, "upsertServed").mockImplementation(() => {
+        throw new Error("injected: post-unit serve fault");
+      });
+      let returned: string | undefined;
+      let fault: unknown;
+      try {
+        returned = getText(await harness.undoTool.execute("undo_last_edit", { path: "t.txt" }));
+      } catch (error) {
+        fault = error;
+      }
+      serve.mockRestore();
+      const text = returned ?? "";
+      // The anchors the output shows for the restored rows — the ones the claim authorises.
+      const shownAnchors = restoredAnchorsFromToolOutput(text);
+      const servedAnchors = p.store.getAnchorReservations(harness.sessionKey, p.abs).reservedHashes;
+      const fileAfter = await readFile(path, "utf-8");
+      // Measured BEFORE the follow-up attempts: the recovery edit legitimately opens a new pair.
+      const pairCommitted = p.store.getUndo(p.abs) === undefined;
+      // The follow-up the claim would have authorised, using an anchor it showed.
+      const followUpEdit =
+        shownAnchors[0] === undefined ? "n/a" : await editOutcome(harness, shownAnchors[0]);
+
+      // The named recovery terminates: a re-read re-serves the reverted file and its anchors edit.
+      const reread = await harness.readTool.execute("read", { path: "t.txt" });
+      const row = getText(reread)
+        .split("\n")
+        .find((line) => line.includes("│b"));
+      if (row === undefined) throw new Error("re-read did not serve line b");
+      const hash = row.split("│")[0];
+      if (hash === undefined) throw new Error("re-read row carried no anchor");
+      const recovery = await editOutcome(harness, hash);
+
+      expect({
+        threw: fault !== undefined,
+        reportsRevert: text.includes("Undone last edit on t.txt."),
+        fileReverted: fileAfter === "a\nb\nc\n",
+        // The serve fault is a PARTIAL failure: it must not roll the committed pair back.
+        pairCommitted,
+        promisesAnchors: text.includes(
+          "carry the restored file\u2019s fresh anchors for follow-up edits",
+        ),
+        namesPartialFailure: /NOT recorded as served/.test(text) && /Re-read the file/.test(text),
+        shownAnchorsServed: shownAnchors.every((hash) => servedAnchors.has(hash)),
+        followUpEdit,
+        recovery,
+      }).toEqual({
+        threw: false,
+        reportsRevert: true,
+        fileReverted: true,
+        pairCommitted: true,
+        promisesAnchors: false,
+        namesPartialFailure: true,
+        shownAnchorsServed: false,
+        followUpEdit: "rejected",
+        recovery: "applied",
+      });
+    });
+  });
+  it("keeps the success message byte-identical when the serve write lands", async () => {
+    await withTempFile("t.txt", "a\nb\nc\n", async ({ cwd }) => {
+      const harness = setupIntegrationTest(cwd);
+      await applyOneEdit(harness);
+
+      // No fault: the serve lands, so the claim stands and must be exactly what it always was.
+      const text = getText(await harness.undoTool.execute("undo_last_edit", { path: "t.txt" }));
+      const lines = text.split("\n");
+
+      expect({
+        head: lines.slice(0, 3).join("\n"),
+        hasDiffHeader: lines.includes("Diff of the revert:"),
+        restoredRows: restoredAnchorsFromToolOutput(text).length,
+        warns: /NOT recorded as served/.test(text),
+      }).toEqual({
+        head: [
+          "Undone last edit on t.txt.",
+          "Removed 1 line(s) that were added and restored 1 line(s) that were removed.",
+          "File reverted to previous state. The post-edit diff rows carry the restored file\u2019s fresh anchors for follow-up edits.",
+        ].join("\n"),
+        hasDiffHeader: true,
+        restoredRows: 1,
+        warns: false,
+      });
+    });
+  });
 });
