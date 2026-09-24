@@ -88,20 +88,52 @@ message states that the file was reverted, that the undo history is retained, an
 `undo_last_edit` clears it as stale. The raw cause is logged for diagnosis before the throw, so it is
 not lost.
 
+### The post-unit serve write (CP1 follow-up)
+
+The pair stays one unit. After it commits, `undo_last_edit` records the restored rows' serve state in a
+**second** unit (`recordServedTruncated`), which now **reports whether that write landed** instead of
+swallowing the failure. The tool promises the diff rows' anchors only when it did; otherwise it warns
+that the anchors were **not recorded as served**, that the diff rows are therefore not usable anchors,
+and that the file must be re-read before editing.
+
+The boundary is deliberate: the serve write stays **outside** the pair, so a serve fault cannot roll the
+committed revert back. It **downgrades the claim**; it does not fail the undo. The cell pins that
+directly — the pair is committed while the anchors the output shows are absent from the served set and a
+follow-up edit using one is rejected.
+
+This is the same invariant read from the other side: an operation may not advertise a capability it did
+not acquire. The success path's message is unchanged, and a second cell pins it byte-for-byte.
+
 ### CP2 — repair at detection, not explicit repair with an actionable error
 
 **What "corrupt" means, precisely.** A `file_snapshots` row exists for the adopted
-`(path, snapshot_hash)` and its `line_lineage` family is unusable in one of three ways:
+`(path, snapshot_hash)` and its `line_lineage` family is unusable in one of four ways:
 
 1. **empty** — zero rows for a snapshot that claims lines;
 2. **wrong count** — rows ≠ `splitLines(content).length`;
 3. **non-contiguous numbering** — a row's `line_number` ≠ index+1. Note the precision: this arm cannot
    fire from row _ordering_ (`snapshotLineageStmt` orders by `line_number ASC`); it fires from numbering
    that is not contiguous from 1, e.g. `11,12` for a 2-line file.
+4. **canon mismatch** — a stored `canon_hash` ≠ `canonDigest(line)` for the line being adopted. The first
+   three are structural; this is the only check on the identity the row carries, and without it a family
+   with the right count and numbering but a garbage canon is adopted as healthy and its `line_id`s are
+   inherited into every future pairing.
 
-**How it is detected.** `diagnoseUnusableLineage` (`src/snapshot-store/lineage-store.ts:225`), called
-in `commitSnapshot`'s adopt arm before anything is written. It returns a diagnosis (the empty / count /
-order arm) or `undefined` when the family can be adopted as-is.
+**Why the canon arm cannot be version skew.** `snapshotHashFor(content)` embeds `CANON_VERSION` in the
+key it looks up (`${CANON_VERSION}:${contentChecksum(content)}`), so the adopt arm can only ever see rows
+written by _this_ canon version — a canon change bumps the version, changes the key, and lands on a
+different row through the insert path. `canonDigest` is pure for a given line: no clock, no reservations,
+no store state. A mismatch inside the adopt arm therefore cannot be legitimate skew; it is corruption,
+and excluding it would be a gap rather than a decision.
+
+**How it is detected.** `diagnoseUnusableLineage` (`src/snapshot-store/lineage-store.ts:231`), called in
+`commitSnapshot`'s adopt arm before anything is written. It returns a diagnosis (the empty / count /
+order / canon arm) or `undefined` when the family can be adopted as-is.
+
+**All four arms route into the same branch.** The canon arm is a fourth diagnosis, not a fourth repair:
+the family is discarded by `snapshot_id` and re-materialized fresh in the caller's unit, with exactly the
+properties below — so a canon-corrupt row is repaired on its next adoption rather than silently reused,
+and `line_id_counters` are still not reset.
 
 **The exact repair.** The adopt arm discards **that one** family by `snapshot_id` — `DELETE FROM
 line_lineage WHERE snapshot_id = ?` then `DELETE FROM file_snapshots WHERE snapshot_id = ?` — and falls
@@ -179,6 +211,11 @@ The repair is observable via `console.warn` **only**: the warning carries the pa
 and the precise arm. It is asserted in tests (a `vi.spyOn` on `console.warn`), so it cannot silently
 regress to a quiet repair.
 
+`console.warn` is the deliberate channel, not an oversight: the repair must be observable, and the tests
+assert the warning, so a `no-console-except-error` advisory on that call site is intentional and a later
+scan should not read it as a live regression. Switching it to `console.error` would also break the
+contract the tests pin.
+
 A returned status would have to travel `commitSnapshot` → `grantServeLeases` →
 `recordServed`/`recordServedTruncated` → the tool result, which is a payload change this checkpoint
 forbids. **Trigger to revisit:** a read-result channel for store repairs existing — i.e. the tool result
@@ -224,6 +261,8 @@ the mitigation until R5.
    file stays reverted, the undo history is retained, and the next `undo_last_edit` clears it as stale.
 2. A corrupt lineage now repairs (with a warning) instead of rejecting forever: a `read` that used to
    report success while persisting nothing now persists, and the following `edit` applies.
+3. An undo whose post-unit serve write fails now downgrades its message — no anchor promise, and a
+   re-read is required before editing — instead of reporting full success.
 
 ## Residuals (with triggers)
 
@@ -231,7 +270,7 @@ the mitigation until R5.
   Reached only on the two `E_UNDO_STALE` branches, where the tool returns a typed stale error anyway.
   Trigger: "no store failure is ever silent" becoming a standing rule, or the read-result channel below.
 - **R2** — the serve-path `console.error` swallows in `src/session-view.ts` (`recordServed:330`,
-  `recordServedTruncated:384`, plus the reported-drift and wipe arms). They are no longer reachable from
+  `recordServedTruncated:395`, plus the reported-drift and wipe arms). They are no longer reachable from
   a _permanent_ condition: the only permanent store failure reachable from the read path was the
   unusable lineage, and `commitSnapshot` now repairs it instead of throwing. What remains is
   environmental (locks, disk), the cause is logged, and the read's best-effort policy is deliberate — a
@@ -248,6 +287,10 @@ the mitigation until R5.
   becoming non-idempotent, or starting to gate re-serving.
 - **R5** — `LineageCorruptError` is an `Error` subclass that is never thrown. Rename it to a plain
   diagnosis type carrying a machine-readable arm. Trigger: the read-result channel above firing.
+- **R6** — the same class as the fixed undo claim, still live elsewhere: the edit path
+  (`src/mutation.ts:419`) discards the serve outcome, and `src/prompts.ts:31` / `:61` still promise fresh
+  anchors unconditionally for `edit` and `undo_last_edit`. Outside this task's allowlist. Trigger: the
+  edit path's served-anchor promise is audited.
 
 ## Consequences
 
@@ -260,5 +303,7 @@ the mitigation until R5.
   a silent assumption.
 - Two error surfaces moved: `E_UNDO_NOT_RECORDED` is new, and four tests that pinned the throw contract
   are reversed. No payload change; `src/contract.ts` is untouched.
-- Pinned by `test/core/undo-atomicity.test.ts` (5 cells), `test/core/lineage-repair.test.ts` (2 cells),
-  and the four rewritten cells in `test/core/lineage-store.test.ts` and `test/core/hash-store.test.ts`.
+- Pinned by `test/core/undo-atomicity.test.ts` (7 cells — the pair, the post-unit serve claim and its
+  success-path twin), `test/core/lineage-repair.test.ts` (3 cells — the loop, `deleteByPath`'s four
+  families on both the interrupted and the successful path, and the canon arm), and the four rewritten
+  cells in `test/core/lineage-store.test.ts` and `test/core/hash-store.test.ts`.
