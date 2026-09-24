@@ -39,6 +39,7 @@ describe("store-lifecycle coverage agent-a", () => {
     const store = {
       pruneMissing: vi.fn(async () => {}),
       pruneUndoOlderThan: vi.fn(),
+      vacuumSnapshots: vi.fn(),
     } as any;
     let servedPruneArgs: number[] = [];
     const stmts = {
@@ -65,7 +66,7 @@ describe("store-lifecycle coverage agent-a", () => {
     expect(store.pruneUndoOlderThan).toHaveBeenCalledTimes(2); // undo prune is not throttled
 
     // different store path should trigger pruneMissing
-    const store2 = { pruneMissing: vi.fn(async () => {}) } as any;
+    const store2 = { pruneMissing: vi.fn(async () => {}), vacuumSnapshots: vi.fn() } as any;
     const otherPath = join(dir, "other.sqlite");
     await mod.onStoreOpen(otherPath, { servedPruneOlderThan: () => {} } as any, store2);
     expect(store2.pruneMissing).toHaveBeenCalledTimes(1);
@@ -86,6 +87,7 @@ describe("store-lifecycle coverage agent-a", () => {
         throw new Error("prune fail");
       }),
       pruneUndoOlderThan: vi.fn(),
+      vacuumSnapshots: vi.fn(),
     } as any;
     // should not throw despite failures (warns)
     await mod.onStoreOpen(join(dir, "x.sqlite"), stmts as any, store);
@@ -110,7 +112,11 @@ describe("store-lifecycle coverage agent-a", () => {
     await writeFile(storePath, "", "utf-8");
     const spyWarn = vi.spyOn(console, "warn").mockImplementation(() => {});
     const stmts = { servedPruneOlderThan: () => {} } as any;
-    const store = { pruneMissing: vi.fn(async () => {}), pruneUndoOlderThan: vi.fn() } as any;
+    const store = {
+      pruneMissing: vi.fn(async () => {}),
+      pruneUndoOlderThan: vi.fn(),
+      vacuumSnapshots: vi.fn(),
+    } as any;
     await mod.onStoreOpen(storePath, stmts, store);
     expect(existsSync(join(ws, ".gitignore"))).toBe(true);
     expect(readFileSync(join(ws, ".gitignore"), "utf-8")).toContain(".dsh_better_edit/");
@@ -151,7 +157,11 @@ describe("store-lifecycle coverage agent-a", () => {
     await writeFile(storePath, "", "utf-8");
     const spy = vi.spyOn(console, "warn").mockImplementation(() => {});
     const stmts = { servedPruneOlderThan: () => {} } as any;
-    const store = { pruneMissing: vi.fn(async () => {}), pruneUndoOlderThan: vi.fn() } as any;
+    const store = {
+      pruneMissing: vi.fn(async () => {}),
+      pruneUndoOlderThan: vi.fn(),
+      vacuumSnapshots: vi.fn(),
+    } as any;
     await mod.onStoreOpen(storePath, stmts, store);
     expect(spy).toHaveBeenCalledWith(expect.stringContaining("not in .gitignore"));
     spy.mockClear();

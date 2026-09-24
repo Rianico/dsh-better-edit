@@ -25,6 +25,7 @@ describe("extra store-lifecycle", () => {
     const servedPruneArgs: number[] = [];
     const undoPruneArgs: number[] = [];
     let pruneMissingCalls = 0;
+    let vacuumCalls = 0;
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
 
     await lc.onStoreOpen(
@@ -41,6 +42,9 @@ describe("extra store-lifecycle", () => {
         pruneMissing: async () => {
           pruneMissingCalls += 1;
         },
+        vacuumSnapshots: () => {
+          vacuumCalls += 1;
+        },
       } as any,
     );
 
@@ -54,6 +58,7 @@ describe("extra store-lifecycle", () => {
     expect(undoPruneArgs).toHaveLength(1);
     expect(Number.isFinite(undoPruneArgs[0])).toBe(true);
     expect(pruneMissingCalls).toBe(1);
+    expect(vacuumCalls).toBe(1); // the store-open boundary runs the retention pass
 
     warn.mockRestore();
     spy.mockRestore();

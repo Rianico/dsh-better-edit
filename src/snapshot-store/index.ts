@@ -6,6 +6,8 @@
  * *i* + 1). Storage is a line-ordered JSON array by construction; this module
  * never sorts, reverses or otherwise reorders it — a normalized read must
  * preserve the same contract (e.g. `ORDER BY line_number ASC`).
+ * The retention surface (`vacuum.ts`) is re-exported here so consumers never reach into the
+ * eviction module directly. See also `./vacuum.js` for the policy constants.
  * @module dsh-better-edit/snapshot-store
  */
 import { DatabaseSync } from "node:sqlite";
@@ -96,3 +98,17 @@ export function createSnapshotStore(db: DatabaseSync): SnapshotStore {
     },
   };
 }
+
+// WHY: the vacuum budgets are the store's retention policy constants, so the module entry keeps
+// them on the public surface; consumers must never reach into the eviction module directly.
+export { vacuumSnapshots } from "./vacuum.js";
+export type { VacuumOptions, VacuumResult } from "./vacuum.js";
+export {
+  VACUUM_GLOBAL_BUDGET_BYTES,
+  VACUUM_SOFT_OVERFLOW_BYTES,
+  VACUUM_PER_PATH_BUDGET_BYTES,
+  VACUUM_MAX_SNAPSHOTS_PER_PATH,
+  VACUUM_MIN_SNAPSHOTS_PER_PATH,
+  VACUUM_LINEAGE_BYTES_PER_LINE,
+  VACUUM_RETIRED_PIN_MS,
+} from "./vacuum.js";

@@ -113,6 +113,39 @@ const T4R6 = {
   limitRegex: "DECLARED LIMIT (full oracle): a regex-literal `//` hides a producer LOUDLY",
   stripperPremise: "the stripper's doc comment states the well-formed-input premise (C20)",
 };
+/**
+ * T5 cell titles (LRU snapshot vacuum). Corpus: `docs/adr/0021-lru-snapshot-vacuum.md`.
+ * Expected RED sets were measured at the T5 implementation revision; re-run to re-derive.
+ */
+const T5 = {
+  window:
+    "cell 01 per-path window: the oldest versions are evicted and their lineage goes with them",
+  globalBudget: "cell 02 global budget: oldest-created_at rows are evicted until the total holds",
+  activePin:
+    "cell 03 active pin survives: a leased version stays resolvable while siblings are evicted",
+  pinRecency: "cell 04 pin recency: an aged lease stops pinning and a re-serve pins again",
+  retiredGrace: "cell 05 retired-inside-grace pins, and a retirement older than the grace does not",
+  undoPin:
+    "cell 06 undo target pinned: a `file_undo.snapshot_hash` survives the per-path and global arms",
+  protectIds: "cell 07 protectSnapshotIds: the in-flight id survives an over-budget sweep",
+  countersLeases: "cell 08 counters and leases are never touched, even for a fully evicted path",
+  loudDeferral: "cell 09 loud deferral: an all-pinned over-budget store reports, never evicts",
+  rematerialize:
+    "cell 10 re-materializing an evicted version issues counter-fresh ids and never duplicates a line",
+  evictedTarget: "cell 11 an evicted lease target fails loudly and writes nothing",
+  rejectNoop:
+    "cell 12 reject-stays-a-no-op and a read after a vacuum still equals the on-disk bytes",
+  undoPinSurvives: "cell 13 the undo pin survives a vacuum and the undo still restores",
+  crossTable:
+    "cell 14 cross-table: a pruned v7 family re-materializes and the legacy row is not the source",
+  triggerFailure:
+    "cell 15 the best-effort trigger reports its own failure and the read still succeeds",
+};
+const VACUUM = "src/snapshot-store/vacuum.ts";
+const LINEAGE_STORE = "src/snapshot-store/lineage-store.ts";
+const HASH_STORE = "src/hash-store.ts";
+const VACUUM_UNIT = "test/core/vacuum.test.ts";
+const VACUUM_INTERACTION = "test/core/vacuum-interaction.test.ts";
 const ARCH_SCAN = "test/support/arch-scan.ts";
 
 /** Shared pre-edit for the three `recordServed` mutants. */
@@ -482,6 +515,194 @@ const MUTANTS = {
         file: ARCH_SCAN,
         old: '  const members = [...block![1]!.matchAll(new RegExp(QUOTED_CODE, "g"))].map((m) => m[1]!);',
         new: "  const members = [...block![1]!.matchAll(/[\"']([EW]_[A-Z0-9_]+)[\"']/g)].map((m) => m[1]!);",
+      },
+    ],
+  },
+  // ---- T5: LRU snapshot vacuum ----
+  T5M1: {
+    what: "drop the per-path retention arm (global budget only)",
+    scope: [VACUUM_UNIT],
+    expected: [T5.window, T5.activePin, T5.pinRecency],
+    edits: [
+      {
+        file: VACUUM,
+        old: "    if (total > VACUUM_GLOBAL_BUDGET_BYTES || retained > retention) {",
+        new: "    if (total > VACUUM_GLOBAL_BUDGET_BYTES) {",
+      },
+    ],
+  },
+  T5M2: {
+    what: "drop the global-budget arm (per-path retention only)",
+    scope: [VACUUM_UNIT],
+    expected: [T5.globalBudget, T5.protectIds, T5.countersLeases],
+    edits: [
+      {
+        file: VACUUM,
+        old: "    if (total > VACUUM_GLOBAL_BUDGET_BYTES || retained > retention) {",
+        new: "    if (retained > retention) {",
+      },
+    ],
+  },
+  T5M3: {
+    what: "the pin probe returns nothing (no snapshot is ever pinned)",
+    scope: [VACUUM_UNIT],
+    expected: [T5.activePin, T5.pinRecency, T5.retiredGrace, T5.undoPin, T5.loudDeferral],
+    edits: [
+      {
+        file: VACUUM,
+        old: "    stmts.listPinned(now - SERVED_TTL_MS, now - VACUUM_RETIRED_PIN_MS).map((row) => row.snapshot_id),",
+        new: "    [],",
+      },
+    ],
+  },
+  T5M4: {
+    what: "the lease pin ignores `updated_at` (no LRU-on-access)",
+    scope: [VACUUM_UNIT, VACUUM_INTERACTION],
+    expected: [T5.pinRecency, T5.countersLeases, T5.rematerialize, T5.evictedTarget, T5.crossTable],
+    edits: [
+      {
+        file: VACUUM,
+        old: '      "AND ((sl.retired_at IS NULL AND sl.updated_at >= ?) OR sl.retired_at >= ?)) " +',
+        new: '      "AND ((sl.retired_at IS NULL AND ? IS NOT NULL) OR sl.retired_at >= ?)) " +',
+      },
+    ],
+  },
+  T5M5: {
+    what: "the retired-lease grace clause can never hold",
+    scope: [VACUUM_UNIT],
+    expected: [T5.retiredGrace],
+    edits: [
+      {
+        file: VACUUM,
+        old: '      "AND ((sl.retired_at IS NULL AND sl.updated_at >= ?) OR sl.retired_at >= ?)) " +',
+        new: '      "AND ((sl.retired_at IS NULL AND sl.updated_at >= ?) OR (sl.retired_at >= ? AND 0)) " +',
+      },
+    ],
+  },
+  T5M6: {
+    what: "the `file_undo` undo pin can never match",
+    scope: [VACUUM_UNIT, VACUUM_INTERACTION],
+    expected: [T5.undoPin, T5.undoPinSurvives],
+    edits: [
+      {
+        file: VACUUM,
+        old: '      "AND fu.snapshot_hash = fs.snapshot_hash))",',
+        new: "      \"AND fu.snapshot_hash = 'never'))\",",
+      },
+    ],
+  },
+  T5M7: {
+    what: "the in-flight protection set is never applied",
+    scope: [VACUUM_UNIT],
+    expected: [T5.protectIds],
+    edits: [
+      {
+        file: VACUUM,
+        old: "  for (const id of options.protectSnapshotIds ?? []) pinned.add(id);",
+        new: "  // mutant: in-flight protection dropped",
+      },
+    ],
+  },
+  T5M8: {
+    what: "the sweep wipes `line_id_counters` (ID-reuse invariant broken)",
+    scope: [VACUUM_UNIT],
+    expected: [T5.countersLeases],
+    edits: [
+      {
+        file: VACUUM,
+        old: "      stmts.deleteLineage(id);",
+        new: '      db.prepare("DELETE FROM line_id_counters").run();\n      stmts.deleteLineage(id);',
+      },
+    ],
+  },
+  T5M9: {
+    what: "the soft-overflow report call is deleted (declaration-only state)",
+    scope: [VACUUM_UNIT],
+    expected: [T5.loudDeferral],
+    edits: [
+      {
+        file: VACUUM,
+        old: "  reportVacuumSoftOverflow(db, result);",
+        new: "  // mutant: the deferred state is returned but never reported",
+      },
+    ],
+  },
+  T5M10: {
+    what: "`line_id_counters.next_id` is ignored (fresh ids restart at 1)",
+    scope: [VACUUM_INTERACTION],
+    expected: [T5.rematerialize],
+    edits: [
+      {
+        file: LINEAGE_STORE,
+        old: "          let fresh = counter === undefined ? 1 : counter.next_id;",
+        new: "          let fresh = 1;",
+      },
+    ],
+  },
+  T5M11: {
+    what: "the lease pin ignores `updated_at`, measured in the interaction corpus",
+    scope: [VACUUM_INTERACTION],
+    expected: [T5.rematerialize, T5.evictedTarget, T5.crossTable],
+    edits: [
+      {
+        file: VACUUM,
+        old: '      "AND ((sl.retired_at IS NULL AND sl.updated_at >= ?) OR sl.retired_at >= ?)) " +',
+        new: '      "AND ((sl.retired_at IS NULL AND ? IS NOT NULL) OR sl.retired_at >= ?)) " +',
+      },
+    ],
+  },
+  T5M12: {
+    what: "the sweep wipes `served_leases` (pins deleted, not computed)",
+    scope: [VACUUM_INTERACTION],
+    expected: [T5.evictedTarget],
+    edits: [
+      {
+        file: VACUUM,
+        old: "      stmts.deleteSnapshot(id);",
+        new: '      db.prepare("DELETE FROM served_leases").run();\n      stmts.deleteSnapshot(id);',
+      },
+    ],
+  },
+  T5M13: {
+    what: "the `file_undo` undo pin can never match, measured in the interaction corpus",
+    scope: [VACUUM_INTERACTION],
+    expected: [T5.undoPinSurvives],
+    edits: [
+      {
+        file: VACUUM,
+        old: '      "AND fu.snapshot_hash = fs.snapshot_hash))",',
+        new: "      \"AND fu.snapshot_hash = 'never'))\",",
+      },
+    ],
+  },
+  T5M14: {
+    what: "the sweep also deletes the legacy `snapshots` row (D2 breached)",
+    scope: [VACUUM_INTERACTION],
+    expected: [T5.crossTable],
+    edits: [
+      {
+        file: VACUUM,
+        old: "      stmts.deleteLineage(id);\n      stmts.deleteSnapshot(id);",
+        new: '      db.prepare(\n        "DELETE FROM snapshots WHERE path = (SELECT path FROM file_snapshots WHERE snapshot_id = ?)",\n      ).run(id);\n      stmts.deleteLineage(id);\n      stmts.deleteSnapshot(id);',
+      },
+    ],
+  },
+  T5M15: {
+    what: "the post-materialization trigger swallows its own failure",
+    scope: [VACUUM_INTERACTION],
+    expected: [T5.triggerFailure],
+    edits: [
+      {
+        file: HASH_STORE,
+        old:
+          "    } catch (error) {\n" +
+          "      console.warn(\n" +
+          "        `dsh-better-edit: snapshot vacuum failed after materializing ${path}: ${\n" +
+          "          error instanceof Error ? error.message : String(error)\n" +
+          "        }`,\n" +
+          "      );\n" +
+          "    }",
+        new: "    } catch {\n      // mutant: the retention failure is swallowed\n    }",
       },
     ],
   },

@@ -90,6 +90,12 @@ export interface LineageStore {
    */
   positionsByIdentity(path: string, content: string): Map<number, number>;
   leaseFor(sessionKey: string, path: string, anchor: string): LeaseRow | undefined;
+  /**
+   * The committed `file_snapshots.snapshot_id` for `(path, snapshotHash)`, or undefined when no
+   * such row exists. The vacuum trigger resolves its in-flight protection id through this, since
+   * the materialization path never learns the inserted id itself.
+   */
+  snapshotIdFor(path: string, snapshotHash: string): number | undefined;
   /** Delete a path's whole lineage family (snapshots, lineage, counters, leases). */
   deleteByPath(path: string): void;
 }
@@ -546,6 +552,10 @@ export function createLineageStore(db: DatabaseSync): LineageStore {
         lineNumber: row.served_line_number,
         retiredAt: row.retired_at,
       };
+    },
+    snapshotIdFor(path, snapshotHash) {
+      return (getSnapshotStmt.get(path, snapshotHash) as { snapshot_id: number } | undefined)
+        ?.snapshot_id;
     },
     deleteByPath(path) {
       // One unit: these four statements are one logical mutation, so an interrupted delete

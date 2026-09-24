@@ -29,6 +29,7 @@ import { DomainError } from "./domain-errors.js";
 import {
   createSnapshotStore,
   isValidHashList,
+  vacuumSnapshots as runVacuumSnapshots,
   type SnapshotStore,
 } from "./snapshot-store/index.js";
 import { withBusyRetry } from "./store-retry.js";
@@ -206,6 +207,8 @@ export interface HashStore {
   // ---- maintenance ---------------------------------------------------------
   /** Delete every row family's entries for paths that no longer exist on disk. */
   pruneMissing(): Promise<void>;
+  /** Run the snapshot retention pass (the store-open boundary); reports its own soft overflow. */
+  vacuumSnapshots(): void;
 }
 
 /**
@@ -747,6 +750,30 @@ function makeDomainStore(
    * buildStore). Delegates to the single re-entrant owner so an undo-pair write
    * joins an outer unit (e.g. pruneMissing) instead of nesting a BEGIN.
    */
+  /**
+   * The post-materialization retention trigger. Runs the sweep after a v7 materialization has
+   * committed, outside that materialization's own `withTransaction` block. A materialization that
+   * joined a caller-owned unit defers instead — the sweep owns `BEGIN IMMEDIATE` and must never run
+   * inside another unit's writes; the store-open hook is the deterministic collector.
+   *
+   * Best-effort but never silent: a retention fault can never fail the read or edit that already
+   * committed, and it is reported observably (spec §3.6.1; the storage-error-transparency rule).
+   * The just-committed row is protected because its lease does not exist yet.
+   */
+  function vacuumAfterMaterialization(path: string, content: string | undefined): void {
+    if (content === undefined || db.isTransaction) return;
+    try {
+      const protectId = lineageStore.snapshotIdFor(path, snapshotHashFor(content));
+      runVacuumSnapshots(db, protectId === undefined ? {} : { protectSnapshotIds: [protectId] });
+    } catch (error) {
+      console.warn(
+        `dsh-better-edit: snapshot vacuum failed after materializing ${path}: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    }
+  }
+
   function withUndoPairTxn(fn: () => void): void {
     withTransaction(db, fn);
   }
@@ -831,9 +858,11 @@ function makeDomainStore(
           lineageStore.commitSnapshot({ path, content, hashes });
         }
       });
+      vacuumAfterMaterialization(path, content);
     },
     commitSnapshot(input) {
       lineageStore.commitSnapshot(input);
+      vacuumAfterMaterialization(input.path, input.content);
     },
     lineageFor(path, snapshotHash) {
       return lineageStore.lineageFor(path, snapshotHash);
@@ -843,6 +872,9 @@ function makeDomainStore(
     },
     leaseFor(sessionKey, path, anchor) {
       return lineageStore.leaseFor(sessionKey, path, anchor);
+    },
+    snapshotIdFor(path, snapshotHash) {
+      return lineageStore.snapshotIdFor(path, snapshotHash);
     },
     /**
      * The `LineageStore` seam member — LINEAGE FAMILY ONLY (file_snapshots, line_lineage,
@@ -1085,6 +1117,12 @@ function makeDomainStore(
           stmts.servedDeletePath(path);
         }
       });
+    },
+    vacuumSnapshots() {
+      // WHY: the store-open boundary (spec §3.6.1) — on this store the open path is the only place
+      // that can reclaim a store that crashed over budget. The sweep owns its transaction and
+      // reports its own soft overflow, so the hook only needs the effect.
+      runVacuumSnapshots(db);
     },
   };
 }

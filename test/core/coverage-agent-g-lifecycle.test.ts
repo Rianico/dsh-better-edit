@@ -37,7 +37,11 @@ describe("coverage-agent-g lifecycle", () => {
     const fakeStmts: any = {
       servedPruneOlderThan: () => {},
     };
-    const fakeStore: any = { pruneMissing: () => Promise.resolve(), pruneUndoOlderThan: () => {} };
+    const fakeStore: any = {
+      pruneMissing: () => Promise.resolve(),
+      pruneUndoOlderThan: () => {},
+      vacuumSnapshots: () => {},
+    };
     await lc.onStoreOpen(storePath, fakeStmts, fakeStore);
     expect(existsSync(join(ws, ".gitignore"))).toBe(true);
     const gi = readFileSync(join(ws, ".gitignore"), "utf-8");
@@ -63,7 +67,11 @@ describe("coverage-agent-g lifecycle", () => {
     const lc = await import("../../src/store-lifecycle.js");
     lc._resetLifecycleForTests();
     const fakeStmts: any = { servedPruneOlderThan: () => {} };
-    const fakeStore: any = { pruneMissing: () => Promise.resolve(), pruneUndoOlderThan: () => {} };
+    const fakeStore: any = {
+      pruneMissing: () => Promise.resolve(),
+      pruneUndoOlderThan: () => {},
+      vacuumSnapshots: () => {},
+    };
     await lc.onStoreOpen(storePath, fakeStmts, fakeStore);
     expect(warnSpy).toHaveBeenCalled();
     // second call should not warn again (has check)
@@ -85,7 +93,11 @@ describe("coverage-agent-g lifecycle", () => {
     await lc.onStoreOpen(
       "/tmp/central/store.json",
       { servedPruneOlderThan: () => {} } as any,
-      { pruneMissing: () => Promise.resolve(), pruneUndoOlderThan: () => {} } as any,
+      {
+        pruneMissing: () => Promise.resolve(),
+        pruneUndoOlderThan: () => {},
+        vacuumSnapshots: () => {},
+      } as any,
     );
     spyLoad.mockRestore();
   });
@@ -104,7 +116,11 @@ describe("coverage-agent-g lifecycle", () => {
     await lc.onStoreOpen(
       storePath,
       { servedPruneOlderThan: () => {} } as any,
-      { pruneMissing: () => Promise.resolve(), pruneUndoOlderThan: () => {} } as any,
+      {
+        pruneMissing: () => Promise.resolve(),
+        pruneUndoOlderThan: () => {},
+        vacuumSnapshots: () => {},
+      } as any,
     );
     spyLoad.mockRestore();
     await rm(dir, { recursive: true, force: true });
@@ -125,7 +141,11 @@ describe("coverage-agent-g lifecycle", () => {
     await lc.onStoreOpen(
       storePath,
       { servedPruneOlderThan: () => {} } as any,
-      { pruneMissing: () => Promise.resolve(), pruneUndoOlderThan: () => {} } as any,
+      {
+        pruneMissing: () => Promise.resolve(),
+        pruneUndoOlderThan: () => {},
+        vacuumSnapshots: () => {},
+      } as any,
     );
     spyLoad.mockRestore();
     await rm(dir, { recursive: true, force: true });
@@ -149,6 +169,7 @@ describe("coverage-agent-g lifecycle", () => {
       pruneUndoOlderThan: () => {
         throw new Error("undo fail");
       },
+      vacuumSnapshots: () => {},
     } as any);
     expect(warnSpy).toHaveBeenCalled();
     spyLoad.mockRestore();
@@ -165,7 +186,11 @@ describe("coverage-agent-g lifecycle", () => {
     } as any);
     const pruneMock = vi.fn(() => Promise.resolve());
     const stmts: any = { servedPruneOlderThan: () => {} };
-    const store: any = { pruneMissing: pruneMock, pruneUndoOlderThan: () => {} };
+    const store: any = {
+      pruneMissing: pruneMock,
+      pruneUndoOlderThan: () => {},
+      vacuumSnapshots: () => {},
+    };
     await lc.onStoreOpen("/tmp/p1", stmts, store);
     expect(pruneMock).toHaveBeenCalledTimes(1);
     // second call throttled (same storePath, within 24h)

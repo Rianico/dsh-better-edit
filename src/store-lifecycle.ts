@@ -253,6 +253,16 @@ export async function onStoreOpen(
       `dsh-better-edit: pruneMissing throttling check failed: ${error instanceof Error ? error.message : String(error)}`,
     );
   }
+
+  // Snapshot vacuum — the deterministic boundary (spec §3.6.1): on this store the open path is
+  // the only place that can reclaim a store that crashed over budget. Best-effort and loud.
+  try {
+    store.vacuumSnapshots();
+  } catch (error) {
+    console.warn(
+      `dsh-better-edit: snapshot vacuum failed at store open for ${storePath}: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
 }
 
 export async function onAppStart(): Promise<void> {
