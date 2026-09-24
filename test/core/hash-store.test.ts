@@ -1860,6 +1860,13 @@ it("getFileUndo propagates infrastructure failures instead of healing the pair a
     // would not discriminate — `saveUndo` reads the legacy pair first (`readUndo` before
     // `readFileUndo`), so it would fail before ever reaching `getFileUndo`.
     const realPrepare = DatabaseSync.prototype.prepare;
+    // Anchored to the exact `fileUndoGetStmt` SELECT (`src/hash-store.ts:577`), not the
+    // `FROM file_undo WHERE path = ?` substring — that also matches the DELETE at `:579` and the
+    // test-local COUNT/updated_at queries, so a future `.run` fault-injection would silently
+    // break the delete. A column-list change stops this matching and fails the test on `threw`:
+    // loud, not silently inert.
+    const fileUndoGetSql =
+      /^SELECT content, bom, ending, hashes, result_content, snapshot_hash, updated_at FROM file_undo WHERE path = \?$/;
     let failFileUndoGet = false;
     const busy = () => Object.assign(new Error("database is locked"), { errcode: 5 });
     const prepareSpy = vi.spyOn(DatabaseSync.prototype, "prepare").mockImplementation(function (
@@ -1867,7 +1874,7 @@ it("getFileUndo propagates infrastructure failures instead of healing the pair a
       sql: string,
     ) {
       const stmt = realPrepare.call(this, sql);
-      if (/FROM file_undo WHERE path = \?/.test(sql)) {
+      if (fileUndoGetSql.test(sql)) {
         const realGet = stmt.get.bind(stmt);
         stmt.get = (...args: Parameters<typeof realGet>) => {
           if (failFileUndoGet) throw busy();
