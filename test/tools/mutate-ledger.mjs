@@ -290,14 +290,10 @@ const MUTANTS = {
       {
         file: DOMAIN_ERRORS,
         old:
-          "export const DEFERRED_PRODUCERS: Readonly<\n" +
-          "  Record<string, { owner: string; trigger: string }>\n" +
-          "> = {\n" +
+          'export const DEFERRED_PRODUCERS: Readonly<Record<string, { owner: string; trigger: string }>> = {\n' +
           "  W_NEVER_SERVED_SHAPE: {",
         new:
-          "export const DEFERRED_PRODUCERS: Readonly<\n" +
-          "  Record<string, { owner: string; trigger: string } | string>\n" +
-          "> = {\n" +
+          'export const DEFERRED_PRODUCERS: Readonly<Record<string, { owner: string; trigger: string } | string>> = {\n' +
           '  E_FOREIGN_ANCHOR: "range-family ticket (leases)",\n' +
           "  W_NEVER_SERVED_SHAPE: {",
       },
