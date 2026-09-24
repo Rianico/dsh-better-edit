@@ -54,10 +54,10 @@ the no-mirror-mutation arm).
 If the **seed** read throws — `identityPositions`, `src/mutation/engine.ts:620-630` — there is no
 source and the position check stays. A **lease** read that throws inside the gate (`leaseFor`,
 `src/hashline/anchor-pipeline.ts:662`) propagates and aborts the edit: fail-closed too, but it is not a
-fallback to the position check. Preview (`noPersist`) carries no source by decision. Pinned by
-`test/core/lease-resolve-seam.test.ts` ("is opt-in: without a
-lease source the position check still rejects the shift", "keeps the position check when a preview
-edit carries no lease source").
+fallback to the position check. The **preview** route (`noPersist`) was deleted by T3h with the
+orphaned single-edit flavor, so the no-source fallback it exercised is pinned at unit level only.
+Pinned by `test/core/lease-resolve-seam.test.ts` ("is opt-in: without a lease source the position check
+still rejects the shift", `:204`).
 
 ## The pairing engine was a prerequisite, and this was measured
 
@@ -146,9 +146,12 @@ earlier item **created** still rejects — fail-closed, pinned by `test/core/bat
 4. A store whose `served` rows predate lease granting (pre-T2b) has no lease for those anchors, so its
    first edit after upgrade rejects and needs one re-read. Derived from the gate's unleased arm,
    pinned by `test/core/lease-resolve-seam.test.ts` ("rejects when the served row holds no lease").
-5. Preview keeps the position check — a deliberate boundary, not an oversight: the seam is opt-in and
-   `noPersist: true` has no production call site (`rg -n 'noPersist: true' src/` → 0 hits; the only
-   occurrence in the tree is the boundary test itself).
+5. A route that carries no lease source keeps the position check — a deliberate boundary, not an
+   oversight. It survives, pinned at unit level only (`test/core/lease-resolve-seam.test.ts:204`,
+   "is opt-in: without a lease source the position check still rejects the shift"); the preview door
+   `noPersist` that used to exercise it end-to-end was deleted by T3h. For the next reader:
+   `rg -n 'noPersist' src/` → 4 matching lines, all in `src/file-view.ts` (`ReadNormOptions.noPersist` /
+   `normFromText`'s `noPersist?`) — read path, a different option, pre-existing, not the edit-path preview.
 6. A null row inside the served window now rejects `E_STALE_RANGE` fail-closed, where the gate previously
    skipped it. Pinned by `test/core/lease-resolve-seam.test.ts` ("fails closed on a null row inside the
    window").
