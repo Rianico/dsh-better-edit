@@ -152,9 +152,17 @@ export interface ErrorPayloadMap {
     cause?: RangeCause;
     firstOffendingLine?: number;
     /**
-     * True when the rejection demands a fresh read (the headline says
-     * "Re-read."): the retry hint is omitted. False/undefined keeps the
-     * reject-and-serve retry hint — the echoed rows ARE the retry.
+     * True when the rejection demands a fresh read: the retry hint is
+     * omitted and the headline carries the instruction. False/undefined
+     * keeps the reject-and-serve hint.
+     *
+     * The echoed rows are the CURRENT file's anchors, not serves — nothing
+     * records them (`recordEchoServes` was deleted by T3f), so a retry with
+     * them rejects at the same site (measured, T4 CP0 G3/H1). The field is
+     * extended to `E_UNSERVED_RANGE` rather than deleting `RETRY_HINT`
+     * outright: smaller diff, no payload-contract break, and the existing
+     * formatter cells stay meaningful. Deletion is deferred with a trigger
+     * (T4 CP1-r2 §5: the next ticket that touches this contract).
      */
     reread?: boolean;
   };
@@ -263,6 +271,8 @@ export interface ErrorPayloadMap {
     headline: string;
     servedRows: ServedRow[];
     servedBlock: string;
+    /** Same rule as `E_STALE_RANGE.reread`: true omits the retry hint. */
+    reread?: boolean;
     unservedKind: "boundary" | "interior";
     firstOffendingLine?: number;
     cause?: RangeCause;
@@ -305,6 +315,9 @@ export interface CodeSpec<P> {
 
 // WHY: the reject-and-serve retry affordance, owned here so every row-carrying
 // WHY: rejection renders it identically.
+// WHY: after T4 every production arm sets `reread: true`, so this hint branch is
+// WHY: unreachable from production; it stays until a contract ticket deletes the
+// WHY: field outright (T4 CP1-r2 §5, deferred with trigger).
 const RETRY_HINT = "Retry with these anchors (no read needed).";
 
 // WHY: 3-char is the hashline anchor width; this module stays zero-dependency
@@ -429,9 +442,12 @@ function blindReplaceFormat(payload: ErrorPayloadMap["E_BLIND_REPLACE"]): string
 }
 
 function unservedRangeFormat(payload: ErrorPayloadMap["E_UNSERVED_RANGE"]): string {
-  // F7: heading only when rows exist (all current producers carry a block).
+  // F7 + T4: heading only when rows exist (all current producers carry a block);
+  // the retry hint obeys `payload.reread` exactly as `staleRangeFormat` does —
+  // one rule for both range codes.
   if (!payload.servedBlock) return payload.headline;
-  return `${payload.headline}\nCurrent range:\n${payload.servedBlock}\n${RETRY_HINT}`;
+  const base = `${payload.headline}\nCurrent range:\n${payload.servedBlock}`;
+  return payload.reread === true ? base : `${base}\n${RETRY_HINT}`;
 }
 
 // WHY: an all-digit anchor is shape evidence pinned to the anchor string itself
@@ -545,8 +561,10 @@ export const ERROR_REGISTRY: { [K in DomainErrorCode]: CodeSpec<ErrorPayloadMap[
   E_STALE_ANCHOR: {
     audience: "MODEL",
     format: staleAnchorFormat,
-    // WHY remedy: a row was served for this path and its line identity is retired, so the served window pins the retry.
-    remedy: "Retry with the served rows; no read is needed.",
+    // WHY remedy: the anchors did not resolve against the current file (unresolved or
+    // ambiguous in `valEdit`), and context rows are shown only when one anchor resolved —
+    // so the only fail-closed recovery is a read.
+    remedy: "Read the file again for fresh anchors, then retry.",
   },
   E_UNKNOWN_ANCHOR: {
     audience: "MODEL",

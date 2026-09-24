@@ -38,6 +38,10 @@ const REPO = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const ENGINE = "src/mutation/engine.ts";
 const ANCHOR_PIPELINE = "src/hashline/anchor-pipeline.ts";
 const CONTRACT = "test/core/serve-leases.test.ts";
+const RETRY_TRUTH = "test/core/range-family-retry-truth.test.ts";
+const ARCH_SIGNAL = "test/arch/range-family-signal.test.ts";
+const ERROR_CODES = "test/core/error-codes.test.ts";
+const DOMAIN_ERRORS = "src/domain-errors.ts";
 
 /** Revision the expected RED sets below were measured at (see ADR-0018's T3h subsection). */
 const VERIFIED_AT = "ba430557912b8b2934261654d3e09034188d8571";
@@ -56,6 +60,17 @@ const T = {
   noopLoop:
     "noop-loop rejection records nothing — served rows and grants byte-identical, next read ≡ control",
   malformed: "malformed anchor on an existing file rejects E_BATCH_ABORT and writes nothing",
+};
+
+/** T4 CP1-r2 cell titles (ADR-0018 "T4 ledger" / ADR-0013 "Reproduce"). */
+const T4 = {
+  spanLength: "span-length rejection offers no dead retry (C1)",
+  unservedInterior: "unserved-interior rejection offers no dead retry (C2)",
+  staleAnchorReread: "stale-anchor rejection recovers only by re-read (C3)",
+  contextRows: "stale-anchor with context rows states the arm-dependent truth (C4)",
+  unservedRule: "E_UNSERVED_RANGE obeys the same reread rule as E_STALE_RANGE (T4 C5)",
+  archSites: "every E_STALE_RANGE/E_UNSERVED_RANGE arm sets reread: true",
+  archFields: "both range payload-map entries declare reread?: boolean",
 };
 
 /** Shared pre-edit for the three `recordServed` mutants. */
@@ -160,6 +175,86 @@ const MUTANTS = {
         file: ENGINE,
         old: "  if (count >= NOOP_LOOP_THRESHOLD) {\n    const originalLines = splitLines(opts.originalNormalized);",
         new: '  if (count >= NOOP_LOOP_THRESHOLD) {\n    throw new Error("Z3b");\n    const originalLines = splitLines(opts.originalNormalized);',
+      },
+    ],
+  },
+  M1: {
+    what: "drop the retry signal at the span-length arm (CP0 G3, SR@802)",
+    scope: null, // full suite
+    expected: [T4.spanLength, T4.archSites],
+    edits: [
+      {
+        file: ANCHOR_PIPELINE,
+        old:
+          "      headline: `served span (${servedLen} lines) no longer matches current range (${currentLen} lines)${where}. Re-read.`,\n" +
+          "      servedBlock: echo,\n" +
+          "      reread: true,",
+        new:
+          "      headline: `served span (${servedLen} lines) no longer matches current range (${currentLen} lines)${where}. Re-read.`,\n" +
+          "      servedBlock: echo,\n" +
+          "      reread: false,",
+      },
+    ],
+  },
+  M2: {
+    what: "drop the retry signal at the unserved-interior arm (CP0 H1, SR@790)",
+    scope: null, // full suite
+    expected: [T4.unservedInterior, T4.archSites],
+    edits: [
+      {
+        file: ANCHOR_PIPELINE,
+        old:
+          "        headline: `line ${i + 1}${where} was never served.`,\n" +
+          "        servedBlock: echo,\n" +
+          "        reread: true,",
+        new:
+          "        headline: `line ${i + 1}${where} was never served.`,\n" +
+          "        servedBlock: echo,\n" +
+          "        reread: false,",
+      },
+    ],
+  },
+  M3: {
+    what: "unservedRangeFormat renders the retry hint unconditionally again",
+    scope: null, // full suite
+    expected: [T4.unservedRule, T4.unservedInterior],
+    edits: [
+      {
+        file: DOMAIN_ERRORS,
+        old:
+          "  const base = `${payload.headline}\\nCurrent range:\\n${payload.servedBlock}`;\n" +
+          "  return payload.reread === true ? base : `${base}\\n${RETRY_HINT}`;",
+        new: "  return `${payload.headline}\\nCurrent range:\\n${payload.servedBlock}\\n${RETRY_HINT}`;",
+      },
+    ],
+  },
+  M4: {
+    what: "restore the read-free E_STALE_ANCHOR remedy string",
+    scope: null, // full suite
+    expected: [T4.staleAnchorReread],
+    edits: [
+      {
+        file: DOMAIN_ERRORS,
+        old: '    remedy: "Read the file again for fresh anchors, then retry.",',
+        new: '    remedy: "Retry with the served rows; no read is needed.",',
+      },
+    ],
+  },
+  M5: {
+    what: "remove reread?: boolean from ErrorPayloadMap.E_UNSERVED_RANGE only",
+    scope: null, // full suite
+    expected: [T4.archFields],
+    edits: [
+      {
+        file: DOMAIN_ERRORS,
+        old:
+          "    /** Same rule as `E_STALE_RANGE.reread`: true omits the retry hint. */\n" +
+          "    reread?: boolean;\n" +
+          '    unservedKind: "boundary" | "interior";',
+        new:
+          "    /** Same rule as `E_STALE_RANGE.reread`: true omits the retry hint. */\n" +
+          "    rereadRemoved?: boolean;\n" +
+          '    unservedKind: "boundary" | "interior";',
       },
     ],
   },

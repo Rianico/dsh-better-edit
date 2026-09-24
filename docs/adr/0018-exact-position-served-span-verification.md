@@ -164,8 +164,20 @@ identical lines, so position is the only discriminator. This ADR keeps upstream'
   records/grants nothing: the served rows are byte-identical before and after, no lease row
   appears, and every grant field (`snapshotHash`, `lineId`, `lineNumber`, `canonHash`) is
   unchanged. The next fresh read's anchor list is byte-identical to the control that performs the
-  same external change with no intervening rejected edit. The recovery is the re-read the message
-  already instructs; the reject sites now only render the echo into the error message.
+  same external change with no intervening rejected edit. **The recovery is the re-read the
+  message instructs** — and after T4 (F1/F2/F3) every one of the 13
+  `ServedRejectionError` arms sets `reread: true`, so no arm renders the
+  `Retry with these anchors (no read needed)` hint and each headline carries the
+  instruction. That sentence was not true of four arms when this ADR was written
+  (served-length mismatch `:802`, hash-differs `:883`, and both `E_UNSERVED_RANGE`
+  sites `:775`/`:790`); the measured basis for closing them is CP0 G3 (`SR@802`) and H1
+  (`SR@790`), where the echo-retry is rejected byte-identically at the same site and a
+  re-read applies. That disagreement with ADR-0013's then-correct "the hint survives on
+  four arms" note is recorded and resolved in
+  [ADR-0013](0013-pos-free-roundtrip-optimization.md)'s T4 reconciliation section: the
+  measurement chose 0013's reading (the echoes are the current file's anchors, not
+  serves), and no new ADR was written because a new ADR would hide the disagreement
+  rather than name it.
 - **`retiredAt` is a different mechanism, not an exception to the bullet above.** The edit
   pipeline calls `normFromText` (`src/mutation.ts:125`) **before** `applyOne` (`:149`). That
   normalization persists a snapshot of the file as it is on disk, and `commitSnapshot` retires
@@ -344,3 +356,22 @@ too, from an accepted edit; **S3 no-edit** → nothing flips; **S5 norm-only** �
 only the `normFromText` call (`src/mutation.ts:125`) — → `f9U.retiredAt 1790264335193`. S5 is the proof
 that the retirement is path-independent; S1 is observable only because nothing follows the
 normalization to revive the row.
+
+### T4 ledger — the retry signal, re-run it from the tree
+
+`reread: true` is now the only value any production arm sets: 13 `ServedRejectionError` arms
+(11 `E_STALE_RANGE` + 2 `E_UNSERVED_RANGE`), plus the `fs-bridge` version guard. The guard is
+`test/arch/range-family-signal.test.ts`; the runtime cells reproduce CP0 G3/H1 through the
+real tools:
+
+```
+pnpm exec vitest run test/core/range-family-retry-truth.test.ts --reporter=verbose
+node test/tools/mutate-ledger.mjs M1    # drop reread at @802 → span-length cell + arch guard RED
+node test/tools/mutate-ledger.mjs M2    # drop reread at @790 → interior cell + arch guard RED
+node test/tools/mutate-ledger.mjs M3    # render the hint unconditionally → formatter cell RED
+node test/tools/mutate-ledger.mjs M4    # restore the read-free E_STALE_ANCHOR remedy → C3 RED
+node test/tools/mutate-ledger.mjs M5    # remove the payload-map field → arch guard RED (+ typecheck)
+```
+
+Line numbers above are scoped to `3f4aca6` (the pre-fix revision the CP0 sweep measured);
+`node test/tools/mutate-ledger.mjs --list` prints the live anchors and expected RED sets.

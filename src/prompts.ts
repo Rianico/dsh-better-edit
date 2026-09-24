@@ -31,7 +31,7 @@ export const EDIT_GUIDANCE: ToolGuidance = {
     "`edit`: after an edit whose serve landed, the returned diff shows fresh anchors (`HASH\u2502content`) \u2014 copy new `HASH` values from there for the next edit; if the result says the rows were NOT recorded as served, re-read instead.",
     "`edit`: `anchor_from`/`anchor_to` are inclusive; batch multiple edits to the same file only when independent \u2014 they apply atomically (fail \u2192 nothing written).",
     "`edit`: `[MODEL]` errors (e.g. `E_STALE_*`, `E_UNSERVED_*`, `E_BAD_PAYLOAD`, `E_SUSPICIOUS_TEXT`) need a retry \u2014 `[USER]` warnings/`drift:` notices are human-only.",
-    "`edit`: on `E_STALE_RANGE`/`E_UNSERVED_RANGE` retry from the echoed fresh anchors (no re-read needed); on `E_STALE_ANCHOR` re-read.",
+    "`edit`: on `E_STALE_ANCHOR` re-read for fresh anchors; on `E_STALE_RANGE`/`E_UNSERVED_RANGE` the echoed rows are the file's current anchors, NOT serves — re-read before retrying.",
   ],
 };
 
@@ -45,7 +45,7 @@ export const READ_GUIDANCE: ToolGuidance = {
     "Use read, not shell commands, to inspect text files and obtain the HASH anchors the editing tools require.",
   lines: [
     "`read`: call it only for content the tools have not served — a page you never saw, or lines past the post-edit diff.",
-    "`read`: each row is `HASH│content`; the HASH is the anchor (no line numbers). Rejection echoes return fresh rows that count as serves.",
+    "`read`: each row is `HASH│content`; the HASH is the anchor (no line numbers). Rejection echoes show the file's current rows — they are NOT recorded as serves, so re-read before retrying.",
     "`read`: binary/directory rejects; page large files with offset/limit.",
   ],
 };

@@ -192,4 +192,32 @@ describe("registry range-shape rules (F7)", () => {
     expect(message).not.toContain("Retry with these anchors");
     expect(message).toContain("  Current context around resolved anchor.");
   });
+  it("E_UNSERVED_RANGE obeys the same reread rule as E_STALE_RANGE (T4 C5)", () => {
+    const unserved = {
+      headline: "line 2 was never served.",
+      servedRows: rows,
+      servedBlock: "abc│one",
+      unservedKind: "interior" as const,
+    };
+    const withFlag = formatError("E_UNSERVED_RANGE", { ...unserved, reread: true });
+    const withoutFlag = formatError("E_UNSERVED_RANGE", unserved);
+    expect({
+      withFlagShowsHeading: withFlag.includes("Current range:\nabc│one"),
+      withFlagShowsHint: withFlag.includes("Retry with these anchors"),
+      withoutFlagShowsHeading: withoutFlag.includes("Current range:\nabc│one"),
+      withoutFlagShowsHint: withoutFlag.includes("Retry with these anchors (no read needed)."),
+      staleWithFlagShowsHint: formatError("E_STALE_RANGE", {
+        headline: "h Re-read.",
+        servedRows: rows,
+        servedBlock: "abc│one",
+        reread: true,
+      }).includes("Retry with these anchors"),
+    }).toEqual({
+      withFlagShowsHeading: true,
+      withFlagShowsHint: false,
+      withoutFlagShowsHeading: true,
+      withoutFlagShowsHint: true,
+      staleWithFlagShowsHint: false,
+    });
+  });
 });

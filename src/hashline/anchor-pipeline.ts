@@ -468,6 +468,8 @@ export class ServedRejectionError extends DomainError<DomainErrorCode> {
           headline: string;
           servedRows: ServedRow[];
           servedBlock: string;
+          /** Same contract as the `E_STALE_RANGE` branch: true omits the retry hint. */
+          reread?: boolean;
           unservedKind: "boundary" | "interior";
           firstOffendingLine?: number;
         },
@@ -491,6 +493,7 @@ export class ServedRejectionError extends DomainError<DomainErrorCode> {
         ...(opts.firstOffendingLine !== undefined
           ? { firstOffendingLine: opts.firstOffendingLine }
           : {}),
+        ...(opts.reread !== undefined ? { reread: opts.reread } : {}),
       });
     }
     this.name = "ServedRejectionError";
@@ -781,6 +784,7 @@ export function verifyServedRange(args: {
         `for a look-alike line. A full read will re-sync the served mirror; the echoed range below ` +
         `is current content.`,
       servedBlock: echo,
+      reread: true,
       servedRows: echoRows,
     });
   }
@@ -792,6 +796,7 @@ export function verifyServedRange(args: {
         unservedKind: "interior",
         headline: `line ${i + 1}${where} was never served.`,
         servedBlock: echo,
+        reread: true,
         firstOffendingLine: i + 1,
         servedRows: echoRows,
       });
@@ -801,8 +806,9 @@ export function verifyServedRange(args: {
   if (servedLen !== currentLen) {
     throw new ServedRejectionError({
       code: "E_STALE_RANGE",
-      headline: `served span (${servedLen} lines) no longer matches current range (${currentLen} lines)${where}.`,
+      headline: `served span (${servedLen} lines) no longer matches current range (${currentLen} lines)${where}. Re-read.`,
       servedBlock: echo,
+      reread: true,
       firstOffendingLine: startLine,
       servedRows: echoRows,
     });
@@ -882,8 +888,9 @@ export function verifyServedRange(args: {
       const offendingLine = startLine + k;
       throw new ServedRejectionError({
         code: "E_STALE_RANGE",
-        headline: `line ${offendingLine}${where} differs from what was served.`,
+        headline: `line ${offendingLine}${where} differs from what was served. Re-read.`,
         servedBlock: echo,
+        reread: true,
         firstOffendingLine: offendingLine,
         servedRows: echoRows,
       });

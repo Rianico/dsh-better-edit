@@ -84,14 +84,19 @@ Makes `shift==rebind` loud only when `changed` overlaps target, not when exterio
 > concurrent change goes through the identity gate — it applies at the rebased
 > coordinate, or rejects as `E_STALE_RANGE` (ADR-0018 / ADR-0019).
 >
-> The strict/identity rejection is **not** a re-serve: it records nothing and grants
-> nothing (ADR-0018, T3f), its message says `Re-read.`, and a retry with the echoed
-> anchors is rejected again (measured). The `Retry with these anchors (no read needed)`
-> hint survives only on the non-`reread` arms — served-length mismatch
-> (`src/hashline/anchor-pipeline.ts:802`), a line whose bytes differ from what was served
-> (`:883`), and every `E_UNSERVED_RANGE` (`:775`/`:790`). Those echo rows are the current file's anchors.
-
-We keep `pos-free` by default because line non-overlap ≈ semantic non-overlap for hash-anchored edits; strict would make every exterior `insert @0` abort `B`'s unrelated range, violating `CONTEXT.md:anchor philosophy` and `ADR-0004` healing. Concurrency fallback is automatic, no `supportConcurrency` flag — exterior drift stays `resist`, only overlapping concurrent goes `strict`.
+> **Tombstone (T4 CP1-r2, F6) — this blockquote described four arms that no longer exist.**
+> It used to say the `Retry with these anchors (no read needed)` hint survives on the
+> non-`reread` arms: served-length mismatch (`src/hashline/anchor-pipeline.ts:802` at
+> `3f4aca6`), a line whose bytes differ from what was served (`:883`), and every
+> `E_UNSERVED_RANGE` (`:775`/`:790`) — and that those echo rows are "the current file's
+> anchors". **The second half was right; the first is now history.** T4's F1–F3 set
+> `reread: true` on all four arms, so no arm renders the hint and the callers read from
+> the echoed _current_ rows without a serve being recorded
+> (`buildRangeEcho(startLine, endLine, fileHashes)`). Measured basis: CP0 G3 (`SR@802`)
+> and H1 (`SR@790`) — the retry is rejected byte-identically at the same site and a
+> re-read applies. The historical note is scoped to `3f4aca6`; the guard that keeps the
+> four arms from coming back is `test/arch/range-family-signal.test.ts`.
+> We keep `pos-free` by default because line non-overlap ≈ semantic non-overlap for hash-anchored edits; strict would make every exterior `insert @0` abort `B`'s unrelated range, violating `CONTEXT.md:anchor philosophy` and `ADR-0004` healing. Concurrency fallback is automatic, no `supportConcurrency` flag — exterior drift stays `resist`, only overlapping concurrent goes `strict`.
 
 ## Considered Options
 
@@ -106,4 +111,34 @@ We keep `pos-free` by default because line non-overlap ≈ semantic non-overlap 
 - `anchor-pipeline.ts:verifyServedRange` keeps candidate enumeration, adds `tombstone` filter and `servedCanons` check, `strict` pos via automatic `changed ∩ [L,R]` (no config).
 - Tests: `hashline-stable-mapping.test.ts` "reuses first removed hash" flips to `fresh hash`; new property `identical canon after removal gets ≠ removed hash`.
 
-- Round trips: single-thread exterior drift no longer aborts; a strict/identity rejection records nothing and grants nothing (ADR-0018, T3f), says `Re-read.`, and a retry with the echoed anchors is rejected again — the `Retry with these anchors (no read needed)` hint survives only on the non-`reread` arms — served-length mismatch (`src/hashline/anchor-pipeline.ts:802`), a line whose bytes differ from what was served (`:883`), and every `E_UNSERVED_RANGE` (`:775`/`:790`) — where the echo rows are the current file's anchors.
+- Round trips: single-thread exterior drift no longer aborts; a strict/identity rejection records nothing and grants nothing (ADR-0018, T3f), says `Re-read.`, and a retry with the echoed anchors is rejected again — the `Retry with these anchors (no read needed)` hint is gone from every arm (T4 F1–F3; the four then-surviving sites are tombstoned above) while the echo rows remain the current file's anchors, so an echo-retry still rejects at the same site (CP0 G3/H1).
+
+## T4 reconciliation — the two accepted ADRs disagreed; the measurement chose this one
+
+[ADR-0018](0018-exact-position-served-span-verification.md):167-168 asserted _"The recovery is
+the re-read the message already instructs."_ The blockquote above asserted the opposite for
+four arms: the hint survived, and the echo rows were "the current file's anchors" — i.e. a
+retry looked on offer. Both could not be true at `3f4aca6`. Measured through the real tools at
+that revision (CP0 G3 → `SR@802`, H1 → `SR@790`): the echo-retry is **rejected
+byte-identically at the same site**, and a re-read **applies**. So the measurement chose this
+ADR's reading: the echoes are not serves and cannot be a retry. It also chose 0018's sentence
+as the target state — after T4's F1–F4 the hint is gone and that sentence is true of every
+arm. **No new ADR was written**: a new ADR would have hidden two accepted ADRs disagreeing
+instead of naming the disagreement, the evidence, and the resolution.
+
+## Reproduce
+
+The tombstone and the reconciliation are re-derivable from the committed tree:
+
+```
+pnpm exec vitest run test/core/range-family-retry-truth.test.ts test/arch/range-family-signal.test.ts --reporter=verbose
+node test/tools/mutate-ledger.mjs M1   # span-length arm (CP0 G3 → SR@802): C1 + arch guard RED
+node test/tools/mutate-ledger.mjs M2   # unserved-interior arm (CP0 H1 → SR@790): C2 + arch guard RED
+node test/tools/mutate-ledger.mjs M3   # unconditional hint: C5 (+ C2) RED
+node test/tools/mutate-ledger.mjs M4   # read-free E_STALE_ANCHOR remedy: C3 RED
+node test/tools/mutate-ledger.mjs M5   # payload-map field removed: arch guard RED (+ typecheck)
+```
+
+The raw G3/H1 tool-path sweeps that measured the echo-retry rejection are the handoff
+evidence `.lsz/tmp/handoff/T4/evidence/CP1-sweep-G1-G10-HEAD.txt` (G3) and
+`CP1-sweep-H1-H2-HEAD.txt` (H1).
