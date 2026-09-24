@@ -421,7 +421,6 @@ export interface NoopLoopOptions {
   /** Batch item index. */
   index: number;
   count: number;
-  originalHashes: string[];
   originalNormalized: string;
   /** Batch flavor: precomputed echo rows for the failed item (may be absent). */
   echoRows?: ServedRow[];
@@ -879,7 +878,6 @@ export async function runFileEdits(
         displayPath: item.file,
         index: item.index,
         count,
-        originalHashes,
         originalNormalized,
         echoRows: echoRowsForItem(applied.edit, originalHashes),
       });

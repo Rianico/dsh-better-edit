@@ -192,7 +192,7 @@ ServedRejectionError` through `collectAbortPart` (`engine.ts:512`, called at `:8
   `onReject` argument (`engine.ts:287`, invoked `:303`/`:324`) inside `execPipeline`
   (`src/mutation.ts:91`), reached only via `applySingle` (`:491` → `:502`), which has **zero** `src/`
   callers — and `enforceNoopLoop`'s `index === undefined` branch (base `engine.ts:443`;
-  `engine.ts:429` today), because `PreparedItem.index` is **required** (`engine.ts:109`) and the sole
+  `engine.ts:429`; deleted by T3h), because `PreparedItem.index` is **required** (`engine.ts:109`) and the sole
   production call site (`:895`) passes `item.index` (`:901`); `NoopLoopOptions.index?` (`:409`,
   "undefined = single-edit flavor") and `NoopLoopOptions.range?` (`:415`, "Single-edit flavor only")
   exist only for that dead flavor. Base `4efa43a` had exactly four `recordEchoServes` call sites:
@@ -202,11 +202,13 @@ ServedRejectionError` through `collectAbortPart` (`engine.ts:512`, called at `:8
   `ExecPipelineOptions` (base `f3ffe7a` `src/mutation.ts:64`/`:84`), `execPipeline` (`:91`), and
   `applySingle` (`:491`); `enforceNoopLoop`'s `index === undefined` branch (`engine.ts:444` at base) and
   the `NoopLoopOptions` fields that existed only for it (`absolutePath`, `replaceWith`, `sessionKey`,
-  `range?`). Measured: `src/mutation.ts` −185 lines, `src/mutation/engine.ts` −40. Deleted from the
+  `range?`, `originalHashes`). Measured with `git diff --numstat f3ffe7a..HEAD`: `src/mutation.ts`
+  −185 lines, `src/mutation/engine.ts` −42. Deleted from the
   tests: the direct-call seam cells that pinned it by hand — base `serve-leases.test.ts:883`/`:904`,
   `coverage-agent-a-mutation.test.ts:49`/`:85`/`:159`, `coverage-agent-g-mutation-sandbox.test.ts:32`,
   `coverage-agent-c-edit-engine.test.ts:244`/`:261`/`:276`, `lease-resolve-seam.test.ts:155`,
-  `epoch-lifecycle.test.ts:81` — −461 test lines, plus one live replacement cell: a malformed anchor on
+  `epoch-lifecycle.test.ts:81` — `test/` 25 added / 470 deleted (net −445, same numstat), plus one live
+  replacement cell: a malformed anchor on
   an existing file now rejects through the tool and writes nothing. The lesson stands and is _why_ this
   ledger exists: an agent can "fix" a dead path, watch it go green, and believe the live path was
   exercised. The trap that lesson warns about is code-free — the flavor is gone from `src/`, from
@@ -235,8 +237,8 @@ ServedRejectionError` through `collectAbortPart` (`engine.ts:512`, called at `:8
   re-derived with `rg -n` at this revision rather than copied. Cells are `test/core/serve-leases.test.ts`.
   The surviving pins this ledger is measured against are the live noop-loop cell (`:697`) and the
   batch-abort cell (`:728`):
-  - **M1 ≡ M6 → `collectAbortPart`** (`src/mutation/engine.ts:493`; called from the pre-pass at `:787`
-    and from `applyOne`'s fail callback at `:832`). RED: the batch-abort cell (`:728`) and the other
+  - **M1 ≡ M6 → `collectAbortPart`** (`src/mutation/engine.ts:492`; called from the pre-pass at `:786`
+    and from `applyOne`'s fail callback at `:831`). RED: the batch-abort cell (`:728`) and the other
     live rejection cells the `735df10` run measured — C1 (`:620`), C3 (`:660`), C4 (`:669`), C5
     (`:683`), C7 (`:716`). The noop-loop cell is **not** this site (the guard throws from the loop body,
     outside `collectAbortPart`); T3h's CP2 ticket groups it with this row, and CP3's re-run is the
@@ -245,8 +247,8 @@ ServedRejectionError` through `collectAbortPart` (`engine.ts:512`, called at `:8
     (`"twin rejection grants nothing — no grant field changes, no new lease appears"`, `:627`) **by
     design**: rows without the context grant nothing, so that cell pins the _grant_, not the write.
   - **M4 → the batch noop branch, now expressed at the guard's call site.** `enforceNoopLoop` is called
-    once, from `src/mutation/engine.ts:876`, passing `index: item.index` (`:880`); the branch it arms is
-    `:438`. The guard no longer receives a `sessionKey` or an `absolutePath` — both were orphan-only
+    once, from `src/mutation/engine.ts:875`, passing `index: item.index` (`:879`); the branch it arms is
+    `:437`. The guard no longer receives a `sessionKey` or an `absolutePath` — orphan-only
     fields, deleted by T3h — so the M4 recipe anchors at that call site instead of inside the guard.
     RED on the live noop-loop cell (`:697`).
 
@@ -269,7 +271,7 @@ one isolated site, run the contract file, revert. The recipes are the scripted e
 `evidence/probes/mutate.py.txt` — `M1`/`M2` = `collectAbortPart` with and without the snapshot context,
 `M4` = `enforceNoopLoop`'s batch branch. **`M3`/`M5` are historical**: their sites — the orphaned
 single-edit branch and the sequential arrow — were deleted by T3h, so those two recipes no longer apply
-to HEAD. `M4`'s site moved with the code: the guard is called once, at `src/mutation/engine.ts:876`,
+to HEAD. `M4`'s site moved with the code: the guard is called once, at `src/mutation/engine.ts:875`,
 and no longer receives a `sessionKey`/`absolutePath`, so the recipe anchors at that call site. It was
 measured RED on C6 (`test/core/serve-leases.test.ts:697`) by the CP1 reviewer at `f3ffe7a`+deletion
 (`evidence/cp1-tm-mutant-logs/`); CP3 re-runs it.

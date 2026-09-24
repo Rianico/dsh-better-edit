@@ -5,7 +5,7 @@ Status: accepted; supersedes [ADR-0018](0018-exact-position-served-span-verifica
 Related: `src/hashline/anchor-pipeline.ts` (`LeaseSpanSource`, `verifyRebasedSpan`,
 `verifyServedRange`), `src/snapshot-store/lineage-store.ts` (`positionsByIdentity`, `commitSnapshot`),
 `src/snapshot-store/pairing.ts`, `src/mutation/engine.ts` (`makeLeaseSource`, `runFileEdits`),
-`src/mutation.ts` (`execPipeline`), [ADR-0013](0013-pos-free-roundtrip-optimization.md),
+`src/mutation.ts` (`execute`, `applySequence`), [ADR-0013](0013-pos-free-roundtrip-optimization.md),
 [ADR-0017](0017-content-addressed-line-identity.md),
 [ADR-0018](0018-exact-position-served-span-verification.md)
 

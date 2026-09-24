@@ -240,7 +240,6 @@ describe("coverage: edit-engine applyOne", () => {
 });
 
 describe("coverage: edit-engine enforceNoopLoop", () => {
-  const hashes = ["h1", "h2", "h3"];
   it("batch: throws at threshold and notice at 2", async () => {
     const { NOOP_LOOP_THRESHOLD } = await import("../../src/constants.js");
     await expect(
@@ -250,7 +249,6 @@ describe("coverage: edit-engine enforceNoopLoop", () => {
         displayPath: "a.txt",
         index: 0,
         count: NOOP_LOOP_THRESHOLD,
-        originalHashes: hashes,
         originalNormalized: "a\nb\nc",
         echoRows: [{ position: 0, hash: "h1" }],
       }),
@@ -262,7 +260,6 @@ describe("coverage: edit-engine enforceNoopLoop", () => {
       displayPath: "a.txt",
       index: 0,
       count: 2,
-      originalHashes: hashes,
       originalNormalized: "a\nb\nc",
     });
     expect(notice).toMatch(/Notice/);
@@ -273,7 +270,6 @@ describe("coverage: edit-engine enforceNoopLoop", () => {
       displayPath: "a.txt",
       index: 0,
       count: 1,
-      originalHashes: hashes,
       originalNormalized: "a\nb\nc",
     });
     expect(none).toBeUndefined();
@@ -291,7 +287,6 @@ describe("coverage: edit-engine enforceNoopLoop", () => {
         displayPath: "a.txt",
         index: 0,
         count: NOOP_LOOP_THRESHOLD,
-        originalHashes: hashes,
         originalNormalized: "a\nb\nc",
         echoRows: [{ position: 0, hash: "h1" }],
       });
@@ -315,7 +310,6 @@ describe("coverage: edit-engine enforceNoopLoop", () => {
         displayPath: "a.txt",
         index: 1,
         count: NOOP_LOOP_THRESHOLD,
-        originalHashes: hashes,
         originalNormalized: "a\nb\nc",
       }),
     ).rejects.toThrow(/E_NOOP_LOOP/);
