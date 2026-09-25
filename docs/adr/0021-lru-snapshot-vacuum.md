@@ -131,7 +131,12 @@ stays over the soft cap; unbounded global state is the leak this project has alr
 overflow ledger re-arms when a pass reports no deferred bytes (cells 17/18 pin both halves); the skip
 ledger reports once per context, because a skip is a property of the call site rather than of the
 store's byte state. The cost of the cap is stated: a process touching more than 256 contexts can
-re-report an evicted context once — observability only.
+re-report an evicted context once — observability only. The ledgers are **process-global module
+state**, so a context must be unique per store _and_ per test: two callers reusing one context string
+share a single throttle entry. That is the declared limit of a module-level ledger, and it is the
+reason the cap exists; cell 29 pins it by bracketing the boundary — of `cap + K` fresh contexts the K
+oldest report again and the K newest stay silent (the cap value is never asserted: one referent that
+cannot fail proves nothing).
 
 The store face returns the result (`HashStore.vacuumSnapshots(): VacuumResult`), **superseding the
 void maintenance seam** this ADR recorded in r1: the trigger — not the sweep — decides what an
@@ -273,10 +278,11 @@ items 4–6 by a measured GREEN with its diagnosis:
 
 ## Reproduce
 
-The mutation ledger for this ADR lives in `test/tools/mutate-ledger.mjs` (`T5M1`–`T5M29`). Recipe:
+The mutation ledger for this ADR lives in `test/tools/mutate-ledger.mjs` (`T5M1`–`T5M30`). Recipe:
 archive HEAD into a temp tree, apply the mutant to exactly one site, run the scoped corpus, compare
 the failing cells with the table below, discard the tree. Every expected set below was re-measured
-at `b2b5eef` on the branch `fix/t5-vacuum` with `RED SET MATCH`; re-run them to re-derive.
+at `b2b5eef` on the branch `fix/t5-vacuum` with `RED SET MATCH` (`T5M30`, the cap bracket, was
+measured after the CP2-r3 cell landed); re-run them to re-derive.
 
 ```bash
 node test/tools/mutate-ledger.mjs --list          # ids, scopes, expected RED counts
@@ -315,11 +321,15 @@ node test/tools/mutate-ledger.mjs T5M2 --keep     # keep the temp tree and the v
 | T5M27 | `vacuum.ts`: the sweep's transaction wrapper removed            | unit               | 16, 20, 26                         |
 | T5M28 | `hash-store.ts`: `getSnapshot`'s lineage-first branch disabled  | interaction        | — GREEN, meaning 4                 |
 | T5M29 | `session-view.ts`: the serve write stops materializing v7       | interaction        | 10, 11, 13, 24                     |
+| T5M30 | `vacuum.ts`: the report-ledger cap check disabled               | unit               | 29                                 |
 
-Cell legend: unit cells are 01–09 and 16–21, 25, 26 over `new DatabaseSync(":memory:")` +
+Cell legend: unit cells are 01–09, 16–21, 25, 26 and 29 over `new DatabaseSync(":memory:")` +
 `createLineageStore`; interaction cells are 10–15 and 22–24, 27, 28 driving the real `read` /
 `edit` / `undo_last_edit` tools over a temp workspace and the live store. Every cell's corpus is a
-`test/core/vacuum*.test.ts` file, so each mutant's RED set is exact.
+`test/core/vacuum*.test.ts` file, so each mutant's RED set is exact. Cell 29 is the report-ledger cap
+bracket (unit): it drives `reportVacuum` directly and asserts the retained set is the `cap` most
+recent by re-reporting the K oldest (each warns) and the K newest (each stays silent), never the cap
+value itself.
 
 ## Consequences
 

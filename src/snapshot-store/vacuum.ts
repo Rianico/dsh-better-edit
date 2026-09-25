@@ -159,7 +159,7 @@ function perPathRetention(newestLineCount: number): number {
 // first, so the state is capped rather than unbounded across distinct store paths. A process that
 // touches more distinct `(store, site)` contexts than the cap can re-report an evicted context once
 // — observability only, and strictly cheaper than the leak an unbounded global Set would be.
-const REPORT_CONTEXT_CAP = 256;
+export const REPORT_CONTEXT_CAP = 256;
 const overflowReported = new Map<string, true>();
 const skipReported = new Map<string, true>();
 

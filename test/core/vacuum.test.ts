@@ -10,18 +10,23 @@ import {
 import {
   reportVacuum,
   vacuumSnapshots,
+  REPORT_CONTEXT_CAP,
   VACUUM_GLOBAL_BUDGET_BYTES,
   VACUUM_MAX_SNAPSHOTS_PER_PATH,
   VACUUM_MIN_SNAPSHOTS_PER_PATH,
   VACUUM_PER_PATH_BUDGET_BYTES,
   VACUUM_SOFT_OVERFLOW_BYTES,
   VACUUM_LINEAGE_BYTES_PER_LINE,
+  type VacuumResult,
 } from "../../src/snapshot-store/index.js";
 import { SERVED_TTL_MS } from "../../src/constants.js";
 
 beforeAll(async () => {
   await initHasher();
 });
+
+/** The report ledgers are process-global module state: give every run its own context namespace. */
+let reportRun = 0;
 
 /**
  * The helper shape of `lineage-store.test.ts`, plus the `file_undo` table the pin predicate reads
@@ -686,5 +691,68 @@ describe("vacuum — pins", () => {
     expect(result.evicted).toBe(2);
     expect(result.pinnedBytes).toBe(0);
     expect(snapshotHashes(db, path)).not.toContain(snapshotHashFor(content));
+  });
+  it("cell 29 the report ledger cap evicts the oldest context, which is then reported again", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const overBudget: VacuumResult = {
+      evicted: 0,
+      totalBytes: 120_000_000,
+      pinnedBytes: 120_000_000,
+      deferredBytes: 120_000_000 - VACUUM_GLOBAL_BUDGET_BYTES,
+      overSoftOverflow: true,
+      skippedInTransaction: false,
+    };
+    // The ledgers are process-global module state, so every context in this cell carries a per-run
+    // prefix: an earlier cell's entry with the same text would suppress a warn this cell asserts.
+    reportRun += 1;
+    const prefix = `cell 29 run ${reportRun}`;
+    // Match the parenthesised context exactly: prefix matching would confuse `b 1` with `b 10`.
+    const warned = (context: string): number =>
+      warn.mock.calls.filter((call) => String(call[0]).includes(`(${context})`)).length;
+    // A small K brackets the boundary: the cap is never asserted as a value (that would be a
+    // tautology — one referent that cannot fail). What is asserted is the OBSERVABLE consequence:
+    // of `cap + K` fresh contexts, the K oldest were evicted and the K newest were retained.
+    const K = 3;
+    try {
+      const target = `${prefix} target`;
+      reportVacuum(overBudget, target);
+      expect(warned(target)).toBe(1);
+      reportVacuum(overBudget, target);
+      expect(warned(target)).toBe(1); // throttled while the context is in the ledger
+
+      // Enough fresh contexts to trip the cap: each insert drops the oldest entry, the target.
+      for (let index = 0; index < REPORT_CONTEXT_CAP; index++) {
+        reportVacuum(overBudget, `${prefix} fill ${index}`);
+      }
+      // Eviction re-armed the context: the same result reports again, 1 -> 2.
+      reportVacuum(overBudget, target);
+      expect(warned(target)).toBe(2);
+
+      // Bracket the boundary: `cap + K` inserts leave the retained set exactly the `cap` most
+      // recent (`b_0..b_{K-1}` evicted, `b_cap..b_{cap+K-1}` retained).
+      const oldest = Array.from({ length: K }, (_, index) => `${prefix} b ${index}`);
+      const newest = Array.from(
+        { length: K },
+        (_, index) => `${prefix} b ${REPORT_CONTEXT_CAP + index}`,
+      );
+      for (let index = 0; index < REPORT_CONTEXT_CAP + K; index++) {
+        reportVacuum(overBudget, `${prefix} b ${index}`);
+      }
+      for (const context of oldest) {
+        // Each fill insert warned once; an evicted context warns a second time on the re-report.
+        expect(warned(context)).toBe(1);
+        reportVacuum(overBudget, context);
+        expect(warned(context)).toBe(2);
+      }
+      // Re-reporting an evicted context re-inserts it and drops the oldest *retained* entry
+      // (`b_K..b_{K+2}`), which with `cap >> 2K` can never reach the newest K.
+      for (const context of newest) {
+        expect(warned(context)).toBe(1);
+        reportVacuum(overBudget, context);
+        expect(warned(context)).toBe(1); // retained: still throttled
+      }
+    } finally {
+      warn.mockRestore();
+    }
   });
 });

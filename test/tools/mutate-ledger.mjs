@@ -164,6 +164,8 @@ const T5 = {
   openFailure: "cell 27 report at store open: a failing open sweep is loud and non-fatal",
   legacyOnlyUpsert:
     "cell 28 legacy-only upsert: no v7 materialization means no sweep and no failure",
+  reportCap:
+    "cell 29 the report ledger cap evicts the oldest context, which is then reported again",
 };
 const VACUUM = "src/snapshot-store/vacuum.ts";
 const LINEAGE_STORE = "src/snapshot-store/lineage-store.ts";
@@ -957,6 +959,18 @@ const MUTANTS = {
         file: SESSION_VIEW,
         old: "  internal.commitSnapshot({ path, content, hashes: [...hashes], leases: { sessionKey, rows } });",
         new: "  // mutant: the serve write stops materializing the v7 family",
+      },
+    ],
+  },
+  T5M30: {
+    what: "the report ledger never evicts (the cap check is disabled)",
+    scope: [VACUUM_UNIT],
+    expected: [T5.reportCap],
+    edits: [
+      {
+        file: VACUUM,
+        old: "  if (ledger.size >= REPORT_CONTEXT_CAP) {",
+        new: "  if (false) {",
       },
     ],
   },
