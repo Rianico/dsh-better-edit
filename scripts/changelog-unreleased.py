@@ -7,15 +7,18 @@
 
 - update: generate notes from commits since last tag, place under Unreleased
 - clear:  remove Unreleased section before semantic-release takes over
+- check:  read-only drift check — exit 0 when in sync, 1 when `update` would rewrite (never writes)
 
 Usage:
   python scripts/changelog-unreleased.py update [--changelog CHANGELOG.md]
   python scripts/changelog-unreleased.py clear [--changelog CHANGELOG.md]
+  python scripts/changelog-unreleased.py check [--changelog CHANGELOG.md]
 """
 
 from __future__ import annotations
 
 import argparse
+import difflib
 import re
 import subprocess
 import sys
@@ -45,6 +48,8 @@ CONVENTIONAL_RE = re.compile(
 )
 
 VERSION_HEADING_RE = re.compile(r"^## \[[^\]]+\].*", re.MULTILINE)
+SECTION_HEADING_RE = re.compile(r"^###\s+(?P<name>.+?)\s*$")
+BULLET_RE = re.compile(r"^[*+-]\s+\S")
 
 
 def run(cmd: list[str]) -> str:
@@ -74,7 +79,7 @@ def warn_if_visible_sync_head(commits: list[tuple[str, str]]) -> None:
             "WARNING: HEAD looks like a visible-type changelog sync commit: "
             f"{subject!r} — commit the sync as a hidden type "
             "(e.g. `chore: sync changelog unreleased section`); "
-            "a visible type re-triggers the guard and loops forever.",
+            "a visible type mints a ledger entry for the sync itself.",
             file=sys.stderr,
         )
 
@@ -117,23 +122,26 @@ def get_commits_since(tag: str) -> list[tuple[str, str]]:
         else:
             range_spec = "HEAD"
 
-    log = run(["git", "log", range_spec, "--pretty=format:%s%n%b%x00%x00", "--no-merges"])
-    if not log:
-        return []
-    # commits separated by double null
-    raw_commits = [c.strip() for c in log.split("\x00\x00") if c.strip()]
+    return parse_commit_log(
+        run(["git", "log", range_spec, "--pretty=format:%s%n%b%x00%x00", "--no-merges"])
+    )
+
+
+def parse_commit_log(log: str) -> list[tuple[str, str]]:
+    """Parse `%s%n%b%x00%x00` output into (subject, body) pairs, order preserved."""
     commits: list[tuple[str, str]] = []
-    for raw in raw_commits:
-        parts = raw.split("\n", 1)
-        subject = parts[0].strip()
-        body = parts[1] if len(parts) > 1 else ""
-        if subject:
-            commits.append((subject, body))
+    for raw in (chunk.strip() for chunk in log.split("\x00\x00")):
+        if not raw:
+            continue
+        subject, _, body = raw.partition("\n")
+        if subject.strip():
+            commits.append((subject.strip(), body))
     return commits
 
 
 def commits_to_sections(commits: list[tuple[str, str]]) -> dict[str, list[str]]:
     sections: dict[str, list[str]] = {}
+    seen: dict[str, set[str]] = {}
     for subject, body in commits:
         m = CONVENTIONAL_RE.match(subject)
         if not m:
@@ -161,52 +169,141 @@ def commits_to_sections(commits: list[tuple[str, str]]) -> dict[str, list[str]]:
             # annotate breaking
             entry += " (BREAKING CHANGE)"
 
+        # One commit per identity: a branch commit and its squash share a subject, and the
+        # ledger's unit is the entry, not the commit that minted it.
+        identities = seen.setdefault(section, set())
+        identity = entry_identity(entry)
+        if identity in identities:
+            continue
+        identities.add(identity)
         sections.setdefault(section, []).append(entry)
 
     return sections
 
 
+def parse_unreleased_sections(content: str) -> dict[str, list[str]]:
+    """Parse the on-disk Unreleased block into {section: [entry, ...]}, order preserved.
+
+    Only the block's own `### Section` headings and bullets are modelled. Each bullet is
+    kept verbatim so `update` never rewrites an entry it did not author.
+    """
+    if UNRELEASED_HEADING not in content:
+        return {}
+    _, rest = content.split(UNRELEASED_HEADING, 1)
+    version = VERSION_HEADING_RE.search(rest)
+    block = rest[: version.start()] if version else rest
+
+    sections: dict[str, list[str]] = {}
+    current: str | None = None
+    for line in block.splitlines():
+        heading = SECTION_HEADING_RE.match(line)
+        if heading:
+            current = heading.group("name")
+            sections.setdefault(current, [])
+            continue
+        if current is not None and BULLET_RE.match(line):
+            sections[current].append(line.rstrip())
+    return sections
+
+
+_ANNOTATION_RE = re.compile(r"\s*\(#\d+\)\s*$|\s*\(BREAKING CHANGE\)\s*$")
+
+
+def entry_identity(entry: str) -> str:
+    """Entry text with its trailing `(#N)` / `(BREAKING CHANGE)` annotations removed.
+
+    GitHub appends `(#N)` when it squashes a PR, so the entry a branch generated and the
+    one regenerated after the merge differ by that suffix alone. Matching on identity lets
+    the named form supersede the branch form instead of the change appearing twice.
+    """
+    text = entry.strip()
+    if text[:1] in "*+-":
+        text = text[1:].strip()
+    while True:
+        trimmed = _ANNOTATION_RE.sub("", text).rstrip()
+        if trimmed == text:
+            return text
+        text = trimmed
+
+
+def merge_unreleased(
+    existing: dict[str, list[str]], generated: dict[str, list[str]]
+) -> dict[str, list[str]]:
+    """Union: keep every on-disk entry, prepend only what the commits newly justify.
+
+    Regenerating alone deletes entries whose commits a squash-merge erased, so an entry
+    already on disk is never dropped. An entry the merge re-issued under its squashed name
+    (same identity, `(#N)` added) is superseded rather than duplicated. New entries arrive
+    newest-first (`git log` order) ahead of the preserved ones, and a section with nothing
+    new is returned untouched - which is what makes `update` idempotent.
+    """
+    merged = {section: list(entries) for section, entries in existing.items()}
+    for section, entries in generated.items():
+        bucket = merged.setdefault(section, [])
+        superseded = {entry_identity(entry) for entry in entries}
+        kept = [entry for entry in bucket if entry_identity(entry) not in superseded]
+        present = {entry_identity(entry) for entry in kept}
+        fresh = [entry for entry in entries if entry_identity(entry) not in present]
+        merged[section] = fresh + kept
+    return merged
+
+
 def render_unreleased(sections: dict[str, list[str]]) -> str:
     if not sections:
         return ""
-    # order by presetConfig.types order
-    order = [v[0] for v in TYPE_SECTIONS.values()]
-    # dedupe order preserving first occurrence
-    seen: set[str] = set()
+    # canonical order by presetConfig.types order, then any section the file already carried
     ordered_keys: list[str] = []
-    for k in order:
-        if k not in seen:
-            seen.add(k)
-            ordered_keys.append(k)
+    seen: set[str] = set()
+    for key in (value[0] for value in TYPE_SECTIONS.values()):
+        if key in sections and key not in seen:
+            seen.add(key)
+            ordered_keys.append(key)
+    for key in sections:
+        if key not in seen:
+            seen.add(key)
+            ordered_keys.append(key)
     lines: list[str] = [UNRELEASED_HEADING, ""]
     for key in ordered_keys:
-        if key not in sections:
+        entries = sections[key]
+        if not entries:
             continue
         lines.append(f"### {key}")
         lines.append("")
-        lines.extend(sections[key])
+        lines.extend(entries)
         lines.append("")
     return "\n".join(lines).strip() + "\n\n"
 
 
-def update_changelog(changelog: Path) -> bool:
+def _normalize(text: str) -> str:
+    """Canonical file form: no triple blanks, single trailing newline."""
+    return re.sub(r"\n{3,}", "\n\n", text).strip() + "\n"
+
+
+def render_updated_changelog(changelog: Path) -> str:
+    """Content `update` would write, as a pure function (never touches disk).
+
+    `update` and `check` both go through here, so a drift `check` reports is exactly the
+    rewrite `update` would make — the two can never disagree.
+    """
     tag = get_last_tag()
     commits = get_commits_since(tag)
     warn_if_visible_sync_head(commits)
-    sections = commits_to_sections(commits)
-    new_block = render_unreleased(sections)
+    generated = commits_to_sections(commits)
 
-    if not changelog.exists():
-        changelog.write_text(
-            f"{HEADER}\n\nAll notable changes to this project will be documented in this file.\n\n",
-            encoding="utf-8",
+    if changelog.exists():
+        content = changelog.read_text(encoding="utf-8")
+    else:
+        content = (
+            f"{HEADER}\n\nAll notable changes to this project will be documented in this file.\n\n"
         )
-
-    content = changelog.read_text(encoding="utf-8")
 
     # ensure header exists
     if HEADER not in content:
         content = f"{HEADER}\n\n" + content
+
+    # Union rather than regenerate: an entry whose commits a squash-merge erased stays put.
+    sections = merge_unreleased(parse_unreleased_sections(content), generated)
+    new_block = render_unreleased(sections)
 
     if UNRELEASED_HEADING in content:
         # replace existing Unreleased block (from heading to next version heading or EOF)
@@ -228,24 +325,62 @@ def update_changelog(changelog: Path) -> bool:
     else:
         if not new_block.strip() or new_block.strip() == UNRELEASED_HEADING:
             # nothing to add
-            return False
-        # insert after header (after first HEADER line and following blank lines)
-        # simple: insert right after header's first paragraph
-        # find first "## [" after header
-        m = VERSION_HEADING_RE.search(content)
-        if m:
-            new_content = (
-                content[: m.start()].rstrip() + "\n\n" + new_block + content[m.start() :].lstrip()
-            )
+            new_content = content
         else:
-            new_content = content.rstrip() + "\n\n" + new_block
+            # insert after header (after first HEADER line and following blank lines)
+            # simple: insert right after header's first paragraph
+            # find first "## [" after header
+            m = VERSION_HEADING_RE.search(content)
+            if m:
+                new_content = (
+                    content[: m.start()].rstrip()
+                    + "\n\n"
+                    + new_block
+                    + content[m.start() :].lstrip()
+                )
+            else:
+                new_content = content.rstrip() + "\n\n" + new_block
 
-    if new_content == content:
+    return _normalize(new_content)
+
+
+def update_changelog(changelog: Path) -> bool:
+    """Rewrite CHANGELOG.md when it differs from the generated Unreleased block.
+
+    Idempotent: a second run over an in-sync file reports no change instead of churning
+    whitespace-only diffs.
+    """
+    new_content = render_updated_changelog(changelog)
+    current = _normalize(changelog.read_text(encoding="utf-8")) if changelog.exists() else ""
+    if new_content == current:
         return False
-    # normalize: ensure single trailing newline, no triple blanks
-    new_content = re.sub(r"\n{3,}", "\n\n", new_content).strip() + "\n"
     changelog.write_text(new_content, encoding="utf-8")
     return True
+
+
+def check_changelog(changelog: Path) -> tuple[bool, str]:
+    """Read-only drift check: (in_sync, report). Never writes, never stages, never commits.
+
+    Exit-code contract lives in `main()`: 0 when the file already matches what `update`
+    would write, 1 when it drifts (or is missing). A convergence Finalize can call this to
+    detect changelog drift without dirtying the integration worktree, which is what made
+    the composite gate fail after a fully successful batch.
+    """
+    if not changelog.exists():
+        return False, f"{changelog}: missing — `update` would create it"
+    current = _normalize(changelog.read_text(encoding="utf-8"))
+    expected = render_updated_changelog(changelog)
+    if current == expected:
+        return True, f"{changelog}: in sync"
+    diff = "".join(
+        difflib.unified_diff(
+            current.splitlines(keepends=True),
+            expected.splitlines(keepends=True),
+            fromfile=f"{changelog} (on disk)",
+            tofile=f"{changelog} (generated by update)",
+        )
+    )
+    return False, diff or f"{changelog}: drift"
 
 
 def clear_changelog(changelog: Path) -> bool:
@@ -270,7 +405,9 @@ def clear_changelog(changelog: Path) -> bool:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Manage Unreleased section in CHANGELOG.md")
-    parser.add_argument("command", choices=["update", "clear"], help="update or clear Unreleased")
+    parser.add_argument(
+        "command", choices=["update", "clear", "check"], help="update, clear, or check Unreleased"
+    )
     parser.add_argument("--changelog", default="CHANGELOG.md", help="path to CHANGELOG.md")
     args = parser.parse_args()
 
@@ -278,10 +415,19 @@ def main() -> int:
     if args.command == "update":
         changed = update_changelog(changelog)
         print("updated" if changed else "no change")
-    else:
+        return 0
+    if args.command == "clear":
         changed = clear_changelog(changelog)
         print("cleared" if changed else "no change")
-    return 0
+        return 0
+
+    # check — read-only; exit 1 so a gate can fail loud on drift without mutating the tree
+    in_sync, report = check_changelog(changelog)
+    if in_sync:
+        print("in sync")
+        return 0
+    print(report, file=sys.stderr)
+    return 1
 
 
 if __name__ == "__main__":
