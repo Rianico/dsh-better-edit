@@ -2,10 +2,12 @@ name: Changelog Check
 on:
   pull_request:
     branches: [main]
+  push:
+    branches: [main]
 permissions:
   contents: read
 concurrency:
-  group: changelog-check-${{ github.event.pull_request.number }}
+  group: changelog-check-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 jobs:
   check:
@@ -14,60 +16,77 @@ jobs:
       contents: read
       pull-requests: write
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           persist-credentials: false
           fetch-depth: 0
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+      # v7.0.0
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
         with:
           python-version: "3.14"
-      - name: Check Unreleased is up to date
+      # The deterministic floor (ADR-0016), replacing the old synchronisation
+      # check: the ledger is curated, not a projection of commit subjects, so
+      # `update`-equality is no longer the invariant. On a PR the floor is given
+      # the landing declaration and the PR number; on main it is the durable
+      # run, where every entry must resolve to a landing commit.
+      - name: Ledger floor
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_BODY: ${{ github.event.pull_request.body }}
         run: |
-          # save committed version
-          cp CHANGELOG.md /tmp/before.md 2>/dev/null || touch /tmp/before.md
-          python scripts/changelog-unreleased.py update
-          if diff -q /tmp/before.md CHANGELOG.md >/dev/null; then
-            echo "CHANGELOG.md Unreleased ok"
-            exit 0
+          set -o pipefail
+          if [ -z "$PR_NUMBER" ]; then
+            python scripts/changelog-gate.py ledger
+            exit $?
           fi
-          echo "::error::CHANGELOG.md Unreleased stale"
-          echo ""
-          echo "Visible conventional commits in this PR require Unreleased update."
-          echo "Expected diff:"
-          diff -u /tmp/before.md CHANGELOG.md || true
-          echo ""
-          echo "Fix locally:"
-          echo "  uv run python scripts/changelog-unreleased.py update"
-          echo "  git add CHANGELOG.md && git commit -m 'chore: sync changelog unreleased section' --no-verify && git push"
-          echo "  # or amend on a feature branch: git add CHANGELOG.md && git commit --amend --no-edit --no-verify && git push --force-with-lease"
-          echo "  Sync commit must use a hidden type (chore:/style:/refactor:/test:/build:/ci:); a visible type (feat/fix/perf/revert/docs) re-triggers the guard and loops forever."
-          echo ""
-          echo "Hidden types (style/chore/refactor/test/build/ci) without BREAKING CHANGE don't need Unreleased."
-          # restore committed file so subsequent steps see original
-          cp /tmp/before.md CHANGELOG.md
-          exit 1
+          waiver=$(printf '%s\n' "$PR_BODY" \
+            | sed -n 's/^[[:space:]]*[Ll]edger-[Ww]aiver:[[:space:]]*//p' \
+            | head -n 1)
+          if [ -n "$waiver" ]; then
+            echo "waiver: $waiver"
+            python scripts/changelog-gate.py ledger \
+              --pr "$PR_NUMBER" \
+              --waiver "$waiver"
+          else
+            python scripts/changelog-gate.py ledger \
+              --pr "$PR_NUMBER"
+          fi
       - name: Comment on failure
-        if: failure()
-        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        if: failure() && github.event_name == 'pull_request'
+        # v9.0.0
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3
         with:
           script: |
-            const body = `> [!warning] CHANGELOG.md Unreleased stale
-            This PR contains visible conventional commits (\`feat|fix|perf|revert|docs\` or \`!\/BREAKING CHANGE\`) but \`## [Unreleased]\` doesn't match \`scripts/changelog-unreleased.py update\`.
-
-            Fix:
-            \`\`\`bash
-            uv run python scripts/changelog-unreleased.py update
-            git add CHANGELOG.md && git commit -m 'chore: sync changelog unreleased section'
-            git push
-            # or amend on a feature branch: git commit --amend --no-edit && git push --force-with-lease
-            \`\`\`
-            Sync commit must use a hidden type (\`chore:\` etc.); a visible type (\`feat|fix|perf|revert|docs\`) re-triggers the guard and loops forever.
-            Hidden types \`style|chore|refactor|test|build|ci\` only need update when breaking.
-            // avoid duplicate comments
+            const pr = context.issue.number;
+            const body = [
+              '> [!warning] Changelog ledger check failed',
+              '',
+              'The `## [Unreleased]` block did not pass verification: well-formedness,',
+              'section integrity, duplicate identities, placeholders, or PR attribution.',
+              '',
+              'Every new entry must name this PR (`(#' + pr + ')`). Multiple entries are allowed.',
+              '',
+              '```bash',
+              'uv run scripts/changelog-gate.py ledger --pr ' + pr,
+              '```',
+              '',
+              'A blocked ledger is waived only with a recorded reason: add a',
+              '`Ledger-Waiver: <reason>` trailer to this PR body and re-run.',
+              'The gate waives fixable findings only, never a needs-human one.',
+            ].join('\n');
             const {data: comments} = await github.rest.issues.listComments({
-              owner: context.repo.owner, repo: context.repo.repo, issue_number: context.issue.number
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: pr
             });
-            if (comments.some(c => c.body.includes('CHANGELOG.md Unreleased stale'))) return;
+            const seen = comments.some(
+              c => c.body.includes('Changelog ledger floor failed')
+            );
+            if (seen) return;
             await github.rest.issues.createComment({
-              owner: context.repo.owner, repo: context.repo.repo, issue_number: context.issue.number, body
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: pr,
+              body
             });

@@ -22,6 +22,12 @@ graph LR
   A --> B
 ```
 
+## Landing
+
+Landing: squash <!-- or: Landing: merge — see git-convention §5 -->
+
+<!-- Read by the PR run of scripts/changelog-gate.py — the repo's gate, not the global pr-land skill. -->
+
 ## Checklist
 
 - [ ] Formatter, linter, typecheck, and tests green (exact commands in `CONTRIBUTING.md`)
