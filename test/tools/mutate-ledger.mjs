@@ -98,6 +98,8 @@ const T6 = {
     "W_SERVED_PREFIX_MISMATCH's guard holds while the source scan sees no producer for it",
   deferredRefute:
     "the deferred predicates refute a constant: their own code falsifies, others do not",
+  orderIndependence:
+    "the witness is order-independent: a render through the pure seam cannot falsify a guard",
 };
 
 /** T4 CP1-r3 cell titles (arch registry oracle + the numeric-note end-to-end cell). */
@@ -407,7 +409,7 @@ const MUTANTS = {
   M6: {
     what: "re-add E_FOREIGN_ANCHOR to DEFERRED_PRODUCERS as a bare rot-marker string",
     scope: null, // full suite
-    expected: [T4R3.backward, T6.deferredRefute, T4R3.deleted],
+    expected: [T4R3.backward, T6.deferredRefute, T6.orderIndependence, T4R3.deleted],
     edits: [
       {
         file: DOMAIN_ERRORS,
