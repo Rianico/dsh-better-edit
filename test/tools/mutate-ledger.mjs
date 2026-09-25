@@ -424,7 +424,7 @@ const MUTANTS = {
   M7: {
     what: "re-add E_TARGET_LOST as a union member with no producer and no deferral",
     scope: null, // full suite
-    expected: [T4R3.forward, T4R3.deleted],
+    expected: [T4R3.forward, T4R3.deleted, T4R5.parity],
     edits: [
       {
         file: DOMAIN_ERRORS,
@@ -457,7 +457,7 @@ const MUTANTS = {
   M9: {
     what: "add a `remedy` reader (append it in staleAnchorFormat) without de-allowlisting it",
     scope: null, // full suite
-    expected: [T4R3.fields, T4R3.contextMessage],
+    expected: [T4R3.fields, T4R5.fieldIdentity, T4R3.contextMessage],
     edits: [
       {
         file: DOMAIN_ERRORS,
