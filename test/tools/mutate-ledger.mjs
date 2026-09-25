@@ -121,7 +121,10 @@ const T4R6 = {
  * (T5M22/T5M26/T5M28: the FK cascade or the serve write's re-materialization, per the P1 matrix).
  * Adding a cell can widen the RED sets of EXISTING mutants, so a new mutant's line alone is not
  * evidence: re-run the full sweep (`for i in $(seq 1 30); do node test/tools/mutate-ledger.mjs T5M$i; done`),
- * because the ledger exits non-zero on any mismatch — it is a gate, not a report.
+ * because the ledger exits non-zero on any mismatch — it is a gate, not a report. Two assertion rules
+ * from cell 29: bracket the boundary (probe just past it, in both directions) and require a delimiter
+ * in the match — a substring a longer name can satisfy (`b 1` vs `b 10`) is a paper tiger inside the
+ * assertion itself.
  */
 const T5 = {
   window:
@@ -677,6 +680,8 @@ const MUTANTS = {
   T5M9: {
     what: "the overflow warning is deleted (the deferred state is returned, never reported)",
     scope: [VACUUM_UNIT],
+    // COUPLING (CP2-r4): cell 29 asserts warned(target) === 1 while the context is retained, so
+    // deleting this warning drives that count to 0 — the same warn-count path this site feeds.
     expected: [T5.loudDeferral, T5.reportPayload, T5.reportRearm, T5.reportCap],
     edits: [
       {
@@ -809,6 +814,8 @@ const MUTANTS = {
   T5M18: {
     what: "the overflow dedup early-return is deleted (warn on every over-budget pass)",
     scope: [VACUUM_UNIT],
+    // COUPLING (CP2-r4): without the dedup a retained context warns again, breaking cell 29's
+    // count-1 assertion — the same warn-count path this site feeds.
     expected: [T5.reportPayload, T5.reportCap],
     edits: [
       {
