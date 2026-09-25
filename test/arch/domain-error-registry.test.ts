@@ -96,20 +96,21 @@ export function undeclaredProducerMessage(missing: readonly string[]): string {
 /**
  * C7/C16 (A2′, G6/G7): the allowlists pinned BY IDENTITY — the test's own copy
  * of the data half. `owner` values are addressable identities
- * (`ADDRESSABLE_OWNER_RE`), never bare lane letters: `T6` alone is ambiguous
- * (`docs/absorption-plan.md:35` = README+CONTEXT merge; the T4 brief = multi-
- * window read), so the deferred owners carry `Q-T6` plus the disambiguating
- * content. The predicates are pinned in C17 and asserted separately in the cells
- * below, so they are never recycled as their own referent.
+ * (`ADDRESSABLE_OWNER_RE`), never bare lane letters or schedule slots: T6 replaced
+ * the ambiguous `Q-T6` lane id with the producer seam the deferral waits on, so the
+ * entry names a FILE that a landing producer must touch. The predicates are pinned
+ * in C17 and asserted separately in the cells below, so they are never recycled as
+ * their own referent (T6 R15: the mutant must break the real predicate, not a
+ * caricature of it).
  */
 const DEFERRED_OWNERS = {
   W_NEVER_SERVED_SHAPE: {
-    owner: "Q-T6 (multi-window read — brief.md:70; NOT absorption-plan.md:35's T6)",
-    trigger: { text: "Q-T6" },
+    owner: "src/hashline/served-guard.ts",
+    trigger: { text: "src/hashline/served-guard.ts" },
   },
   W_SERVED_PREFIX_MISMATCH: {
-    owner: "Q-T6 (multi-window read — brief.md:70; NOT absorption-plan.md:35's T6)",
-    trigger: { text: "Q-T6" },
+    owner: "src/hashline/served-guard.ts",
+    trigger: { text: "src/hashline/served-guard.ts" },
   },
 } as const;
 
@@ -131,8 +132,8 @@ const FIELD_PREDICATES = {
 } as const;
 
 const DEFERRED_PREDICATES = {
-  W_NEVER_SERVED_SHAPE: '() => isDomainWarningCode("W_NEVER_SERVED_SHAPE")',
-  W_SERVED_PREFIX_MISMATCH: '() => isDomainWarningCode("W_SERVED_PREFIX_MISMATCH")',
+  W_NEVER_SERVED_SHAPE: '() => !PRODUCED_WARNINGS.has("W_NEVER_SERVED_SHAPE")',
+  W_SERVED_PREFIX_MISMATCH: '() => !PRODUCED_WARNINGS.has("W_SERVED_PREFIX_MISMATCH")',
 } as const;
 
 // A3′ (F10): the keys the renderer actually reads. `formatError`/`formatWarning`

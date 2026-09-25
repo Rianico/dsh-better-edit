@@ -134,20 +134,12 @@ export interface ErrorPayloadMap {
     servedBlock: string;
     cause?: RangeCause;
     firstOffendingLine?: number;
-    /**
-     * True when the rejection demands a fresh read: the retry hint is
-     * omitted and the headline carries the instruction. False/undefined
-     * keeps the reject-and-serve hint.
-     *
-     * The echoed rows are the CURRENT file's anchors, not serves — nothing
-     * records them (`recordEchoServes` was deleted by T3f), so a retry with
-     * them rejects at the same site (measured, T4 CP0 G3/H1). The field is
-     * extended to `E_UNSERVED_RANGE` rather than deleting `RETRY_HINT`
-     * outright: smaller diff, no payload-contract break, and the existing
-     * formatter cells stay meaningful. Deletion is deferred with a trigger
-     * (T4 CP1-r2 §5: the next ticket that touches this contract).
-     */
-    reread?: boolean;
+    // The echoed rows are the CURRENT file's anchors, not serves — nothing records them
+    // (`recordEchoServes` was deleted by T3f), so a retry with them rejects at the same site
+    // (measured, T4 CP0 G3/H1). T6 deleted the `reread` flag that used to say so: the flag
+    // was a constant `true` on every producer, so the payload's rows (`servedRows.length`)
+    // carry the distinction — empty means the region is unidentifiable and only a read
+    // restores it; non-empty means the rows are the named region's current anchors.
   };
   E_MALFORMED_ANCHOR: {
     rawAnchor: string;
@@ -242,8 +234,7 @@ export interface ErrorPayloadMap {
     headline: string;
     servedRows: ServedRow[];
     servedBlock: string;
-    /** Same rule as `E_STALE_RANGE.reread`: true omits the retry hint. */
-    reread?: boolean;
+    // Same contract as `E_STALE_RANGE.servedRows`: empty means no row-carrying region exists.
     unservedKind: "boundary" | "interior";
     firstOffendingLine?: number;
     cause?: RangeCause;
@@ -284,12 +275,10 @@ export interface CodeSpec<P> {
   remedy?: string;
 }
 
-// WHY: the reject-and-serve retry affordance, owned here so every row-carrying
-// WHY: rejection renders it identically.
-// WHY: after T4 every production arm sets `reread: true`, so this hint branch is
-// WHY: unreachable from production; it stays until a contract ticket deletes the
-// WHY: field outright (T4 CP1-r2 §5, deferred with trigger).
-const RETRY_HINT = "Retry with these anchors (no read needed).";
+// WHY: the `Retry with these anchors (no read needed).` affordance was deleted by T6. It was
+// WHY: unreachable from production (every producer set `reread: true`), and its premise was
+// WHY: false: the echoed rows are the current file's anchors, not serves, so a retry with them
+// WHY: rejects at the same site. The retry affordance a payload carries is its rows.
 
 // WHY: 3-char is the hashline anchor width; this module stays zero-dependency
 // WHY: so the width is stated, never imported.
@@ -393,10 +382,9 @@ function staleAnchorFormat(payload: ErrorPayloadMap["E_STALE_ANCHOR"]): string {
 function staleRangeFormat(payload: ErrorPayloadMap["E_STALE_RANGE"]): string {
   // F7: the `Current range:` heading exists only when there are rows to
   // show; a row-less rejection (e.g. the version-guard arm) renders the
-  // headline alone, and `reread: true` still suppresses the retry hint.
+  // headline alone; the payload's rows are its retry affordance.
   if (!payload.servedBlock) return payload.headline;
-  const base = `${payload.headline}\nCurrent range:\n${payload.servedBlock}`;
-  return payload.reread === true ? base : `${base}\n${RETRY_HINT}`;
+  return `${payload.headline}\nCurrent range:\n${payload.servedBlock}`;
 }
 
 function blindReplaceFormat(payload: ErrorPayloadMap["E_BLIND_REPLACE"]): string {
@@ -413,12 +401,9 @@ function blindReplaceFormat(payload: ErrorPayloadMap["E_BLIND_REPLACE"]): string
 }
 
 function unservedRangeFormat(payload: ErrorPayloadMap["E_UNSERVED_RANGE"]): string {
-  // F7 + T4: heading only when rows exist (all current producers carry a block);
-  // the retry hint obeys `payload.reread` exactly as `staleRangeFormat` does —
-  // one rule for both range codes.
+  // F7: heading only when rows exist; one rule for both range codes.
   if (!payload.servedBlock) return payload.headline;
-  const base = `${payload.headline}\nCurrent range:\n${payload.servedBlock}`;
-  return payload.reread === true ? base : `${base}\n${RETRY_HINT}`;
+  return `${payload.headline}\nCurrent range:\n${payload.servedBlock}`;
 }
 
 // WHY: an all-digit anchor is shape evidence pinned to the anchor string itself
@@ -739,12 +724,19 @@ export const WARNING_REGISTRY: {
  * `[<AUDIENCE>] [<W_CODE>] <neutral-observation>` from the registry, so every
  * applied-tier warning carries its machine-readable code and audience by
  * construction.
+ *
+ * SAFETY: `formatWarning` is the ONLY seam that renders a `[W_*]` header (`formatError`
+ * renders `E_*`), so recording every composed code here is the runtime witness of "a
+ * warning producer exists and ran". `DEFERRED_PRODUCERS` predicates on it (REFERENT 1).
  */
+const PRODUCED_WARNINGS = new Set<string>();
+
 export function formatWarning<K extends DomainWarningCode>(
   code: K,
   payload: WarningPayloadMap[K],
 ): string {
   const spec = WARNING_REGISTRY[code] as CodeSpec<WarningPayloadMap[K]>;
+  PRODUCED_WARNINGS.add(code);
   return `[${spec.audience}] [${code}] ${spec.format(payload)}`;
 }
 
@@ -879,28 +871,34 @@ export const DECLARATION_ONLY_FIELDS: Readonly<Record<string, AllowlistEntry>> =
  * `E_STALE_ANCHOR`). `docs/absorption-plan.md` ("Debt — T4 …") carries the
  * same record for the next absorb.
  *
- * ── IDENTITY, NOT SHAPE (T4 CP1-r4/r5) ──
+ * ── IDENTITY, NOT SHAPE (T4 CP1-r4/r5; T6 R15) ──
  * `owner` and `trigger.text` below are pinned BY IDENTITY in
  * `test/arch/domain-error-registry.test.ts` (C7/C16), so changing one is a
- * deliberate edit that must touch the test — never a silent one. A bare `T6`
- * must never be used again: `docs/absorption-plan.md:35` gives T6 to the
- * README+CONTEXT merge while the T4 brief (`brief.md:70`) gives it to
- * multi-window read, so the id names two different lanes. `trigger.holds()` is
- * a src-side predicate; the oracle recomputes its own and asserts both.
+ * deliberate edit that must touch the test — never a silent one. T6 replaced the
+ * lane-letter owner (`Q-T6`) with the addressable producer seam, and the
+ * constant-true `holds: () => isDomainWarningCode(…)` with a live-object
+ * predicate over `PRODUCED_WARNINGS`: its falsity is reachable because it flips
+ * the moment a producer composes the code. The arch oracle recomputes producer
+ * existence from source as the independent second referent — source is the
+ * landing witness, `PRODUCED_WARNINGS` is the firing witness, and neither is read
+ * back out of the entry it checks.
  */
 export const DEFERRED_PRODUCERS: Readonly<Record<string, AllowlistEntry>> = {
   W_NEVER_SERVED_SHAPE: {
-    owner: "Q-T6 (multi-window read — brief.md:70; NOT absorption-plan.md:35's T6)",
+    owner: "src/hashline/served-guard.ts",
     trigger: {
-      text: "Q-T6",
-      holds: () => isDomainWarningCode("W_NEVER_SERVED_SHAPE"),
+      text: "src/hashline/served-guard.ts",
+      // REFERENT 1 (src, live object): `formatWarning` is the only warning seam, so this
+      // flips false the moment a producer composes the code. REFERENT 2 (test): the arch
+      // oracle recomputes producer existence from source — see C7/C17.
+      holds: () => !PRODUCED_WARNINGS.has("W_NEVER_SERVED_SHAPE"),
     },
   },
   W_SERVED_PREFIX_MISMATCH: {
-    owner: "Q-T6 (multi-window read — brief.md:70; NOT absorption-plan.md:35's T6)",
+    owner: "src/hashline/served-guard.ts",
     trigger: {
-      text: "Q-T6",
-      holds: () => isDomainWarningCode("W_SERVED_PREFIX_MISMATCH"),
+      text: "src/hashline/served-guard.ts",
+      holds: () => !PRODUCED_WARNINGS.has("W_SERVED_PREFIX_MISMATCH"),
     },
   },
 };

@@ -78,9 +78,21 @@ const T4 = {
   unservedInterior: "unserved-interior rejection offers no dead retry (C2)",
   staleAnchorReread: "stale-anchor rejection recovers only by re-read (C3)",
   contextRows: "stale-anchor with context rows states the arm-dependent truth (C4)",
-  unservedRule: "E_UNSERVED_RANGE obeys the same reread rule as E_STALE_RANGE (T4 C5)",
-  archSites: "every E_STALE_RANGE/E_UNSERVED_RANGE arm sets reread: true",
-  archFields: "both range payload-map entries declare reread?: boolean",
+};
+
+/**
+ * T6 cell titles (ADR-0022: the region rule and the deleted retry pair).
+ * T4M1/T4M2/T4M3/T4M5 retired here: their mutation anchors (`reread: true`, `RETRY_HINT`,
+ * the payload-map field) no longer exist — the deferral they pinned fired in T6.
+ */
+const T6 = {
+  formatterHint: "E_STALE_RANGE with rows renders the heading and the named region's rows (T6)",
+  regionOracle: "span-length arm carries the named region's rows",
+  armFlag: "no range-family arm carries the deleted retry flag (arm counts pinned)",
+  nullRowGate: "fails closed on a null row inside the window — the gate is directly callable",
+  lengthDisagree: "rejects a window whose served and rebased lengths disagree",
+  deletedExternally:
+    "rejects E_STALE_RANGE and writes nothing when the anchored line was deleted externally",
 };
 
 /** T4 CP1-r3 cell titles (arch registry oracle + the numeric-note end-to-end cell). */
@@ -294,67 +306,6 @@ const MUTANTS = {
       },
     ],
   },
-  T4M1: {
-    what: "drop the retry signal at the span-length arm (CP0 G3, SR@802)",
-    scope: null, // full suite
-    expected: [T4.spanLength, T4.archSites],
-    edits: [
-      {
-        file: ANCHOR_PIPELINE,
-        old:
-          "      headline: `served span (${servedLen} lines) no longer matches current range (${currentLen} lines)${where}. Re-read.`,\n" +
-          "      servedBlock: echo,\n" +
-          "      reread: true,",
-        new:
-          "      headline: `served span (${servedLen} lines) no longer matches current range (${currentLen} lines)${where}. Re-read.`,\n" +
-          "      servedBlock: echo,\n" +
-          "      reread: false,",
-      },
-    ],
-  },
-  T4M2: {
-    what: "drop the retry signal at the unserved-interior arm (CP0 H1, SR@790)",
-    scope: null, // full suite
-    expected: [T4.unservedInterior, T4.archSites],
-    edits: [
-      {
-        file: ANCHOR_PIPELINE,
-        old:
-          "        headline: `line ${i + 1}${where} was never served.`,\n" +
-          "        servedBlock: echo,\n" +
-          "        reread: true,",
-        new:
-          "        headline: `line ${i + 1}${where} was never served.`,\n" +
-          "        servedBlock: echo,\n" +
-          "        reread: false,",
-      },
-    ],
-  },
-  T4M3: {
-    what: "unservedRangeFormat renders the retry hint unconditionally again",
-    scope: null, // full suite
-    expected: [T4.unservedRule, T4.unservedInterior],
-    edits: [
-      {
-        file: DOMAIN_ERRORS,
-        old:
-          'function unservedRangeFormat(payload: ErrorPayloadMap["E_UNSERVED_RANGE"]): string {\n' +
-          "  // F7 + T4: heading only when rows exist (all current producers carry a block);\n" +
-          "  // the retry hint obeys `payload.reread` exactly as `staleRangeFormat` does —\n" +
-          "  // one rule for both range codes.\n" +
-          "  if (!payload.servedBlock) return payload.headline;\n" +
-          "  const base = `${payload.headline}\\nCurrent range:\\n${payload.servedBlock}`;\n" +
-          "  return payload.reread === true ? base : `${base}\\n${RETRY_HINT}`;",
-        new:
-          'function unservedRangeFormat(payload: ErrorPayloadMap["E_UNSERVED_RANGE"]): string {\n' +
-          "  // F7 + T4: heading only when rows exist (all current producers carry a block);\n" +
-          "  // the retry hint obeys `payload.reread` exactly as `staleRangeFormat` does —\n" +
-          "  // one rule for both range codes.\n" +
-          "  if (!payload.servedBlock) return payload.headline;\n" +
-          "  return `${payload.headline}\\nCurrent range:\\n${payload.servedBlock}\\n${RETRY_HINT}`;",
-      },
-    ],
-  },
   T4M4: {
     what: "restore the read-free E_STALE_ANCHOR remedy string",
     scope: null, // full suite
@@ -367,21 +318,70 @@ const MUTANTS = {
       },
     ],
   },
-  T4M5: {
-    what: "remove reread?: boolean from ErrorPayloadMap.E_UNSERVED_RANGE only",
+  T6M1: {
+    what: "restore the deleted retry affordance on the stale-range formatter",
     scope: null, // full suite
-    expected: [T4.archFields],
+    expected: [
+      T4.spanLength,
+      T6.nullRowGate,
+      T6.lengthDisagree,
+      T6.regionOracle,
+      T6.deletedExternally,
+      T6.formatterHint,
+    ],
     edits: [
       {
         file: DOMAIN_ERRORS,
         old:
-          "    /** Same rule as `E_STALE_RANGE.reread`: true omits the retry hint. */\n" +
-          "    reread?: boolean;\n" +
-          '    unservedKind: "boundary" | "interior";',
+          "  // headline alone; the payload's rows are its retry affordance.\n" +
+          "  if (!payload.servedBlock) return payload.headline;\n" +
+          "  return `${payload.headline}\\nCurrent range:\\n${payload.servedBlock}`;",
         new:
-          "    /** Same rule as `E_STALE_RANGE.reread`: true omits the retry hint. */\n" +
-          "    rereadRemoved?: boolean;\n" +
-          '    unservedKind: "boundary" | "interior";',
+          "  // headline alone; the payload's rows are its retry affordance.\n" +
+          "  if (!payload.servedBlock) return payload.headline;\n" +
+          "  return `${payload.headline}\\nCurrent range:\\n${payload.servedBlock}\\nRetry with these anchors (no read needed).`;",
+      },
+    ],
+  },
+  T6M2: {
+    what: "re-add the deleted retry flag at one range arm",
+    scope: null, // full suite
+    expected: [T6.armFlag],
+    edits: [
+      {
+        file: ANCHOR_PIPELINE,
+        old: "      servedBlock: echo,\n      firstOffendingLine: args.rebasedStart,",
+        new: "      servedBlock: echo,\n      reread: true,\n      firstOffendingLine: args.rebasedStart,",
+      },
+    ],
+  },
+  T6M3: {
+    what: "plant a REAL W_* producer through the real seam (self-arming deferral)",
+    scope: null, // full suite
+    expected: [T4R3.backward],
+    edits: [
+      {
+        file: DOMAIN_ERRORS,
+        old: "export const DEFERRED_PRODUCERS: Readonly<Record<string, AllowlistEntry>> = {",
+        new:
+          'export const __t6m3 = formatWarning("W_NEVER_SERVED_SHAPE", { count: 1 });\n' +
+          "export const DEFERRED_PRODUCERS: Readonly<Record<string, AllowlistEntry>> = {",
+      },
+    ],
+  },
+  T6M4: {
+    what: "break the region oracle's real per-row identity guard",
+    scope: null, // full suite
+    expected: ["negative control: a misplaced row fails the live-mapping check"],
+    edits: [
+      {
+        file: "test/arch/rejection-payload-region.test.ts",
+        old:
+          "    // The identity half: the row's hash IS the current snapshot's hash at that position.\n" +
+          "    expect(row.hash, `row ${row.position} reproduces fileHashes[${row.position}]`).toBe(\n" +
+          "      args.fileHashes[row.position],\n" +
+          "    );",
+        new: "    // mutated (T6M4): the per-row identity guard is dropped.",
       },
     ],
   },
@@ -536,13 +536,13 @@ const MUTANTS = {
     ],
   },
   M17: {
-    what: "holds: () => true in a DEFERRED_PRODUCERS entry",
+    what: "caricature: holds: () => true in a DEFERRED_PRODUCERS entry (text pin only; R15's real mutant is T6M3)",
     scope: null, // full suite
     expected: [T4R6.holdsPins],
     edits: [
       {
         file: DOMAIN_ERRORS,
-        old: '      holds: () => isDomainWarningCode("W_NEVER_SERVED_SHAPE"),',
+        old: '      holds: () => !PRODUCED_WARNINGS.has("W_NEVER_SERVED_SHAPE"),',
         new: "      holds: () => true,",
       },
     ],

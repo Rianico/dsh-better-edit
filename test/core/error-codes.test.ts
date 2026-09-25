@@ -154,23 +154,15 @@ describe("batch drift note retired (#55 S2)", () => {
 
 describe("registry range-shape rules (F7)", () => {
   const rows = [{ position: 0, hash: "abc" }];
-  it("E_STALE_RANGE with rows and no reread flag carries the heading and hint", () => {
+  it("E_STALE_RANGE with rows renders the heading and the named region's rows (T6)", () => {
     const message = formatError("E_STALE_RANGE", {
       headline: "line 1 differs from what was served.",
       servedRows: rows,
       servedBlock: "abc│one",
     });
     expect(message).toContain("Current range:\nabc│one");
-    expect(message).toContain("Retry with these anchors (no read needed).");
-  });
-  it("E_STALE_RANGE with reread:true keeps the heading but drops the hint", () => {
-    const message = formatError("E_STALE_RANGE", {
-      headline: "anchor was served at line 1 but now resolves to line 5. Re-read.",
-      servedRows: rows,
-      servedBlock: "abc│one",
-      reread: true,
-    });
-    expect(message).toContain("Current range:\nabc│one");
+    // T6 deleted the `Retry with these anchors (no read needed).` affordance: the payload's
+    // rows are the affordance, and the echoed rows are NOT serves (T3f/T4).
     expect(message).not.toContain("Retry with these anchors");
   });
   it("E_STALE_RANGE without rows renders the headline alone", () => {
@@ -178,11 +170,10 @@ describe("registry range-shape rules (F7)", () => {
       headline: "The file changed on disk since it was read.",
       servedRows: [],
       servedBlock: "",
-      reread: true,
     });
     expect(message).toBe("[MODEL] [E_STALE_RANGE] The file changed on disk since it was read.");
   });
-  it("E_STALE_ANCHOR renders headline plus block, never a heading or hint", () => {
+  it("E_STALE_ANCHOR renders headline plus block, never a heading or a retry affordance", () => {
     const message = formatError("E_STALE_ANCHOR", {
       headline: '1 stale anchor: "ZZZ". Re-read for fresh anchors.',
       servedRows: rows,
@@ -192,32 +183,30 @@ describe("registry range-shape rules (F7)", () => {
     expect(message).not.toContain("Retry with these anchors");
     expect(message).toContain("  Current context around resolved anchor.");
   });
-  it("E_UNSERVED_RANGE obeys the same reread rule as E_STALE_RANGE (T4 C5)", () => {
+  it("E_UNSERVED_RANGE obeys the same row-gated rule as E_STALE_RANGE (T6)", () => {
     const unserved = {
       headline: "line 2 was never served.",
       servedRows: rows,
       servedBlock: "abc│one",
       unservedKind: "interior" as const,
     };
-    const withFlag = formatError("E_UNSERVED_RANGE", { ...unserved, reread: true });
-    const withoutFlag = formatError("E_UNSERVED_RANGE", unserved);
+    const withRows = formatError("E_UNSERVED_RANGE", unserved);
+    const withoutRows = formatError("E_UNSERVED_RANGE", {
+      ...unserved,
+      servedRows: [],
+      servedBlock: "",
+    });
     expect({
-      withFlagShowsHeading: withFlag.includes("Current range:\nabc│one"),
-      withFlagShowsHint: withFlag.includes("Retry with these anchors"),
-      withoutFlagShowsHeading: withoutFlag.includes("Current range:\nabc│one"),
-      withoutFlagShowsHint: withoutFlag.includes("Retry with these anchors (no read needed)."),
-      staleWithFlagShowsHint: formatError("E_STALE_RANGE", {
-        headline: "h Re-read.",
-        servedRows: rows,
-        servedBlock: "abc│one",
-        reread: true,
-      }).includes("Retry with these anchors"),
+      withRowsShowsHeading: withRows.includes("Current range:\nabc│one"),
+      withRowsShowsHint: withRows.includes("Retry with these anchors"),
+      withoutRowsShowsHeading: withoutRows.includes("Current range:"),
+      withoutRowsIsHeadlineOnly:
+        withoutRows === "[MODEL] [E_UNSERVED_RANGE] line 2 was never served.",
     }).toEqual({
-      withFlagShowsHeading: true,
-      withFlagShowsHint: false,
-      withoutFlagShowsHeading: true,
-      withoutFlagShowsHint: true,
-      staleWithFlagShowsHint: false,
+      withRowsShowsHeading: true,
+      withRowsShowsHint: false,
+      withoutRowsShowsHeading: false,
+      withoutRowsIsHeadlineOnly: true,
     });
   });
 });

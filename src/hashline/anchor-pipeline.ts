@@ -461,15 +461,12 @@ export class ServedRejectionError extends DomainError<DomainErrorCode> {
           servedRows: ServedRow[];
           servedBlock: string;
           firstOffendingLine?: number;
-          reread?: boolean;
         }
       | {
           code: "E_UNSERVED_RANGE";
           headline: string;
           servedRows: ServedRow[];
           servedBlock: string;
-          /** Same contract as the `E_STALE_RANGE` branch: true omits the retry hint. */
-          reread?: boolean;
           unservedKind: "boundary" | "interior";
           firstOffendingLine?: number;
         },
@@ -482,7 +479,6 @@ export class ServedRejectionError extends DomainError<DomainErrorCode> {
         ...(opts.firstOffendingLine !== undefined
           ? { firstOffendingLine: opts.firstOffendingLine }
           : {}),
-        ...(opts.reread !== undefined ? { reread: opts.reread } : {}),
       });
     } else {
       super("E_UNSERVED_RANGE", {
@@ -493,7 +489,6 @@ export class ServedRejectionError extends DomainError<DomainErrorCode> {
         ...(opts.firstOffendingLine !== undefined
           ? { firstOffendingLine: opts.firstOffendingLine }
           : {}),
-        ...(opts.reread !== undefined ? { reread: opts.reread } : {}),
       });
     }
     this.name = "ServedRejectionError";
@@ -639,7 +634,6 @@ export function verifyRebasedSpan(args: {
       code: "E_STALE_RANGE",
       headline: `served span (${servedLen} lines) no longer matches the rebased range (${rebasedLen} lines)${where}.`,
       servedBlock: echo,
-      reread: true,
       firstOffendingLine: args.rebasedStart,
       servedRows: echoRows,
     });
@@ -657,7 +651,6 @@ export function verifyRebasedSpan(args: {
         code: "E_STALE_RANGE",
         headline: `line ${currentLine}${where} is not served; re-read to serve it.`,
         servedBlock: echo,
-        reread: true,
         firstOffendingLine: currentLine,
         servedRows: echoRows,
       });
@@ -668,7 +661,6 @@ export function verifyRebasedSpan(args: {
         code: "E_STALE_RANGE",
         headline: `line ${currentLine}${where} has no served line identity; re-read to lease it.`,
         servedBlock: echo,
-        reread: true,
         firstOffendingLine: currentLine,
         servedRows: echoRows,
       });
@@ -678,7 +670,6 @@ export function verifyRebasedSpan(args: {
         code: "E_STALE_RANGE",
         headline: `line ${currentLine}${where} was retired since it was served. Re-read.`,
         servedBlock: echo,
-        reread: true,
         firstOffendingLine: currentLine,
         servedRows: echoRows,
       });
@@ -688,7 +679,6 @@ export function verifyRebasedSpan(args: {
         code: "E_STALE_RANGE",
         headline: `line ${currentLine}${where} no longer resolves to the line identity it was served with. Re-read.`,
         servedBlock: echo,
-        reread: true,
         firstOffendingLine: currentLine,
         servedRows: echoRows,
       });
@@ -742,7 +732,6 @@ export function verifyServedRange(args: {
             code: "E_STALE_RANGE",
             headline: `anchor "${retiredHash}" was freed since last full read (retired, canon changed from "${expected}" to "${actual}"). Re-read.`,
             servedBlock: echo,
-            reread: true,
             firstOffendingLine: pos + 1,
             servedRows: echoRows,
           });
@@ -784,7 +773,6 @@ export function verifyServedRange(args: {
         `for a look-alike line. A full read will re-sync the served mirror; the echoed range below ` +
         `is current content.`,
       servedBlock: echo,
-      reread: true,
       servedRows: echoRows,
     });
   }
@@ -796,7 +784,6 @@ export function verifyServedRange(args: {
         unservedKind: "interior",
         headline: `line ${i + 1}${where} was never served.`,
         servedBlock: echo,
-        reread: true,
         firstOffendingLine: i + 1,
         servedRows: echoRows,
       });
@@ -808,7 +795,6 @@ export function verifyServedRange(args: {
       code: "E_STALE_RANGE",
       headline: `served span (${servedLen} lines) no longer matches current range (${currentLen} lines)${where}. Re-read.`,
       servedBlock: echo,
-      reread: true,
       firstOffendingLine: startLine,
       servedRows: echoRows,
     });
@@ -841,7 +827,6 @@ export function verifyServedRange(args: {
       code: "E_STALE_RANGE",
       headline: `anchor was served at line ${from + 1} but now resolves to line ${startLine}. Re-read.`,
       servedBlock: echo,
-      reread: true,
       firstOffendingLine: startLine,
       servedRows: echoRows,
     });
@@ -857,7 +842,6 @@ export function verifyServedRange(args: {
             code: "E_STALE_RANGE",
             headline: `line ${startLine + k}${where} canon differs from served (expected "${expected}" vs actual "${actual}").`,
             servedBlock: echo,
-            reread: true,
             firstOffendingLine: startLine + k,
             servedRows: echoRows,
           });
@@ -876,7 +860,6 @@ export function verifyServedRange(args: {
           code: "E_STALE_RANGE",
           headline: `line ${startLine + k}${where} uses retired anchor "${h}" (freed since last full read, canon changed). Re-read.`,
           servedBlock: echo,
-          reread: true,
           firstOffendingLine: startLine + k,
           servedRows: echoRows,
         });
@@ -890,7 +873,6 @@ export function verifyServedRange(args: {
         code: "E_STALE_RANGE",
         headline: `line ${offendingLine}${where} differs from what was served. Re-read.`,
         servedBlock: echo,
-        reread: true,
         firstOffendingLine: offendingLine,
         servedRows: echoRows,
       });

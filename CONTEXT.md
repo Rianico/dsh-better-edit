@@ -44,7 +44,7 @@ The model-facing word for the `served span` — the span between `remove_from` a
 _Avoid_: range (use `served range` for verified span, `range` for current file run)
 
 **served-range staleness**:
-The condition where the `served range` (span between anchors) cannot be reconciled with served state: interior `served span` vs `current span` mismatch (`hash`/`canon`/`retired`/`len`). Reported as `[E_STALE_RANGE]` (changed) or `[E_UNSERVED_RANGE]` (never-served, `details.unservedKind` `boundary`|`interior`). Both do `reject-and-serve`.
+The condition where the `served range` (span between anchors) cannot be reconciled with served state: interior `served span` vs `current span` mismatch (`hash`/`canon`/`retired`/`len`). Reported as `[E_STALE_RANGE]` (changed) or `[E_UNSERVED_RANGE]` (never-served, `details.unservedKind` `boundary`|`interior`). Both do `reject-and-serve`; when the region is unidentifiable the rejection is a `target-lost rejection`.
 _Avoid_: range staleness (use `served range` for span)
 
 **never-served**:
@@ -89,8 +89,12 @@ A file mutation that bypasses `encoding governance` — the built-in `write`/`ed
 _Avoid_: native edit path
 
 **reject-and-serve**:
-The staleness policy: reject the edit and return the current range as fresh `HASH│content` rows, which themselves count as serves, so the retry needs no read.
-_Avoid_: reject-then-reread (the retry must not require a read)
+The staleness policy: reject the edit and return the current content of the region the submitted anchors identify as `HASH|content` rows — a _region-matched_ serve. A serve refreshes the model's inputs for that region and never substitutes another region for those anchors; the echoed rows are the current file's anchors, not serves (`recordEchoServes` was deleted by T3f), so a retry with them rejects at the same site and a read is the recovery. "Region-matched" is the upstream referent's name (`pi-better-edit` ADR-0018) for "the window the submitted anchors identify".
+_Avoid_: reject-then-reread (the retry must not require a read), context serve (no such operation exists), region (use `served span` / `served range`)
+
+**target-lost rejection**:
+A rejection whose region cannot be identified: the submitted anchors no longer name a live span (both bounds stale, a survivor that shifted, or a window that collapses or misses the file). Its payload carries **no rows** and no `Current range` heading; the headline names the previously served position and instructs a read, so no served coordinate the model never targeted becomes committable. Realized locally as an `[E_STALE_RANGE]` payload with an empty `servedRows` (`src/fs-bridge.ts`, F7) — the local disjointness signal is the row count, not the code.
+_Avoid_: context serve (dropped: no such operation exists), unverified range (unported upstream code)
 
 **drift**:
 The divergence between the served state and the current file: lines the model was shown whose content has changed on disk since they were served. Detected by comparing served hashes against current hashes.

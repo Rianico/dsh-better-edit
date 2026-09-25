@@ -3,28 +3,26 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 /**
- * Arch oracle for the range-family re-read signal (T4 CP1-r2, F5).
+ * Arch oracle for the range-family payload shape (T4 CP1-r2, F5; re-pointed by T6).
  *
  * Method: read `src/**` with node:fs and match with precise regexes (no imports of the
  * scanned modules, so the oracle cannot be fooled by runtime shape). The `ErrorPayloadMap`
  * shape check reads `src/domain-errors.ts` as text for the same reason.
  *
- * Invariant: every `ServedRejectionError` arm whose code is `E_STALE_RANGE` or
- * `E_UNSERVED_RANGE` passes `reread: true`, because no arm is retryable with the echoed
- * rows — they are the current file's anchors, not serves (measured, T4 CP0 G3/H1). The
- * `reread?: boolean` field must also be declared on BOTH payload-map entries: that shape
- * is part of the contract now ([P1] fold-in — the formatter reads a field the type must
- * have).
+ * Invariant (T6): the range family's retry affordance is its ROWS, not a flag. Every
+ * `ServedRejectionError` arm whose code is `E_STALE_RANGE` or `E_UNSERVED_RANGE` must NOT
+ * carry the deleted `reread` field, and neither payload-map entry may redeclare it. The
+ * field was a constant `true` on all 14 producers (T6 closure measurement), so it carried
+ * no information; `servedRows.length` carries the distinction (empty ⇒ grounding void,
+ * only a read restores it; non-empty ⇒ the named region's current anchors). The row
+ * derivability rule itself lives in `test/arch/rejection-payload-region.test.ts`.
  *
- * NEGATIVE CONTROL (named, per ticket §2 F5): deleting one `reread: true` from a single
- * arm, or one payload-map field, must turn this file RED. That is T4M1/T4M2/T4M5's second
- * assertion — run it:
- *   node test/tools/mutate-ledger.mjs T4M1   # drop the flag at the span-length arm
- *   node test/tools/mutate-ledger.mjs T4M2   # drop the flag at the unserved-interior arm
- *   node test/tools/mutate-ledger.mjs T4M5   # remove the payload-map field
+ * NEGATIVE CONTROL (named): re-adding `reread: true` to one arm, or re-declaring the
+ * payload-map field, must turn this file RED. That is `T6M2`'s second assertion — run it:
+ *   node test/tools/mutate-ledger.mjs T6M2
  *
- * If an arm is ever made retryable, this guard is where the evidence must land.
- */
+ * If an arm is ever made retryable with its echoed rows, this guard is where the evidence
+ * must land. */
 
 const SRC_ROOT = join(process.cwd(), "src");
 const REGISTRY_FILE = join(SRC_ROOT, "domain-errors.ts");
@@ -214,19 +212,19 @@ describe("arch: range-family re-read signal (T4)", () => {
   const files = listSources(SRC_ROOT);
   const sites = allSites(files);
 
-  it("every E_STALE_RANGE/E_UNSERVED_RANGE arm sets reread: true", () => {
+  it("no range-family arm carries the deleted retry flag (arm counts pinned)", () => {
     for (const code of RANGE_CODES) {
       const arms = sites.filter((s) => s.code === code);
       expect(arms.length, `${code} production arm count`).toBe(EXPECTED_SITES[code]);
-      const missing = arms.filter((s) => !s.reread).map((s) => `${s.file}:${s.line} (${s.code})`);
-      expect(missing, `arms that omit reread: true: ${missing.join(", ")}`).toEqual([]);
+      const flagged = arms.filter((s) => s.reread).map((s) => `${s.file}:${s.line} (${s.code})`);
+      expect(flagged, `arms that re-add the deleted flag: ${flagged.join(", ")}`).toEqual([]);
     }
   });
 
-  it("both range payload-map entries declare reread?: boolean", () => {
+  it("neither range payload-map entry redeclares the deleted flag", () => {
     const region = payloadMapRegion();
     for (const code of RANGE_CODES) {
-      expect(payloadBlock(region, code), `${code} declares reread?: boolean`).toMatch(
+      expect(payloadBlock(region, code), `${code} redeclares reread`).not.toMatch(
         /reread\?\s*:\s*boolean/,
       );
     }
@@ -234,20 +232,26 @@ describe("arch: range-family re-read signal (T4)", () => {
 
   // Planted evidence: proves the oracle can fail (a scanner that always found `true`
   // would pass the cells above while proving nothing).
-  it("scanner stays sighted when an arm omits the flag", () => {
-    const planted =
+  it("scanner stays sighted on the flag in both directions", () => {
+    const without = sitesFromText(
       "function f() {\n" +
-      "  throw new ServedRejectionError({\n" +
-      '    code: "E_STALE_RANGE",\n' +
-      '    headline: "h",\n' +
-      "    servedRows: [],\n" +
-      '    servedBlock: "",\n' +
-      "  });\n" +
-      "}\n";
-    const found = sitesFromText(planted, "planted.ts");
-    expect(found).toHaveLength(1);
-    expect(found[0]!.code).toBe("E_STALE_RANGE");
-    expect(found[0]!.reread).toBe(false);
+        "  throw new ServedRejectionError({\n" +
+        '    code: "E_STALE_RANGE",\n' +
+        '    headline: "h",\n' +
+        "    servedRows: [],\n" +
+        '    servedBlock: "",\n' +
+        "  });\n" +
+        "}\n",
+      "planted.ts",
+    );
+    expect(without).toHaveLength(1);
+    expect(without[0]!.code).toBe("E_STALE_RANGE");
+    expect(without[0]!.reread).toBe(false);
+    const withFlag = sitesFromText(
+      'throw new ServedRejectionError({ code: "E_STALE_RANGE", reread: true });\n',
+      "planted.ts",
+    );
+    expect(withFlag.map((s) => s.reread)).toEqual([true]);
     // A commented-out construction is not evidence — comments are stripped.
     const commented =
       '// throw new ServedRejectionError({ code: "E_STALE_RANGE", reread: true });\n' +

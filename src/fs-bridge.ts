@@ -133,7 +133,6 @@ export function mapFsError(error: unknown, displayPath: string): never {
         servedRows: [],
         servedBlock: "",
         // F7: row-less and read-required — no `Current range:` section, no retry hint.
-        reread: true,
       });
     }
     if (code === "FS_NOT_OBSERVED") {

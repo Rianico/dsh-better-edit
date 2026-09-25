@@ -359,23 +359,31 @@ normalization to revive the row.
 
 ### T4 ledger — the retry signal, re-run it from the tree
 
-`reread: true` is now the only value any production arm sets: 13 `ServedRejectionError` arms
-(11 `E_STALE_RANGE` + 2 `E_UNSERVED_RANGE`), plus the `fs-bridge` version guard. The guard is
-`test/arch/range-family-signal.test.ts`; the runtime cells reproduce CP0 G3/H1 through the
-real tools:
+The retry signal this subsection pinned is **gone**. T6 (ADR-0022) measured the `reread` field
+to be a constant — all 14 producers passed a literal `true`, `reread: false` appeared nowhere,
+and the only non-literal path was the `opts.reread` pass-through fed by those same 13 call
+sites — so it carried no information and was deleted together with `RETRY_HINT` and the two
+formatters' dead branches. Four ledger cells retired with their referents: `T4M1`/`T4M2` (drop
+the flag at an arm), `T4M3` (render the hint unconditionally) and `T4M5` (remove the payload-map
+field). `T4M4` (the read-free `E_STALE_ANCHOR` remedy) is unchanged.
+
+The guard is re-pointed, not deleted: `test/arch/range-family-signal.test.ts` still pins the
+13-arm population (11 `E_STALE_RANGE` + 2 `E_UNSERVED_RANGE`) and now asserts that **no** arm
+carries the flag and that neither payload-map entry redeclares it. The rule the rows themselves
+must satisfy is `test/arch/rejection-payload-region.test.ts` (ADR-0022), with the T3f
+per-region, T3a/T3c windowed, T5 pin and R12 limit cells alongside it.
 
 ```
 pnpm exec vitest run test/core/range-family-retry-truth.test.ts --reporter=verbose
-node test/tools/mutate-ledger.mjs T4M1    # drop reread at @802 → span-length cell + arch guard RED
-node test/tools/mutate-ledger.mjs T4M2    # drop reread at @790 → interior cell + arch guard RED
-node test/tools/mutate-ledger.mjs T4M3    # render the hint unconditionally → formatter cell RED
-node test/tools/mutate-ledger.mjs T4M4    # restore the read-free E_STALE_ANCHOR remedy → C3 RED
-node test/tools/mutate-ledger.mjs T4M5    # remove the payload-map field → typecheck + arch guard RED
+node test/tools/mutate-ledger.mjs T6M1   # restore the dead retry affordance → formatter + oracle RED
+node test/tools/mutate-ledger.mjs T6M2   # re-add the flag at one arm → arch guard RED
+node test/tools/mutate-ledger.mjs T6M3   # plant a REAL W_* producer → registry referent RED
+node test/tools/mutate-ledger.mjs T6M4   # break the oracle's per-row identity guard → negative control RED
 ```
 
-The T4 ids are prefixed `T4M*` because the T3h ledger above already owns `M1`/`M2`/`M4`; each
-T4 run is the full suite. `T4M5` is reported as typecheck RED first: the runtime payload still
-carries the key (types are erased), so only the declaration oracle and `tsc` can see it.
-
-Line numbers above are scoped to `3f4aca6` (the pre-fix revision the CP0 sweep measured);
-`node test/tools/mutate-ledger.mjs --list` prints the live anchors and expected RED sets.
+`T6M3` mutates the **real** producer seam (`formatWarning`), not a caricature of the predicate:
+the planted call flips both `DEFERRED_PRODUCERS` referents (the live `PRODUCED_WARNINGS` set and
+the oracle's independent source recompute). `T6M4` mutates the **real** guard
+(`assertRegionPayload`'s per-row identity check) and the cell it reddens is the planted-violation
+negative control. Each run is the full suite; `node test/tools/mutate-ledger.mjs --list` prints
+the live anchors and expected RED sets.
