@@ -119,6 +119,9 @@ const T4R6 = {
  * An `expected: []` entry is a measured GREEN mutant, diagnosed by one of: (1) a real gap, (2) the
  * mutation did not apply, (3) the claim was too strong, (4) another mechanism covered the effect
  * (T5M22/T5M26/T5M28: the FK cascade or the serve write's re-materialization, per the P1 matrix).
+ * Adding a cell can widen the RED sets of EXISTING mutants, so a new mutant's line alone is not
+ * evidence: re-run the full sweep (`for i in $(seq 1 30); do node test/tools/mutate-ledger.mjs T5M$i; done`),
+ * because the ledger exits non-zero on any mismatch — it is a gate, not a report.
  */
 const T5 = {
   window:
@@ -674,7 +677,7 @@ const MUTANTS = {
   T5M9: {
     what: "the overflow warning is deleted (the deferred state is returned, never reported)",
     scope: [VACUUM_UNIT],
-    expected: [T5.loudDeferral, T5.reportPayload, T5.reportRearm],
+    expected: [T5.loudDeferral, T5.reportPayload, T5.reportRearm, T5.reportCap],
     edits: [
       {
         file: VACUUM,
@@ -806,7 +809,7 @@ const MUTANTS = {
   T5M18: {
     what: "the overflow dedup early-return is deleted (warn on every over-budget pass)",
     scope: [VACUUM_UNIT],
-    expected: [T5.reportPayload],
+    expected: [T5.reportPayload, T5.reportCap],
     edits: [
       {
         file: VACUUM,
