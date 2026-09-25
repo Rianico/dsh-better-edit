@@ -280,9 +280,12 @@ items 4–6 by a measured GREEN with its diagnosis:
 
 The mutation ledger for this ADR lives in `test/tools/mutate-ledger.mjs` (`T5M1`–`T5M30`). Recipe:
 archive HEAD into a temp tree, apply the mutant to exactly one site, run the scoped corpus, compare
-the failing cells with the table below, discard the tree. Every expected set below was re-measured
-at `b2b5eef` on the branch `fix/t5-vacuum` with `RED SET MATCH` (`T5M30`, the cap bracket, was
-measured after the CP2-r3 cell landed); re-run them to re-derive.
+the failing cells with the table below, discard the tree. Every expected set below is verified at the
+revision the run asserts — the run prints that revision (`revision <sha>`, `worktree clean`) and
+`--expect-rev=<sha>` refuses loudly on mismatch, so a stale expectation cannot pass quietly. Re-run
+them to re-derive with
+`node test/tools/mutate-ledger.mjs T5M<id> --expect-rev=$(git rev-parse HEAD)`. Behavioural provenance
+rather than a revision claim: `T5M30`, the cap bracket, was measured after the CP2-r3 cell landed.
 
 ```bash
 node test/tools/mutate-ledger.mjs --list          # ids, scopes, expected RED counts
