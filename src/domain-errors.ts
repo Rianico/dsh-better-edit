@@ -725,18 +725,20 @@ export const WARNING_REGISTRY: {
  * applied-tier warning carries its machine-readable code and audience by
  * construction.
  *
- * SAFETY: `formatWarning` is the ONLY seam that renders a `[W_*]` header (`formatError`
- * renders `E_*`), so recording every composed code here is the runtime witness of "a
- * warning producer exists and ran". `DEFERRED_PRODUCERS` predicates on it (REFERENT 1).
+ * PURE by contract (T6 CP2, F2): a formatter carries no state. The deferral
+ * witnesses below are INJECTED (`AllowlistTrigger.holds(fired)`), never accumulated —
+ * a module-global "did it fire?" latch made a guard's verdict depend on whether an
+ * earlier test happened to render the warning, so a witness satisfiable by another
+ * test's side effect proved nothing about the guard that consumed it. The witness is
+ * derived by the test layer from a source scan (`test/support/arch-scan.ts`,
+ * `firedWarnings`) — a READ, so the verdict is a pure function of the tree and cannot
+ * depend on evaluation order or on a test-only reset hook.
  */
-const PRODUCED_WARNINGS = new Set<string>();
-
 export function formatWarning<K extends DomainWarningCode>(
   code: K,
   payload: WarningPayloadMap[K],
 ): string {
   const spec = WARNING_REGISTRY[code] as CodeSpec<WarningPayloadMap[K]>;
-  PRODUCED_WARNINGS.add(code);
   return `[${spec.audience}] [${code}] ${spec.format(payload)}`;
 }
 
@@ -805,14 +807,17 @@ export function isDomainWarningCode(code: unknown): code is DomainWarningCode {
  * A trigger must be CHECKABLE, not a phrase. `text` names the artifact whose
  * change makes this entry actionable — a queue line (`Q-T<n>`), an issue
  * (`#NN`), an absorb branch (`absorb/<branch>`), or a `src/` path — and
- * `holds()` is a src-side predicate over live objects that must remain true
- * while the entry exists. The arch oracle recomputes its own, independent
- * predicate and asserts both (`AllowlistEntry` is the two-referents rule in
- * type form; see `test/support/arch-scan.ts`).
+ * `holds(fired)` is a predicate that must remain true while the entry exists. The
+ * witness is INJECTED, never read from module state: production carries no latch, so
+ * the same source yields the same verdict in any evaluation order (T6 CP2, F2). The
+ * arch oracle supplies its own, independently derived witness and asserts both
+ * (`AllowlistEntry` is the two-referents rule in type form; see
+ * `test/support/arch-scan.ts`).
  */
 export interface AllowlistTrigger {
   readonly text: string;
-  readonly holds: () => boolean;
+  /** `fired` = codes whose producer became visible to the caller's witness scan. */
+  readonly holds: (fired: ReadonlySet<string>) => boolean;
 }
 
 /**
@@ -876,29 +881,29 @@ export const DECLARATION_ONLY_FIELDS: Readonly<Record<string, AllowlistEntry>> =
  * `test/arch/domain-error-registry.test.ts` (C7/C16), so changing one is a
  * deliberate edit that must touch the test — never a silent one. T6 replaced the
  * lane-letter owner (`Q-T6`) with the addressable producer seam, and the
- * constant-true `holds: () => isDomainWarningCode(…)` with a live-object
- * predicate over `PRODUCED_WARNINGS`: its falsity is reachable because it flips
- * the moment a producer composes the code. The arch oracle recomputes producer
- * existence from source as the independent second referent — source is the
- * landing witness, `PRODUCED_WARNINGS` is the firing witness, and neither is read
- * back out of the entry it checks.
+ * `holds: () => isDomainWarningCode(…)` with a predicate over an INJECTED witness:
+ * `holds(fired)` is false exactly when a producer for that code is visible to the
+ * caller's scan (T6 CP2 F2). Production keeps no state, so the verdict cannot be
+ * satisfied by another test's earlier firing — the defect the first form had. The arch
+ * oracle derives the witness from source (a read) and recomputes the same producer scan
+ * as its independent second referent.
  */
 export const DEFERRED_PRODUCERS: Readonly<Record<string, AllowlistEntry>> = {
   W_NEVER_SERVED_SHAPE: {
     owner: "src/hashline/served-guard.ts",
     trigger: {
       text: "src/hashline/served-guard.ts",
-      // REFERENT 1 (src, live object): `formatWarning` is the only warning seam, so this
-      // flips false the moment a producer composes the code. REFERENT 2 (test): the arch
+      // REFERENT 1 (src, pure): flips false exactly when the caller's witness (a source
+      // scan of producer call sites) contains this code. REFERENT 2 (test): the arch
       // oracle recomputes producer existence from source — see C7/C17.
-      holds: () => !PRODUCED_WARNINGS.has("W_NEVER_SERVED_SHAPE"),
+      holds: (fired) => !fired.has("W_NEVER_SERVED_SHAPE"),
     },
   },
   W_SERVED_PREFIX_MISMATCH: {
     owner: "src/hashline/served-guard.ts",
     trigger: {
       text: "src/hashline/served-guard.ts",
-      holds: () => !PRODUCED_WARNINGS.has("W_SERVED_PREFIX_MISMATCH"),
+      holds: (fired) => !fired.has("W_SERVED_PREFIX_MISMATCH"),
     },
   },
 };

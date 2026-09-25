@@ -97,14 +97,20 @@ does not re-open the boundary rule.
 
 Multi-window reads do not exist locally and are **not** exercised by this ADR. The limit is
 declarable because it is **discoverable from the failure**: a `windows` argument to the local
-`read` is already rejected loudly — `assertReadRequest` → `rejectUnknownFields(request, READ_KS,
-"Read request")` (`src/contract.ts:238,345`) → `E_BAD_PAYLOAD`, whose message names the read
-request's allowed fields. `test/arch/rejection-payload-region.test.ts` pins that with a cell.
+`read` is rejected loudly — `assertReadRequest` → `rejectUnknownFields(request, READ_KS,
+"Read request")` (`src/contract.ts:238,345`) → `E_BAD_PAYLOAD`, whose message names the
+**offending** field (`windows`) and the request (`Read request`). Naming the allowed set is _not_
+claimed: `rejectUnknownFields` filters by `allowed` and never renders it (`src/utils.ts:27-40`),
+`assertReadRequest` passes no `hint`, and `src/contract.ts` is frozen by ruling — unfreezing it
+would create a third copy of the list (`READ_KS`, the tool schema, the message) and change every
+unknown-field rejection. So the allowed set is a **declared limit**: discoverable from the tool's
+`parameters` schema and from `READ_KS`, not advertised by the rejection. Both halves are pinned by
+`test/arch/rejection-payload-region.test.ts` — the cell asserts the offending field IS named and
+the allowed set is NOT.
 
-**Predicate trigger (T6b):** the trigger is the _landing of a multi-window read_, asserted by
-the predicate `Array.isArray(assertReadRequest-visible field "windows")` — i.e. the limit is
-lifted when `READ_KS` admits `windows` for a multi-window request. Until then the loud
-`E_BAD_PAYLOAD` is the discoverable failure, and this ADR's rule stays window-count-agnostic.
+**Predicate trigger (T6b):** the trigger is the _landing of a multi-window read_ — `READ_KS`
+admitting a `windows` field (`src/contract.ts:238`). Until then the loud `E_BAD_PAYLOAD` is the
+discoverable failure, and this ADR's rule stays window-count-agnostic.
 
 ## VOID record — the spec §9.5 ADR-0016 instruction
 
@@ -144,9 +150,10 @@ needed).` string is gone, so no message can promise a read-free retry the served
 - `CONTEXT.md` gains `target-lost rejection`, narrows `reject-and-serve` to region-matched serves,
   and drops the never-implemented `context serve`.
 - The two deferred `W_*` warnings keep their deferral, with the **owner** moved from a lane letter
-  to the producer seam (`src/hashline/served-guard.ts`) and `holds()` replaced by a live-object
-  predicate (`PRODUCED_WARNINGS`) whose falsity is reachable; the arch oracle's source scan stays
-  the independent second referent.
+  to the producer seam (`src/hashline/served-guard.ts`) and `holds()` replaced by a predicate over an
+  **injected witness** (`holds(fired)`), so production carries no witness state, the falsity is
+  reachable, and the verdict cannot depend on evaluation order; the arch oracle derives the witness
+  from a source scan as the independent second referent (T6 CP2, F2).
 - Out of scope, unchanged: the fast path, in-place `E_STALE_RANGE` for torn or inserted spans,
   the content-placeable `E_STALE_ANCHOR` self-heal, the `E_SUSPICIOUS_TEXT` / `mode: "literal"`
   surface, and `README.md`'s error table.

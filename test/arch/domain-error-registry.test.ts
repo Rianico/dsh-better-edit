@@ -11,6 +11,7 @@ import {
   WARNING_REGISTRY,
   isDomainErrorCode,
   isDomainWarningCode,
+  formatWarning,
 } from "../../src/domain-errors.js";
 import {
   CODE_SHAPE,
@@ -21,8 +22,8 @@ import {
   producedCodesInText,
   stripComments,
   unionMembers,
+  firedWarnings,
 } from "../support/arch-scan.js";
-
 /**
  * Arch oracle for the domain-error registry (T1 contract ticket; guards hardened
  * in T4 CP1-r5 and CP1-r6).
@@ -122,18 +123,16 @@ const FIELD_OWNERS = {
 } as const;
 
 /**
- * C17 (H1/H7): the predicates pinned BY SOURCE TEXT. A behavioural pin cannot
- * refute `holds: () => true` — the ticket measured it passing `tsc` and the whole
- * oracle — because “the entry's predicate holds” and “no producer exists” are
- * different propositions. A predicate change must touch this table.
+ * C17 (H1/H7; re-pointed by T6 CP2 F2): the `DECLARATION_ONLY_FIELDS` predicate is pinned
+ * by source text; the `DEFERRED_PRODUCERS` predicates are pinned BEHAVIOURALLY (its own
+ * code falsifies it, another code does not, an empty witness holds). A behavioural pin
+ * refutes `holds: () => true` directly — stronger than a text copy of the body — and the
+ * source scan recomputed in this file stays the independent second referent (C7).
+ * Consequence for a future edit: changing a deferred predicate must touch the behavioural
+ * cells below, never this table.
  */
 const FIELD_PREDICATES = {
   remedy: '() => Object.values(ERROR_REGISTRY).some((spec) => "remedy" in spec)',
-} as const;
-
-const DEFERRED_PREDICATES = {
-  W_NEVER_SERVED_SHAPE: '() => !PRODUCED_WARNINGS.has("W_NEVER_SERVED_SHAPE")',
-  W_SERVED_PREFIX_MISMATCH: '() => !PRODUCED_WARNINGS.has("W_SERVED_PREFIX_MISMATCH")',
 } as const;
 
 // A3′ (F10): the keys the renderer actually reads. `formatError`/`formatWarning`
@@ -217,10 +216,12 @@ function readersOfField(files: string[], field: string): string[] {
 
 describe("arch: domain-error registry", () => {
   const files = listSources(SRC_ROOT);
-  const registrySource = readFileSync(join(SRC_ROOT, "domain-errors.ts"), "utf-8");
+  const registryFile = join(SRC_ROOT, "domain-errors.ts");
+  const registrySource = readFileSync(registryFile, "utf-8");
   const errorMembers = unionMembers(registrySource, "DomainErrorCode");
   const warningMembers = unionMembers(registrySource, "DomainWarningCode");
   const produced = producedCodes(files);
+  const fired = firedWarnings(files);
   const deferred = new Set(Object.keys(DEFERRED_PRODUCERS));
 
   it("totality forward: every code is produced or deferred", () => {
@@ -241,7 +242,7 @@ describe("arch: domain-error registry", () => {
     for (const code of deferred) {
       // REFERENT 1 (src): the entry's own predicate over live objects.
       expect(
-        DEFERRED_PRODUCERS[code]!.trigger.holds(),
+        DEFERRED_PRODUCERS[code]!.trigger.holds(new Set()),
         `${code} trigger no longer holds — the entry must be removed or reconciled`,
       ).toBe(true);
       // REFERENT 2 (test): the producer scan, recomputed here — never read back
@@ -261,18 +262,14 @@ describe("arch: domain-error registry", () => {
     }
   });
 
-  // C17 (H1/H7): the predicate itself is pinned by source text, for BOTH
-  // allowlists. `holds: () => true` passes every behavioural check in this file
-  // (measured: tsc accepted, oracle green) — only a text pin refutes it.
-  it("`holds` predicates are pinned by source text, both allowlists (C17)", () => {
+  // C17 (H1/H7, re-pointed by T6 CP2 F2): the declaration-only predicate is pinned by
+  // source text; the deferred predicates are pinned behaviourally — a behavioural pin
+  // refutes `holds: () => true` directly, which is stronger than a text copy, and the
+  // source scan below is the independent second referent.
+  it("`holds` predicates are pinned by source text and by behaviour (C17)", () => {
     for (const [field, entry] of Object.entries(DECLARATION_ONLY_FIELDS)) {
       expect(String(entry.trigger.holds), `${field} holds source text`).toBe(
         FIELD_PREDICATES[field as keyof typeof FIELD_PREDICATES],
-      );
-    }
-    for (const [code, entry] of Object.entries(DEFERRED_PRODUCERS)) {
-      expect(String(entry.trigger.holds), `${code} holds source text`).toBe(
-        DEFERRED_PREDICATES[code as keyof typeof DEFERRED_PREDICATES],
       );
     }
     // DECLARED LIMIT 3's trigger is multi-line, so it is pinned by its
@@ -281,7 +278,50 @@ describe("arch: domain-error registry", () => {
     expect(limitSource).toContain("package.json");
     expect(limitSource).toContain("PARSER_DEPS.some");
     expect(limitSource).not.toContain("=> true");
-    expect(REGEX_LIMIT_TRIGGER.holds(), "no parser dependency has arrived yet").toBe(true);
+    expect(REGEX_LIMIT_TRIGGER.holds(new Set()), "no parser dependency has arrived yet").toBe(true);
+  });
+
+  it("the deferred predicates refute a constant: their own code falsifies, others do not", () => {
+    for (const code of deferred) {
+      const entry = DEFERRED_PRODUCERS[code]!;
+      // Token pin: the predicate must name its own code (a `() => true` body cannot).
+      expect(String(entry.trigger.holds), `${code} names its own code`).toContain(code);
+      expect(String(entry.trigger.holds), `${code} is not a constant`).not.toContain("=> true");
+      // Behavioural pin: a two-sided refutation of any constant predicate.
+      expect(entry.trigger.holds(new Set()), `${code} holds with an empty witness`).toBe(true);
+      expect(entry.trigger.holds(new Set([code])), `${code} falls on its own firing`).toBe(false);
+      const others = [...deferred].filter((other) => other !== code);
+      expect(entry.trigger.holds(new Set(others)), `${code} survives other codes`).toBe(true);
+    }
+  });
+
+  // Per-code world cells (F2 proof 2): the mutant that plants a producer for ONE code
+  // must redden only THAT code's cell. A shared witness cannot satisfy this pair.
+  it("W_NEVER_SERVED_SHAPE's guard holds while the source scan sees no producer for it", () => {
+    expect(fired.has("W_NEVER_SERVED_SHAPE")).toBe(false);
+    expect(DEFERRED_PRODUCERS.W_NEVER_SERVED_SHAPE!.trigger.holds(fired)).toBe(true);
+  });
+
+  it("W_SERVED_PREFIX_MISMATCH's guard holds while the source scan sees no producer for it", () => {
+    expect(fired.has("W_SERVED_PREFIX_MISMATCH")).toBe(false);
+    expect(DEFERRED_PRODUCERS.W_SERVED_PREFIX_MISMATCH!.trigger.holds(fired)).toBe(true);
+  });
+
+  // F2 proof 3: the witness is a pure function of the tree, so the verdict cannot depend
+  // on evaluation order. With the module-global latch this REAL render flipped the guard
+  // for the rest of the process — a witness satisfiable by any earlier test.
+  it("the witness is order-independent: a render through the pure seam cannot falsify a guard", () => {
+    const before = firedWarnings(files);
+    void formatWarning("W_NEVER_SERVED_SHAPE", { count: 1 });
+    const after = firedWarnings(files);
+    expect([...after].sort()).toEqual([...before].sort());
+    for (const code of deferred) {
+      expect(DEFERRED_PRODUCERS[code]!.trigger.holds(after), `${code} after a render`).toBe(
+        DEFERRED_PRODUCERS[code]!.trigger.holds(before),
+      );
+    }
+    // Production carries no witness state: the scan is the only input.
+    expect(namesInCode([registryFile], ["PRODUCED_WARNINGS", "firedWarnings"])).toEqual([]);
   });
 
   // C9 (F10): the deletion is a commitment, not a tidy-up. The four names may

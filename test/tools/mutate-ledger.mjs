@@ -93,6 +93,11 @@ const T6 = {
   lengthDisagree: "rejects a window whose served and rebased lengths disagree",
   deletedExternally:
     "rejects E_STALE_RANGE and writes nothing when the anchored line was deleted externally",
+  neverGuard: "W_NEVER_SERVED_SHAPE's guard holds while the source scan sees no producer for it",
+  mismatchGuard:
+    "W_SERVED_PREFIX_MISMATCH's guard holds while the source scan sees no producer for it",
+  deferredRefute:
+    "the deferred predicates refute a constant: their own code falsifies, others do not",
 };
 
 /** T4 CP1-r3 cell titles (arch registry oracle + the numeric-note end-to-end cell). */
@@ -122,7 +127,7 @@ const T4R5 = {
 
 /** T4 CP1-r6 cell titles (predicate pins, shape derivation, full-oracle limits). */
 const T4R6 = {
-  holdsPins: "`holds` predicates are pinned by source text, both allowlists (C17)",
+  holdsPins: "`holds` predicates are pinned by source text and by behaviour (C17)",
   shapeDerivation: "every shape literal derives from CODE_SHAPE/QUOTED_CODE (C18)",
   limitHeld: "DECLARED LIMIT (full oracle): a variable-held producer reports LOUD",
   limitMjs: "DECLARED LIMIT (full oracle): a .mjs producer reports LOUD",
@@ -356,9 +361,9 @@ const MUTANTS = {
     ],
   },
   T6M3: {
-    what: "plant a REAL W_* producer through the real seam (self-arming deferral)",
+    what: "plant a REAL W_* producer through the real seam (source scan sees it; the other code's guard must stay held)",
     scope: null, // full suite
-    expected: [T4R3.backward],
+    expected: [T4R3.backward, T6.neverGuard],
     edits: [
       {
         file: DOMAIN_ERRORS,
@@ -385,10 +390,24 @@ const MUTANTS = {
       },
     ],
   },
+  T6M5: {
+    what: "plant a W_SERVED_PREFIX_MISMATCH producer ONLY — per-code isolation (W_NEVER_SERVED_SHAPE's guard must stay held)",
+    scope: null, // full suite
+    expected: [T4R3.backward, T6.mismatchGuard],
+    edits: [
+      {
+        file: DOMAIN_ERRORS,
+        old: "export const DEFERRED_PRODUCERS: Readonly<Record<string, AllowlistEntry>> = {",
+        new:
+          'export const __t6m5 = formatWarning("W_SERVED_PREFIX_MISMATCH", { k: 1, anchor: "aaa", servedLine: 1 });\n' +
+          "export const DEFERRED_PRODUCERS: Readonly<Record<string, AllowlistEntry>> = {",
+      },
+    ],
+  },
   M6: {
     what: "re-add E_FOREIGN_ANCHOR to DEFERRED_PRODUCERS as a bare rot-marker string",
     scope: null, // full suite
-    expected: [T4R3.backward, T4R6.holdsPins, T4R3.deleted],
+    expected: [T4R3.backward, T6.deferredRefute, T4R3.deleted],
     edits: [
       {
         file: DOMAIN_ERRORS,
@@ -536,13 +555,13 @@ const MUTANTS = {
     ],
   },
   M17: {
-    what: "caricature: holds: () => true in a DEFERRED_PRODUCERS entry (text pin only; R15's real mutant is T6M3)",
+    what: "caricature: holds: () => true in a DEFERRED_PRODUCERS entry (refuted by the token + behavioural pin; R15's real mutant is T6M3)",
     scope: null, // full suite
-    expected: [T4R6.holdsPins],
+    expected: [T6.deferredRefute],
     edits: [
       {
         file: DOMAIN_ERRORS,
-        old: '      holds: () => !PRODUCED_WARNINGS.has("W_NEVER_SERVED_SHAPE"),',
+        old: '      holds: (fired) => !fired.has("W_NEVER_SERVED_SHAPE"),',
         new: "      holds: () => true,",
       },
     ],

@@ -382,8 +382,8 @@ node test/tools/mutate-ledger.mjs T6M4   # break the oracle's per-row identity g
 ```
 
 `T6M3` mutates the **real** producer seam (`formatWarning`), not a caricature of the predicate:
-the planted call flips both `DEFERRED_PRODUCERS` referents (the live `PRODUCED_WARNINGS` set and
-the oracle's independent source recompute). `T6M4` mutates the **real** guard
+the planted call site is visible to the source scan, so it flips the arm's guard (its own-code cell
+plus `totality backward`) and never the other code's — the isolation `T6M5` measures symmetrically.
 (`assertRegionPayload`'s per-row identity check) and the cell it reddens is the planted-violation
 negative control. Each run is the full suite; `node test/tools/mutate-ledger.mjs --list` prints
 the live anchors and expected RED sets.

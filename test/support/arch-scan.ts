@@ -297,6 +297,18 @@ export function producedCodes(files: string[]): Set<string> {
 }
 
 /**
+ * The injected witness for `DEFERRED_PRODUCERS` (T6 CP2, F2): the warning codes whose
+ * producer call sites are visible in `files`. A READ of the tree — production carries no
+ * latch, so the witness is stateless, order-independent, and cannot be satisfied by
+ * another test's earlier render. `producedCodes` already matches `formatWarning("<CODE>"`
+ * call sites, so a planted producer is visible here by construction (the ledger's `T6M3`
+ * for one code, `T6M5` for the other, prove the isolation).
+ */
+export function firedWarnings(files: string[]): ReadonlySet<string> {
+  return new Set([...producedCodes(files)].filter((code) => code.startsWith("W_")));
+}
+
+/**
  * Occurrences of the given code names in **code** (comments stripped) across
  * files, as `file:code` strings. Prose may name a code; code may not.
  */
