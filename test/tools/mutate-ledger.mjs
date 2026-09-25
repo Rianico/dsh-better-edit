@@ -102,6 +102,18 @@ const T6 = {
     "the witness is per-call: a different source set yields a different witness and verdicts",
 };
 
+/**
+ * T6b cell titles (ADR-0023: multi-region interaction on sequential windowed reads).
+ * Both assert an `E_STALE_RANGE` payload through `assertRegionPayload`, so both redden under
+ * `T6M1` — measured 2026-09-25, re-pointed in the same commit that added them.
+ */
+const T6b = {
+  overlap:
+    "overlapping windowed reads: an anchor pair spanning the overlap scopes the payload to the resolved region (R13)",
+  disjoint:
+    "disjoint windowed reads: an anchor pair inside window A excludes window B's rows (R14)",
+};
+
 /** T4 CP1-r3 cell titles (arch registry oracle + the numeric-note end-to-end cell). */
 const T4R3 = {
   forward: "totality forward: every code is produced or deferred",
@@ -335,6 +347,10 @@ const MUTANTS = {
       T6.regionOracle,
       T6.deletedExternally,
       T6.formatterHint,
+      // T6b (ADR-0023): the two multi-region cells assert their E_STALE_RANGE payloads through
+      // `assertRegionPayload`, which bans the restored affordance — measured 3/3 in this file.
+      T6b.overlap,
+      T6b.disjoint,
     ],
     edits: [
       {

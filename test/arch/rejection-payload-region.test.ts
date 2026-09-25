@@ -111,6 +111,14 @@ function plantedError(args: {
 
 const DISK = "alpha\nBETA\ngamma\n";
 
+/** The `HASH` column of every served row in a rendered read, in served order. */
+function servedHashes(rendered: string): string[] {
+  return rendered
+    .split("\n")
+    .filter((line) => line.includes("│"))
+    .map((line) => line.split("│")[0]!);
+}
+
 /**
  * The read tool's allowed parameter set, DERIVED from the exported tool schema — never retyped
  * (CP2 premise P2: `READ_KS` is module-local and `src/contract.ts` is frozen, so a typed list here
@@ -445,6 +453,133 @@ describe("rejection payload region rule (ADR-0022)", () => {
         /must not name the allowed field/,
       );
     });
+  });
+
+  // ---- multi-region interaction (ADR-0023): the two cells that retire ADR-0022's declared limit.
+  // Both express N served regions with N sequential `offset`/`limit` reads — no `windows` parameter
+  // exists or is needed. Each cell fails if a rejection payload starts carrying rows outside the
+  // region the submitted anchors identify (e.g. the union of every served window).
+  it("overlapping windowed reads: an anchor pair spanning the overlap scopes the payload to the resolved region (R13)", async () => {
+    await withTempFile("overlap.txt", "one\ntwo\nthree\nfour\nfive\n", async ({ cwd, path }) => {
+      const harness = setupIntegrationTest(cwd);
+      // Read A serves lines 1–3; read B serves lines 3–5. Line 3 is the overlap.
+      const windowA = servedHashes(
+        getText(
+          await harness.readTool.execute("read", { path: "overlap.txt", offset: 1, limit: 3 }),
+        ),
+      );
+      const windowB = servedHashes(
+        getText(
+          await harness.readTool.execute("read", { path: "overlap.txt", offset: 3, limit: 3 }),
+        ),
+      );
+      expect(windowA).toHaveLength(3);
+      expect(windowB).toHaveLength(3);
+      const overlap = windowA[2]!;
+      expect(windowB[0]!, "both reads served the overlap line under one anchor").toBe(overlap);
+
+      // The serve-union the port was declined against (ADR-0023): the merged mirror holds BOTH
+      // windows, and the overlap occupies exactly one position — the exact-write merge neither
+      // duplicates it nor drops read A's rows.
+      const mirror = await withWorkspace(cwd, () => loadServed("test-session", path));
+      expect(mirror).toEqual([...windowA, windowB[1]!, windowB[2]!]);
+      expect(mirror.filter((hash) => hash === overlap)).toHaveLength(1);
+
+      // An interior insert, so the anchors' served span (3 lines) and their resolved span (4 lines)
+      // disagree: the span-length arm rejects with the resolved region's current rows.
+      const disk = "one\ntwo\nINSERTED\nthree\nfour\nfive\n";
+      await writeFile(path, disk, "utf-8");
+      let caught: unknown;
+      try {
+        await harness.editTool.execute("edit", {
+          path: "overlap.txt",
+          anchor_from: windowA[1]!, // "two" — served by read A only
+          anchor_to: windowB[1]!, // "four" — served by read B only
+          replace_with: "R",
+        });
+      } catch (error) {
+        caught = error;
+      }
+      const fileLines = disk.split("\n").slice(0, -1);
+      const fileHashes = lineHashesPure(disk.trimEnd());
+      // The region is the span the submitted anchors resolve in — lines 2–5 of the new snapshot —
+      // hardcoded from served-coordinate knowledge, never searched.
+      assertRegionPayload({
+        error: caught,
+        fileHashes,
+        fileLines,
+        liveStart: 2,
+        liveEnd: 5,
+        expectedCode: "E_STALE_RANGE",
+      });
+
+      // The scoping half, as an exclusion: neither read's exclusive edge row may ride along. A
+      // payload echoing the union of the two served windows (lines 1–6) reddens on these four.
+      const payload = caught as Payloadish;
+      expect(payload.servedRows.map((row) => row.position)).toEqual([1, 2, 3, 4]);
+      expect(payload.message).not.toContain(`${fileHashes[0]}│${fileLines[0]}`);
+      expect(payload.message).not.toContain(`${fileHashes[5]}│${fileLines[5]}`);
+      expect(await readFile(path, "utf-8"), "the rejection wrote nothing").toBe(disk);
+    });
+  });
+
+  it("disjoint windowed reads: an anchor pair inside window A excludes window B's rows (R14)", async () => {
+    await withTempFile(
+      "disjoint.txt",
+      "alpha\nbeta\ngamma\ndelta\nepsilon\nzeta\n",
+      async ({ cwd, path }) => {
+        const harness = setupIntegrationTest(cwd);
+        // Read A serves lines 1–2; read B serves lines 5–6. Lines 3–4 are never served.
+        const windowA = servedHashes(
+          getText(
+            await harness.readTool.execute("read", { path: "disjoint.txt", offset: 1, limit: 2 }),
+          ),
+        );
+        const windowB = servedHashes(
+          getText(
+            await harness.readTool.execute("read", { path: "disjoint.txt", offset: 5, limit: 2 }),
+          ),
+        );
+        expect(windowA).toHaveLength(2);
+        expect(windowB).toHaveLength(2);
+        // The control's premise: two served regions that do not touch, with the gap left unserved.
+        const mirror = await withWorkspace(cwd, () => loadServed("test-session", path));
+        expect(mirror).toEqual([windowA[0]!, windowA[1]!, null, null, windowB[0]!, windowB[1]!]);
+
+        const disk = "alpha\nINSERTED\nbeta\ngamma\ndelta\nepsilon\nzeta\n";
+        await writeFile(path, disk, "utf-8");
+        let caught: unknown;
+        try {
+          await harness.editTool.execute("edit", {
+            path: "disjoint.txt",
+            anchor_from: windowA[0]!,
+            anchor_to: windowA[1]!,
+            replace_with: "R",
+          });
+        } catch (error) {
+          caught = error;
+        }
+        const fileLines = disk.split("\n").slice(0, -1);
+        const fileHashes = lineHashesPure(disk.trimEnd());
+        assertRegionPayload({
+          error: caught,
+          fileHashes,
+          fileLines,
+          liveStart: 1,
+          liveEnd: 3,
+          expectedCode: "E_STALE_RANGE",
+        });
+
+        // Window B's rows are served, leased and byte-unchanged, so nothing but the region rule
+        // keeps them out of this payload; the never-served gap rows are excluded with them.
+        const payload = caught as Payloadish;
+        expect(payload.servedRows.map((row) => row.position)).toEqual([0, 1, 2]);
+        for (const outside of [3, 4, 5, 6]) {
+          expect(payload.message).not.toContain(`${fileHashes[outside]}│${fileLines[outside]}`);
+        }
+        expect(await readFile(path, "utf-8"), "the rejection wrote nothing").toBe(disk);
+      },
+    );
   });
 
   it("a rejection inside a region leaves the served mirror and out-of-region slots untouched (T3f per region)", async () => {

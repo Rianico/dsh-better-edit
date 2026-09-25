@@ -16,6 +16,8 @@ Upstream: <https://github.com/Rianico/pi-better-edit> — local checkout `../pi-
 
 Last absorbed checkpoint: `87a17ebf14a1d980015b721a4fc7082d4c3b9635` (2026-09-05 — v1.6.0; absorbed as #45–#48 via absorb/t1-audience, t2-drift-canon, t3-gemma, t4-epoch). Previous: `7b9195851037623484fe2840d081dab09f9f29d1` (2026-08-21 — fix: dense post-edit servedRows, post-v1.1.4). Previous checkpoint `c1f080048cc28c6b9cc5bb7ede2f3f572dc8b450` (v1.1.4) was absorbed from base `6a9cefca6c6e7011f5a20f058f9e17e3375419da` (1.1.3) as `v0.3.0` via `absorb/t1`–`t7` worktrees (54 commits, ADRs 0002–0004 + payload break). Next absorb starts from `87a17eb..HEAD` (or `87a17eb..upstream/main`) — inspected `87a17eb..01a6255` (2026-09-06 `01a6255099666b105fb783f93175add17469ba18` chore(ci) scaffold sync) — scaffold/CI only, no semantic changes; cursor stays at `87a17eb` (scaffold/CI ignored by design, see `docs/absorption-plan.md`).
 
+Deliberately NOT ported: upstream `windows: ReadWindow[]` (multi-window read, `pi-better-edit@00f8c34:src/file-content/preview.ts` `buildWindowedPreview`, cap `MAX_READ_WINDOWS = 16`) — ADR-0023 declines it: `buildWindowedPreview` unions rows by position under one shared line budget, and local `_mergeServedRows` already merges served rows across sequential `offset`/`limit` reads, so the port's whole delta is call-count convenience (ADR-0016: parity/convenience never justifies). Do not re-propose it without ADR-0023's predicate trigger firing.
+
 Procedure — repeat every sync and record the new hash here:
 
 1. Fetch: `git fetch upstream` or `git -C ../pi-better-edit fetch origin && git -C ../pi-better-edit log <last>..HEAD --oneline`.

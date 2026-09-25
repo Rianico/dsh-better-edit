@@ -111,3 +111,5 @@ will not compile until the absorber records a per-code decision, here: (i) _adop
 (re-add registry entry + payload map + union member + producer), or (ii) _map_ it onto the local family
 (`E_STALE_RANGE` / `E_UNSERVED_RANGE` / `E_STALE_ANCHOR`, ADR-0018/0019/0020). Do not leave this file silent
 about which was chosen.
+
+**Deliberately NOT ported (ADR-0023):** upstream `windows: ReadWindow[]` — `buildWindowedPreview` (`pi-better-edit@00f8c34:src/file-content/preview.ts`) unions rows by position under one shared line budget, and local `_mergeServedRows` already merges served rows across sequential `offset`/`limit` reads, so the delta is call-count convenience, not capability; the next absorb skips it unless ADR-0023's predicate trigger has fired.
