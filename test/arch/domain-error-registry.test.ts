@@ -11,7 +11,6 @@ import {
   WARNING_REGISTRY,
   isDomainErrorCode,
   isDomainWarningCode,
-  formatWarning,
 } from "../../src/domain-errors.js";
 import {
   CODE_SHAPE,
@@ -307,20 +306,36 @@ describe("arch: domain-error registry", () => {
     expect(DEFERRED_PRODUCERS.W_SERVED_PREFIX_MISMATCH!.trigger.holds(fired)).toBe(true);
   });
 
-  // F2 proof 3: the witness is a pure function of the tree, so the verdict cannot depend
-  // on evaluation order. With the module-global latch this REAL render flipped the guard
-  // for the rest of the process — a witness satisfiable by any earlier test.
-  it("the witness is order-independent: a render through the pure seam cannot falsify a guard", () => {
-    const before = firedWarnings(files);
-    void formatWarning("W_NEVER_SERVED_SHAPE", { count: 1 });
-    const after = firedWarnings(files);
-    expect([...after].sort()).toEqual([...before].sort());
-    for (const code of deferred) {
-      expect(DEFERRED_PRODUCERS[code]!.trigger.holds(after), `${code} after a render`).toBe(
-        DEFERRED_PRODUCERS[code]!.trigger.holds(before),
+  // Order-independence is STRUCTURAL, and this cell locates the witness instead of decorating it
+  // with an unfalsifiable re-read (CP3 FIX 2 — the deleted `before`/`after` comparison read the
+  // same files twice and could not fail):
+  //   (i)   the witness is an INJECTED `ReadonlySet<string>` parameter, never module state
+  //         (`src/domain-errors.ts` -> `AllowlistTrigger.holds`);
+  //   (ii)  `firedWarnings` re-derives per call from source (`new Set([...producedCodes(files)]…)`),
+  //         with no module, global or clock input — asserted below on two DIFFERENT source sets;
+  //   (iii) the ban on a production latch is the refutable witness: reintroducing one reddens it.
+  it("the witness is per-call: a different source set yields a different witness and verdicts", () => {
+    const dir = mkdtempSync(join(tmpdir(), "t6-witness-"));
+    try {
+      const plantedFile = join(dir, "planted.ts");
+      writeFileSync(
+        plantedFile,
+        'export const x = formatWarning("W_NEVER_SERVED_SHAPE", { count: 1 });\n',
+        "utf-8",
       );
+      const plantedWitness = firedWarnings([plantedFile]);
+      // (ii) two different sets, two different witnesses: a latch or a constant fails this.
+      expect(plantedWitness.has("W_NEVER_SERVED_SHAPE")).toBe(true);
+      expect(fired.has("W_NEVER_SERVED_SHAPE")).toBe(false);
+      // ... and the guards' verdicts change with the witness, per code.
+      expect(DEFERRED_PRODUCERS.W_NEVER_SERVED_SHAPE!.trigger.holds(plantedWitness)).toBe(false);
+      expect(DEFERRED_PRODUCERS.W_NEVER_SERVED_SHAPE!.trigger.holds(fired)).toBe(true);
+      expect(DEFERRED_PRODUCERS.W_SERVED_PREFIX_MISMATCH!.trigger.holds(plantedWitness)).toBe(true);
+      expect(DEFERRED_PRODUCERS.W_SERVED_PREFIX_MISMATCH!.trigger.holds(fired)).toBe(true);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
     }
-    // Production carries no witness state: the scan is the only input.
+    // (iii) no production latch: reintroducing one reddens this.
     expect(namesInCode([registryFile], ["PRODUCED_WARNINGS", "firedWarnings"])).toEqual([]);
   });
 

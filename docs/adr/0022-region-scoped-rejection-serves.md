@@ -95,22 +95,21 @@ does not re-open the boundary rule.
 
 ## Declared limit (R12)
 
-Multi-window reads do not exist locally and are **not** exercised by this ADR. The limit is
-declarable because it is **discoverable from the failure**: a `windows` argument to the local
-`read` is rejected loudly — `assertReadRequest` → `rejectUnknownFields(request, READ_KS,
-"Read request")` (`src/contract.ts:238,345`) → `E_BAD_PAYLOAD`, whose message names the
-**offending** field (`windows`) and the request (`Read request`). Naming the allowed set is _not_
-claimed: `rejectUnknownFields` filters by `allowed` and never renders it (`src/utils.ts:27-40`),
-`assertReadRequest` passes no `hint`, and `src/contract.ts` is frozen by ruling — unfreezing it
-would create a third copy of the list (`READ_KS`, the tool schema, the message) and change every
-unknown-field rejection. So the allowed set is a **declared limit**: discoverable from the tool's
-`parameters` schema and from `READ_KS`, not advertised by the rejection. Both halves are pinned by
-`test/arch/rejection-payload-region.test.ts` — the cell asserts the offending field IS named and
-the allowed set is NOT.
+Multi-window reads do not exist locally and are **not** exercised by this ADR.
+
+**The limit, stated once.** A `windows` argument to the local `read` fails with `E_BAD_PAYLOAD`, and
+the failure names the offending field only — it does not advertise the allowed set. The allowed set
+is discoverable from the read tool's `parameters` schema (`buildReadTool`, `src/tool-read.ts:30`) and
+from `READ_KS` (`src/contract.ts:238`). `src/contract.ts` is frozen by ruling, and adding a hint at
+that call site would hand-copy the list into a third place.
+
+The cell that pins this limit — including the control that shows the ban can fail — is
+`test/arch/rejection-payload-region.test.ts` → _the declared multi-window limit is discoverable from
+the failure (R12)_. Read the cell; it is the witness, and this ADR does not restate what it asserts.
 
 **Predicate trigger (T6b):** the trigger is the _landing of a multi-window read_ — `READ_KS`
-admitting a `windows` field (`src/contract.ts:238`). Until then the loud `E_BAD_PAYLOAD` is the
-discoverable failure, and this ADR's rule stays window-count-agnostic.
+admitting a `windows` field. Until then the loud `E_BAD_PAYLOAD` is the discoverable failure, and
+this ADR's rule stays window-count-agnostic.
 
 ## VOID record — the spec §9.5 ADR-0016 instruction
 

@@ -2,12 +2,14 @@ import { readFile, writeFile } from "node:fs/promises";
 import { beforeAll, describe, expect, it } from "vitest";
 
 import type { ServedRow } from "../../src/domain-errors.js";
-import { mapFsError } from "../../src/fs-bridge.js";
+import { localIO, mapFsError } from "../../src/fs-bridge.js";
 import { initHasher } from "../../src/hashline/hasher.js";
 import { lineHashesPure } from "../../src/hashline/index.js";
 import { loadServed } from "../../src/session-view.js";
 import { withWorkspace } from "../../src/workspace-context.js";
 import { loadHashStore, type InternalHashStore } from "../../src/hash-store.js";
+import { buildReadTool } from "../../src/tool-read.js";
+import { rejectUnknownFields } from "../../src/utils.js";
 import { getText, setupIntegrationTest, withTempFile } from "../support/fixtures.js";
 
 beforeAll(async () => {
@@ -108,6 +110,27 @@ function plantedError(args: {
 }
 
 const DISK = "alpha\nBETA\ngamma\n";
+
+/**
+ * The read tool's allowed parameter set, DERIVED from the exported tool schema — never retyped
+ * (CP2 premise P2: `READ_KS` is module-local and `src/contract.ts` is frozen, so a typed list here
+ * would be a hand-copy of a derivable fact). `buildReadTool` is the same source `READ_KS` mirrors.
+ */
+function allowedReadParams(): string[] {
+  const tool = buildReadTool(localIO()) as unknown as { parameters: Record<string, unknown> };
+  return Object.keys(tool.parameters);
+}
+
+/**
+ * The R12 ban, as a FUNCTION so the demonstration control below can show it fails (CP3 FIX 1):
+ * the failure must not name any allowed field. It is not satisfied by the absence of a list in
+ * `rejectUnknownFields`; it is satisfied by the absence of a hint at the call site.
+ */
+function assertNoAllowedSetLeak(message: string, allowed: readonly string[]): void {
+  for (const name of allowed) {
+    expect(message, `the failure must not name the allowed field "${name}"`).not.toContain(name);
+  }
+}
 
 describe("rejection payload region rule (ADR-0022)", () => {
   it("live lease applies at the served coordinates with no rejection", async () => {
@@ -391,11 +414,36 @@ describe("rejection payload region rule (ADR-0022)", () => {
       }
       expect((caught as { code?: string }).code).toBe("E_BAD_PAYLOAD");
       const message = (caught as Error).message;
-      // Discoverable: the failure NAMES the unsupported field. (T6 CP1 measured that it does
-      // NOT also list the allowed set — `assertReadRequest` passes no hint — so this cell pins
-      // the half that holds and the report records the re-rule signal.)
-      expect(message).toContain("windows");
-      expect(message).toContain("Read request");
+      const allowed = allowedReadParams();
+      expect(allowed.length, "the tool schema exposes the allowed set").toBeGreaterThan(0);
+      // The failure is exactly the offending-field line: the `hint` suffix (src/utils.ts:26-40) is
+      // the only place an allowed-set list could be appended, and any hint changes this string.
+      expect(message).toBe(
+        "[MODEL] [E_BAD_PAYLOAD] Read request contains unknown or unsupported fields: windows.",
+      );
+      // The invariant, stated in terms of the DERIVED schema — no retyped list enters this file.
+      assertNoAllowedSetLeak(message, allowed);
+
+      // Demonstration control (required): `rejectUnknownFields` builds this message and its `hint`
+      // argument is the only way the suffix is populated. Called WITH a hint, the ban must fail —
+      // otherwise the assertion above would be vacuous.
+      let hinted: unknown;
+      try {
+        rejectUnknownFields(
+          { windows: [{ offset: 1, limit: 1 }] },
+          new Set(allowed),
+          "Read request",
+          `Allowed: ${allowed.join(", ")}.`,
+        );
+      } catch (error) {
+        hinted = error;
+      }
+      expect((hinted as Error | undefined)?.message, "the control rendered a hint").toContain(
+        "Allowed:",
+      );
+      expect(() => assertNoAllowedSetLeak((hinted as Error).message, allowed)).toThrow(
+        /must not name the allowed field/,
+      );
     });
   });
 

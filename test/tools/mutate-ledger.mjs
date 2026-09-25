@@ -99,7 +99,7 @@ const T6 = {
   deferredRefute:
     "the deferred predicates refute a constant: their own code falsifies, others do not",
   orderIndependence:
-    "the witness is order-independent: a render through the pure seam cannot falsify a guard",
+    "the witness is per-call: a different source set yields a different witness and verdicts",
 };
 
 /** T4 CP1-r3 cell titles (arch registry oracle + the numeric-note end-to-end cell). */
@@ -365,7 +365,9 @@ const MUTANTS = {
   T6M3: {
     what: "plant a REAL W_* producer through the real seam (source scan sees it; the other code's guard must stay held)",
     scope: null, // full suite
-    expected: [T4R3.backward, T6.neverGuard],
+    // CP3: the renamed per-call cell asserts the verdict on a planted witness, so a plant in the
+    // real tree also reddens it — measured 3/3, re-pointed with the rename.
+    expected: [T4R3.backward, T6.neverGuard, T6.orderIndependence],
     edits: [
       {
         file: DOMAIN_ERRORS,
@@ -395,7 +397,9 @@ const MUTANTS = {
   T6M5: {
     what: "plant a W_SERVED_PREFIX_MISMATCH producer ONLY — per-code isolation (W_NEVER_SERVED_SHAPE's guard must stay held)",
     scope: null, // full suite
-    expected: [T4R3.backward, T6.mismatchGuard],
+    // CP3: the renamed per-call cell asserts the verdict on a planted witness, so a plant in the
+    // real tree also reddens it — measured 3/3, re-pointed with the rename.
+    expected: [T4R3.backward, T6.mismatchGuard, T6.orderIndependence],
     edits: [
       {
         file: DOMAIN_ERRORS,
@@ -409,7 +413,9 @@ const MUTANTS = {
   M6: {
     what: "re-add E_FOREIGN_ANCHOR to DEFERRED_PRODUCERS as a bare rot-marker string",
     scope: null, // full suite
-    expected: [T4R3.backward, T6.deferredRefute, T6.orderIndependence, T4R3.deleted],
+    // `T6.orderIndependence` renamed in CP3 (the old title claimed a property its re-read could
+    // not falsify); M6 no longer reddens the renamed cell — its loop dereferences named codes.
+    expected: [T4R3.backward, T6.deferredRefute, T4R3.deleted],
     edits: [
       {
         file: DOMAIN_ERRORS,
@@ -559,7 +565,8 @@ const MUTANTS = {
   M17: {
     what: "caricature: holds: () => true in a DEFERRED_PRODUCERS entry (refuted by the token + behavioural pin; R15's real mutant is T6M3)",
     scope: null, // full suite
-    expected: [T6.deferredRefute],
+    // CP3: a constant predicate also fails the renamed per-call cell — measured 2/2.
+    expected: [T6.deferredRefute, T6.orderIndependence],
     edits: [
       {
         file: DOMAIN_ERRORS,
