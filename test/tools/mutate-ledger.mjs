@@ -46,6 +46,10 @@ const DOMAIN_ERRORS = "src/domain-errors.ts";
  *  - T4 (`T4M1`–`T4M5`, full suite): see ADR-0018's "T4 ledger" subsection.
  * The T4 ids are prefixed because the T3h ledger already owns `M1`/`M2`/`M4`.
  */
+// FROZEN vs MOVING: the three revisions below are FROZEN baseline labels for closed corpora (T3h, T4,
+// T4-r3) — keep them; their immutability is the information. A literal claiming a measurement of the
+// CURRENT sets is a MOVING referent: it rots at the next cell addition, so it is removed rather than
+// updated (see the T5 header's invariant: the run asserts its own revision).
 const VERIFIED_AT = "ba430557912b8b2934261654d3e09034188d8571";
 /** T4 (T4M1–T4M5) expected RED sets were measured at this revision. */
 const T4_VERIFIED_AT = "ddce82b333a2c6cc5854823de92264971f5e84f2";
@@ -117,7 +121,8 @@ const T4R6 = {
  * T5 cell titles (LRU snapshot vacuum). Corpus: `docs/adr/0021-lru-snapshot-vacuum.md`.
  * The expected sets below are verified at the revision this run asserts: the run prints that revision
  * and `--expect-rev=<sha>` refuses loudly on mismatch, so a stale expectation cannot pass quietly.
- * Re-run the full sweep to re-derive them.
+ * Re-run the full sweep to re-derive them. The frozen baseline labels for the closed corpora above
+ * are the opposite case: they stay, because the corpora they name no longer move.
  * An `expected: []` entry is a measured GREEN mutant, diagnosed by one of: (1) a real gap, (2) the
  * mutation did not apply, (3) the claim was too strong, (4) another mechanism covered the effect
  * (T5M22/T5M26/T5M28: the FK cascade or the serve write's re-materialization, per the P1 matrix).
