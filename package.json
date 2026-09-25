@@ -56,8 +56,6 @@
     "test:watch": "vitest",
     "prepublishOnly": "npm run typecheck && npm test && node scripts/assert-tagged.mjs",
     "benchmark": "node benchmark/run.mjs",
-    "postpublish": "node scripts/tag-current.mjs",
-    "release": "node scripts/release.mjs",
     "lint": "oxlint .",
     "lint:fix": "oxlint --fix .",
     "format": "oxfmt --check .",

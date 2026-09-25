@@ -23,10 +23,7 @@
         }
       }
     ],
-    [
-      "@semantic-release/changelog",
-      { "changelogFile": "CHANGELOG.md", "changelogTitle": "# Changelog" }
-    ],
+    ["./scripts/release-changelog.mjs", { "changelogFile": "CHANGELOG.md" }],
     ["@semantic-release/npm", { "npmPublish": false }],
     "@semantic-release/github",
     [
