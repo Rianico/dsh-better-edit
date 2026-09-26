@@ -38,7 +38,9 @@ export const EDIT_GUIDANCE: ToolGuidance = {
 export const READ_DESCRIPTION =
   "Read a text file; each line returned as HASH│content with a 3-char alphanumeric hash. " +
   "No line numbers — use the HASH as the anchor in edit calls. Binary/directory → rejected; " +
-  "empty → HASH│ (edit to insert); pageable with offset/limit; BOM stripped; non-UTF-8 shown as U+FFFD.";
+  "empty → HASH│ (edit to insert); pageable with offset/limit, or several disjoint ranges in one call " +
+  "with `windows: [{offset, limit}, ...]` (every listed window is served there, so anchors from all " +
+  "of them work in one edit); BOM stripped; non-UTF-8 shown as U+FFFD.";
 
 export const READ_GUIDANCE: ToolGuidance = {
   intro:

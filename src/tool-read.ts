@@ -14,6 +14,7 @@ import { readAndServe } from "./read-and-serve.js";
 import { READ_DESCRIPTION } from "./prompts.js";
 import { normalizeEncoding } from "./encoding.js";
 import { DomainError } from "./domain-errors.js";
+import { MAX_READ_WINDOWS } from "./file-view.js";
 
 import type { FileIO } from "./fs-bridge.js";
 import { renderTextWarning } from "./render-text-warning.js";
@@ -40,6 +41,29 @@ export function buildReadTool(io: FileIO) {
       limit: {
         type: "number",
         description: "Maximum number of lines to read",
+      },
+      // FU-6 (port of pi-better-edit@2334352): upstream enforces the 16-window cap twice (TypeBox
+      // schema + preview); the dsh value-schema DSL has no maxItems on array nodes, so the bound is
+      // enforced in file-view's normWindows and stated in the description to stay discoverable.
+      windows: {
+        type: "array",
+        description: `Optional array of up to ${MAX_READ_WINDOWS} line windows to read in a single turn; every window's rows are served, so anchors from all of them are usable in one edit`,
+        items: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            offset: {
+              type: "number",
+              required: true,
+              description: "Line number to start reading from (1-indexed)",
+            },
+            limit: {
+              type: "number",
+              required: true,
+              description: "Maximum number of lines to read",
+            },
+          },
+        } as unknown as import("@deepseek-ai/dsh-tools").ValueSchemaSpec,
       },
       encoding: {
         type: "string",
@@ -79,6 +103,7 @@ export function buildReadTool(io: FileIO) {
           signal,
           offset: canonical.offset,
           limit: canonical.limit,
+          windows: canonical.windows,
           encoding: encoding as string | undefined,
         });
         // Record the present observation with the fs policy gate so later

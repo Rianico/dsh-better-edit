@@ -1,7 +1,10 @@
 # ADR-0023 — Multi-window read declined; the region rule is window-count-agnostic
 
 Date: 2026-09-25
-Status: accepted
+Status: **superseded** — the decline is overturned by operator ruling (FU-6, 2026-09-26) and the
+`windows` port has landed; see the §FU-6 amendment below. The Decision §2 cells (R13/R14), the
+region-rule retirement and the W1–W4 measurements stand on their own facts.
+(Originally: accepted.)
 Related: `docs/adr/0022-region-scoped-rejection-serves.md` (its _Declared limit (R12)_ is retired
 here; its region rule is unchanged), `docs/adr/0018-exact-position-served-span-verification.md` (exact-write merge),
 `docs/adr/0019-lease-identity-served-span-resolution.md` (lease identity), `src/session-view.ts`
@@ -239,3 +242,52 @@ empty=0
 The mutation ledger sweep (`node test/tools/mutate-ledger.mjs <id> --expect-rev=<40-char sha>`,
 foreground, sequential) is the standing check that the pre-existing region carriers still fail when
 their own invariants regress.
+
+## FU-6 amendment (2026-09-26) — the decline is superseded; `windows` has landed
+
+**Ruling.** The operator overruled all recorded declines (FU-6 ticket, relayed via `fu-tm`,
+2026-09-26): port upstream's multi-window read contract plus the read-path stats consolidation in
+one commit. This is an override of Decision §1, **not** the predicate trigger above firing — W1–W4
+still measure what they measured, and the trigger's tests (union-by-position, shared budget) still
+hold at the ported commit. The ruling substitutes an owner decision for the capability argument;
+the measurement record stays intact because Decision §2's carriers (R13/R14) and the region-rule
+retirement do not depend on the decline.
+
+**Ported referent.** `pi-better-edit@2334352206adcf2c5c2cb0d3beaa1eae7ea8f0c4` — _feat(read): add
+multi-window reads and consolidate the read path's stats_ (2026-09-22; an ancestor of the current
+sync cursor `00f8c34`, i.e. this closes the single deliberate exception of the v2 absorb — the
+cursor does not move). Cited lines: `2334352:src/constants.ts:9` (`MAX_READ_WINDOWS = 16`),
+`2334352:src/file-content/preview.ts:45-49` (`normWindows` cap + message),
+`2334352:src/read.ts:68` (schema `maxItems`), `2334352:src/read.ts:131,179` (`isFullRead` follows
+the empty-array fallback; drift cleared only on full reads),
+`2334352:src/file-content/loader.ts:34` + `2334352:src/file-content/index.ts:51` (`FileStats`
+travels with the loader's text into `fileSnap`, fresh-stat fallback).
+
+**Local landing.** `src/file-view.ts:45` (`MAX_READ_WINDOWS`), `:520` (`normWindows`), `:731`
+(`buildWindowedPreview`), the `hintRemainder` threading at `:601`/`:654`/`:705`/`:716`;
+`src/contract.ts:244` (`READ_KS` gains `"windows"`) and `:56` (`ReadParams.windows`);
+`src/tool-read.ts` (schema `windows` entry, passed through to the seam);
+`src/read-and-serve.ts:54`/`:131`/`:169` and its `isFullRead` gate.
+
+**Disclosed deviations (each measured, none silent).**
+
+1. The dsh value-schema DSL has no array `maxItems` (`node_modules/@deepseek-ai/dsh-tools` compiler:
+   array nodes admit only `type`/`items`/annotations) — upstream's schema+preview double enforcement
+   reduces to `normWindows`-only; the cap stays model-discoverable via the tool description text.
+2. `MAX_READ_WINDOWS` lives in `src/file-view.ts`, not `src/constants.ts` (that file is another
+   lane's scope; the read budgets already live together in `file-view.ts`).
+3. `fileSnap(absolutePath, preloadedStats?)` takes no checksum argument — this tree's `fmtSnapId`
+   carries no checksum segment, so upstream's third parameter has no local counterpart.
+4. The stats-consolidation cell for `prepareFile` was not ported: the local read path loads text
+   through `FileIO.readText` (`readView` in `src/file-view.ts`) and never double-stats through a
+   loader→`fileSnap` chain on the tool path; the `FileStats`/`LFile.stats`/preloaded-`fileSnap`
+   plumbing itself is ported verbatim-shape and pinned by `test/core/file-view-stats.test.ts`.
+
+**Tests.** `test/tools/read-windows.test.ts` ports upstream's suite (headers, overlap collapse,
+past-EOF, shared budget, no root `nextOffset`, `windows: []` full-read fallback, cap rejection)
+with seam-level adaptations only; `test/arch/rejection-payload-region.test.ts` R12 is flipped per
+ticket direction — `windows` now serves (`=== Lines 1-1 of 3 ===`) and the unknown-field witness
+uses `ranges`, with the allowed-set leak ban and its demonstration control intact; R13/R14
+continue to pin the sequential path on purpose. The mutate ledger needed no re-anchoring: zero
+mutants anchored in `src/file-view.ts`, the `R2M1` anchor line is untouched, and `T6M4`'s anchor
+block survives the R12 rewrite.

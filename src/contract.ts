@@ -10,6 +10,7 @@
  */
 
 import { EDITS_MAX_ITEMS } from "./constants.js";
+import type { ReadWindow } from "./file-view.js";
 import { isRec, normalizeFilePath, rejectUnknownFields } from "./utils.js";
 import { DomainError } from "./domain-errors.js";
 
@@ -48,6 +49,11 @@ export interface ReadParams {
   offset?: number;
   limit?: number;
   encoding?: string;
+  /**
+   * FU-6 (port of pi-better-edit@2334352): multi-window read — disjoint line ranges served in
+   * one call. Shape and count (max MAX_READ_WINDOWS) are validated in file-view's normWindows.
+   */
+  windows?: ReadWindow[];
 }
 
 export interface UndoParams {
@@ -235,7 +241,7 @@ function describeReceived(input: unknown): string {
 // ---- filed sets (declared once) ---------------------------------------------
 
 const EDIT_KS = new Set(["file", "edits", "mode", "sandbox_permissions", "justification"]);
-const READ_KS = new Set(["path", "offset", "limit", "encoding"]);
+const READ_KS = new Set(["path", "offset", "limit", "encoding", "windows"]);
 const ITEM_KS = new Set(["anchor_from", "anchor_to", "replace_with"]);
 const LEGACY_ITEM_KS = new Set(["remove_from", "remove_to", "replacement_text"]);
 

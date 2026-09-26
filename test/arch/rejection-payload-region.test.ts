@@ -127,8 +127,12 @@ function servedHashes(rendered: string): string[] {
  * would be a hand-copy of a derivable fact). `buildReadTool` is the same source `READ_KS` mirrors.
  */
 function allowedReadParams(): string[] {
-  const tool = buildReadTool(localIO()) as unknown as { parameters: Record<string, unknown> };
-  return Object.keys(tool.parameters);
+  const tool = buildReadTool(localIO()) as unknown as {
+    // `defineTool` compiles the author-facing parameter map into a raw object-rooted schema; the
+    // allowed set lives under `.properties`, not on the root (`type`/`properties` are schema keys).
+    parameters: { properties: Record<string, unknown> };
+  };
+  return Object.keys(tool.parameters.properties);
 }
 
 /**
@@ -418,14 +422,25 @@ describe("rejection payload region rule (ADR-0022)", () => {
     ).toThrow();
   });
 
-  it("the declared multi-window limit is discoverable from the failure (R12)", async () => {
+  it("windows is part of the read contract; unknown-field rejection stays leak-free (R12, FU-6 flipped)", async () => {
     await withTempFile("r12.txt", "one\ntwo\nthree\n", async ({ cwd }) => {
       const harness = setupIntegrationTest(cwd);
-      let caught: unknown;
-      try {
+      // FU-6 (port of pi-better-edit@2334352, superseding ADR-0023's decline): `windows` reads are
+      // served in one call — the R12 pin flipped from "windows is rejected" to "windows works",
+      // while the discoverability invariant keeps a NON-contract field.
+      const readText = getText(
         await harness.readTool.execute("read", {
           path: "r12.txt",
           windows: [{ offset: 1, limit: 1 }],
+        }),
+      );
+      expect(readText).toContain("=== Lines 1-1 of 3 ===");
+
+      let caught: unknown;
+      try {
+        await harness.readTool.execute("read-bad", {
+          path: "r12.txt",
+          ranges: [{ offset: 1, limit: 1 }],
         });
       } catch (error) {
         caught = error;
@@ -434,10 +449,11 @@ describe("rejection payload region rule (ADR-0022)", () => {
       const message = (caught as Error).message;
       const allowed = allowedReadParams();
       expect(allowed.length, "the tool schema exposes the allowed set").toBeGreaterThan(0);
+      expect(allowed, "the schema now advertises windows").toContain("windows");
       // The failure is exactly the offending-field line: the `hint` suffix (src/utils.ts:26-40) is
       // the only place an allowed-set list could be appended, and any hint changes this string.
       expect(message).toBe(
-        "[MODEL] [E_BAD_PAYLOAD] Read request contains unknown or unsupported fields: windows.",
+        "[MODEL] [E_BAD_PAYLOAD] Read request contains unknown or unsupported fields: ranges.",
       );
       // The invariant, stated in terms of the DERIVED schema — no retyped list enters this file.
       assertNoAllowedSetLeak(message, allowed);
@@ -448,7 +464,7 @@ describe("rejection payload region rule (ADR-0022)", () => {
       let hinted: unknown;
       try {
         rejectUnknownFields(
-          { windows: [{ offset: 1, limit: 1 }] },
+          { ranges: [{ offset: 1, limit: 1 }] },
           new Set(allowed),
           "Read request",
           `Allowed: ${allowed.join(", ")}.`,
@@ -466,8 +482,10 @@ describe("rejection payload region rule (ADR-0022)", () => {
   });
 
   // ---- multi-region interaction (ADR-0023): the two cells that retire ADR-0022's declared limit.
-  // Both express N served regions with N sequential `offset`/`limit` reads — no `windows` parameter
-  // exists or is needed. Each cell fails if a rejection payload starts carrying rows outside the
+  // Both express N served regions with N sequential `offset`/`limit` reads — since FU-6 a single
+  // `windows` call serves N regions too, but these cells pin the sequential path on purpose: the
+  // region oracle must scope a payload regardless of how the regions were served.
+  // Each cell fails if a rejection payload starts carrying rows outside the
   // region the submitted anchors identify (e.g. the union of every served window).
   it("overlapping windowed reads: an anchor pair spanning the overlap scopes the payload to the resolved region (R13)", async () => {
     await withTempFile("overlap.txt", "one\ntwo\nthree\nfour\nfive\n", async ({ cwd, path }) => {

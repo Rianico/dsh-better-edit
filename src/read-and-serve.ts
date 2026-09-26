@@ -23,6 +23,7 @@ import {
 } from "./session-view.js";
 import { loadServedStore } from "./hash-store.js";
 import type { FileIO } from "./fs-bridge.js";
+import type { ReadWindow } from "./file-view.js";
 import type { ServedRow } from "./hashline/anchor-pipeline.js";
 
 /** Appended when the file had non-UTF-8 bytes; editing rewrites it as UTF-8. */
@@ -46,6 +47,11 @@ export interface ReadAndServeOptions {
   /** Pagination for the rendered preview (undefined = from the start). */
   offset?: number;
   limit?: number;
+  /**
+   * FU-6 (port of pi-better-edit@2334352): disjoint ranges served in one call; wins over
+   * offset/limit when non-empty, `[]` falls back to the plain (full-read) contract.
+   */
+  windows?: ReadWindow[];
 }
 
 export interface ReadAndServeResult {
@@ -122,6 +128,7 @@ export async function readAndServe(
       encoding: options.encoding,
       offset: options.offset,
       limit: options.limit,
+      windows: options.windows,
       signal,
       reservedHashes: reservations.reservedHashes,
       retiredHashes: reservations.retiredHashes,
@@ -159,6 +166,7 @@ export async function readAndServe(
         encoding: options.encoding,
         offset: options.offset,
         limit: options.limit,
+        windows: options.windows,
         signal,
         reservedHashes: reservations.reservedHashes,
         retiredHashes: reservations.retiredHashes,
@@ -192,8 +200,15 @@ export async function readAndServe(
   // #69: epoch lifecycle belongs to full reads — a partial (paged or
   // truncated) read merges window rows only and must not clear the
   // drift-reported marks; only a full read resets them.
+  // FU-6 (2334352) WHY: `windows: []` falls back to a full read in the preview, so the full-read
+  // contract has to follow the same rule — otherwise an empty array silently skips the drift clear
+  // that a full read owes. A non-empty multi-window read serves sparse rows, never the full file.
+  const hasWindows = Array.isArray(options.windows) && options.windows.length > 0;
   const isFullRead =
-    options.offset === undefined && options.limit === undefined && !view.truncation?.truncated;
+    options.offset === undefined &&
+    options.limit === undefined &&
+    !hasWindows &&
+    !view.truncation?.truncated;
   if (isFullRead) await clearDriftReported(sessionKey, view.absolutePath);
   const autoFooter =
     getAutoGuessFooter(view.absolutePath) ??
