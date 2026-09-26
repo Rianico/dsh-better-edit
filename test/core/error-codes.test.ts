@@ -236,3 +236,35 @@ describe("registry range-shape rules (F7)", () => {
     });
   });
 });
+
+/**
+ * FU-R R4c: the E_FOREIGN_ANCHOR homes display. The `and N more` arm is reachable in
+ * production (lineage-store's anchorHomes SQL has no LIMIT and the dedup union can
+ * exceed three) but no test exercised it — pinned literally per the #75 lesson,
+ * together with the three-or-fewer arm it caps against.
+ */
+describe("E_FOREIGN_ANCHOR homes display (FU-R R4c)", () => {
+  const single = { path: "target.ts", anchors: ["aB3"] };
+  it("lists up to three homes verbatim", () => {
+    expect(
+      formatError("E_FOREIGN_ANCHOR", {
+        ...single,
+        homes: ["one.ts", "two.ts", "three.ts"],
+      }),
+    ).toBe(
+      '[MODEL] [E_FOREIGN_ANCHOR] the anchor "aB3" is inconsistent with target.ts; ' +
+        "served for one.ts, two.ts, three.ts; nothing was written.",
+    );
+  });
+  it("caps at three homes and counts the remainder", () => {
+    expect(
+      formatError("E_FOREIGN_ANCHOR", {
+        ...single,
+        homes: ["one.ts", "two.ts", "three.ts", "four.ts", "five.ts"],
+      }),
+    ).toBe(
+      '[MODEL] [E_FOREIGN_ANCHOR] the anchor "aB3" is inconsistent with target.ts; ' +
+        "served for one.ts, two.ts, three.ts and 2 more; nothing was written.",
+    );
+  });
+});

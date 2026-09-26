@@ -63,7 +63,7 @@ export function buildReadTool(io: FileIO) {
               description: "Maximum number of lines to read",
             },
           },
-        } as unknown as import("@deepseek-ai/dsh-tools").ValueSchemaSpec,
+        },
       },
       encoding: {
         type: "string",

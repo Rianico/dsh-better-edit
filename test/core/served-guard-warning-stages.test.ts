@@ -1,12 +1,7 @@
 import { beforeAll, describe, expect, it } from "vitest";
 import { readFile } from "node:fs/promises";
 
-import {
-  getText,
-  setupIntegrationTest,
-  useTestHome,
-  withTempFile,
-} from "../support/fixtures.js";
+import { getText, setupIntegrationTest, useTestHome, withTempFile } from "../support/fixtures.js";
 import { applyEdit, canon, lineHashes, resEdit, type HTEdit } from "../../src/hashline/index.js";
 import { initHasher } from "../../src/hashline/hasher.js";
 import {

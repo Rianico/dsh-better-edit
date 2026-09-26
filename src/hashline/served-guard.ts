@@ -26,9 +26,9 @@
  */
 
 import { formatWarning } from "../domain-errors.js";
-import { HASH_SEP, canon } from "./hash-assign.js";
+import { HASH_CLASS, HASH_SEP, canon } from "./hash-assign.js";
 
-export interface ServedPrefixMismatch {
+interface ServedPrefixMismatch {
   /** SAFETY: 1-based candidate index within the submitted lines. */
   k: number;
   /** SAFETY: absolute candidate line (`start + k - 1`); equals `k` when `start` is 1. */
@@ -57,8 +57,15 @@ interface ServedAnchorHit {
   candidateCanon: string;
 }
 
-/** Single owner of the anchor-shape parse: optional diff-marker strip, length, separator, class. */
-const ANCHOR_SHAPE_RE = /^[A-Za-z0-9]{3}$/;
+/**
+ * Owner of the anchor-shape parse for the warn tiers (diff-marker strip, length,
+ * separator, class); the class derives from hash-assign's HASH_CLASS, never a copy.
+ * Deliberately NOT a repo-wide parser: the sibling accepts (anchor-pipeline's
+ * `ANCHOR_ROW_RE`, hash-assign's prefix regexes, `parseRef`) differ in marker classes,
+ * error semantics and matching basis (measured FU-R R4) — unifying would change what
+ * each accepts.
+ */
+const ANCHOR_SHAPE_RE = new RegExp(`^${HASH_CLASS}$`);
 
 function anchorShapeFromLine(line: string): { anchor: string; tail: string } | undefined {
   let text = line;
@@ -171,7 +178,7 @@ export function buildServedEditPrefixNote(args: {
   })} ${ANCHOR_PREFIX_REMEDY}`;
 }
 
-export interface NeverServedAnchorShape {
+interface NeverServedAnchorShape {
   /** SAFETY: 1-based candidate index within the submitted lines. */
   k: number;
   /** SAFETY: absolute candidate line (`start + k - 1`); equals `k` when `start` is 1. */
