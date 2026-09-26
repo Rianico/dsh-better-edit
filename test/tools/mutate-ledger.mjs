@@ -812,7 +812,12 @@ const MUTANTS = {
   T5M14: {
     what: "the sweep also deletes the legacy `snapshots` row (D2 breached)",
     scope: [VACUUM_INTERACTION],
-    expected: [T5.crossTable, T5.evictedTarget],
+    // FU-8 sweep re-anchor: FU-4 (b65d437) flipped cell 11 to the lease-boundary interception —
+    // the evicted edit now fails closed where identity is checked before any snapshot row is
+    // consulted, so deleting the legacy row no longer changes its outcome (measured 1/1 at
+    // a2b211d). `evictedTarget` stays refutable through T5M29; D2 itself is still directly
+    // refuted here by `crossTable` (its legacy-row-count assertion fails under this mutant).
+    expected: [T5.crossTable],
     edits: [
       {
         file: VACUUM,
