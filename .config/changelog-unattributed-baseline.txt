@@ -1,9 +1,32 @@
-# Legacy unattributed baseline
-# WHY this entry is unattributed: it landed before the ledger gate and carries no
+# Legacy unattributed baseline + T8 absorb bridge (a bridge, not a record).
+# WHY the legacy line is unattributed: it landed before the ledger gate and carries no
 # (#N) because no PR/issue number exists for it — attributing one would invent
 # provenance (S1 CP0 premise table, P4 option (a)). Tolerated, not fixed.
+# WHY the absorb lines are unattributed: they are this absorb's own entries and no
+# individual PR numbers exist for them yet (T8 brief ruling 2026-09-26; fabricating
+# numbers would dangle). Covered here until the landing PR attributes them.
+# Authority: the T8 ruling. Scope: exactly the absorb's own entries. Owner: T8.
+# Review trigger: the landing PR attributes these entries with its number (or the
+# release promotion empties [Unreleased]); re-running
+# `python3 scripts/changelog-gate.py ledger --update-baseline` then shrinks this file
+# back toward the legacy line (intersect-when-nonempty: recorded = baseline & unatt).
 # Form: comment lines are skipped by read_baseline (scripts/changelog-gate.py:189-195);
-# the final line is the exact bytes of entry_identity (gate:82-90) of the
-# CHANGELOG.md [Unreleased] entry, extracted mechanically via the gate's own function
-# at CP4 (never retyped), proven by cmp against the non-comment lines of this file.
+# every non-comment line is the exact bytes of entry_identity (gate:82-90),
+# written by the gate itself via --update-baseline (never retyped) — proven by cmp
+# of the non-comment lines against the gate's own entry_identity output at seeding.
+**ci:** the PR run reads the `Landing:` declaration — `scripts/changelog-gate.py` validates `--landing` (`squash|merge`) and `changelog-check.yml` forwards the PR-body line; the two deliberate holds live in `.config/scaffold-divergence.txt` as recorded drift, and the typecheck-budget projection is dropped now that its component went opt-in
+**ci:** the changelog ledger is curated, not projected — one gate (`scripts/changelog-gate.py`) checks both CI boundaries (PR run and durable `main` run) with the waiver as the only recorded escape; the amending pre-push hook is retired and the local signal is the read-only `check` probe
+**ci:** the release job no longer runs Python — the handoff `clear` step and the now-consumer-less `setup-python` pin are deleted, and release notes come from the curated `[Unreleased]` block through the release-changelog plugin
+**docs:** the v2 absorb's decisions are recorded — ADR-0016 through ADR-0025 landed (0025 records #63's deliberate supersession of #24's 0-matched strip arm; 0024's Landing forward-contract section now describes the wired reader), stale code names in older ADRs and the glossary are annotated as historical with their rename chain, the dangling supersession in ADR-0003 is annotated in place, upstream-numbered ADR cites are qualified, and the absorb plan carries the upstream-to-local ADR mapping
+**edit:** a rejected edit records and grants nothing, so the next fresh read cannot turn the rejection into a duplicate anchor
+**edit:** a stale served span no longer heals silently onto a look-alike line — verification is exact-position and fail-closed (`E_STALE_RANGE` / `E_UNSERVED_RANGE`), removing the position-misaligned accept path
+**errors:** the copied-anchor echo is one deny code (`E_SUSPICIOUS_TEXT`) across edit/write with a diagnosis that names the served line; the range family's re-read remedy is now truthful
+**errors:** the domain-error registry is the single source — declaration-only codes with no producer are deleted, and deferred upstream producers are gated per code by a producer oracle
+**scaffold:** re-project the changelog script and `.gitignore` to the skill's bytes and adopt the `Related issues` footer in the PR template — keeping the `Landing:` declaration and declining the `CODE_AUTHORS` block
+**served:** a rejected edit now answers with the current rows of exactly the region the submitted anchors name (region-matched serve); the payload never re-binds another region, and re-read stays the recovery
+**served:** the orphaned-serve healing and candidate-span enumeration are gone; lease identity is the span-verification authority
+**snapshot-store:** an LRU vacuum bounds snapshot retention — global and per-path budgets with lease/undo pins honored; the deferred state is reported, never resolved by evicting a pin
+**store:** corrupt lineage repairs terminate, and store writes land as atomic snapshot+lineage pairs — no half-written families
+**store:** the version-flap guard refuses an out-of-order store write instead of letting it clobber the newer version
+**store:** v7 content-addressed line identity — lines carry stable ids with lineage, leases key on identity, and materialization/undo resolve through it instead of position
 对齐 DSH 0.1.6-alpha.2 并修复本地测试

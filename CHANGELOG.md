@@ -24,6 +24,8 @@ All notable changes to this project will be documented in this file.
 * **store:** the version-flap guard refuses an out-of-order store write instead of letting it clobber the newer version
 * **store:** corrupt lineage repairs terminate, and store writes land as atomic snapshot+lineage pairs — no half-written families
 * **errors:** the copied-anchor echo is one deny code (`E_SUSPICIOUS_TEXT`) across edit/write with a diagnosis that names the served line; the range family's re-read remedy is now truthful
+* **read:** gate the positionless pseudo-previous reuse on the dense served mirror, so interleaved windowed reads no longer reshuffle anchors of a byte-identical file (#62)
+* **hashline:** write 0-matched HASH│ content through literally — the bare-prefix guard now rejects only a line-start hash that is a real anchor of the file, and #63 deliberately supersedes #24's 0-matched arm (see ADR-0025) (#63)
 
 ### Performance Improvements
 
@@ -36,12 +38,17 @@ All notable changes to this project will be documented in this file.
 
 ### Documentation
 
-* **docs:** the v2 absorb's decisions are recorded — ADR-0016 through ADR-0024 landed, stale code names in older ADRs and the glossary are annotated as historical with their rename chain, the dangling supersession in ADR-0003 is annotated in place, upstream-numbered ADR cites are qualified, and the absorb plan carries the upstream-to-local ADR mapping
+* **docs:** the v2 absorb's decisions are recorded — ADR-0016 through ADR-0025 landed (0025 records #63's deliberate supersession of #24's 0-matched strip arm; 0024's Landing forward-contract section now describes the wired reader), stale code names in older ADRs and the glossary are annotated as historical with their rename chain, the dangling supersession in ADR-0003 is annotated in place, upstream-numbered ADR cites are qualified, and the absorb plan carries the upstream-to-local ADR mapping
 
 ### Continuous Integration
 
 * **ci:** the changelog ledger is curated, not projected — one gate (`scripts/changelog-gate.py`) checks both CI boundaries (PR run and durable `main` run) with the waiver as the only recorded escape; the amending pre-push hook is retired and the local signal is the read-only `check` probe
 * **ci:** the release job no longer runs Python — the handoff `clear` step and the now-consumer-less `setup-python` pin are deleted, and release notes come from the curated `[Unreleased]` block through the release-changelog plugin
+* **ci:** the PR run reads the `Landing:` declaration — `scripts/changelog-gate.py` validates `--landing` (`squash|merge`) and `changelog-check.yml` forwards the PR-body line; the two deliberate holds live in `.config/scaffold-divergence.txt` as recorded drift, and the typecheck-budget projection is dropped now that its component went opt-in
+
+### Miscellaneous Chores
+
+* **scaffold:** re-project the changelog script and `.gitignore` to the skill's bytes and adopt the `Related issues` footer in the PR template — keeping the `Landing:` declaration and declining the `CODE_AUTHORS` block
 
 ## [0.8.2](https://github.com/Rianico/dsh-better-edit/compare/v0.8.1...v0.8.2) (2026-09-14)
 
