@@ -15,7 +15,6 @@
  * @module dsh-better-edit/workspace-context
  */
 
-import { randomUUID } from "node:crypto";
 import { AsyncLocalStorage } from "node:async_hooks";
 import type { ToolExecution } from "@deepseek-ai/dsh-tools";
 
@@ -31,12 +30,15 @@ export function workspaceCwd(): string | undefined {
 }
 
 // --- sessionKey helpers ---
-let fallbackSessionKey: string | undefined;
 
+// WHY: (#165) there is deliberately no fallback key: a minted key that was never served anything
+// WHY: makes every lease lookup miss and surfaces a misleading E_UNKNOWN_ANCHOR. Entrypoints
+// WHY: without a session fail here, at the boundary, with the real cause.
 export function sessionKeyFor(sessionId?: string): string {
   if (sessionId && sessionId.length > 0) return sessionId;
-  // fallback for previews/tests
-  return (fallbackSessionKey ??= randomUUID());
+  throw new Error(
+    "sessionKeyFor: tool context carries no session — entrypoints must supply the ToolExecution's session id",
+  );
 }
 
 export function execCwd(exec: ToolExecution): string {
@@ -45,9 +47,4 @@ export function execCwd(exec: ToolExecution): string {
 
 export function execSessionKey(exec: ToolExecution): string {
   return sessionKeyFor(exec.agent?.session.id);
-}
-
-// For tests: reset the fallback UUID so tests can be isolated
-export function _resetWorkspaceContextForTests(): void {
-  fallbackSessionKey = undefined;
 }
