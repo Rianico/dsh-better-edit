@@ -287,7 +287,8 @@ export function setupIntegrationTest(cwd: string, io: FileIO = localIO()) {
     sessionKey,
     makeExecFor,
     ctx: { cwd } as unknown,
-    getTool: (name: string) => (tools as Record<string, unknown>)[name],
+    getTool: (name: string): ReturnType<typeof wrapTool> =>
+      (tools as Record<string, ReturnType<typeof wrapTool>>)[name],
     readTool: tools.read,
     editTool: tools.edit,
     undoTool: tools.undo_last_edit,

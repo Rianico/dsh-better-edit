@@ -95,7 +95,7 @@ describe("undo leases — read, edit, undo through the real tools", () => {
       // same-anchor revival cannot happen through it by design; what resolves is
       // the line identity, live under the restored anchor.
       const storeU = await leases();
-      const lineageU = await withWorkspace(cwd, () =>
+      const lineageU = await withWorkspace(cwd, async () =>
         storeU.lineageFor(path, snapshotHashFor(textB1)),
       );
       const gammaRowU = lineageU.find((row) => row.canonHash === canonDigest("gamma"));
