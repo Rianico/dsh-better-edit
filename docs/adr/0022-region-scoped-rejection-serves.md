@@ -249,10 +249,35 @@ collapsed. What changes and what stands:
 - **Reference map:** rows 1–2 of _Upstream → local reference map_ flipped back to parity —
   `[E_UNVERIFIED_RANGE]` renders `Current range (fresh read):` with rows; `[E_TARGET_LOST]`
   renders the headline + re-target remedy with no rows. Rows 3–5 stand.
-- **Residuals (disclosed):** the `src/fs-bridge.ts` F7 version-guard arm keeps a row-less
-  `E_STALE_RANGE` — its payload cannot carry the `servedLine` the TARGET_LOST shape needs; and
-  local `E_STALE_RANGE` keeps rendering `Current range:` where upstream renders the fresh-read
-  heading (existing-code render, out of FU-4's scope).
+- **Residuals (disclosed, re-measured line-by-line against `b92e0ec` in FU-4R):**
+  1. The `src/fs-bridge.ts` F7 version-guard arm keeps a row-less `E_STALE_RANGE` — its
+     payload cannot carry the `servedLine` the TARGET_LOST shape needs (unchanged).
+  2. **`E_STALE_RANGE` heading render.** Local `staleRangeFormat`
+     (`src/domain-errors.ts:407-413`) renders `Current range:`; upstream renders
+     `Current range (fresh read):` for the same code
+     (`b92e0ec:src/domain-errors.ts:380-385` — the fresh-read contract of issue #149).
+     There is no `RETRY_HINT` delta here: upstream's `E_STALE_RANGE` format never appends
+     the hint. `RETRY_HINT`'s upstream home is `staleAnchorFormat`
+     (`b92e0ec:src/domain-errors.ts:299-303`, i.e. `E_STALE_ANCHOR`), whose hint local
+     already deleted per Decision 3. (FU-4R note: the retraction request for this residual
+     cited `b92e0ec:src/domain-errors.ts:302` as the `E_STALE_RANGE` formatter; the
+     enclosing function is `staleAnchorFormat(payload: ErrorPayloadMap["E_STALE_ANCHOR"])`,
+     so the citation does not resolve as stated and the divergence claim stands, now with
+     the correct referent.)
+  3. **Truncated-serve + live-lease route.** When a serve window was truncated while the
+     boundary leases stay live, upstream resolves the span's coordinates from the leases
+     themselves (`b92e0ec:src/hashline/lease-resolve.ts:221-222`,
+     `uniqueServedPosition(served, anchor) ?? lease.servedLineNumber` — "the lease outlives
+     the mirror") and feeds them to the gate (`b92e0ec:src/hashline/lease-resolve.ts:233-245`),
+     so the absent slot fails closed inside `verifyRebasedSpan` as `E_STALE_RANGE`
+     "…has no served mirror row left; the served window was truncated."
+     (`b92e0ec:src/hashline/served-verification.ts:325-335`). Downstream, the anchor's zero
+     mirror placement refuses first with `E_UNKNOWN_ANCHOR`
+     (`src/hashline/anchor-pipeline.ts`, the placement-arm refusal) before any leased-route
+     gate is reachable. **Verdict parity** (both reject, both fail-closed, both write
+     nothing); **code mismatch** (`E_UNKNOWN_ANCHOR` vs `E_STALE_RANGE`-truncated). The fix
+     is gate reachability on the leased route — a pipeline restructure, beyond the FU-4
+     taxonomy scope — recorded here as a follow-up residual, not FU-4 debt.
 - **Ledger:** mutant `M7` retired (its subject — `E_TARGET_LOST` declared without producer or
   deferral — no longer exists); `M14` re-anchored; `T6M1`'s and `M6`'s expected sets re-measured
   (the deleted-twin cell renamed, the null-row gate cell turned into an acceptance by FU-3, and
