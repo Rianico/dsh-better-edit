@@ -53,4 +53,4 @@ Single-context — one `CONTEXT.md` plus `docs/adr/` at the repo root. See `docs
 ### Contribution
 
 Conventional commits & changelog: see CONTRIBUTING.md
-Git hooks: `git config core.hooksPath .githooks` (or `npm install` with husky → `.husky` delegates to `.githooks`) so pre-push CHANGELOG guard is live on fresh clone/worktree.
+Git hooks: `.husky` runs `commit-msg` + `pre-commit` (wired by `npm install`). The CHANGELOG ledger is checked by the gate at BOTH CI boundaries (PR run and durable `main` run, `.github/workflows/changelog-check.yml`) — the pre-push amending guard is retired, see [ADR-0024](docs/adr/0024-changelog-prepush-guard-retired-gate-owns-boundaries.md); the local signal is the read-only `python3 scripts/changelog-unreleased.py check` (informational, never amends; baseline-aware local floor: `python3 scripts/changelog-gate.py ledger`).
