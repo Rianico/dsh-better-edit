@@ -45,8 +45,9 @@ and the tombstone path, not from resolution.
 
 The gate's arms, all `E_STALE_RANGE` with the echo rows/block and `reread: true`: window length
 changed, an unleased served row, a retired lease, a coordinate no leased identity occupies, and — since
-CP2-r2 — a null row inside the window (fail-closed; dsh does **not** adopt upstream ADR-0024's
-interior-`null` tolerance). Pinned by `test/core/lease-resolve-seam.test.ts`
+CP2-r2 — a null row inside the window (fail-closed; dsh does **not** adopt `pi-better-edit`
+ADR-0024's interior-`null` tolerance — that number is upstream's own sequence, not a local ADR).
+Pinned by `test/core/lease-resolve-seam.test.ts`
 ("verifyRebasedSpan — the gate's arms", 8 tests: the 6 rejection arms, the benign-accept arm and
 the no-mirror-mutation arm).
 
@@ -115,8 +116,9 @@ makes the benign-shift decision above reachable at all.
   rebind, and it was removed in T3a. A digest cannot separate two identical lines.
 - **Tombstone + canon without identity** — a byte-identical twin shares the canon, so it cannot
   distinguish moved from replaced.
-- **Upstream parity including its later interior-`null` tolerance** (upstream ADR-0024) — loosens a
-  fail-closed rule beyond this task's mandate; dsh keeps its own interior-null rejection.
+- **Upstream parity including its later interior-`null` tolerance** (`pi-better-edit` ADR-0024, upstream's
+  own numbering) — loosens a fail-closed rule beyond this task's mandate; dsh keeps its own interior-null
+  rejection.
 - **A bespoke "unique-canon crossing = swap" rule** to preserve reorder identity — a new heuristic, an
   upstream divergence, and the fail-closed direction is the one that protects against rebinds.
 

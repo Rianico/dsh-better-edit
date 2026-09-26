@@ -915,7 +915,7 @@ const MUTANTS = {
   T5M22: {
     what: "the pair delete order is swapped (snapshot before lineage)",
     scope: [VACUUM_UNIT],
-    expected: [],
+    expected: [], // GREEN (meaning 4 — the mutation applies and TWO mechanisms cover its effect): `withTransaction` (src/snapshot-store/vacuum.ts:323) makes the pair atomic, and `ON DELETE CASCADE` (src/snapshot-store/lineage-store.ts:161) removes the lineage rows together with the snapshot. Row-count matrix measured on the pair's own DDL/SQL, kept-vs-dropped x FK-ON/FK-OFF: FK-ON baseline removes [lineage 2, snapshot 1], swapped removes [snapshot 1, lineage 0] — different work, identical final set {snapshots 0, lineage 0, orphans 0}; FK-OFF both orders give the same final set, because two DELETEs on different tables commute. The order IS load-bearing, but only for a crash mid-pair with no transaction wrapper AND FKs off, which leaves 2 orphan lineage rows the adopt path cannot repair (it keys on the snapshot row, so an orphan snapshot self-heals while an orphan lineage does not). No shipped opener configures that: `PRAGMA foreign_keys` measures 1, and `enableForeignKeyConstraints:false` / `PRAGMA foreign_keys = OFF` have 0 hits in src/. NOT meaning 1 — no cell is missing; under every configuration the product builds, the swapped order has no observable effect.
     edits: [
       {
         file: VACUUM,
@@ -968,7 +968,7 @@ const MUTANTS = {
   T5M26: {
     what: "the explicit lineage delete is dropped (cascade-masked, P1 meaning 4)",
     scope: [VACUUM_UNIT],
-    expected: [],
+    expected: [], // GREEN (meaning 4 — `what` claimed cascade-masking; this is the count that proves it): dropping the explicit `deleteLineage` leaves FK-ON removing [snapshot 1] and landing on {snapshots 0, lineage 0, orphans 0}, the identical final set the baseline reaches via [lineage 2, snapshot 1], because `ON DELETE CASCADE` (src/snapshot-store/lineage-store.ts:161) does the lineage work itself. The deleted line is NOT vestigial — under FK-OFF the same mutation lands on {snapshots 0, lineage 2, orphans 2}, so the explicit delete is the belt to the cascade's braces and the mutation's effect is real wherever foreign keys are disabled. It is GREEN here only because no shipped opener disables them: `PRAGMA foreign_keys` measures 1 (src/hash-store.ts:549 sets it ON and `node:sqlite` defaults it ON), and `enableForeignKeyConstraints:false` / `PRAGMA foreign_keys = OFF` have 0 hits in src/. NOT meaning 1 — the cell that would redden this needs an FK-OFF store the product never constructs.
     edits: [
       {
         file: VACUUM,

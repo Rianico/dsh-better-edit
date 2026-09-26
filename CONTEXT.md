@@ -105,7 +105,7 @@ The informational section appended to a replace result (applied or noop, not und
 _Avoid_: warning (the operation succeeded; it is information, not a warning)
 
 **model-facing signal**:
-A model-visible signal the tool must include in `content` for correctness (e.g. `anchor staleness`, `served-range staleness`, `E_STALE_*`/`E_UNSERVED_*`, `E_SERVED_ECHO`). The model needs it to retry correctly.
+A model-visible signal the tool must include in `content` for correctness (e.g. `anchor staleness`, `served-range staleness`, `E_STALE_*`/`E_UNSERVED_*`, `E_SUSPICIOUS_TEXT`). The model needs it to retry correctly.
 
 **user-facing signal**:
 A model-visible signal informative for the human only, emitted in `details`/`warnings` and rendered collapsed in TUI (e.g. drift notice, Batch drift note). Not in model content.
@@ -174,9 +174,9 @@ _Avoid_: patch language, array shorthand
 A candidate line that begins with the exact `HASH│` anchor served for the same session, canonical path, and line — tool output mistaken for file content. For `write` the check is absolute line `i` vs `served[i]`; for `edit` it is range-relative line `k` vs `served[startLine + k]` (AA: E1). Detected before dispatch/write, file stays byte-identical. Not a generic `^[A-Za-z0-9]{3}│` strip.
 _Avoid_: hash echo (without served qualification), anchor echo
 
-**E_SERVED_ECHO**:
-Refusal that `content` (for `write`) or `replacement_text` (for `edit`) copied a `served hash echo` — `[E_SERVED_ECHO] Refused write to ${path}: line ${n} begins with the exact ${hash}│ anchor served for this session, path, and line` or `Refused edit to ${path}: replacement line ${k} begins with the exact ${hash}│ anchor served for this session, path, and range-relative line`. Remove the copied anchors and retry. Nothing was written. Deny, not strip — fail-loud, compensable.
-_Avoid_: E_HASH_ECHO (ambiguous)
+**E_SUSPICIOUS_TEXT**:
+Refusal that `content` (for `write`) or `replacement_text` (for `edit`) copied a `served hash echo` — `[E_SUSPICIOUS_TEXT] Refused write to ${path}: line ${n} begins with the exact ${hash}│ anchor served for this session, path, and line` or `Refused edit to ${path}: replacement line ${k} begins with the exact ${hash}│ anchor served for this session, path, and range-relative line`. Remove the copied anchors and retry. Nothing was written. Deny, not strip — fail-loud, compensable.
+_Avoid_: E_HASH_ECHO (ambiguous); E_WRITE_HASH_ECHO / E_EDIT_HASH_ECHO (the per-tool split, merged by ADR-0014); E_SERVED_ECHO (the merged name, renamed by the domain-errors registry — see ADR-0005's Amendment)
 
 **boundary duplicate (historical, removed by ADR-0007):**
 Auto-spliced `replacement_text` edge when it equaled an adjacent file line — `trailingDups`/`leadingDups` (byte `===`, 1-line) and `firstNewAfterDups`/`lastNewBeforeDups` (`canon()` + `sectionIsUnique`). Removed — tool is now pure `range = [remove_from, remove_to]` by hash, `replacement = exact replacement_text`; a duplicate stays as a loud duplicate the model fixes next turn (see ADR-0007).
