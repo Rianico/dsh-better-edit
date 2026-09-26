@@ -51,7 +51,7 @@
   "scripts": {
     "prepare": "tsc -p tsconfig.json && husky",
     "build": "tsc -p tsconfig.json",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.test.json",
     "typecheck:test": "tsc --noEmit -p tsconfig.test.json",
     "test": "vitest run",
     "test:watch": "vitest",

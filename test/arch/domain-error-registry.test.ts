@@ -430,6 +430,7 @@ describe("arch: domain-error registry", () => {
   // predicate and the oracle's independent recomputation.
   it("the field allowlist is pinned by identity and its predicates hold", () => {
     expect(dataHalf(DECLARATION_ONLY_FIELDS)).toEqual(FIELD_OWNERS);
+    const fired = firedWarnings(files); // REFERENT 1's witness, independently derived
     for (const [field, entry] of Object.entries(DECLARATION_ONLY_FIELDS)) {
       expect(
         ADDRESSABLE_OWNER_RE.test(entry.owner),
@@ -441,7 +442,7 @@ describe("arch: domain-error registry", () => {
       ).toBe(true);
       // REFERENT 1 (src): the entry's own predicate over live objects.
       expect(
-        entry.trigger.holds(),
+        entry.trigger.holds(fired),
         `${field} trigger no longer holds — the entry must be removed or reconciled`,
       ).toBe(true);
       // REFERENT 2 (test): the reader scan, recomputed here.
