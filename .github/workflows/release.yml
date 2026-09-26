@@ -35,8 +35,6 @@ jobs:
         with: { node-version: 26, cache: pnpm }
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with: { python-version: "3.14" }
-      - name: Clear Unreleased section (handoff to semantic-release)
-        run: python scripts/changelog-unreleased.py clear
       - run: pnpm install
       - run: pnpm exec semantic-release
         env:
