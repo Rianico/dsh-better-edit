@@ -176,7 +176,7 @@ export function makeExec(
 /** pi-hashline-compatible wrapper: execute(id, params, signal, onUpdate, ctx) → { content } */
 function wrapTool(
   tool: { execute: (args: unknown, exec: ToolRunContext) => Promise<unknown> },
-  makeExecFor: (args: unknown) => unknown,
+  makeExecFor: (args: unknown) => ToolExecution,
 ): {
   execute(
     _callId: string,
@@ -192,7 +192,8 @@ function wrapTool(
 } {
   return {
     async execute(_callId, params) {
-      const result = (await tool.execute(params, makeExecFor(params))) as unknown;
+      // Partial fake: session/signal/arguments only — the tools under test never touch deferContext/concludeTurn.
+      const result = (await tool.execute(params, makeExecFor(params) as unknown as ToolRunContext)) as unknown;
       if (typeof result === "string") return { content: [{ type: "text", text: result }] };
       if (result && typeof result === "object" && "text" in (result as Record<string, unknown>)) {
         const r = result as { text: string; warning?: string };

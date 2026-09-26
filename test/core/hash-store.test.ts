@@ -18,6 +18,7 @@ import { HASH_STORE_VERSION } from "../../src/constants.js";
 import { CANON_VERSION } from "../../src/hashline/hash-assign.js";
 import { initHasher, contentChecksum } from "../../src/hashline/hasher.js";
 import { splitLines } from "../../src/utils.js";
+import type { UndoEntry } from "../../src/undo-edit.js";
 import { getWritableTempRoot } from "../support/fixtures.js";
 
 let tmpHome: string;
@@ -1728,7 +1729,7 @@ it("file_undo row mirrors the legacy undo row with the snapshot pin", async () =
     const { saveUndo, clearUndo } = await import("../../src/undo-edit.js");
     const { snapshotHashFor } = await import("../../src/snapshot-store/lineage-store.js");
     const internal = (await loadHashStore()) as unknown as InternalHashStore;
-    const entry = {
+    const entry: UndoEntry = {
       content: "old\n",
       bom: "",
       originalEnding: "\n",
@@ -1875,10 +1876,10 @@ it("getFileUndo propagates infrastructure failures instead of healing the pair a
       const stmt = realPrepare.call(this, sql);
       if (fileUndoGetSql.test(sql)) {
         const realGet = stmt.get.bind(stmt);
-        stmt.get = (...args: Parameters<typeof realGet>) => {
+        stmt.get = ((...args: Parameters<typeof realGet>) => {
           if (failFileUndoGet) throw busy();
           return realGet(...args);
-        };
+        }) as typeof stmt.get;
       }
       return stmt;
     });
@@ -1990,7 +1991,7 @@ it("v7 write fault leaves the previous undo readable and reports failure", async
   await withTempHome(async (home) => {
     const { saveUndo } = await import("../../src/undo-edit.js");
     const internal = (await loadHashStore()) as unknown as InternalHashStore;
-    const v1 = {
+    const v1: UndoEntry = {
       content: "one\n",
       bom: "",
       originalEnding: "\n",
@@ -2301,7 +2302,7 @@ it("pruneMissing deletes the whole v7 lineage family for missing paths", async (
   await withTempHome(async (home) => {
     const store = await loadHashStore();
     const { saveUndo } = await import("../../src/undo-edit.js");
-    store.commitSnapshot({
+    (store as unknown as InternalHashStore).commitSnapshot({
       path: "/gone-fam.ts",
       content: "a\nb\n",
       hashes: ["H01", "H02"],
@@ -2330,7 +2331,7 @@ it("pruneMissing deletes the whole v7 lineage family for missing paths", async (
       2,
     );
     // v7-only path: lineage family and nothing else — the discovery union must find it.
-    store.commitSnapshot({
+    (store as unknown as InternalHashStore).commitSnapshot({
       path: "/gone-pure.ts",
       content: "p\n",
       hashes: ["P01"],
@@ -2339,7 +2340,7 @@ it("pruneMissing deletes the whole v7 lineage family for missing paths", async (
     // Existing path keeps every row (no over-delete).
     const keep = join(home, "keep-fam.ts");
     await writeFile(keep, "x\ny\n", "utf-8");
-    store.commitSnapshot({
+    (store as unknown as InternalHashStore).commitSnapshot({
       path: keep,
       content: "x\ny\n",
       hashes: ["K01", "K02"],
@@ -2383,7 +2384,7 @@ it("legacy write fault leaves the previous undo readable and reports failure", a
   await withTempHome(async (home) => {
     const { saveUndo } = await import("../../src/undo-edit.js");
     const internal = (await loadHashStore()) as unknown as InternalHashStore;
-    const v1 = {
+    const v1: UndoEntry = {
       content: "one\n",
       bom: "",
       originalEnding: "\n",
@@ -2422,7 +2423,7 @@ it("pruneMissing rolls back every table when a later delete faults", async () =>
     // Missing path with a full family; `served` is last in the prune order, and
     // legacy `snapshots` is the FIRST family — both sides of the sweep are covered.
     store.upsertSnapshot("/gone-rb.ts", contentChecksum("a\n"), 1, ["H01"]);
-    store.commitSnapshot({
+    (store as unknown as InternalHashStore).commitSnapshot({
       path: "/gone-rb.ts",
       content: "a\n",
       hashes: ["H01"],

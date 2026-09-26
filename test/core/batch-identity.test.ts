@@ -16,9 +16,9 @@ async function getWritableTempRoot(): Promise<string> {
 }
 
 /** Rendered served row -> its anchor, keyed by the row's line text. */
-function anchorsByLine(text: string): Map<string, string> {
+function anchorsByLine(result: { content: Array<{ text?: string }> }): Map<string, string> {
   const map = new Map<string, string>();
-  for (const row of getText(text).split("\n")) {
+  for (const row of getText(result).split("\n")) {
     const sep = row.indexOf("│");
     if (sep > 0) map.set(row.slice(sep + 1), extractHash(row));
   }

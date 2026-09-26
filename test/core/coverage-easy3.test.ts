@@ -39,7 +39,7 @@ describe("easy3 tool-edit", () => {
       fs: { sandboxMode: undefined },
       get: () => undefined,
     } as any);
-    const tool = buildEditTool(localIO, sandbox as any);
+    const tool = buildEditTool(localIO(), sandbox as any);
     expect(tool.name).toBe("edit");
     // just check that tool can be executed with valid params (may succeed or return error object, but not throw sync)
     try {

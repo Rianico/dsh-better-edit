@@ -49,9 +49,9 @@ const TWIN_CONTENT_A =
   "}\n";
 const TWIN_CONTENT_B = TWIN_CONTENT_A.replace("  return compute(value);\n", "");
 
-function anchorOfRendered(text: string, line: string): string {
+function anchorOfRendered(result: { content: Array<{ text?: string }> }, line: string): string {
   return extractHash(
-    getText(text)
+    getText(result)
       .split("\n")
       .find((row) => row.endsWith(`│${line}`))!,
   );

@@ -27,11 +27,6 @@ describe("coverage-agent-e fixtures2", () => {
       // Instead, test that setupIntegrationTest with custom io that returns warning
       const { buildReadTool } = await import("../../src/tool-read.js");
       const { localIO } = await import("../../src/fs-bridge.js");
-      const { FsSandboxController } = await import("../../src/sandbox.js");
-      const sandbox: any = new FsSandboxController({
-        fs: { sandboxMode: undefined },
-        get: () => undefined,
-      } as any);
       const customIo: any = {
         resolve: async (p: string) => p,
         readText: async () => "hi",
@@ -39,7 +34,7 @@ describe("coverage-agent-e fixtures2", () => {
         emitObserved: async () => {},
         statVersion: async () => undefined,
       };
-      const readTool: any = buildReadTool(customIo, sandbox);
+      const readTool: any = buildReadTool(customIo);
       // Mock tool that returns object with warning
       const fakeTool: any = {
         execute: async () => ({ text: "hello", warning: "warn text" }),

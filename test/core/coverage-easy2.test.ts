@@ -34,9 +34,8 @@ describe("easy2 tool-edit", () => {
       get: () => undefined,
     } as any);
     const tool = buildEditTool(
-      localIO,
+      localIO(),
       sandbox as any,
-      async () => ({ stdout: "", stderr: "", exitCode: 0 }) as any,
     );
     expect(tool).toBeDefined();
     expect(tool.name).toBe("edit");

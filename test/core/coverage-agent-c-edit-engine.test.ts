@@ -352,6 +352,7 @@ describe("coverage: edit-engine persistUndoAndWrite", () => {
         sandbox,
         sandboxPolicy: undefined,
         undoUnavailableMessage: (p) => `[E_UNDO_UNAVAILABLE] ${p}`,
+        restoreUnwrittenUndos: false,
       }),
     ).rejects.toThrow(/E_UNDO_UNAVAILABLE/);
     saveSpy.mockRestore();
@@ -398,6 +399,7 @@ describe("coverage: edit-engine persistUndoAndWrite", () => {
         sandbox,
         sandboxPolicy: undefined,
         undoUnavailableMessage: (p) => `undo ${p}`,
+        restoreUnwrittenUndos: false,
       }),
     ).rejects.toThrow(/disk full/);
     // first file was written then restored via second writeText call for restore + restore undo
@@ -429,6 +431,7 @@ describe("coverage: edit-engine persistUndoAndWrite", () => {
         sandboxPolicy: undefined,
         signal: undefined,
         undoUnavailableMessage: () => "x",
+        restoreUnwrittenUndos: false,
       }),
     ).resolves.toBeUndefined();
     expect(io.writeText).toHaveBeenCalledTimes(1);

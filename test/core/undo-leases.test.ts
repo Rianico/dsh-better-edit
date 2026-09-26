@@ -53,7 +53,7 @@ describe("undo leases — read, edit, undo through the real tools", () => {
       const textB1 = await fileText();
       expect(textB1).not.toContain("beta");
       const storeB1 = await leases();
-      const betaLease = await withWorkspace(cwd, () =>
+      const betaLease = await withWorkspace(cwd, async () =>
         storeB1.leaseFor("test-session", path, betaAnchor),
       );
       expect(betaLease).toBeDefined();
@@ -79,7 +79,7 @@ describe("undo leases — read, edit, undo through the real tools", () => {
         const rows = storeC.lineageFor(path, snapshotHashFor(textC));
         return rows.find((row) => row.lineId !== 1)!.anchor;
       });
-      const gammaLive = await withWorkspace(cwd, () =>
+      const gammaLive = await withWorkspace(cwd, async () =>
         storeC.leaseFor("test-session", path, gammaAnchorNow),
       );
       expect(gammaLive?.retiredAt).toBeNull();
@@ -103,7 +103,7 @@ describe("undo leases — read, edit, undo through the real tools", () => {
       expect(gammaRowU?.lineId).toBe(3);
       const restoredGammaAnchor = gammaRowU!.anchor;
       expect(restoredGammaAnchor).not.toBe(gammaAnchorB1);
-      const gammaRestored = await withWorkspace(cwd, () =>
+      const gammaRestored = await withWorkspace(cwd, async () =>
         storeU.leaseFor("test-session", path, restoredGammaAnchor),
       );
       expect(gammaRestored).toBeDefined();
@@ -115,19 +115,19 @@ describe("undo leases — read, edit, undo through the real tools", () => {
       expect(idByCanon.get(canonDigest("gamma"))).toBe(3);
       expect(idByCanon.get(canonDigest("delta"))).toBe(4);
       // The superseded assignment is never resurrected.
-      const gammaSuperseded = await withWorkspace(cwd, () =>
+      const gammaSuperseded = await withWorkspace(cwd, async () =>
         storeU.leaseFor("test-session", path, gammaAnchorB1),
       );
       expect(gammaSuperseded?.retiredAt).not.toBeNull();
 
       // Evidence 2: the added line stays retired (absent from restored content)…
-      const gammaGone = await withWorkspace(cwd, () =>
+      const gammaGone = await withWorkspace(cwd, async () =>
         storeU.leaseFor("test-session", path, gammaAnchorNow),
       );
       expect(gammaGone).toBeDefined();
       expect(gammaGone?.retiredAt).not.toBeNull();
       // …and the line the edit removed and the undo never re-served stays retired.
-      const betaStill = await withWorkspace(cwd, () =>
+      const betaStill = await withWorkspace(cwd, async () =>
         storeU.leaseFor("test-session", path, betaAnchor),
       );
       expect(betaStill).toBeDefined();

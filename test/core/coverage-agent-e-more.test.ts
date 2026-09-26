@@ -77,7 +77,7 @@ describe("coverage-agent-e more", () => {
     };
     const fakeCtx: any = { waterfall: async () => undefined, emit: () => {} };
     const io = ctxFsIO(fakeFs, fakeCtx);
-    await io.writeText("/abs/enc.txt", "hello", undefined, undefined, undefined, "gbk");
+    await io.writeText("/abs/enc.txt", "hello", undefined, undefined, undefined);
     expect(true).toBe(true);
   });
 

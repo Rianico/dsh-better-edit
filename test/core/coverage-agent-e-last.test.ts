@@ -21,7 +21,7 @@ describe("coverage-agent-e last", () => {
       fs: { sandboxMode: undefined },
       get: () => undefined,
     } as any);
-    const readTool = buildReadTool(localIO(), sandbox as any);
+    const readTool = buildReadTool(localIO());
     expect(readTool.name).toBe("read");
     const undoTool = buildUndoTool(localIO(), sandbox as any);
     expect(undoTool.name).toBe("undo_last_edit");

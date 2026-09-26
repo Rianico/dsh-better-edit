@@ -68,7 +68,8 @@ function assertRegionPayload(args: {
   const rows = err.servedRows ?? [];
   expect(err.message).not.toContain(RETRY_AFFORDANCE);
 
-  if (args.liveStart === null) {
+  // Either end null means the window is unidentifiable (call sites pair null with null).
+  if (args.liveStart === null || args.liveEnd === null) {
     // Target-lost shape: grounding void, only a read restores it.
     expect(rows).toEqual([]);
     expect(err.servedBlock).toBe("");
