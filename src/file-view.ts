@@ -550,8 +550,9 @@ export function formatPaginationHint(
 
 // FU-6 (port of pi-better-edit@2334352): the oversized and normal render paths were extracted
 // from fmtReadPreview's body into the builders below — the multi-window sections must route
-// through the SAME pipeline a single-window read uses, so a window degrades exactly like the
-// same range read alone. Single-window behavior is unchanged (pinned by read-preview tests).
+// through the SAME pipeline a single-window read uses, on ONE shared budget (same render arms,
+// budget-relative measurement — see buildWindowSection). Single-window behavior is unchanged
+// (pinned by read-preview tests).
 
 function oversizedWarning(oversized: { lineNumber: number }[]): {
   lineLabel: string;
@@ -670,8 +671,12 @@ function windowHeader(startLine: number, endLine: number, totalLines: number): s
 }
 
 /**
- * Renders one window through the same oversized/truncation pipeline a single-window read uses, so a
- * window inside a multi-window request degrades exactly like the same range read alone.
+ * Renders one window through the same oversized/truncation pipeline a single-window read uses, but
+ * against the shared budget actually LEFT to this window: `maxBytes`/`maxTruncLines` are the
+ * caller's remaining bytes/lines, not the single-read caps. The render arm is identical while the
+ * measurement is not — a 120KB line under a 200KB single-read cap is reported oversized as
+ * "exceeds 80KB" once earlier windows spent the shared budget down to 80KB. A window degrades like
+ * the same range read alone only while the shared budget is still unspent.
  */
 function buildWindowSection(params: {
   rowSizes: { lineNumber: number; bytes: number }[];

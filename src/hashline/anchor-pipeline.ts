@@ -35,7 +35,6 @@ import { NEW_CONTENT_NOT_STRING_MSG, NEW_CONTENT_BODY } from "../constants.js";
 import { DomainError, formatWarning, numericAnchorNote } from "../domain-errors.js";
 import type { ErrorPayloadMap, ServedRow, DomainErrorCode, RangeCause } from "../domain-errors.js";
 import {
-  buildNeverServedEditHint,
   buildServedEditPrefixNote,
   findNeverServedAnchorShapes,
   findServedPrefixMismatches,
@@ -1209,6 +1208,7 @@ export function applyEdit(
   range: ResolvedRange;
   warnings?: string[];
   noopEdit?: NEdit;
+  neverServedCount?: number;
 } {
   abortIf(signal);
 
@@ -1348,6 +1348,10 @@ export function applyEdit(
   // and runs against an empty served set when served is absent — it fires
   // regardless of the literal declaration (the declaration covers served rows,
   // not never-served shapes). Never blocks, never rewrites, keeps no state.
+  // FU-R (upstream apply.ts:399-401): the offending count travels as structured
+  // data (`neverServedCount`); the engine aggregates across batch items and renders
+  // one counted hint per call — this layer never renders the hint string itself.
+  let neverServedCount = 0;
   if (served) {
     for (const mismatch of findServedPrefixMismatches(
       resolved.content_lines,
@@ -1366,7 +1370,7 @@ export function applyEdit(
   }
   const neverServed = findNeverServedAnchorShapes(resolved.content_lines, served ?? [], 1);
   if (neverServed.length > 0) {
-    warnings.push(buildNeverServedEditHint({ count: neverServed.length }));
+    neverServedCount = neverServed.length;
   }
 
   return {
@@ -1375,6 +1379,7 @@ export function applyEdit(
     lastChangedLine: changed?.lastChangedLine,
     range: resolvedRange(resolved),
     ...(warnings.length ? { warnings } : {}),
+    ...(neverServedCount > 0 ? { neverServedCount } : {}),
   };
 }
 

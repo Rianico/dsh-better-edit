@@ -121,6 +121,21 @@ const P063 = {
 };
 
 /**
+ * FU-R cell titles (upstream aggregation seam + literal format pins,
+ * served-guard-warning-stages.test.ts). The two engine cells ride the per-call hint
+ * rendering, so T6M3 reddens them end-to-end; the three format pins call their
+ * builder directly, so each reddens only under its own code's deletion (the
+ * per-code isolation T6M5 already proves for the producer cells).
+ */
+const FUR = {
+  singularPin: "the count===1 arm of neverServedShapeFormat renders the singular body verbatim",
+  pluralPin: "the plural arm of neverServedShapeFormat renders the counted body verbatim",
+  mismatchPin: "servedPrefixMismatchFormat renders the k/anchor/servedLine body verbatim",
+  engineSingle: "reports success with one counted hint and keeps file bytes verbatim",
+  engineMirror: "emits exactly one hint for the whole call when 2 batch items offend",
+};
+
+/**
  * T6b cell titles (ADR-0023: multi-region interaction on sequential windowed reads).
  * Both assert an `E_STALE_RANGE` payload through `assertRegionPayload`, so both redden under
  * `T6M1` — measured 2026-09-25, re-pointed in the same commit that added them.
@@ -403,7 +418,19 @@ const MUTANTS = {
     // nothing — the refuting mutation is removing the real one. Reddens totality
     // forward (union member with neither producer nor deferral), the producer-present
     // cell, the witness cell's live-tree conjunctions, and the p063 response pin.
-    expected: [T4R3.forward, T6.neverGuard, T6.orderIndependence, P063.neverHint],
+    // FU-R re-point: the engine now renders the one per-call hint, so the two batch
+    // engine cells and the two singular/plural format pins ride the same builder —
+    // measured at the FU-R commit (got 8, expected 4 → 8).
+    expected: [
+      T4R3.forward,
+      T6.neverGuard,
+      T6.orderIndependence,
+      P063.neverHint,
+      FUR.singularPin,
+      FUR.pluralPin,
+      FUR.engineSingle,
+      FUR.engineMirror,
+    ],
     edits: [
       {
         file: SERVED_GUARD,
@@ -433,7 +460,9 @@ const MUTANTS = {
     scope: null, // full suite
     // FU-5 re-anchor (see T6M3): plant→delete. The p063 pin rides the never-served
     // header only, so it stays green here — that asymmetry IS the isolation proof.
-    expected: [T4R3.forward, T6.mismatchGuard, T6.orderIndependence],
+    // FU-R re-point: the mismatch format pin joins (the never-served pins stay green,
+    // extending the same asymmetry to the FU-R cells; measured got 4, expected 3 → 4).
+    expected: [T4R3.forward, T6.mismatchGuard, T6.orderIndependence, FUR.mismatchPin],
     edits: [
       {
         file: SERVED_GUARD,

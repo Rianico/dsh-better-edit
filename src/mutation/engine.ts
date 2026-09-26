@@ -35,6 +35,7 @@ import {
 } from "../hashline/anchor-pipeline.js";
 import { lineHashes } from "../hashline/hash.js";
 import { AnchorSpaceExhaustedError, HASH_SPACE } from "../hashline/hash-assign.js";
+import { buildNeverServedEditHint } from "../hashline/served-guard.js";
 
 function isAnchorSpaceExhausted(e: unknown): boolean {
   return (
@@ -285,6 +286,8 @@ export interface ApplyOneResult {
   totalAddedLines: number;
   totalRemovedLines: number;
   anchorWarnings: string[] | undefined;
+  /** Offending never-served anchor-shaped lines, as data (FU-R, upstream pipeline.ts:261,269); the batch renders one counted hint per call. */
+  neverServedCount: number;
 }
 
 /**
@@ -408,6 +411,7 @@ export async function applyOne(
     totalAddedLines,
     totalRemovedLines,
     anchorWarnings: anchorResult.warnings,
+    neverServedCount: anchorResult.neverServedCount ?? 0,
   };
 }
 
@@ -729,6 +733,18 @@ export async function runFileEdits(
   const served = await loadServed(opts.sessionKey, absolutePath);
   const servedCanons = await loadServedCanons(opts.sessionKey, absolutePath);
   const warnings: string[] = [];
+  // FU-R (upstream pipeline.ts:811-822): the never-served soft hint is once per call. Per-item
+  // counts travel as structured data (`neverServedCount`), aggregate here, and one counted hint
+  // renders after the loop. No other warning tier is capped; a noop writes nothing, so its count
+  // is never aggregated.
+  let neverServedTotal = 0;
+  const pushAppliedWarnings = (list: string[] | undefined, hintCount: number): void => {
+    if (list) warnings.push(...list);
+    neverServedTotal += hintCount;
+  };
+  const pushNoopWarnings = (list: string[] | undefined): void => {
+    if (list) warnings.push(...list);
+  };
 
   // The lease store is resolved once per file edit; the source itself is rebuilt per buffer (the
   // pre-pass resolves against `originalNormalized`, each loop item against `currentContent` plus the
@@ -896,7 +912,7 @@ export async function runFileEdits(
       warnings.push(
         `edits[${item.index}] (${item.file}) was a noop: the range already contains the replacement text.`,
       );
-      if (applied.anchorWarnings?.length) warnings.push(...applied.anchorWarnings);
+      pushNoopWarnings(applied.anchorWarnings);
       continue;
     }
 
@@ -924,7 +940,11 @@ export async function runFileEdits(
     }
     currentHashes = applied.hashes;
     clearNoopLoop(absolutePath);
-    if (applied.anchorWarnings?.length) warnings.push(...applied.anchorWarnings);
+    pushAppliedWarnings(applied.anchorWarnings, applied.neverServedCount);
+  }
+
+  if (neverServedTotal > 0) {
+    warnings.push(buildNeverServedEditHint({ count: neverServedTotal }));
   }
 
   const result = currentContent;
