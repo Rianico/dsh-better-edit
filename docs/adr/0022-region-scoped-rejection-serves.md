@@ -254,8 +254,8 @@ collapsed. What changes and what stands:
   local `E_STALE_RANGE` keeps rendering `Current range:` where upstream renders the fresh-read
   heading (existing-code render, out of FU-4's scope).
 - **Ledger:** mutant `M7` retired (its subject — `E_TARGET_LOST` declared without producer or
-  deferral — no longer exists); `M14` re-anchored; `T6M1`'s expected set dropped the deleted-twin
-  cell, which now rejects via `E_TARGET_LOST` and no longer routes through the `E_STALE_RANGE`
-  formatter.
+  deferral — no longer exists); `M14` re-anchored; `T6M1`'s and `M6`'s expected sets re-measured
+  (the deleted-twin cell renamed, the null-row gate cell turned into an acceptance by FU-3, and
+  M6's stays-deleted cell no longer fires for a code whose producer exists).
 - **Keep serving context rows for the target-lost case (unleased)** — rejected upstream and here:
   a context row grounds no decision, and serving it would reintroduce a non-leasing serve.

@@ -89,7 +89,10 @@ const T6 = {
   formatterHint: "E_STALE_RANGE with rows renders the heading and the named region's rows (T6)",
   regionOracle: "span-length arm carries the named region's rows",
   armFlag: "no range-family arm carries the deleted retry flag (arm counts pinned)",
-  nullRowGate: "fails closed on a null row inside the window — the gate is directly callable",
+  // `nullRowGate` retired here: FU-3 (edc516d, upstream ADR-0024 decision 1) turned the
+  // null-row-in-window rejection into an ACCEPTANCE cell, so no cell under this title can
+  // redden; the acceptance is pinned by "accepts an unread interior row between two leased
+  // boundaries" and the direct-call gate arms stay pinned separately.
   lengthDisagree: "rejects a window whose served and rebased lengths disagree",
   neverGuard: "W_NEVER_SERVED_SHAPE's guard holds while the source scan sees no producer for it",
   mismatchGuard:
@@ -344,12 +347,13 @@ const MUTANTS = {
     scope: null, // full suite
     expected: [
       T4.spanLength,
-      T6.nullRowGate,
       T6.lengthDisagree,
       T6.regionOracle,
       T6.formatterHint,
       // T6b (ADR-0023): the two multi-region cells assert their E_STALE_RANGE payloads through
       // `assertRegionPayload`, which bans the restored affordance — measured 3/3 in this file.
+      // FU-4 re-measure (b65d437): dropped `nullRowGate` (cell turned into an acceptance by
+      // FU-3) and `deletedExternally` (cell renamed and rerouted to E_TARGET_LOST) — 6/6.
       T6b.overlap,
       T6b.disjoint,
     ],
@@ -432,7 +436,10 @@ const MUTANTS = {
     scope: null, // full suite
     // `T6.orderIndependence` renamed in CP3 (the old title claimed a property its re-read could
     // not falsify); M6 no longer reddens the renamed cell — its loop dereferences named codes.
-    expected: [T4R3.backward, T6.deferredRefute, T4R3.deleted],
+    // FU-4 re-measure: `E_FOREIGN_ANCHOR` is a real ported code with a producer now, so the
+    // marker refutes through `totality backward` and the constant-refutation pin; the
+    // stays-deleted cell no longer fires for a code whose producer exists (measured at b65d437).
+    expected: [T4R3.backward, T6.deferredRefute],
     edits: [
       {
         file: DOMAIN_ERRORS,
