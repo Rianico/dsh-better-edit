@@ -63,8 +63,9 @@ describe("P0-63 — literal HASH│-shaped replacement content must write throug
       }
 
       let error: unknown;
+      let outcome: Awaited<ReturnType<typeof editTool.execute>> | undefined;
       try {
-        await editTool.execute("write-literal", {
+        outcome = await editTool.execute("write-literal", {
           path: "target.txt",
           anchor_from: anchor1,
           anchor_to: anchor1,
@@ -83,6 +84,14 @@ describe("P0-63 — literal HASH│-shaped replacement content must write throug
       ).toBeUndefined();
       // VERDICT carrier #2: the bytes landed literally, prefixes intact, rest untouched.
       expect(await readFile(path, "utf-8")).toBe(`${LITERAL_REPLACEMENT}\nbeta\ngamma\n`);
+      // FU-5 (§4.7 / ADR-0025 amendment): the write-through is NOT silent — the
+      // counted never-served hint rides the model-visible response, and the
+      // batch-abort wording the guard used to own is gone from this route.
+      const out = getText(outcome!);
+      expect(out).toContain("[W_NEVER_SERVED_SHAPE]");
+      expect(out).toContain("2 replacement lines open with anchor-shaped tokens");
+      expect(out).toContain("Applied verbatim.");
+      expect(out).toContain("If the hash anchor prefix was unintended, `undo_last_edit`");
     });
   });
 

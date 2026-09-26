@@ -5,7 +5,9 @@ Status: accepted
 Amended: 2026-09-26 (FU-4, absorb of `pi-better-edit@b92e0ec`) — Decision 2's
 row-count-only disjointness and the _Deliberate divergence_ collapse are superseded;
 the region invariant (Decision 1) and the retry-affordance deletion (Decision 3) stand.
-See §Amendment at the end.
+Amended again: 2026-09-26 (FU-5, §4.7 conformance) — the `W_*` deferral bullet is
+superseded (producers landed; deferral recorded at `b65d437` closed).
+See §Amendment (FU-4) and §Amendment (FU-5) at the end.
 Related: `src/hashline/anchor-pipeline.ts` (`verifyServedRange`, `buildRangeEcho`,
 `fmtMismatchWithServes`), `src/domain-errors.ts` (`E_STALE_RANGE`, `E_UNSERVED_RANGE`
 formatters), `src/fs-bridge.ts` (the F7 version-guard arm), `CONTEXT.md`
@@ -163,6 +165,10 @@ needed).` string is gone, so no message can promise a read-free retry the served
   **injected witness** (`holds(fired)`), so production carries no witness state, the falsity is
   reachable, and the verdict cannot depend on evaluation order; the arch oracle derives the witness
   from a source scan as the independent second referent (T6 CP2, F2).
+  **Superseded by FU-5 (§4.7 conformance)**: the trigger fired — both producers landed in
+  `src/hashline/served-guard.ts` and `DEFERRED_PRODUCERS` is empty; the deferral this bullet
+  recorded (moved to the producer seam at `b65d437`) is closed, not renewed. See
+  §Amendment (FU-5) at the end and ADR-0025's FU-5 amendment.
 - Out of scope, unchanged: the fast path, in-place `E_STALE_RANGE` for torn or inserted spans,
   the content-placeable `E_STALE_ANCHOR` self-heal, the `E_SUSPICIOUS_TEXT` / `mode: "literal"`
   surface, and `README.md`'s error table.
@@ -284,3 +290,31 @@ collapsed. What changes and what stands:
   M6's stays-deleted cell no longer fires for a code whose producer exists).
 - **Keep serving context rows for the target-lost case (unleased)** — rejected upstream and here:
   a context row grounds no decision, and serving it would reintroduce a non-leasing serve.
+
+## Amendment (FU-5, 2026-09-26) — the `W_*` deferral recorded at `b65d437` is closed
+
+FU-5 (§4.7 conformance, upstream `pi-better-edit@b92e0ec`) ported the two deferred
+producers. This supersedes the Consequences bullet "The two deferred `W_*` warnings
+keep their deferral…" (the deferral FU-4 moved to the producer seam at `b65d437`,
+upstream referents `served-guard.ts:202` and `:279`):
+
+- `src/hashline/served-guard.ts` now exists and produces both codes —
+  `buildServedEditPrefixNote` (W_SERVED_PREFIX_MISMATCH, per occurrence, applied-only)
+  and `buildNeverServedEditHint` (W_NEVER_SERVED_SHAPE, shape-only, once per rendered
+  hint with an aggregated line count). `DEFERRED_PRODUCERS` is empty; the mechanism and
+  its identity pins stay for future deferrals.
+- The applied-bytes warn stages are wired in `applyEdit` (upstream stage
+  `hashline/apply.ts:387-427`): mismatch tier evidence-gated (`if (served)`),
+  never-served tier runs against the empty served set when served is absent and fires
+  regardless of the `mode: "literal"` declaration.
+- **Evidence adaptation:** upstream compares `canonDigest(remainder)` against
+  lease-derived `canon_hash` digests (#151); this tree compares `canon(tail)` against
+  the raw canon strings of `servedCanons` (`read-and-serve.ts:173`). Same tier
+  semantics, different comparison space.
+- **Disclosed deviations:** (1) upstream aggregates `neverServedCount` per batch item in
+  the engine and renders ONE hint per call (`mutation-engine/pipeline.ts:1037`); the
+  engine was ruled out of the FU-5 lane, so this tree renders one hint per applied
+  `applyEdit` item. (2) Upstream's write-channel note builder
+  (`buildServedWritePrefixNote`, `lifecycle-hooks/index.ts:188-197`) is NOT ported: the
+  local write channel (`src/write-hook.ts`, `target: "write"` at :74 — measurement
+  corrected during FU-5) is outside the ticket's target files.

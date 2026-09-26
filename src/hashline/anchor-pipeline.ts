@@ -34,6 +34,12 @@ import { SERVED_ECHO_CAP } from "../constants.js";
 import { NEW_CONTENT_NOT_STRING_MSG, NEW_CONTENT_BODY } from "../constants.js";
 import { DomainError, formatWarning, numericAnchorNote } from "../domain-errors.js";
 import type { ErrorPayloadMap, ServedRow, DomainErrorCode, RangeCause } from "../domain-errors.js";
+import {
+  buildNeverServedEditHint,
+  buildServedEditPrefixNote,
+  findNeverServedAnchorShapes,
+  findServedPrefixMismatches,
+} from "./served-guard.js";
 import type { EditMode } from "../contract.js";
 export type Anchor = { hash: string };
 
@@ -325,6 +331,7 @@ function stripBarePrefixes(edit: HEdit, fileHashes: string[], _warnings: string[
   // #63 supersedes #24's 0-matched arm: no stripped prefix is a file anchor, so the
   // lines are literal content — pass the edit through UNCHANGED (prefixes intact).
   // Arms with matched >= 1 keep throwing; the call-site echo routing still governs.
+  // FU-5: the applied-bytes warn tiers (served-guard.ts) name this write-through.
   if (matchedCount === 0) return edit;
   const locations = stripped.map((s) => `replace_with line ${s.lineIndex + 1}`).join(", ");
   const evidence = `${matchedCount}/${stripped.length} matched`;
@@ -1333,6 +1340,34 @@ export function applyEdit(
   const result = assemble(content, spanResult, signal);
   assertNotEmpty(content, result);
   const changed = changedRange(content, result);
+
+  // FU-5 (§4.7 conformance, upstream apply.ts:387-427): the 0-matched literal
+  // write-through (#63/ADR-0025) keeps writing, and these tiers name what was
+  // written. Middle tier stays evidence-gated (`if (served)`): with no served
+  // content it reports nothing by construction. Soft-hint tier is shape-only
+  // and runs against an empty served set when served is absent — it fires
+  // regardless of the literal declaration (the declaration covers served rows,
+  // not never-served shapes). Never blocks, never rewrites, keeps no state.
+  if (served) {
+    for (const mismatch of findServedPrefixMismatches(
+      resolved.content_lines,
+      served,
+      servedCanons ?? [],
+      1,
+    )) {
+      warnings.push(
+        buildServedEditPrefixNote({
+          k: mismatch.k,
+          anchor: mismatch.anchor,
+          servedLine: mismatch.servedLine,
+        }),
+      );
+    }
+  }
+  const neverServed = findNeverServedAnchorShapes(resolved.content_lines, served ?? [], 1);
+  if (neverServed.length > 0) {
+    warnings.push(buildNeverServedEditHint({ count: neverServed.length }));
+  }
 
   return {
     content: result,

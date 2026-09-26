@@ -1,6 +1,10 @@
 # ADR-0025 — #63 supersedes #24's 0-matched strip arm
 
 Status: RULED (orchestrator, CP3 ticket "Option 1 granted"); landed by p0-impl in-lane 2026-09-26.
+Amended: 2026-09-26 (FU-5, §4.7 conformance, absorb of `pi-better-edit@b92e0ec`) — the
+Condition-4 "Declared limit" below was DEFERRED DEBT, not a decline, and its predicate
+trigger has fired: both `W_*` producers landed in `src/hashline/served-guard.ts` and the
+0-matched write-through now warns. See §FU-5 amendment at the end.
 Landed as `docs/adr/0025-63-supersedes-24-zero-matched-strip-arm.md` by T8 on 2026-09-26; this file is the durable decision record for the lane.
 Revision: `ab713ddf1d76451139257f43761b282143957a30` (branch `audit/p0-61-canon-fallback`).
 
@@ -101,3 +105,36 @@ exists in the registry, or the edit response payload otherwise distinguishes the
 the same `rg -n '0-matched' src/domain-errors.ts` above — empty output (RC=1) means the gap stands; any hit
 means re-read the registry and update this section. No reader was shimmed at landing: the write-through ships
 silent and the gap is recorded, not patched.
+
+**TRIGGER FIRED (FU-5, 2026-09-26):** both codes already existed in the registry (declared, deferred) and
+FU-5 landed their producers — the deciding command above still prints nothing because the codes are named
+`W_NEVER_SERVED_SHAPE`/`W_SERVED_PREFIX_MISMATCH`, not "0-matched"; per the trigger's first clause
+("a warning code expressing 0-matched-literal write-through exists"), re-read the registry: the deferred
+entries are gone and the producers fire. This section is superseded by §FU-5 amendment below.
+
+## FU-5 amendment (2026-09-26) — the declared limit is closed: write-through now warns
+
+Determination: Condition 4 was recorded as **deferred debt**, not a decline — "a new code would be a new
+design → surfaced to the orchestrator as a possible own bounded ticket". FU-5 (drift review §4.7) IS that
+ticket: it ports the upstream producers and closes the debt.
+
+- `src/hashline/served-guard.ts` (upstream referents `pi-better-edit@b92e0ec:src/hashline/served-guard.ts:202`
+  and `:279`) produces both codes; `DEFERRED_PRODUCERS` is empty (mechanism retained).
+- Warn stages wire after `applyEdit`'s served guards on the APPLIED bytes (upstream stage
+  `hashline/apply.ts:387-427`): per-occurrence `W_SERVED_PREFIX_MISMATCH` notes (evidence-gated on `served`,
+  exact reproductions excluded — the gate owns them) and one `W_NEVER_SERVED_SHAPE` hint carrying the
+  offending-line count (shape-only, runs against the empty served set when `served` is absent, fires
+  regardless of `mode: "literal"`). The no-false-refusal contract is unchanged: the 0-matched arm still
+  writes through — now loudly.
+- Evidence adaptation: upstream compares canon DIGESTS from leases; this tree compares `canon(tail)` against
+  the `servedCanons` raw canon strings (`read-and-serve.ts:173`). Tier semantics identical.
+- Disclosed deviations: (1) upstream aggregates `neverServedCount` per batch item in the engine and renders
+  ONE hint per call (`mutation-engine/pipeline.ts:1037`); the engine was ruled out of this lane, so the hint
+  renders per applied `applyEdit` item. (2) The upstream write-channel note builder
+  (`lifecycle-hooks/index.ts:188-197`) is not ported — `src/write-hook.ts` is outside the lane's target
+  files (corrected measurement: the local write channel exists, `target: "write"` at `write-hook.ts:74`).
+- Re-pinned tests: the #63 write-through cells now assert the warning path alongside byte equality
+  (`test/core/hashline-strict-input.test.ts`, `test/core/hashline-p063-literal-pipe-content.test.ts`);
+  tier coverage lives in `test/core/served-guard-warning-stages.test.ts`; the arch registry cells flip from
+  guard-holds to producer-present (`test/arch/domain-error-registry.test.ts`), and the mutate ledger
+  re-anchors T6M3/T6M5/M6 accordingly (M17 retired with its dead anchor).

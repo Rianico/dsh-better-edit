@@ -976,23 +976,10 @@ export const DECLARATION_ONLY_FIELDS: Readonly<Record<string, AllowlistEntry>> =
  * satisfied by another test's earlier firing — the defect the first form had. The arch
  * oracle derives the witness from source (a read) and recomputes the same producer scan
  * as its independent second referent.
+ *
+ * FU-5 (absorb/follow-upstream, upstream `pi-better-edit@b92e0ec` §4.7) landed the
+ * two deferred `W_*` producers in `src/hashline/served-guard.ts` — per the shrink-only
+ * rule above both entries are removed. The map is empty; the mechanism and the
+ * identity pins stay for the next deferral.
  */
-export const DEFERRED_PRODUCERS: Readonly<Record<string, AllowlistEntry>> = {
-  W_NEVER_SERVED_SHAPE: {
-    owner: "src/hashline/served-guard.ts",
-    trigger: {
-      text: "src/hashline/served-guard.ts",
-      // REFERENT 1 (src, pure): flips false exactly when the caller's witness (a source
-      // scan of producer call sites) contains this code. REFERENT 2 (test): the arch
-      // oracle recomputes producer existence from source — see C7/C17.
-      holds: (fired) => !fired.has("W_NEVER_SERVED_SHAPE"),
-    },
-  },
-  W_SERVED_PREFIX_MISMATCH: {
-    owner: "src/hashline/served-guard.ts",
-    trigger: {
-      text: "src/hashline/served-guard.ts",
-      holds: (fired) => !fired.has("W_SERVED_PREFIX_MISMATCH"),
-    },
-  },
-};
+export const DEFERRED_PRODUCERS: Readonly<Record<string, AllowlistEntry>> = {};

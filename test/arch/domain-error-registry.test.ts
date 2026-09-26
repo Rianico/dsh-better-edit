@@ -102,17 +102,11 @@ export function undeclaredProducerMessage(missing: readonly string[]): string {
  * in C17 and asserted separately in the cells below, so they are never recycled as
  * their own referent (T6 R15: the mutant must break the real predicate, not a
  * caricature of it).
+ * FU-5 (§4.7): both `W_*` producers landed in `src/hashline/served-guard.ts`, so the
+ * map is empty — this copy stays as the identity pin: a NEW deferral must touch this
+ * test, and `totality backward` below keeps refuting any entry that contradicts it.
  */
-const DEFERRED_OWNERS = {
-  W_NEVER_SERVED_SHAPE: {
-    owner: "src/hashline/served-guard.ts",
-    trigger: { text: "src/hashline/served-guard.ts" },
-  },
-  W_SERVED_PREFIX_MISMATCH: {
-    owner: "src/hashline/served-guard.ts",
-    trigger: { text: "src/hashline/served-guard.ts" },
-  },
-} as const;
+const DEFERRED_OWNERS = {} as const;
 
 const FIELD_OWNERS = {
   remedy: {
@@ -294,16 +288,19 @@ describe("arch: domain-error registry", () => {
     }
   });
 
-  // Per-code world cells (F2 proof 2): the mutant that plants a producer for ONE code
-  // must redden only THAT code's cell. A shared witness cannot satisfy this pair.
-  it("W_NEVER_SERVED_SHAPE's guard holds while the source scan sees no producer for it", () => {
-    expect(fired.has("W_NEVER_SERVED_SHAPE")).toBe(false);
-    expect(DEFERRED_PRODUCERS.W_NEVER_SERVED_SHAPE!.trigger.holds(fired)).toBe(true);
+  // Per-code world cells (F2 proof 2; flipped by FU-5): the producers landed in
+  // `src/hashline/served-guard.ts`, so each cell flips from guard-holds to the C9
+  // conjunction — declared union member AND literal-visible producer. The mutant
+  // that deletes ONE producer must redden only THAT code's cell (plus totality
+  // forward); a shared assertion cannot satisfy this pair.
+  it("W_NEVER_SERVED_SHAPE is a union member with a literal producer (FU-5)", () => {
+    expect(isDomainWarningCode("W_NEVER_SERVED_SHAPE")).toBe(true);
+    expect(fired.has("W_NEVER_SERVED_SHAPE")).toBe(true);
   });
 
-  it("W_SERVED_PREFIX_MISMATCH's guard holds while the source scan sees no producer for it", () => {
-    expect(fired.has("W_SERVED_PREFIX_MISMATCH")).toBe(false);
-    expect(DEFERRED_PRODUCERS.W_SERVED_PREFIX_MISMATCH!.trigger.holds(fired)).toBe(true);
+  it("W_SERVED_PREFIX_MISMATCH is a union member with a literal producer (FU-5)", () => {
+    expect(isDomainWarningCode("W_SERVED_PREFIX_MISMATCH")).toBe(true);
+    expect(fired.has("W_SERVED_PREFIX_MISMATCH")).toBe(true);
   });
 
   // Order-independence is STRUCTURAL, and this cell locates the witness instead of decorating it
@@ -317,21 +314,26 @@ describe("arch: domain-error registry", () => {
   it("the witness is per-call: a different source set yields a different witness and verdicts", () => {
     const dir = mkdtempSync(join(tmpdir(), "t6-witness-"));
     try {
-      const plantedFile = join(dir, "planted.ts");
+      const plantedNever = join(dir, "planted-never.ts");
       writeFileSync(
-        plantedFile,
+        plantedNever,
         'export const x = formatWarning("W_NEVER_SERVED_SHAPE", { count: 1 });\n',
         "utf-8",
       );
-      const plantedWitness = firedWarnings([plantedFile]);
+      const plantedMismatch = join(dir, "planted-mismatch.ts");
+      writeFileSync(
+        plantedMismatch,
+        'export const x = formatWarning("W_SERVED_PREFIX_MISMATCH", { k: 1, anchor: "aaa", servedLine: 1 });\n',
+        "utf-8",
+      );
       // (ii) two different sets, two different witnesses: a latch or a constant fails this.
-      expect(plantedWitness.has("W_NEVER_SERVED_SHAPE")).toBe(true);
-      expect(fired.has("W_NEVER_SERVED_SHAPE")).toBe(false);
-      // ... and the guards' verdicts change with the witness, per code.
-      expect(DEFERRED_PRODUCERS.W_NEVER_SERVED_SHAPE!.trigger.holds(plantedWitness)).toBe(false);
-      expect(DEFERRED_PRODUCERS.W_NEVER_SERVED_SHAPE!.trigger.holds(fired)).toBe(true);
-      expect(DEFERRED_PRODUCERS.W_SERVED_PREFIX_MISMATCH!.trigger.holds(plantedWitness)).toBe(true);
-      expect(DEFERRED_PRODUCERS.W_SERVED_PREFIX_MISMATCH!.trigger.holds(fired)).toBe(true);
+      expect([...firedWarnings([plantedNever])].sort()).toEqual(["W_NEVER_SERVED_SHAPE"]);
+      expect([...firedWarnings([plantedMismatch])].sort()).toEqual(["W_SERVED_PREFIX_MISMATCH"]);
+      expect(firedWarnings([]).size).toBe(0);
+      // The live tree carries both producers (FU-5 flipped the deferral): deleting one
+      // reddens the per-code cell above AND the conjunctions here.
+      expect(fired.has("W_NEVER_SERVED_SHAPE")).toBe(true);
+      expect(fired.has("W_SERVED_PREFIX_MISMATCH")).toBe(true);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

@@ -37,6 +37,7 @@ import { fileURLToPath } from "node:url";
 const REPO = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const ENGINE = "src/mutation/engine.ts";
 const ANCHOR_PIPELINE = "src/hashline/anchor-pipeline.ts";
+const SERVED_GUARD = "src/hashline/served-guard.ts";
 const CONTRACT = "test/core/serve-leases.test.ts";
 const DOMAIN_ERRORS = "src/domain-errors.ts";
 
@@ -94,9 +95,11 @@ const T6 = {
   // redden; the acceptance is pinned by "accepts an unread interior row between two leased
   // boundaries" and the direct-call gate arms stay pinned separately.
   lengthDisagree: "rejects a window whose served and rebased lengths disagree",
-  neverGuard: "W_NEVER_SERVED_SHAPE's guard holds while the source scan sees no producer for it",
-  mismatchGuard:
-    "W_SERVED_PREFIX_MISMATCH's guard holds while the source scan sees no producer for it",
+  // FU-5 re-anchor: the producers landed in src/hashline/served-guard.ts (ADR-0025
+  // amendment); the guard-holds cells flipped to producer-present conjunctions, and
+  // the mutants below flipped from PLANT a producer to DELETE one.
+  neverGuard: "W_NEVER_SERVED_SHAPE is a union member with a literal producer (FU-5)",
+  mismatchGuard: "W_SERVED_PREFIX_MISMATCH is a union member with a literal producer (FU-5)",
   deferredRefute:
     "the deferred predicates refute a constant: their own code falsifies, others do not",
   orderIndependence:
@@ -105,6 +108,16 @@ const T6 = {
   // rejection no longer routes through the `E_STALE_RANGE` formatter, so T6M1 cannot redden it.
   // The retry-affordance ban is still pinned by T4.spanLength, T6.regionOracle and the E_TARGET_LOST
   // cell's own `not.toContain(Retry with these anchors)` assertion.
+};
+
+/**
+ * P0-63 cell titles (issue #63 write-through; FU-5 added the warning-path pin).
+ * The treatment cell asserts the rendered `[W_NEVER_SERVED_SHAPE]` header in the
+ * tool response, so deleting the producer reddens it end-to-end (T6M3).
+ */
+const P063 = {
+  neverHint:
+    "writes 0-matched literal `abc│text`/`KEY│value` through unchanged (treatment, acceptance criterion 1)",
 };
 
 /**
@@ -384,18 +397,18 @@ const MUTANTS = {
     ],
   },
   T6M3: {
-    what: "plant a REAL W_* producer through the real seam (source scan sees it; the other code's guard must stay held)",
+    what: "delete the REAL W_NEVER_SERVED_SHAPE producer from served-guard — the landed code must be refutable (FU-5 re-anchor; per-code isolation: the mismatch guard stays green)",
     scope: null, // full suite
-    // CP3: the renamed per-call cell asserts the verdict on a planted witness, so a plant in the
-    // real tree also reddens it — measured 3/3, re-pointed with the rename.
-    expected: [T4R3.backward, T6.neverGuard, T6.orderIndependence],
+    // FU-5 flipped plant→delete: the deferral is gone, so adding a producer reddens
+    // nothing — the refuting mutation is removing the real one. Reddens totality
+    // forward (union member with neither producer nor deferral), the producer-present
+    // cell, the witness cell's live-tree conjunctions, and the p063 response pin.
+    expected: [T4R3.forward, T6.neverGuard, T6.orderIndependence, P063.neverHint],
     edits: [
       {
-        file: DOMAIN_ERRORS,
-        old: "export const DEFERRED_PRODUCERS: Readonly<Record<string, AllowlistEntry>> = {",
-        new:
-          'export const __t6m3 = formatWarning("W_NEVER_SERVED_SHAPE", { count: 1 });\n' +
-          "export const DEFERRED_PRODUCERS: Readonly<Record<string, AllowlistEntry>> = {",
+        file: SERVED_GUARD,
+        old: '  return `${formatWarning("W_NEVER_SERVED_SHAPE", { count: args.count })} ${ANCHOR_PREFIX_REMEDY}`;',
+        new: "  return ANCHOR_PREFIX_REMEDY;",
       },
     ],
   },
@@ -416,18 +429,21 @@ const MUTANTS = {
     ],
   },
   T6M5: {
-    what: "plant a W_SERVED_PREFIX_MISMATCH producer ONLY — per-code isolation (W_NEVER_SERVED_SHAPE's guard must stay held)",
+    what: "delete the W_SERVED_PREFIX_MISMATCH producer ONLY — per-code isolation (W_NEVER_SERVED_SHAPE's producer-present cell must stay green)",
     scope: null, // full suite
-    // CP3: the renamed per-call cell asserts the verdict on a planted witness, so a plant in the
-    // real tree also reddens it — measured 3/3, re-pointed with the rename.
-    expected: [T4R3.backward, T6.mismatchGuard, T6.orderIndependence],
+    // FU-5 re-anchor (see T6M3): plant→delete. The p063 pin rides the never-served
+    // header only, so it stays green here — that asymmetry IS the isolation proof.
+    expected: [T4R3.forward, T6.mismatchGuard, T6.orderIndependence],
     edits: [
       {
-        file: DOMAIN_ERRORS,
-        old: "export const DEFERRED_PRODUCERS: Readonly<Record<string, AllowlistEntry>> = {",
-        new:
-          'export const __t6m5 = formatWarning("W_SERVED_PREFIX_MISMATCH", { k: 1, anchor: "aaa", servedLine: 1 });\n' +
-          "export const DEFERRED_PRODUCERS: Readonly<Record<string, AllowlistEntry>> = {",
+        file: SERVED_GUARD,
+        old:
+          '  return `${formatWarning("W_SERVED_PREFIX_MISMATCH", {\n' +
+          "    k: args.k,\n" +
+          "    anchor: args.anchor,\n" +
+          "    servedLine: args.servedLine,\n" +
+          "  })} ${ANCHOR_PREFIX_REMEDY}`;",
+        new: "  return ANCHOR_PREFIX_REMEDY;",
       },
     ],
   },
@@ -439,17 +455,18 @@ const MUTANTS = {
     // FU-4 re-measure: `E_FOREIGN_ANCHOR` is a real ported code with a producer now, so the
     // marker refutes through `totality backward` and the constant-refutation pin; the
     // stays-deleted cell no longer fires for a code whose producer exists (measured at b65d437).
+    // FU-5 re-anchor: DEFERRED_PRODUCERS is now EMPTY (both producers landed), so the marker
+    // plants into the empty map; `totality backward`'s identity pin ({} vs the planted entry)
+    // and the dereferencing loop still redden.
     expected: [T4R3.backward, T6.deferredRefute],
     edits: [
       {
         file: DOMAIN_ERRORS,
-        old:
-          "export const DEFERRED_PRODUCERS: Readonly<Record<string, AllowlistEntry>> = {\n" +
-          "  W_NEVER_SERVED_SHAPE: {",
+        old: "export const DEFERRED_PRODUCERS: Readonly<Record<string, AllowlistEntry>> = {};",
         new:
           "export const DEFERRED_PRODUCERS: Readonly<Record<string, AllowlistEntry | string>> = {\n" +
           '  E_FOREIGN_ANCHOR: "range-family ticket (leases)",\n' +
-          "  W_NEVER_SERVED_SHAPE: {",
+          "};",
       },
     ],
   },
@@ -581,19 +598,12 @@ const MUTANTS = {
       },
     ],
   },
-  M17: {
-    what: "caricature: holds: () => true in a DEFERRED_PRODUCERS entry (refuted by the token + behavioural pin; R15's real mutant is T6M3)",
-    scope: null, // full suite
-    // CP3: a constant predicate also fails the renamed per-call cell — measured 2/2.
-    expected: [T6.deferredRefute, T6.orderIndependence],
-    edits: [
-      {
-        file: DOMAIN_ERRORS,
-        old: '      holds: (fired) => !fired.has("W_NEVER_SERVED_SHAPE"),',
-        new: "      holds: () => true,",
-      },
-    ],
-  },
+  // M17 retired here: FU-5 landed both W_* producers and emptied DEFERRED_PRODUCERS, so no live
+  // `holds(fired)` predicate remains to caricature (its anchor — the W_NEVER_SERVED_SHAPE
+  // predicate line — is gone with the deferral). The predicate mechanism's refutability stays
+  // pinned by M6 (rot-marker through backward + deferredRefute) and the generic loop cells in
+  // test/arch/domain-error-registry.test.ts; re-anchoring would mean inventing a deferral that
+  // does not exist. R15's real mutant is now T6M3's producer deletion.
   M18: {
     what: "reintroduce a private shape literal in unionMembers (no knob change)",
     scope: null, // full suite
