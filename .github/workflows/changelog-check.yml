@@ -43,15 +43,19 @@ jobs:
           waiver=$(printf '%s\n' "$PR_BODY" \
             | sed -n 's/^[[:space:]]*[Ll]edger-[Ww]aiver:[[:space:]]*//p' \
             | head -n 1)
+          landing=$(printf '%s\n' "$PR_BODY" \
+            | sed -n 's/^[[:space:]]*Landing:[[:space:]]*\([a-z]*\).*/\1/p' \
+            | head -n 1)
+          args=(--pr "$PR_NUMBER")
           if [ -n "$waiver" ]; then
             echo "waiver: $waiver"
-            python scripts/changelog-gate.py ledger \
-              --pr "$PR_NUMBER" \
-              --waiver "$waiver"
-          else
-            python scripts/changelog-gate.py ledger \
-              --pr "$PR_NUMBER"
+            args+=(--waiver "$waiver")
           fi
+          if [ -n "$landing" ]; then
+            echo "landing: $landing"
+            args+=(--landing "$landing")
+          fi
+          python scripts/changelog-gate.py ledger "${args[@]}"
       - name: Comment on failure
         if: failure() && github.event_name == 'pull_request'
         # v9.0.0
