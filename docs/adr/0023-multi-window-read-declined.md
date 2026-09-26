@@ -3,8 +3,7 @@
 Date: 2026-09-25
 Status: accepted
 Related: `docs/adr/0022-region-scoped-rejection-serves.md` (its _Declared limit (R12)_ is retired
-here; its region rule is unchanged), `docs/adr/0016-store-version-flap-guard.md` (parity is not a
-reason), `docs/adr/0018-exact-position-served-span-verification.md` (exact-write merge),
+here; its region rule is unchanged), `docs/adr/0018-exact-position-served-span-verification.md` (exact-write merge),
 `docs/adr/0019-lease-identity-served-span-resolution.md` (lease identity), `src/session-view.ts`
 (`_mergeServedRows`), `src/read-and-serve.ts`, `src/contract.ts` (`READ_KS`),
 `test/arch/rejection-payload-region.test.ts` (R13, R14), upstream referent
@@ -51,7 +50,7 @@ Each row is a measurement, not an opinion; each has a deciding command in _Repro
 | W2  | Locally, served rows **merge** across reads: `_mergeServedRows` slices + writes positions, and clears or truncates only on an explicit `clearFrom`/`truncateTo`. `wipeServedState` has **no caller in `src/`**, so no read path wipes another read's rows.                                                                                                                                                                                                  | The multi-region lease the port would grant already exists: one edit can be anchored on rows two separate reads served (R13 asserts exactly this).                                                                            |
 | W3  | Upstream's line budget is **shared, not multiplied**: `remainingLines` starts at `maxTruncLines` and is decremented per window; a window cut by the budget renders `[Read budget exhausted; this window is not shown.]` and serves nothing.                                                                                                                                                                                                                 | 16 windows serve no more rows than one wide `offset`/`limit` read under the same budget (`DEFAULT_MAX_LINES = 2000`). Batching cannot raise what a single read can serve.                                                     |
 | W4  | Atomicity (the A1 row): sequential reads **can** straddle an external write, but the straddle is handled — the snapshot identity binds `ino`+`mtimeMs`+`ctimeMs`+`size`, drift is reported per position, the F7 version guard rejects row-less (target-lost), and a straddle-tolerant cell already exists. Meanwhile one-call same-revision multi-region serving is reachable today via a single wide read, whose serve-merge and lease grant are one unit. | The straddle is real but handled, and the atomic alternative already exists. The residual delta of `windows` over a wide read is **payload shaping** (skip middle rows, per-window headers) and **call count** — convenience. |
-| W5  | ADR-0016 precedent: parity alone has never justified a change here.                                                                                                                                                                                                                                                                                                                                                                                         | Convenience fails the same way parity does. Declined, recorded, with a trigger for revisit.                                                                                                                                   |
+| W5  | Decision rule (T8 correction 2026-09-26: no such precedent exists under either numbering — `rg -i 'parity\|convenience' docs/adr/0016-*` → 0 hits, and no upstream ADR carries a `justifies`/`convenience` sentence): parity alone does not justify a port. W1–W4 leave call count as the only delta, so there is no capability to justify it. | Convenience fails the same way parity does. Declined, recorded, with a trigger for revisit. |
 
 Not measured, not claimed: whether upstream accumulates served state **across** sequential calls.
 The decline does not depend on it — W2 is a statement about this tree.
@@ -130,7 +129,7 @@ falsifiability is the region-echo mutation in _Reproduce_, not `T6M4`.
 ## Considered Options
 
 - **Port `windows` for parity with upstream** — rejected: W1–W3 leave call count as the only delta,
-  and ADR-0016's precedent makes parity a non-reason. Porting would also add a public field to a
+  and the W5 rule makes parity a non-reason. Porting would also add a public field to a
   frozen contract and a second way to express what `offset`/`limit` already expresses.
 - **Port a capped subset (`MAX_READ_WINDOWS` small) as a cheap win** — rejected: the cost is not the
   cap, it is the second serve path. Window-shaped previews need their own budget accounting (W3),

@@ -58,10 +58,14 @@ The rule needs **one implementation (the gate), at two boundaries (PR + durable 
 recorded escape (the waiver)** — not three copies with three divergence risks.
 `.github/workflows/changelog-check.yml` now runs `python scripts/changelog-gate.py ledger`:
 on `pull_request` with `--pr <number>`, forwarding a single-line `Ledger-Waiver: <reason>` PR-body
-trailer as `--waiver` when present; on `push: [main]` it is the durable run with no PR context,
+trailer as `--waiver` and the `Landing:` PR-body line as `--landing` when present; on `push: [main]`
+it is the durable run with no PR context,
 where every entry must resolve to a landing commit. Read the workflow itself —
 `sed -n '28,55p' .github/workflows/changelog-check.yml` — the failure comment names the gate and
 the waiver as the only escape (fixable findings only, never a needs-human one).
+(The `:28` `(ADR-0016)` cite is the scaffold template's own numbering and stays byte-identical
+with the skill by design — it does not resolve to local ADR-0016 (`store-version-flap-guard`);
+the local record of the floor is this ADR.)
 
 The local fast-feedback role moves to a **read-only probe**: `python3 scripts/changelog-unreleased.py
 check` — exit-only, never amends, never pushes. Its verdict is **informational only**: it diffs the
@@ -76,16 +80,25 @@ landing**. Projection (`update`-equality) and curation are contradictory owners 
 a hook that auto-amends rewrites curated entries from commit subjects, silently destroying the
 thing the gate now protects.
 
-**Declared limit — the PR run does NOT yet read the `## Landing` declaration.** Measured at the
-merged tip, only the durable `main` run consumes landing commits:
-`rg -n "Landing" scripts/changelog-gate.py` → **0 hits** (the gap stands). The gate ignores
-`--landing` (script `:289`, "ignored for compatibility") and skips landing-set construction on PR
-(`:249`, `landings = landing_commits() if not pr else set()`). The `Landing:` field in
-`.github/pull_request_template.md` is therefore a **forward contract**: written into the template,
-reader unwired. **Predicate trigger:** this section is stale when the PR run begins reading the
-declaration. **Deciding command:** the same `rg` above — empty output means the gap stands; any
-hit means re-read the gate and update this section. No reader was shimmed at landing: the script
-is pinned verbatim from the scaffold skill and the gap is recorded, not patched.
+**Declared limit (FIRED 2026-09-26) — the PR run reads the `Landing:` declaration.** S3 re-projected
+the gate from the fixed skill (`97b8a17`); skill and repo copies are byte-identical
+(`diff` skill `scripts/changelog-gate.py` against repo `scripts/changelog-gate.py` → empty). The gate
+validates `--landing` (`squash|merge`, script `:321-322`) and consumes it: an attributed ref that is
+not this PR's passes under a declared squash landing (`:262`, shape checked at `:279-283` instead of
+reachability), while merge behaves as the bare ledger; landing-set construction still runs only off-PR
+(`:251`, `landings = landing_commits() if not pr else set()`). The workflow forwards the PR-body
+`Landing:` line (case-sensitive `Landing:`, first lowercase word) as `--landing`. The `Landing:` field in
+`.github/pull_request_template.md` is therefore a **read declaration**, not a forward contract.
+**Predicate trigger:** this section is stale when the PR run stops reading the declaration (the reader
+removed or the workflow stops forwarding it). **Deciding command:** `rg -n "landing"`
+`scripts/changelog-gate.py` — measured at the T8 tip: 13 hits (`:19` usage, `:177` `landing_commits`,
+`:220`/`251`/`262`/`264`/`276-283` consumption, `:301`/`320-322`/`333` wiring); empty output (RC=1)
+means the reader is gone — re-read the gate and update this section. Correction carried: the section's
+original command, `rg -n "Landing"` (capital L), returns **0 hits** (RC=1) even now — the wiring
+spells it lowercase `landing`; capitals live only in the workflow comment, the PR-body `Landing:` line,
+and prose. The old command could never have fired; the lowercase form above replaces it. No reader was
+shimmed at wiring: the script is pinned verbatim from the scaffold skill and the mechanism — including
+this case correction — is recorded, not patched.
 
 ### 4. `clear` versus the curated plugin — the release-workflow verdict
 
