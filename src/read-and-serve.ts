@@ -81,9 +81,16 @@ export async function readAndServe(
   let retiredHashes = await loadRetiredAnchors(sessionKey, absolutePath);
   const servedForNorm = await loadServed(sessionKey, absolutePath);
   const servedCanons = await loadServedCanons(sessionKey, absolutePath);
-  // Build previous for stable reuse (S): served filtered + canons reconstruction
+  // Build previous for stable reuse (S): served filtered + canons reconstruction.
+  // #62 alignment gate: the reconstructed arrays carry the SERVED index as the line
+  // position, which equals the real line number only when the mirror is dense — the
+  // `row.position === index` half of the `isFullRead` predicate (session-view.ts).
+  // With holes (a partial mirror), `mapStableHashes` would match compressed indices
+  // against whole-file positions and reshuffle anchors of an UNCHANGED file; pass
+  // `previous = undefined` instead and take the content-addressed snapshot path
+  // (hash.ts cache), which is deterministic for unchanged content.
   let previous: { content: string; hashes: string[]; removedHashes?: Set<string> } | undefined;
-  if (servedForNorm.some((h) => h !== null)) {
+  if (servedForNorm.every((h) => h !== null)) {
     const filteredHashes: string[] = [];
     const filteredCanons: string[] = [];
     for (let i = 0; i < servedForNorm.length; i++) {

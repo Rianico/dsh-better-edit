@@ -1035,6 +1035,25 @@ const MUTANTS = {
       },
     ],
   },
+  R2M1: {
+    what: "#62 alignment gate removed — pseudo-previous rebuilt from a holed served mirror (drift returns)",
+    scope: [
+      "test/core/hashline-p061-canon-fallback.test.ts",
+      "test/core/hashline-p062-partial-read-anchor-stability.test.ts",
+    ],
+    expected: [
+      "resolves the old line-9 anchor via the served path and applies AT line 9 after an interleaved windowed read (steps a–d, re-pinned)",
+      "keeps every line-8–14 anchor stable across interleaved partial reads, file byte-identical (steps 1–5)",
+      "non-regression: after the 5-step sequence, freshest anchors still edit (repeated-canon line) and stale anchors still reject (issue #62 acceptance)",
+    ],
+    edits: [
+      {
+        file: "src/read-and-serve.ts",
+        old: "if (servedForNorm.every((h) => h !== null)) {",
+        new: "if (servedForNorm.some((h) => h !== null)) {",
+      },
+    ],
+  },
 };
 
 function run(cmd, args, opts = {}) {
