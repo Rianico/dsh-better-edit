@@ -441,10 +441,6 @@ function valEdit(
   };
 }
 
-export function findNewEdge(): undefined {
-  return undefined;
-}
-
 export type ServedCode = "E_STALE_RANGE" | "E_UNSERVED_RANGE";
 
 export type { ServedRow, RangeCause } from "../domain-errors.js";

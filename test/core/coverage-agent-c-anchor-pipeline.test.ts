@@ -6,7 +6,6 @@ import {
   verifyServedRange,
   buildRangeEcho,
   fmtServedRows,
-  findNewEdge,
   parseText,
 } from "../../src/hashline/anchor-pipeline.js";
 import { lineHashesPure } from "../../src/hashline/hash-assign.js";
@@ -202,12 +201,6 @@ describe("coverage: anchor-pipeline applyEdit", () => {
       content_lines: [],
     };
     expect(() => applyEdit(content, edit, undefined, hashes)).toThrow(/E_EMPTY_RANGE/);
-  });
-  it("findNewEdge stub returns undefined (boundaryDups removed)", () => {
-    expect(findNewEdge(["new", "b", "c"], ["b", "c"], false)).toBeUndefined();
-    expect(findNewEdge(["a", "b", "new"], ["a", "b"], true)).toBeUndefined();
-    expect(findNewEdge(["a", "b"], ["a", "b"], false)).toBeUndefined();
-    expect(findNewEdge(["", "new"], ["a"], false)).toBeUndefined();
   });
 
   it("warnUnicodeEsc adds warning", () => {

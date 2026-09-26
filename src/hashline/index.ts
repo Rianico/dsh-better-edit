@@ -41,7 +41,6 @@ export {
   AnchorMismatchError,
   EditHashEchoError,
   findEditHashEcho,
-  isServedRejection,
   isAnchorMismatch,
   verifyServedRange,
   verifyRebasedSpan,
@@ -51,7 +50,6 @@ export {
 export type {
   ServedRow,
   ResolvedRange,
-  ServedCode,
   LeaseSpanSource,
   LeaseIdentityView,
 } from "./anchor-pipeline.js";
