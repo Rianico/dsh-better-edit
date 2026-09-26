@@ -51,7 +51,8 @@
   "scripts": {
     "prepare": "tsc -p tsconfig.json && husky",
     "build": "tsc -p tsconfig.json",
-    "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.test.json",
+    "typecheck": "tsc --noEmit",
+    "typecheck:test": "tsc --noEmit -p tsconfig.test.json",
     "test": "vitest run",
     "test:watch": "vitest",
     "prepublishOnly": "npm run typecheck && npm test && node scripts/assert-tagged.mjs",

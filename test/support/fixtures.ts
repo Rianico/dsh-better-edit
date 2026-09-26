@@ -193,7 +193,10 @@ function wrapTool(
   return {
     async execute(_callId, params) {
       // Partial fake: session/signal/arguments only — the tools under test never touch deferContext/concludeTurn.
-      const result = (await tool.execute(params, makeExecFor(params) as unknown as ToolRunContext)) as unknown;
+      const result = (await tool.execute(
+        params,
+        makeExecFor(params) as unknown as ToolRunContext,
+      )) as unknown;
       if (typeof result === "string") return { content: [{ type: "text", text: result }] };
       if (result && typeof result === "object" && "text" in (result as Record<string, unknown>)) {
         const r = result as { text: string; warning?: string };
