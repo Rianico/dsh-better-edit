@@ -90,7 +90,7 @@ describe("partial hash prefixes copied into content (issue #24)", () => {
     expect(() => applyTool(toolEdit, hashes)).toThrow(/1\/1 matched/);
   });
 
-  it("rejects bare prefixes even when the hash is not in the file hash set", async () => {
+  it("writes 0-matched bare prefixes through literally — supersedes #24's 0-matched arm per #63", async () => {
     const hashes = await lineHashes(file, home.testPath);
     const anchor = hashes[0]!;
     const toolEdit: HTEdit = {
@@ -98,12 +98,13 @@ describe("partial hash prefixes copied into content (issue #24)", () => {
       anchor_to: anchor,
       replace_with: "ZZZ│one\nZZP│two",
     };
-    expect(() => applyTool(toolEdit, hashes)).toThrow(/\[E_MALFORMED_ANCHOR\]/);
-    expect(() => applyTool(toolEdit, hashes)).toThrow(/0 matched/);
-    expect(() => applyTool(toolEdit, hashes)).toThrow(/literal 'HASH│' content/);
+    // #63's contract: no prefix is a file anchor → literal content passes through
+    // UNCHANGED (prefixes intact). Bytes, not message strings, decide.
+    const result = applyTool(toolEdit, hashes);
+    expect(result.content).toBe("ZZZ│one\nZZP│two\nbeta\ngamma\ndelta");
   });
 
-  it("reports the replace_with line for each rejected line", async () => {
+  it("writes a mixed 0-matched replacement through literally — supersedes #24 per #63", async () => {
     const hashes = await lineHashes(file, home.testPath);
     const anchor = hashes[0]!;
     const toolEdit: HTEdit = {
@@ -111,8 +112,8 @@ describe("partial hash prefixes copied into content (issue #24)", () => {
       anchor_to: anchor,
       replace_with: "ZZZ│one\nreal\nZZP│two",
     };
-    expect(() => applyTool(toolEdit, hashes)).toThrow(/\[E_MALFORMED_ANCHOR\]/);
-    expect(() => applyTool(toolEdit, hashes)).toThrow(/replace_with line 1, replace_with line 3/);
+    const result = applyTool(toolEdit, hashes);
+    expect(result.content).toBe("ZZZ│one\nreal\nZZP│two\nbeta\ngamma\ndelta");
   });
 
   it("rejects indented prefix with E_MALFORMED_ANCHOR", async () => {

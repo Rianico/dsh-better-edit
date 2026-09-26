@@ -321,12 +321,13 @@ function stripBarePrefixes(edit: HEdit, fileHashes: string[], _warnings: string[
     return line.slice(match[0].length);
   });
   if (stripped.length === 0) return edit;
-  const locations = stripped.map((s) => `replace_with line ${s.lineIndex + 1}`).join(", ");
   const matchedCount = stripped.filter((s) => s.matched).length;
-  const evidence =
-    matchedCount === 0
-      ? "0 matched — verify literal 'HASH│' content"
-      : `${matchedCount}/${stripped.length} matched`;
+  // #63 supersedes #24's 0-matched arm: no stripped prefix is a file anchor, so the
+  // lines are literal content — pass the edit through UNCHANGED (prefixes intact).
+  // Arms with matched >= 1 keep throwing; the call-site echo routing still governs.
+  if (matchedCount === 0) return edit;
+  const locations = stripped.map((s) => `replace_with line ${s.lineIndex + 1}`).join(", ");
+  const evidence = `${matchedCount}/${stripped.length} matched`;
   if (matchedCount === stripped.length) {
     throw new BadAnchorError(
       locations,
@@ -444,8 +445,6 @@ export function findNewEdge(): undefined {
   return undefined;
 }
 
-export { warnUnicodeEsc };
-
 export type ServedCode = "E_STALE_RANGE" | "E_UNSERVED_RANGE";
 
 export type { ServedRow, RangeCause } from "../domain-errors.js";
@@ -511,8 +510,9 @@ export class AnchorMismatchError extends DomainError<DomainErrorCode> {
 }
 /** Thrown when replace_with carries anchor-syntax garbage (HASH│/diff-preview prefixes).
  * Carries the stripped edit so applyEdit can distinguish served-echo (→ E_SUSPICIOUS_TEXT
- * denial downstream) from garbage (→ E_MALFORMED_ANCHOR stands). */
-export class BadAnchorError extends DomainError<"E_MALFORMED_ANCHOR"> {
+ * denial downstream) from garbage (→ E_MALFORMED_ANCHOR stands). @internal — instances
+ * cross the seam as DomainError<"E_MALFORMED_ANCHOR">; the symbol has no importer. */
+class BadAnchorError extends DomainError<"E_MALFORMED_ANCHOR"> {
   readonly stripped: HEdit;
   constructor(rawAnchor: string, reason: string, stripped: HEdit) {
     super("E_MALFORMED_ANCHOR", { rawAnchor, reason });
