@@ -59,6 +59,7 @@ line whose prefix IS a file anchor.
 ## Both-sides evidence (what reddens if each arm returns)
 
 **0-matched side — write-through (#63):**
+
 - `test/core/hashline-p063-literal-pipe-content.test.ts` treatment (`:83` `expect(error).toBeUndefined()` +
   byte assert): reddens if the 0-matched throw returns (the round-3 LIVE carrier).
 - `test/core/hashline-strict-input.test.ts` "writes 0-matched bare prefixes through literally — supersedes
@@ -67,6 +68,7 @@ line whose prefix IS a file anchor.
   test) or if any implementation starts STRIPPING literal prefixes (bytes differ).
 
 **Matched side — echo guard still throws (#24's surviving half):**
+
 - `hashline-strict-input.test.ts` "rejects bare HASH| prefix in content with E_MALFORMED_ANCHOR" (:8) —
   assertions at :15-17; real file hash, `served = undefined` → the ONLY guard on this route is
   `stripBarePrefixes`' matched throw; deleting it reddens `toThrow(/E_MALFORMED_ANCHOR/)` directly.
@@ -74,7 +76,7 @@ line whose prefix IS a file anchor.
   seam; each `.toThrow(/\[E_MALFORMED_ANCHOR\]/)` reddens on throw-deletion.
 - `test/core/hashline.recovery.test.ts:148` ("rejects bare hash prefix in content_lines with
   E_MALFORMED_ANCHOR") — :160 `toThrow(/\[E_MALFORMED_ANCHOR\]/)` + :171 `toThrow(/stripped "HASH│"
-  prefix/)` are the named red carriers.
+prefix/)` are the named red carriers.
 - `hashline-p063` control (b) (real served echo rejected with both wording asserts + unchanged bytes) —
   honest attribution: it reddens only if BOTH the matched throw AND the call-site echo arms are removed
   (either one alone routes to the same `E_SUSPICIOUS_TEXT` denial); it pins the REFUSAL end-to-end, the

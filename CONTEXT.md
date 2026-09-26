@@ -19,7 +19,7 @@ The separation of responsibilities: the tool owns verification of what the model
 _Avoid_: —
 
 **anchor philosophy**:
-The project's core contract: per-line anchors are content-derived with ASCII whitespace (`[ \t\r\n]`) stripped, stable for unchanged lines and across whitespace-only formatting, and position-independent; an anchor that cannot be resolved is rejected, never fuzzy-matched or silently relocated. Byte-level detection of non-whitespace changes is unchanged — token-level edits still rotate the anchor (ADR-0005).
+The project's core contract: per-line anchors are content-derived with ASCII whitespace (`[ \t\r\n]`) stripped, stable for unchanged lines and across whitespace-only formatting, and position-independent; an anchor that cannot be resolved is rejected, never fuzzy-matched or silently relocated. Byte-level detection of non-whitespace changes is unchanged — token-level edits still rotate the anchor (ADR-0002).
 
 **anchor staleness**:
 An anchor (one line, `remove_from` or `remove_to`) that no longer resolves against the current file because the line's content changed since it was served (`hash`/`canon`/`retired` miss). The model must re-`read` for fresh anchors.
