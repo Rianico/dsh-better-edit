@@ -199,7 +199,8 @@ def parse_unreleased_sections(content: str) -> dict[str, list[str]]:
         heading = SECTION_HEADING_RE.match(line)
         if heading:
             current = heading.group("name")
-            sections.setdefault(current, [])
+            if current is not None:
+                _ = sections.setdefault(current, [])
             continue
         if current is not None and BULLET_RE.match(line):
             sections[current].append(line.rstrip())
@@ -354,7 +355,7 @@ def update_changelog(changelog: Path) -> bool:
     current = _normalize(changelog.read_text(encoding="utf-8")) if changelog.exists() else ""
     if new_content == current:
         return False
-    changelog.write_text(new_content, encoding="utf-8")
+    _ = changelog.write_text(new_content, encoding="utf-8")
     return True
 
 
@@ -399,16 +400,16 @@ def clear_changelog(changelog: Path) -> bool:
     new_content = re.sub(r"\n{3,}", "\n\n", new_content).strip() + "\n"
     if new_content == content:
         return False
-    changelog.write_text(new_content, encoding="utf-8")
+    _ = changelog.write_text(new_content, encoding="utf-8")
     return True
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Manage Unreleased section in CHANGELOG.md")
-    parser.add_argument(
+    _ = parser.add_argument(
         "command", choices=["update", "clear", "check"], help="update, clear, or check Unreleased"
     )
-    parser.add_argument("--changelog", default="CHANGELOG.md", help="path to CHANGELOG.md")
+    _ = parser.add_argument("--changelog", default="CHANGELOG.md", help="path to CHANGELOG.md")
     args = parser.parse_args()
 
     changelog = Path(args.changelog)
