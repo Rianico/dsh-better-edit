@@ -162,7 +162,7 @@ describe("property: single random edit per call", () => {
         lines,
         span.s,
         span.e,
-        replayFixes(span.repl, result.autoFixes),
+        replayFixes(span.repl, undefined),
         content.endsWith("\n"),
       );
       expect(result.content).toBe(correctedExpected);
@@ -200,7 +200,7 @@ describe("property: sequential random edits", () => {
           replace_with: replToContent(span.repl),
         });
         const result = applyEdit(current, edit, undefined, currentHashes, home.testPath);
-        applied.push({ s: span.s, e: span.e, repl: replayFixes(span.repl, result.autoFixes) });
+        applied.push({ s: span.s, e: span.e, repl: replayFixes(span.repl, undefined) });
         current = result.content;
       }
       let expectedLines = lines;
@@ -279,7 +279,7 @@ describe("property: chained stable mapping at every step", () => {
           lines,
           span.s,
           span.e,
-          replayFixes(span.repl, result.autoFixes),
+          replayFixes(span.repl, undefined),
           content.endsWith("\n"),
         );
         expect(result.content).toBe(expected);

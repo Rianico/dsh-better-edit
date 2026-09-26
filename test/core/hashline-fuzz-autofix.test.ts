@@ -131,20 +131,9 @@ async function runStep(
   }
   expect(result.content).toBe(expected);
   if (expected === content) {
-    expect(result.autoFixes).toBeUndefined();
     const rehashed = await lineHashes(content, path, { content, hashes });
     expect(rehashed).toEqual(hashes);
     return { content, hashes, autofixed: fixes.length > 0, noop: true };
-  }
-  if (fixes.length > 0) {
-    expect(result.autoFixes).toBeDefined();
-    expect(result.autoFixes!.map((f) => f.kind)).toEqual(fixes.map((f) => f.kind));
-    expect(result.autoFixes!.map((f) => f.removedLine)).toEqual(fixes.map((f) => f.removedLine));
-    expect(result.autoFixes!.map((f) => f.removedLineIndex)).toEqual(
-      fixes.map((f) => f.removedLineIndex),
-    );
-  } else {
-    expect(result.autoFixes).toBeUndefined();
   }
   const removedHashes = new Set(hashes.slice(s - 1, e));
   const resultHashes = await lineHashes(expected, path, { content, hashes, removedHashes });

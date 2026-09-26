@@ -13,7 +13,6 @@ describe("indentation difference — no boundary auto-fix (removed)", () => {
       resEdit({ anchor_from: hashes[1]!, anchor_to: hashes[1]!, replace_with: "  foo\n  bar" }),
     );
     expect(result.content).toBe("  foo\n  foo\n  bar\n  baz");
-    expect(result.autoFixes ?? []).toHaveLength(0);
   });
 
   it("keeps leading duplication (no auto-fix) when both indentation and content match", async () => {
@@ -24,6 +23,5 @@ describe("indentation difference — no boundary auto-fix (removed)", () => {
       resEdit({ anchor_from: hashes[1]!, anchor_to: hashes[1]!, replace_with: "  foo\n  new" }),
     );
     expect(result.content).toBe("  foo\n  foo\n  new\n  baz");
-    expect(result.autoFixes ?? []).toHaveLength(0);
   });
 });

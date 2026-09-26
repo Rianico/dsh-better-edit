@@ -46,7 +46,6 @@ describe("checkBoundaryDup (via applyEdit) — no auto-fix (removed)", () => {
       resEdit({ anchor_from: hashes[1]!, anchor_to: hashes[2]!, replace_with: "X\nd" }),
     );
     expect(result.content).toBe("a\nX\nd\nd");
-    expect(result.autoFixes ?? []).toHaveLength(0);
   });
 
   it("keeps leading duplication (no auto-fix)", async () => {
@@ -57,7 +56,6 @@ describe("checkBoundaryDup (via applyEdit) — no auto-fix (removed)", () => {
       resEdit({ anchor_from: hashes[1]!, anchor_to: hashes[2]!, replace_with: "a\nX" }),
     );
     expect(result.content).toBe("a\na\nX\nd");
-    expect(result.autoFixes ?? []).toHaveLength(0);
   });
 
   it("does not auto-fix when replacement does not duplicate adjacent lines", async () => {
@@ -67,7 +65,6 @@ describe("checkBoundaryDup (via applyEdit) — no auto-fix (removed)", () => {
       content,
       resEdit({ anchor_from: hashes[1]!, anchor_to: hashes[2]!, replace_with: "X\nY" }),
     );
-    expect(result.autoFixes ?? []).toHaveLength(0);
   });
 
   it("does not auto-fix when replacement edge is empty string", async () => {
@@ -77,7 +74,6 @@ describe("checkBoundaryDup (via applyEdit) — no auto-fix (removed)", () => {
       content,
       resEdit({ anchor_from: hashes[1]!, anchor_to: hashes[2]!, replace_with: "" }),
     );
-    expect(result.autoFixes ?? []).toHaveLength(0);
   });
 
   it("keeps trailing duplication when content_lines has trailing empty lines (no auto-fix)", async () => {
@@ -88,7 +84,6 @@ describe("checkBoundaryDup (via applyEdit) — no auto-fix (removed)", () => {
       resEdit({ anchor_from: hashes[1]!, anchor_to: hashes[2]!, replace_with: `X\nd\n` }),
     );
     expect(result.content).toBe("a\nX\nd\n\nd");
-    expect(result.autoFixes ?? []).toHaveLength(0);
   });
 
   it("keeps leading duplication when content_lines has leading empty lines (no auto-fix)", async () => {
@@ -99,7 +94,6 @@ describe("checkBoundaryDup (via applyEdit) — no auto-fix (removed)", () => {
       resEdit({ anchor_from: hashes[1]!, anchor_to: hashes[2]!, replace_with: `\na\nX` }),
     );
     expect(result.content).toBe("a\n\na\nX\nd");
-    expect(result.autoFixes ?? []).toHaveLength(0);
   });
 
   it("keeps both trailing and leading duplication in one edit (no auto-fix)", async () => {
@@ -110,7 +104,6 @@ describe("checkBoundaryDup (via applyEdit) — no auto-fix (removed)", () => {
       resEdit({ anchor_from: hashes[1]!, anchor_to: hashes[2]!, replace_with: "a\nd" }),
     );
     expect(result.content).toBe("a\na\nd\nd");
-    expect(result.autoFixes ?? []).toHaveLength(0);
   });
 });
 
@@ -231,7 +224,6 @@ describe("no auto-fix via applyEdit (removed)", () => {
         replace_with: `new one\nnew two\nafter`,
       }),
     );
-    expect(result.autoFixes ?? []).toHaveLength(0);
     expect(result.content).toBe("before\nnew one\nnew two\nafter\nafter");
   });
 
@@ -246,7 +238,6 @@ describe("no auto-fix via applyEdit (removed)", () => {
         replace_with: `before\nnew one\nnew two`,
       }),
     );
-    expect(result.autoFixes ?? []).toHaveLength(0);
     expect(result.content).toBe("before\nbefore\nnew one\nnew two\nafter");
   });
 
@@ -261,7 +252,6 @@ describe("no auto-fix via applyEdit (removed)", () => {
         replace_with: `ctx2\ndup\ndup\nctx3`,
       }),
     );
-    expect(result.autoFixes ?? []).toHaveLength(0);
     expect(result.content).toBe("ctx1\nctx2\nctx2\ndup\ndup\nctx3\nctx3\nctx4");
   });
 });
@@ -276,7 +266,6 @@ describe("boundary-dup no autocorrection (removed)", () => {
     );
     expect(result.content).toBe("a\nX\nd\nd");
     expect(result.warnings).toBeUndefined();
-    expect(result.autoFixes ?? []).toHaveLength(0);
   });
 
   it("keeps duplicate after range (no auto-fix, not noop)", async () => {
@@ -296,7 +285,6 @@ describe("boundary-dup no autocorrection (removed)", () => {
     );
     expect(result.noopEdit).toBeUndefined();
     expect(result.warnings).toBeUndefined();
-    expect(result.autoFixes ?? []).toHaveLength(0);
   });
 
   it("keeps duplicate even when unique line before range (no auto-fix, not noop)", async () => {
@@ -312,7 +300,6 @@ describe("boundary-dup no autocorrection (removed)", () => {
     );
     expect(result.content).toBe("foo();\nbar();\nbaz();\nfoo();\n");
     expect(result.noopEdit).toBeUndefined();
-    expect(result.autoFixes ?? []).toHaveLength(0);
   });
 
   it("keeps new-line duplicates even when adjacent line is not unique (no auto-fix)", async () => {
@@ -328,6 +315,5 @@ describe("boundary-dup no autocorrection (removed)", () => {
     );
     expect(result.content).toBe("if (a) {\n  x();\n}\nif (b) {\n  yNew();\n}\n}\n");
     expect(result.warnings).toBeUndefined();
-    expect(result.autoFixes ?? []).toHaveLength(0);
   });
 });

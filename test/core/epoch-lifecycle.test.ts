@@ -87,7 +87,6 @@ describe("epoch lifecycle belongs to full reads (#69)", () => {
         await markDriftReported(sessionKey, path, ["abc"]);
         const view = await readAndServe(localIO(), "w.txt", cwd, { sessionKey, ...shape });
         expect(view.served.length, JSON.stringify(shape)).toBe(4);
-        expect(view.truncation, JSON.stringify(shape)).toBeUndefined();
         // Not a full read: drift-reported survives and the epoch pin is not re-stamped.
         expect(await driftReported(sessionKey, path), JSON.stringify(shape)).toEqual(
           new Set(["abc"]),

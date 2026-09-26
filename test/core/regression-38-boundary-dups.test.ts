@@ -20,7 +20,6 @@ describe("regression #38 — boundaryDups removed (no auto-fix)", () => {
     const res = applyEdit(content, edit, undefined, hashes, "test.txt", [...hashes]);
     expect(splitLines(res.content)).toEqual(["a", "b", "b"]);
     expect(res.content).toBe("a\nb\nb\n");
-    expect(res.autoFixes ?? []).toHaveLength(0);
   });
 
   it("minimal with trailing newline in replacement — still kept", () => {
@@ -32,7 +31,6 @@ describe("regression #38 — boundaryDups removed (no auto-fix)", () => {
     );
     const res = applyEdit(content, edit, undefined, hashes, "test.txt", [...hashes]);
     // replacement ["a","b",""] → last non-empty "b" equals file "b", before fix would splice to ["a",""]
-    expect(res.autoFixes ?? []).toHaveLength(0);
     expect(splitLines(res.content)).toEqual(["a", "b", "", "b"]);
   });
 
@@ -55,7 +53,6 @@ describe("regression #38 — boundaryDups removed (no auto-fix)", () => {
     expect(res.content).toBe(
       "void foo()\n{\n\tswitch (type) {\n\tcase A:\n\tcase B:\n\t{\n\t\tbody;\n\t}\n\t}\n}\n",
     );
-    expect(res.autoFixes ?? []).toHaveLength(0);
   });
 
   it("does not splice leading dup either", () => {
@@ -66,7 +63,6 @@ describe("regression #38 — boundaryDups removed (no auto-fix)", () => {
       [],
     );
     const res = applyEdit(content, edit, undefined, hashes, "test.txt", [...hashes]);
-    expect(res.autoFixes ?? []).toHaveLength(0);
     expect(splitLines(res.content)).toEqual(["x", "x", "y2", "z"]);
   });
 });

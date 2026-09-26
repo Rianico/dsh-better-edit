@@ -194,7 +194,6 @@ describe("applyEdit — no auto-fix (boundaryDups removed)", () => {
     const result = applyEdit(content, edit);
 
     expect(result.content).toBe("before\nbefore\nnew one\nnew two\nafter");
-    expect(result.autoFixes ?? []).toHaveLength(0);
   });
 
   it("keeps trailing duplication (no auto-fix)", async () => {
@@ -210,7 +209,6 @@ describe("applyEdit — no auto-fix (boundaryDups removed)", () => {
     const result = applyEdit(content, edit);
 
     expect(result.content).toBe("before\nnew one\nnew two\nafter\nafter");
-    expect(result.autoFixes ?? []).toHaveLength(0);
   });
 });
 

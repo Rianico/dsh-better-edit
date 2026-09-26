@@ -134,7 +134,6 @@ describe("coverage: anchor-pipeline applyEdit", () => {
       content_lines: ["B", "C", "d"],
     };
     const result = applyEdit(content, edit, undefined, hashes);
-    expect(result.autoFixes ?? []).toHaveLength(0);
     expect(result.content).toBe("a\nB\nC\nd\nd\ne");
     // also test leading dup
     const edit2: any = {
@@ -142,7 +141,6 @@ describe("coverage: anchor-pipeline applyEdit", () => {
       content_lines: ["a", "B", "C"],
     };
     const result2 = applyEdit(content, edit2, undefined, hashes);
-    expect(result2.autoFixes ?? []).toHaveLength(0);
     expect(result2.content).toBe("a\na\nB\nC\nd\ne");
   });
 
