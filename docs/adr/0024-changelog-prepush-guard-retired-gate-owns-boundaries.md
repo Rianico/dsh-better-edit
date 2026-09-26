@@ -17,7 +17,7 @@ Related: `.github/workflows/changelog-check.yml` (the gate's two runs),
 (`.githooks/pre-push`, live via `.husky/pre-push`), the PR workflow
 `.github/workflows/changelog-check.yml`, and a prose restatement in `CONTRIBUTING.md`. All three
 implemented the same rule — run `scripts/changelog-unreleased.py update` and `diff -q` the result
-against the committed file — which makes the ledger a *projection of commit subjects*: any human
+against the committed file — which makes the ledger a _projection of commit subjects_: any human
 curation of it is machine-overwritten on the next run.
 
 ## Decision
@@ -40,7 +40,7 @@ witnesses — re-derive with
    — after aborting the user's push (`:42 exit 1`), a detached background process re-pushed while
    the user's command had not succeeded; push semantics became non-deterministic across the abort.
 3. `:55` — `# or amend on a feature branch: git commit --amend --no-edit --no-verify && git push --force-with-lease`
-   — the fix text printed to the user taught history-rewriting and force-push as the *correct*
+   — the fix text printed to the user taught history-rewriting and force-push as the _correct_
    response to a bookkeeping warning.
 4. `:57` — `Bypass (human): git push --no-verify  or  PREPUSH_AUTOFIX=0 git push` — a guard whose
    own output advertises its escape hatch is documentation for its bypass, not a gate.
@@ -149,7 +149,7 @@ provable by `cmp` against the file's non-comment lines. Comment form is safe: th
   `CONTRIBUTING.md` retains the sentence for semantic-release hygiene only.
 - The three divergent copies of the old rule (hook, workflow, `CONTRIBUTING.md`) collapse to the
   gate plus one prose pointer.
-- **Lockfile integrity of the release path:** in CI, flag-free `pnpm install` is a *frozen*
+- **Lockfile integrity of the release path:** in CI, flag-free `pnpm install` is a _frozen_
   install (`frozen-lockfile=true` under `CI`), so a lockfile lagging `package.json` fails the
   release loudly at install. Declared limit: registry reachability from a hosted runner is not
   provable offline — predicate trigger: the first dispatched release; deciding command:
