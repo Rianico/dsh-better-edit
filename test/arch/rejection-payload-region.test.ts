@@ -196,24 +196,25 @@ describe("rejection payload region rule (ADR-0022)", () => {
     });
   });
 
-  it("never-served interior arm carries the named region's rows", async () => {
+  // FU-3 (upstream ADR-0024 decision 1, adopted): the interior-hole arm no longer fires on the
+  // leased route — the tool path always carries a lease source, so the identity gate owns the
+  // span and accepts the hole. This cell keeps pinning the E_UNSERVED_RANGE payload shape on the
+  // boundary arm, which runs before the gate and rejects regardless of leases. The non-leased
+  // interior rejection is pinned in test/core/error-codes.test.ts ("interior hole carries
+  // E_UNSERVED_RANGE with kind").
+  it("never-served boundary arm carries the named region's rows", async () => {
     await withTempFile("hole.txt", "alpha\nbeta\ngamma\n", async ({ cwd, path }) => {
       const harness = setupIntegrationTest(cwd);
       const window1 = getText(
         await harness.readTool.execute("read", { path: "hole.txt", offset: 1, limit: 1 }),
       );
-      const window3 = getText(
-        await harness.readTool.execute("read", { path: "hole.txt", offset: 3, limit: 1 }),
-      );
       const from = window1
         .split("\n")
         .find((l) => l.includes("│"))!
         .split("│")[0]!;
-      const to = window3
-        .split("\n")
-        .find((l) => l.includes("│"))!
-        .split("│")[0]!;
       const disk = await readFile(path, "utf-8");
+      // The `to` anchor exists on disk (line 3) but was never served, so it has no served position.
+      const to = lineHashesPure(disk.trimEnd())[2]!;
       let caught: unknown;
       try {
         await harness.editTool.execute("edit", {
@@ -233,6 +234,7 @@ describe("rejection payload region rule (ADR-0022)", () => {
         liveEnd: 3,
         expectedCode: "E_UNSERVED_RANGE",
       });
+      expect(await readFile(path, "utf-8"), "the rejection wrote nothing").toBe(disk);
     });
   });
 

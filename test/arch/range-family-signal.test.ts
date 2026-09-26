@@ -30,8 +30,13 @@ const REGISTRY_FILE = join(SRC_ROOT, "domain-errors.ts");
 const RANGE_CODES = ["E_STALE_RANGE", "E_UNSERVED_RANGE"] as const;
 type RangeCode = (typeof RANGE_CODES)[number];
 
-/** Expected production arm counts per code (T4 CP0 enumeration, 3f4aca6: 11 + 2). */
-const EXPECTED_SITES: Record<RangeCode, number> = { E_STALE_RANGE: 11, E_UNSERVED_RANGE: 2 };
+/**
+ * Expected production arm counts per code (T4 CP0 enumeration, 3f4aca6: 11 + 2).
+ * E_STALE_RANGE is 12 since FU-3: the gate's merged `null || undefined` arm was split into a
+ * truncated-slot arm and a boundary-never-served arm (upstream ADR-0024 decision 1, adopted;
+ * the interior hole now `continue`s instead of throwing, so no arm was added for it).
+ */
+const EXPECTED_SITES: Record<RangeCode, number> = { E_STALE_RANGE: 12, E_UNSERVED_RANGE: 2 };
 
 function listSources(root: string): string[] {
   const out: string[] = [];

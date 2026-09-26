@@ -33,7 +33,7 @@ import { servedPositionsOf } from "../session-view.js";
 import { SERVED_ECHO_CAP } from "../constants.js";
 import { NEW_CONTENT_NOT_STRING_MSG, NEW_CONTENT_BODY } from "../constants.js";
 import { DomainError, formatWarning, numericAnchorNote } from "../domain-errors.js";
-import type { ErrorPayloadMap, ServedRow, DomainErrorCode } from "../domain-errors.js";
+import type { ErrorPayloadMap, ServedRow, DomainErrorCode, RangeCause } from "../domain-errors.js";
 import type { EditMode } from "../contract.js";
 export type Anchor = { hash: string };
 
@@ -455,6 +455,7 @@ export class ServedRejectionError extends DomainError<DomainErrorCode> {
           headline: string;
           servedRows: ServedRow[];
           servedBlock: string;
+          cause?: RangeCause;
           firstOffendingLine?: number;
         }
       | {
@@ -471,6 +472,7 @@ export class ServedRejectionError extends DomainError<DomainErrorCode> {
         headline: opts.headline,
         servedRows: opts.servedRows,
         servedBlock: opts.servedBlock,
+        ...(opts.cause !== undefined ? { cause: opts.cause } : {}),
         ...(opts.firstOffendingLine !== undefined
           ? { firstOffendingLine: opts.firstOffendingLine }
           : {}),
@@ -601,11 +603,14 @@ export interface LeaseSpanSource {
  * `line_id` no longer lives at the rebased coordinate, or is gone from the buffer's identity map
  * entirely, so the anchor cannot be reconciled with the line it named.
  *
- * Fail-closed on every arm: an unleased served row (a serve predating lease granting), a retired
- * lease, a coordinate no leased identity occupies, or a window length that changed because an
- * external insert/delete landed strictly inside the span all reject with `E_STALE_RANGE` and the
- * echo rows, so the retry story stays the position check's own. Throwing happens before any write,
- * so a rejection leaves the file byte-identical.
+ * Fail-closed arms, all `E_STALE_RANGE` with the echo rows: a window length that changed because
+ * an external insert/delete landed strictly inside the span, a truncated mirror slot (no served row
+ * left to reconcile), a never-served boundary row (the named anchor itself, unverifiable without a
+ * served row), an unleased served row (a serve predating lease granting), a retired lease, or a
+ * coordinate no leased identity occupies. An interior mirror row the span never served (`null`) is
+ * accepted (upstream ADR-0024 decision 1, adopted; supersedes ADR-0019's decline): it carries no
+ * identity to verify and the two boundary leases plus the window-length check pin the span's extent.
+ * Throwing happens before any write, so a rejection leaves the file byte-identical.
  */
 export function verifyRebasedSpan(args: {
   served: (string | null)[];
@@ -628,51 +633,78 @@ export function verifyRebasedSpan(args: {
       servedBlock: echo,
       firstOffendingLine: args.rebasedStart,
       servedRows: echoRows,
+      cause: "served-range staleness",
     });
   }
   for (let k = 0; k < servedLen; k++) {
     const servedAnchor = served[args.servedStart - 1 + k];
     const currentLine = args.rebasedStart + k;
-    // Fail-closed guard: a null row inside the window is an unserved line, and this gate is
-    // exported and directly callable, so it must not skip one. Through `verifyServedRange` the
-    // interior-null rule already rejected this and the two boundary positions ARE the named
-    // anchors — but a future caller can reach it, so it rejects like every other arm (dsh's own
-    // interior rule; we deliberately do not adopt upstream's ADR-0024 tolerance).
-    if (servedAnchor === null || servedAnchor === undefined) {
+    // WHY: the served window can come from the leases' own `servedLineNumber` because a truncated
+    // serve dropped the mirror rows it no longer covers: the lease outlives the mirror. An
+    // absent slot is that missing record, never "this line was never served", so the span
+    // fails closed on the truth (the served record cannot be reconciled) and the current
+    // range is served for a fresh read.
+    if (servedAnchor === undefined) {
       throw new ServedRejectionError({
         code: "E_STALE_RANGE",
-        headline: `line ${currentLine}${where} is not served; re-read to serve it.`,
+        headline: `line ${currentLine}${where} has no served mirror row left; the served window was truncated.`,
         servedBlock: echo,
         firstOffendingLine: currentLine,
         servedRows: echoRows,
+        cause: "served-range staleness",
       });
+    }
+    if (servedAnchor === null) {
+      // WHY: upstream ADR-0024 decision 1 (adopted; supersedes ADR-0019's decline) narrows informed
+      // destruction to the boundaries: an unread interior row has no identity to check, and the
+      // two verified boundary leases already fix the span's extent, so refusing it only taxed a
+      // correct edit. A `null` boundary is the named anchor itself — unverifiable by
+      // construction — so it keeps the fail-closed diagnosis.
+      if (k === 0 || k === servedLen - 1) {
+        throw new ServedRejectionError({
+          code: "E_STALE_RANGE",
+          headline: `line ${currentLine}${where} was never served.`,
+          servedBlock: echo,
+          firstOffendingLine: currentLine,
+          servedRows: echoRows,
+          cause: "never-served",
+        });
+      }
+      continue;
     }
     const lease = leaseSource.leaseFor(servedAnchor);
     if (lease === undefined) {
       throw new ServedRejectionError({
         code: "E_STALE_RANGE",
-        headline: `line ${currentLine}${where} has no served line identity; re-read to lease it.`,
+        headline: `line ${currentLine}${where} has no served line identity.`,
         servedBlock: echo,
         firstOffendingLine: currentLine,
         servedRows: echoRows,
+        cause: "never-served",
       });
     }
+    // WHY: two distinct diagnoses, one per condition: a terminal lease is a `retirement` — the
+    // identity is gone and only a re-read revives it — while a live lease whose `lineId` no
+    // longer sits at its expected coordinate is drift between the served record and the
+    // rebased span.
     if (lease.retiredAt !== null) {
       throw new ServedRejectionError({
         code: "E_STALE_RANGE",
-        headline: `line ${currentLine}${where} was retired since it was served. Re-read.`,
+        headline: `line ${currentLine}${where} no longer resolves to the line identity it was served with.`,
         servedBlock: echo,
         firstOffendingLine: currentLine,
         servedRows: echoRows,
+        cause: "retirement",
       });
     }
     if (leaseSource.rebasedLineOf(lease.lineId) !== currentLine) {
       throw new ServedRejectionError({
         code: "E_STALE_RANGE",
-        headline: `line ${currentLine}${where} no longer resolves to the line identity it was served with. Re-read.`,
+        headline: `line ${currentLine}${where} no longer resolves to the line identity it was served with.`,
         servedBlock: echo,
         firstOffendingLine: currentLine,
         servedRows: echoRows,
+        cause: "served-range staleness",
       });
     }
   }
@@ -769,16 +801,24 @@ export function verifyServedRange(args: {
     });
   }
 
-  for (let i = from; i <= to; i++) {
-    if (served[i] === null) {
-      throw new ServedRejectionError({
-        code: "E_UNSERVED_RANGE",
-        unservedKind: "interior",
-        headline: `line ${i + 1}${where} was never served.`,
-        servedBlock: echo,
-        firstOffendingLine: i + 1,
-        servedRows: echoRows,
-      });
+  // WHY: the never-served interior scan is the non-leased route's evidence rule (upstream ADR-0024
+  // decision 2): there the mirror is the only evidence, so an interior hole rejects. With a
+  // lease source the identity gate owns verification — its two boundary leases pin the span's
+  // extent, so an interior `null` carries no identity to verify and `verifyRebasedSpan`
+  // accepts it (decision 1, adopted; supersedes ADR-0019's decline). Rejecting the hole here
+  // would shadow the gate and keep taxing correct edits upstream measured at 8/242 calls.
+  if (args.leaseSource === undefined) {
+    for (let i = from; i <= to; i++) {
+      if (served[i] === null) {
+        throw new ServedRejectionError({
+          code: "E_UNSERVED_RANGE",
+          unservedKind: "interior",
+          headline: `line ${i + 1}${where} was never served.`,
+          servedBlock: echo,
+          firstOffendingLine: i + 1,
+          servedRows: echoRows,
+        });
+      }
     }
   }
   const servedLen = to - from + 1;
@@ -859,6 +899,11 @@ export function verifyServedRange(args: {
     }
   }
   for (let k = 0; k < servedLen; k++) {
+    // WHY: on the leased route a `null` slot carries no evidence to compare and the identity gate
+    // has already adjudicated the window (accepting an interior hole per upstream ADR-0024
+    // decision 1); failing the position check on it here would re-shadow the gate. The
+    // non-leased route rejects the hole above (decision 2 keeps its interior diagnosis).
+    if (args.leaseSource !== undefined && served[from + k] === null) continue;
     if (served[from + k] !== fileHashes[startLine - 1 + k]) {
       const offendingLine = startLine + k;
       throw new ServedRejectionError({

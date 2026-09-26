@@ -68,6 +68,17 @@ function codeOfCall(fn: () => void): string | undefined {
   }
 }
 
+/** The ServedRejectionError a call must throw; fails the test when it does not throw. */
+function rejectionFrom(fn: () => void): ServedRejectionError {
+  try {
+    fn();
+  } catch (error) {
+    expect(error).toBeInstanceOf(ServedRejectionError);
+    return error as ServedRejectionError;
+  }
+  throw new Error("expected a ServedRejectionError, none was thrown");
+}
+
 describe("lease-resolve seam — identity replaces the position check (obligation (c))", () => {
   let tmpHome: string;
   beforeAll(async () => {
@@ -228,11 +239,19 @@ describe("verifyRebasedSpan — the gate's arms", () => {
       leaseFor: () => undefined,
       rebasedLineOf: () => 1,
     };
-    expect(codeOfCall(() => verify(unleased))).toBe("E_STALE_RANGE");
+    const error = rejectionFrom(() => verify(unleased));
+    expect(codeOf(error)).toBe("E_STALE_RANGE");
+    expect(String(error.message)).toContain("has no served line identity.");
+    expect(error.details.cause).toBe("never-served");
   });
 
   it("rejects when the leased line was retired", () => {
-    expect(codeOfCall(() => verify(leaseSource({ retired: true })))).toBe("E_STALE_RANGE");
+    const error = rejectionFrom(() => verify(leaseSource({ retired: true })));
+    expect(codeOf(error)).toBe("E_STALE_RANGE");
+    expect(String(error.message)).toContain(
+      "no longer resolves to the line identity it was served with.",
+    );
+    expect(error.details.cause).toBe("retirement");
   });
 
   it("does not mutate the served mirror", () => {
@@ -243,23 +262,23 @@ describe("verifyRebasedSpan — the gate's arms", () => {
     expect(SERVED_CANONS).toEqual([canon("gone"), ...FILE_LINES.map((line) => canon(line))]);
   });
 
-  it("fails closed on a null row inside the window — the gate is directly callable", () => {
-    // A three-row window whose middle row is null. The other two hold valid leases that resolve to
-    // their own coordinates, so the null row is the ONLY rejecting condition — with `continue` the
-    // call returns undefined and this goes red.
-    const holed: (string | null)[] = [
-      "hGone",
-      FILE_HASHES[0]!,
-      null,
-      FILE_HASHES[2]!,
-      FILE_HASHES[3]!,
-    ];
+  // A three-row window whose middle row is null. The boundary rows hold valid leases that resolve
+  // to their own coordinates, so the null row is the ONLY discriminating condition.
+  const HOLED: (string | null)[] = [
+    "hGone",
+    FILE_HASHES[0]!,
+    null,
+    FILE_HASHES[2]!,
+    FILE_HASHES[3]!,
+  ];
+  const HOLED_CANONS = [canon("gone"), canon("alpha"), null, canon("gamma"), canon("delta")];
+  function holedSource(): LeaseSpanSource {
     const holedIds: Record<string, number> = { [FILE_HASHES[0]!]: 11, [FILE_HASHES[2]!]: 13 };
     const holedPositions = new Map([
       [11, 1],
       [13, 3],
     ]);
-    const holedSource: LeaseSpanSource = {
+    return {
       leaseFor: (anchor) => {
         const lineId = holedIds[anchor];
         if (lineId === undefined) return undefined;
@@ -272,28 +291,85 @@ describe("verifyRebasedSpan — the gate's arms", () => {
       },
       rebasedLineOf: (lineId) => holedPositions.get(lineId),
     };
-    let thrown: unknown;
-    try {
+  }
+
+  it("accepts an unread interior row between two leased boundaries (upstream ADR-0024 decision 1)", () => {
+    // Falsifier: restore the null-throwing guard in `verifyRebasedSpan` and this goes RED.
+    expect(
+      codeOfCall(() =>
+        verifyRebasedSpan({
+          served: HOLED,
+          servedStart: 2,
+          servedEnd: 4,
+          rebasedStart: 1,
+          rebasedEnd: 3,
+          leaseSource: holedSource(),
+          echo: "echo-block",
+          echoRows: [{ position: 0, hash: FILE_HASHES[0]! }],
+          where: " in x.ts",
+        }),
+      ),
+    ).toBeUndefined();
+  });
+
+  it("accepts the same hole end-to-end through verifyServedRange with a lease source", () => {
+    // Falsifier: drop the leased-route skips of the never-served interior scan and the position
+    // check in `verifyServedRange` and this goes RED (E_UNSERVED_RANGE / E_STALE_RANGE shadowing).
+    expect(
+      codeOfCall(() =>
+        verifyServedRange({
+          served: HOLED,
+          servedCanons: HOLED_CANONS,
+          startHash: FILE_HASHES[0]!,
+          endHash: FILE_HASHES[2]!,
+          startLine: 1,
+          endLine: 3,
+          fileHashes: [...FILE_HASHES],
+          fileLines: [...FILE_LINES],
+          leaseSource: holedSource(),
+        }),
+      ),
+    ).toBeUndefined();
+  });
+
+  it("rejects a never-served boundary row — a two-row window is all boundary (decision 1 keeps it fail-closed)", () => {
+    const error = rejectionFrom(() =>
       verifyRebasedSpan({
-        served: holed,
-        servedStart: 2,
-        servedEnd: 4,
+        served: [null, FILE_HASHES[1]!],
+        servedStart: 1,
+        servedEnd: 2,
         rebasedStart: 1,
-        rebasedEnd: 3,
-        leaseSource: holedSource,
+        rebasedEnd: 2,
+        leaseSource: leaseSource(),
         echo: "echo-block",
         echoRows: [{ position: 0, hash: FILE_HASHES[0]! }],
         where: " in x.ts",
-      });
-    } catch (error) {
-      thrown = error;
-    }
-    // Falsifier: restore `continue` in the guard and this goes RED (the call returns undefined).
-    expect(thrown).toBeInstanceOf(ServedRejectionError);
-    const error = thrown as ServedRejectionError;
+      }),
+    );
     expect(codeOf(error)).toBe("E_STALE_RANGE");
-    expect(error.servedRows.length).toBeGreaterThan(0);
-    expect(String(error.message)).not.toContain("Retry with these anchors");
+    expect(String(error.message)).toContain("line 1 in x.ts was never served.");
+    expect(error.details.cause).toBe("never-served");
+  });
+
+  it("rejects a truncated window slot — the mirror row is gone, the lease outlives it", () => {
+    const error = rejectionFrom(() =>
+      verifyRebasedSpan({
+        served: [FILE_HASHES[0]!],
+        servedStart: 1,
+        servedEnd: 2,
+        rebasedStart: 1,
+        rebasedEnd: 2,
+        leaseSource: leaseSource(),
+        echo: "echo-block",
+        echoRows: [{ position: 0, hash: FILE_HASHES[0]! }],
+        where: " in x.ts",
+      }),
+    );
+    expect(codeOf(error)).toBe("E_STALE_RANGE");
+    expect(String(error.message)).toContain(
+      "line 2 in x.ts has no served mirror row left; the served window was truncated.",
+    );
+    expect(error.details.cause).toBe("served-range staleness");
   });
 
   it("rejects a window whose served and rebased lengths disagree", () => {

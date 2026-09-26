@@ -44,21 +44,27 @@ and the tombstone path, not from resolution.
   byte-identical after the rejection).
 
 The gate's arms, all `E_STALE_RANGE` with the echo rows/block and `reread: true`: window length
-changed, an unleased served row, a retired lease, a coordinate no leased identity occupies, and — since
-CP2-r2 — a null row inside the window (fail-closed; dsh does **not** adopt `pi-better-edit`
-ADR-0024's interior-`null` tolerance — that number is upstream's own sequence, not a local ADR).
-Pinned by `test/core/lease-resolve-seam.test.ts`
-("verifyRebasedSpan — the gate's arms", 8 tests: the 6 rejection arms, the benign-accept arm and
-the no-mirror-mutation arm).
+changed, an unleased served row, a retired lease, a coordinate no leased identity occupies, and a
+`null` **boundary** row (the named anchor itself, unverifiable by construction). A `null` **interior**
+row is accepted: `pi-better-edit` ADR-0024 decision 1 (upstream's own numbering, not a local ADR) was
+adopted on 2026-09-26 (FU-3), superseding this ADR's CP2-r2 decline — the row carries no identity to
+verify and the two boundary leases plus the window-length check pin the span's extent; the leased
+route of `verifyServedRange` skips its never-served interior scan and the position check's null slot
+so the gate's acceptance is not re-shadowed (decision 2: the interior scan stays the non-leased
+route's evidence rule). Pinned by `test/core/lease-resolve-seam.test.ts`
+("verifyRebasedSpan — the gate's arms", 11 tests: the 6 rejection arms — unleased, retired,
+look-alike rebind, boundary null, truncated slot, length mismatch — the 3 accept arms — benign
+shift, interior hole at the gate, interior hole end-to-end — the opt-in position-check arm and the
+no-mirror-mutation arm).
 
 **Why the seam is opt-in.** No `LeaseSpanSource` ⇒ the unconditional position check, byte-identical.
 If the **seed** read throws — `identityPositions`, `src/mutation/engine.ts:620-630` — there is no
 source and the position check stays. A **lease** read that throws inside the gate (`leaseFor`,
-`src/hashline/anchor-pipeline.ts:662`) propagates and aborts the edit: fail-closed too, but it is not a
+`src/hashline/anchor-pipeline.ts:675`) propagates and aborts the edit: fail-closed too, but it is not a
 fallback to the position check. The **preview** route (`noPersist`) was deleted by T3h with the
 orphaned single-edit flavor, so the no-source fallback it exercised is pinned at unit level only.
 Pinned by `test/core/lease-resolve-seam.test.ts` ("is opt-in: without a lease source the position check
-still rejects the shift", `:204`).
+still rejects the shift", `:215`).
 
 ## The pairing engine was a prerequisite, and this was measured
 
@@ -117,8 +123,9 @@ makes the benign-shift decision above reachable at all.
 - **Tombstone + canon without identity** — a byte-identical twin shares the canon, so it cannot
   distinguish moved from replaced.
 - **Upstream parity including its later interior-`null` tolerance** (`pi-better-edit` ADR-0024, upstream's
-  own numbering) — loosens a fail-closed rule beyond this task's mandate; dsh keeps its own interior-null
-  rejection.
+  own numbering) — declined at authoring ("loosens a fail-closed rule beyond this task's mandate");
+  **superseded 2026-09-26 (FU-3): adopted**, per the drift review's divergence finding and the lane
+  mandate. See the gate-arms paragraph above for the as-adopted rule.
 - **A bespoke "unique-canon crossing = swap" rule** to preserve reorder identity — a new heuristic, an
   upstream divergence, and the fail-closed direction is the one that protects against rebinds.
 
@@ -149,14 +156,15 @@ earlier item **created** still rejects — fail-closed, pinned by `test/core/bat
    first edit after upgrade rejects and needs one re-read. Derived from the gate's unleased arm,
    pinned by `test/core/lease-resolve-seam.test.ts` ("rejects when the served row holds no lease").
 5. A route that carries no lease source keeps the position check — a deliberate boundary, not an
-   oversight. It survives, pinned at unit level only (`test/core/lease-resolve-seam.test.ts:204`,
+   oversight. It survives, pinned at unit level only (`test/core/lease-resolve-seam.test.ts:215`,
    "is opt-in: without a lease source the position check still rejects the shift"); the preview door
    `noPersist` that used to exercise it end-to-end was deleted by T3h. For the next reader:
    `rg -n 'noPersist' src/` → 4 matching lines, all in `src/file-view.ts` (`ReadNormOptions.noPersist` /
    `normFromText`'s `noPersist?`) — read path, a different option, pre-existing, not the edit-path preview.
-6. A null row inside the served window now rejects `E_STALE_RANGE` fail-closed, where the gate previously
-   skipped it. Pinned by `test/core/lease-resolve-seam.test.ts` ("fails closed on a null row inside the
-   window").
+6. A `null` row inside the served window rejected `E_STALE_RANGE` fail-closed (CP2-r2) —
+   **superseded 2026-09-26 (FU-3)**: interior nulls are accepted per upstream ADR-0024 decision 1,
+   boundary nulls keep the rejection. Pinned by `test/core/lease-resolve-seam.test.ts` ("accepts an
+   unread interior row between two leased boundaries", "rejects a never-served boundary row").
 7. A batch item whose anchor targets a line an **earlier item created** still rejects (`E_BATCH_ABORT`) —
    the residual the working-buffer identity map does not close. Pinned by
    `test/core/batch-identity.test.ts` ("an item targeting a line an earlier item created still

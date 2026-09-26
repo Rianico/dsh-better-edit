@@ -13,7 +13,8 @@ import { getText, setupIntegrationTest, withTempFile } from "../support/fixtures
  * The invariant under test: no message may promise a retry the served state cannot honour.
  *
  * - C1 = CP0 G3 (`evidence/CP1-sweep-G1-G10-HEAD.txt`): interior insert, span-length arm.
- * - C2 = CP0 H1 (`evidence/CP1-sweep-H1-H2-HEAD.txt`): disjoint windowed reads, interior arm.
+ * - C2 = CP0 H1 (`evidence/CP1-sweep-H1-H2-HEAD.txt`): disjoint windowed reads — an accept on the
+ *   leased route since FU-3 (upstream ADR-0024 decision 1), so it pins the acceptance instead.
  * - C3 = CP0 G7: full external rewrite, `E_STALE_ANCHOR` recovery is a re-read.
  * - C4 = CP0 G4: end-anchor deleted, context rows DO apply — the truth is arm-dependent,
  *   so the prose must not generalize it.
@@ -144,7 +145,12 @@ describe("range-family retry truth (T4)", () => {
     });
   });
 
-  it("unserved-interior rejection offers no dead retry (C2)", async () => {
+  // FU-3 adopted upstream ADR-0024 decision 1: on the leased route the identity gate owns span
+  // verification and its two boundary leases pin the extent, so an interior hole — a row that never
+  // carried an identity — is ACCEPTED, not rejected. C2's dead-retry claim was about a rejection
+  // that no longer fires; the non-leased interior rejection (where the mirror is the only evidence,
+  // decision 2) stays pinned in error-codes.test.ts ("interior hole carries E_UNSERVED_RANGE with kind").
+  it("never-served interior edit applies on the leased route (C2, flipped by FU-3)", async () => {
     await withTempFile("t4-h1.txt", "alpha\nbeta\ngamma\n", async ({ cwd, path }) => {
       const harness = setupIntegrationTest(cwd);
       // The H1 geometry: two disjoint windowed reads, so line 2 is never served.
@@ -161,42 +167,7 @@ describe("range-family retry truth (T4)", () => {
         path: "t4-h1.txt",
         edits: [[window1[0], window3[0], "R"]],
       });
-      expect({
-        applied: first.applied,
-        envelope: first.message.startsWith("[MODEL] [E_BATCH_ABORT]"),
-        code: first.message.includes("[E_UNSERVED_RANGE]"),
-        arm: first.message.includes("line 2 in t4-h1.txt was never served"),
-        deadHint: first.message.includes("Retry with these anchors"),
-        deadNoRead: first.message.includes("no read needed"),
-      }).toEqual({
-        applied: false,
-        envelope: true,
-        code: true,
-        arm: true,
-        deadHint: false,
-        deadNoRead: false,
-      });
-
-      const echoed = rangeBlockAnchors(first.message);
-      expect(echoed).toHaveLength(3);
-      const retry = await attemptEdit(harness, {
-        path: "t4-h1.txt",
-        edits: [[echoed[0], echoed[echoed.length - 1], "R"]],
-      });
-      expect(retry.applied).toBe(false);
-      expect(retry.message).toContain("[E_UNSERVED_RANGE]");
-      expect(retry.message).toContain("line 2 in t4-h1.txt was never served");
-      expect(retry.message).not.toContain("Retry with these anchors");
-
-      const reread = rowAnchors(
-        getText(await harness.readTool.execute("read", { path: "t4-h1.txt" })),
-      );
-      expect(reread).toHaveLength(3);
-      const control = await attemptEdit(harness, {
-        path: "t4-h1.txt",
-        edits: [[reread[0], reread[reread.length - 1], "R"]],
-      });
-      expect(control.applied).toBe(true);
+      expect(first.applied).toBe(true);
       expect(await readFile(path, "utf-8")).toBe("R\n");
     });
   });
@@ -313,22 +284,19 @@ describe("range-family retry truth (T4)", () => {
   // invisible to every helper-level test that existed before, which is how it
   // survived four tickets.
   it("the rendered envelope never glues a row to the on-disk heading (C11a)", async () => {
-    await withTempFile("t4-c11a.txt", "alpha\nbeta\ngamma\n", async ({ cwd }) => {
+    await withTempFile("t4-c11a.txt", "alpha\nbeta\ngamma\n", async ({ cwd, path }) => {
       const harness = setupIntegrationTest(cwd);
-      // The H1 geometry: two disjoint windowed reads leave line 2 unserved.
-      const window1 = rowAnchors(
-        getText(
-          await harness.readTool.execute("read", { path: "t4-c11a.txt", offset: 1, limit: 1 }),
-        ),
+      // FU-3 made the old H1 interior-hole geometry an ACCEPT, so this render contract is
+      // rebased onto the span-length arm (C1/G3 shape at 3-line scale): a full read, then an
+      // interior insert out of band, then the stale anchor pair — a rejection that echoes rows.
+      const served = rowAnchors(
+        getText(await harness.readTool.execute("read", { path: "t4-c11a.txt" })),
       );
-      const window3 = rowAnchors(
-        getText(
-          await harness.readTool.execute("read", { path: "t4-c11a.txt", offset: 3, limit: 1 }),
-        ),
-      );
+      expect(served).toHaveLength(3);
+      await writeFile(path, "alpha\ninserted\nbeta\ngamma\n", "utf-8");
       const attempt = await attemptEdit(harness, {
         path: "t4-c11a.txt",
-        edits: [[window1[0], window3[0], "R"]],
+        edits: [[served[0], served[2], "R"]],
       });
       expect(attempt.applied).toBe(false);
       // (ii) The heading begins its own line (the engine's leading space is normalized).
