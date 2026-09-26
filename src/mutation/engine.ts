@@ -543,7 +543,15 @@ function buildBatchAbort(file: string, parts: AbortPart[]): DomainError<"E_BATCH
     servedRows: rows,
     servedBlock: blocks.join("\n"),
   };
-  if (parts.length === 1) return new DomainError("E_BATCH_ABORT", base);
+  if (parts.length === 1) {
+    // FU-7 conformance (b92e0ec:src/mutation-engine/pipeline.ts:531-560 — `batchAbortFor`): the
+    // single-failing-item stage forwards the item's `details.cause` untouched; unanimity is
+    // trivially true for one item, so the base envelope must not drop it.
+    return new DomainError("E_BATCH_ABORT", {
+      ...base,
+      ...(first.cause !== undefined ? { cause: first.cause } : {}),
+    });
+  }
   const firstCause = parts[0]!.cause;
   const unanimous = firstCause !== undefined && parts.every((part) => part.cause === firstCause);
   return new DomainError("E_BATCH_ABORT", {
