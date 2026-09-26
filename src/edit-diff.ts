@@ -1,4 +1,5 @@
 import * as Diff from "diff";
+import { DIFF_REMOVED_CAP, DIFF_REMOVED_EDGE } from "./constants.js";
 import { lineHashesPure, ANCHOR_LEN, HASH_SEP } from "./hashline/index.js";
 import type { ServedRow } from "./hashline/anchor-pipeline.js";
 
@@ -40,6 +41,30 @@ function fmtDiffLine(prefix: " " | "+" | "-", line: string, hash: string | undef
 const ELLIPSIS_MARKER: unique symbol = Symbol("ellipsis");
 const isEllipsisMarker = (line: string | symbol): line is symbol => line === ELLIPSIS_MARKER;
 
+function pushRemovedLines(
+  displayLines: string[],
+  oldContentHashes: string[] | undefined,
+  oldLineNum: { value: number },
+  output: string[],
+): void {
+  const emit = (line: string): void => {
+    const hash = oldContentHashes?.[oldLineNum.value - 1];
+    output.push(fmtDiffLine("-", line, hash));
+    oldLineNum.value++;
+  };
+  if (displayLines.length <= DIFF_REMOVED_CAP) {
+    for (const line of displayLines) emit(line);
+    return;
+  }
+  const omitted = displayLines.length - DIFF_REMOVED_EDGE * 2;
+  for (const line of displayLines.slice(0, DIFF_REMOVED_EDGE)) emit(line);
+  // WHY: ADR-0024/D3 — the model sees the deletion's head, tail, and exact size; the omitted rows
+  // WHY: still advance the cursor so every later row keeps its exact old line number and hash.
+  output.push(` - ... [${omitted} lines omitted] ...`);
+  oldLineNum.value += omitted;
+  for (const line of displayLines.slice(-DIFF_REMOVED_EDGE)) emit(line);
+}
+
 export function genDiff(
   oldContent: string,
   newContent: string,
@@ -69,19 +94,19 @@ export function genDiff(
 
     if (part.added || part.removed) {
       if (firstChangedLine === undefined) firstChangedLine = newLineNum;
-      for (let k = 0; k < displayLines.length; k++) {
-        if (part.added) {
+      if (part.added) {
+        for (let k = 0; k < displayLines.length; k++) {
           const hash = effectiveNewHashes[newLineNum - 1];
           output.push(fmtDiffLine("+", displayLines[k]!, hash));
           if (hash !== undefined) {
             servedRows.push({ position: newLineNum - 1, hash });
           }
           newLineNum++;
-        } else {
-          const hash = oldContentHashes?.[oldLineNum - 1];
-          output.push(fmtDiffLine("-", displayLines[k]!, hash));
-          oldLineNum++;
         }
+      } else {
+        const o = { value: oldLineNum };
+        pushRemovedLines(displayLines, oldContentHashes, o, output);
+        oldLineNum = o.value;
       }
       lastWasChange = true;
       continue;
