@@ -84,13 +84,39 @@ describe("structured error codes (#55 S1)", () => {
     }
   });
 
-  it("ambiguous served anchor carries E_UNSERVED_RANGE with boundary kind", () => {
+  // FU-4 granularity: a boundary anchor with NO served position is a never-served anchor —
+  // refused `E_UNKNOWN_ANCHOR` with no rows (upstream b92e0ec:src/hashline/lease-resolve.ts:87-118
+  // and its non-leased analogue `served-verification.ts:729-749`), not a range-serve.
+  it("boundary anchor with no served position carries E_UNKNOWN_ANCHOR (FU-4)", () => {
     const hashes = lineHashesPure("a\nb\nc");
     try {
       verifyServedRange({
         served: [hashes[0]!, hashes[0]!, hashes[2]!],
         startHash: hashes[0]!,
         endHash: hashes[1]!,
+        startLine: 1,
+        endLine: 2,
+        fileHashes: hashes,
+        fileLines: ["a", "b", "c"],
+      });
+      expect.unreachable();
+    } catch (error) {
+      expect(error).toBeInstanceOf(DomainError);
+      expect(error).not.toBeInstanceOf(ServedRejectionError);
+      expect((error as DomainError).code).toBe("E_UNKNOWN_ANCHOR");
+      expect(String((error as Error).message)).toContain(
+        `has not served the anchor "${hashes[1]!}"`,
+      );
+    }
+  });
+
+  it("ambiguous served anchor carries E_UNSERVED_RANGE with boundary kind", () => {
+    const hashes = lineHashesPure("a\nb\nc");
+    try {
+      verifyServedRange({
+        served: [hashes[0]!, hashes[0]!, hashes[2]!],
+        startHash: hashes[2]!,
+        endHash: hashes[0]!,
         startLine: 1,
         endLine: 2,
         fileHashes: hashes,

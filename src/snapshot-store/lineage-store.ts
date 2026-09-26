@@ -91,6 +91,12 @@ export interface LineageStore {
   positionsByIdentity(path: string, content: string): Map<number, number>;
   leaseFor(sessionKey: string, path: string, anchor: string): LeaseRow | undefined;
   /**
+   * Other files this session has served one anchor for, excluding `excludePath` (the file being
+   * edited) — the `(session_id, anchor)` lookup behind `E_FOREIGN_ANCHOR`. Failure-path only:
+   * the edit path calls it exactly when a boundary lease misses. READ-ONLY.
+   */
+  leaseHomes(sessionKey: string, excludePath: string, anchor: string): string[];
+  /**
    * The committed `file_snapshots.snapshot_id` for `(path, snapshotHash)`, or undefined when no
    * such row exists. The vacuum trigger resolves its in-flight protection id through this, since
    * the materialization path never learns the inserted id itself.
@@ -306,6 +312,9 @@ export function createLineageStore(db: DatabaseSync): LineageStore {
   const getLeaseStmt = db.prepare(
     "SELECT line_id, canon_hash, served_snapshot_hash, served_line_number, retired_at " +
       "FROM served_leases WHERE session_id = ? AND file_path = ? AND anchor = ?",
+  );
+  const getLeaseHomesStmt = db.prepare(
+    "SELECT DISTINCT file_path FROM served_leases WHERE session_id = ? AND anchor = ? AND file_path != ?",
   );
   const updateLineageAnchorStmt = db.prepare(
     "UPDATE line_lineage SET anchor = ? WHERE snapshot_id = ? AND line_number = ?",
@@ -552,6 +561,12 @@ export function createLineageStore(db: DatabaseSync): LineageStore {
         lineNumber: row.served_line_number,
         retiredAt: row.retired_at,
       };
+    },
+    leaseHomes(sessionKey, excludePath, anchor) {
+      const rows = getLeaseHomesStmt.all(sessionKey, anchor, excludePath) as {
+        file_path: string;
+      }[];
+      return rows.map((row) => row.file_path);
     },
     snapshotIdFor(path, snapshotHash) {
       return (getSnapshotStmt.get(path, snapshotHash) as { snapshot_id: number } | undefined)

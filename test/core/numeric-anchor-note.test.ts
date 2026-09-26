@@ -8,18 +8,17 @@ import { lineHashesPure } from "../../src/hashline/hash-assign.js";
  * Numeric-anchor diagnosis (B, upstream 33ccb0d): an all-digit anchor is
  * shape evidence that steers away from line numbers.
  *
- * T4 (CP1-r3) deleted the declaration-only `E_UNKNOWN_ANCHOR` — zero local
- * producers, zero reachable messages — so the `E_STALE_ANCHOR` not_found
- * headline is the note's only home now, pinned end-to-end below. The
- * declaration is deleted, not deferred: a future absorb that ports its
- * upstream producer must reintroduce it WITH the producer (`DEFERRED_PRODUCERS`
- * carries the record).
+ * T4 (CP1-r3) deleted the declaration-only `E_UNKNOWN_ANCHOR`; FU-4 re-introduced it
+ * WITH its producer (the never-served anchor refusals in `anchor-pipeline.ts`), exactly
+ * as this file's own rule demanded ("a future absorb that ports its upstream producer
+ * must reintroduce it WITH the producer"). The `E_STALE_ANCHOR` not_found headline still
+ * carries the note, pinned end-to-end below.
  */
 describe("numeric-anchor diagnosis", () => {
-  it("the numeric note survives the E_UNKNOWN_ANCHOR deletion", () => {
-    // The deleted declaration has no second home: re-adding it without a
-    // producer fails here as well as in the arch oracle.
-    expect("E_UNKNOWN_ANCHOR" in ERROR_REGISTRY).toBe(false);
+  it("the numeric note survives E_UNKNOWN_ANCHOR's FU-4 re-introduction with its producer", () => {
+    // The declaration is back only because a producer exists: pin both halves, so a
+    // re-addition without a producer still fails here and in the arch oracle.
+    expect("E_UNKNOWN_ANCHOR" in ERROR_REGISTRY).toBe(true);
 
     const content = "alpha\nbeta\n";
     const hashes = lineHashesPure(content);

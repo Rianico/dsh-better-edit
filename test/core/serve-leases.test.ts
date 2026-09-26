@@ -613,14 +613,14 @@ async function runBatchAbort(withBatch: boolean): Promise<BatchAbortRun> {
 }
 
 // The TWIN geometry: the failure has to reach `applyOne`'s verification (a resolvable
-// anchor whose served position/retirement no longer holds) — a plain deleted-anchor
+// anchor whose leased line identity no longer resolves) — a plain deleted-anchor
 // geometry throws in `resEdit` *before* `applyOne`, so it never reaches `onReject`.
 
 describe("serve leases — a rejected edit is a no-op for the next read", () => {
   it("twin rejection records nothing — served rows byte-identical before/after", async () => {
     const run = await runScenario(TWIN_SCENARIO, true);
     expect(run.rejected).toBe(true);
-    expect(run.message).toMatch(/E_STALE_RANGE/);
+    expect(run.message).toMatch(/E_TARGET_LOST/);
     expect(run.servedAfterReject).toEqual(run.servedBefore);
   });
 

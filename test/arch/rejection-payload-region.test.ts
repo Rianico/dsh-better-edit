@@ -26,10 +26,11 @@ beforeAll(async () => {
  * `fileHashes`/`fileLines` are the current on-disk snapshot; each row must reproduce them
  * exactly at its own position.
  *
- * Payload shape is disjoint by ROW COUNT, not by code (the local tree has no
- * `E_TARGET_LOST`/`E_UNVERIFIED_RANGE` — ADR-0022 §Decision 2): a row-less payload is the
- * target-lost shape (no `Current range` heading of either form, read instruction in the
- * headline); a row-carrying payload renders `Current range:` and its rows.
+ * Payload shape is disjoint by ROW COUNT (ADR-0022 §Decision 2, refined by FU-4's code
+ * granularity): a row-less payload is the grounding-void shape — either a granular refusal
+ * (`E_UNKNOWN_ANCHOR`, no read wording by upstream's text) asserted directly at its cell, or
+ * the target-lost shape (read instruction in the headline); a row-carrying payload renders
+ * `Current range:` (or `Current range (fresh read):` for `E_UNVERIFIED_RANGE`) and its rows.
  *
  * R15: the rule below is the guard, so it carries its own mutant (`T6M4` breaks the real
  * per-row identity check). The planted-violation cells exercise the broken guard.
@@ -202,7 +203,11 @@ describe("rejection payload region rule (ADR-0022)", () => {
   // boundary arm, which runs before the gate and rejects regardless of leases. The non-leased
   // interior rejection is pinned in test/core/error-codes.test.ts ("interior hole carries
   // E_UNSERVED_RANGE with kind").
-  it("never-served boundary arm carries the named region's rows", async () => {
+  // FU-4 granularity: a boundary anchor the mirror never placed was never served for this
+  // file — upstream refuses it with `E_UNKNOWN_ANCHOR` and NO rows (b92e0ec:src/hashline/
+  // served-verification.ts:729-749), so `assertRegionPayload`'s row-shape branches do not
+  // apply: the region is unidentifiable AND the message does not name a read. Asserted directly.
+  it("never-served boundary arm rejects granular with no rows", async () => {
     await withTempFile("hole.txt", "alpha\nbeta\ngamma\n", async ({ cwd, path }) => {
       const harness = setupIntegrationTest(cwd);
       const window1 = getText(
@@ -226,14 +231,16 @@ describe("rejection payload region rule (ADR-0022)", () => {
       } catch (error) {
         caught = error;
       }
-      assertRegionPayload({
-        error: caught,
-        fileHashes: lineHashesPure(disk.trimEnd()),
-        fileLines: disk.split("\n").slice(0, -1),
-        liveStart: 1,
-        liveEnd: 3,
-        expectedCode: "E_UNSERVED_RANGE",
-      });
+      const err = caught as { code?: string; message: string; servedRows?: ServedRow[] };
+      expect(err.message).toContain("[E_UNKNOWN_ANCHOR]");
+      expect(err.message).toContain(`has not served the anchor "${to}"`);
+      expect(err.message).toContain("nothing was written");
+      // The granular refusal itself renders no rows — checked on the message: the payload
+      // emits no `Current range:` heading (the envelope's separate `Current on-disk range`
+      // echo at engine.ts:509 is an F5 convenience derived from the submitted anchors'
+      // live window, not payload rows).
+      expect(err.message).not.toContain("Current range");
+      expect(err.message).not.toContain(RETRY_AFFORDANCE);
       expect(await readFile(path, "utf-8"), "the rejection wrote nothing").toBe(disk);
     });
   });

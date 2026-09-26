@@ -590,6 +590,125 @@ export interface LeaseIdentityView {
 export interface LeaseSpanSource {
   leaseFor(anchor: string): LeaseIdentityView | undefined;
   rebasedLineOf(lineId: number): number | undefined;
+  /**
+   * Other files this session served one anchor for, excluding the file being edited.
+   * Backed by the store's `(session_id, anchor)` lookup; it runs on the failure path only,
+   * so the happy path pays nothing (upstream b92e0ec:src/hashline/resolve.ts:41-49).
+   */
+  anchorHomes?(anchor: string): string[];
+}
+
+/**
+ * Refuses anchors the lease seam cannot place: the session holds no lease for them in this file.
+ * Deterministic precedence, one condition per code — a lease held for ANOTHER file
+ * (`E_FOREIGN_ANCHOR`) wins over holding no lease anywhere (`E_UNKNOWN_ANCHOR`). Neither
+ * rejection serves rows: with no lease for this file no range can be identified, so there is
+ * nothing trustworthy to retry with (port of upstream b92e0ec:src/hashline/lease-resolve.ts:87-118).
+ */
+function throwUnknownOrForeign(args: {
+  filePath?: string;
+  refused: string[];
+  source: LeaseSpanSource;
+}): never {
+  const path = args.filePath ?? "this file";
+  const refused = [...new Set(args.refused)];
+  const homes = [
+    ...new Set(refused.flatMap((anchor) => args.source.anchorHomes?.(anchor) ?? [])),
+  ].sort();
+  if (homes.length > 0) {
+    throw new DomainError("E_FOREIGN_ANCHOR", { path, anchors: refused, homes });
+  }
+  throw new DomainError("E_UNKNOWN_ANCHOR", { path, anchors: refused });
+}
+
+/**
+ * Per-lease line-identity decision (port of upstream b92e0ec:src/hashline/resolve.ts:95-110):
+ * a retired lease, or a live lease whose `line_id` has no coordinate in the buffer being
+ * edited, is `stale`; otherwise the decision names the rebased line.
+ */
+function lineIdentityDecision(
+  lease: LeaseIdentityView,
+  source: LeaseSpanSource,
+): { kind: "line"; line: number } | { kind: "stale" } {
+  if (lease.retiredAt !== null) return { kind: "stale" };
+  const rebased = source.rebasedLineOf(lease.lineId);
+  if (rebased === undefined) return { kind: "stale" };
+  return { kind: "line", line: rebased };
+}
+
+/**
+ * The leased-route boundary identity interception (port of upstream
+ * b92e0ec:src/hashline/lease-resolve.ts:120-200), running before the served-window gates:
+ * a boundary anchor with no lease is lost identity — unknown or foreign, never a content
+ * question. A stale boundary serves rows ONLY when exactly one bound is stale AND the survivor
+ * is live and unshifted (its rebased coordinate equals its served coordinate — evidence no
+ * shift occurred): that one case rejects with `E_UNVERIFIED_RANGE`, the named window echoed as
+ * a fresh read; every other stale case rejects with `E_TARGET_LOST`, carrying no rows.
+ * The named coordinates are lease-derived (`servedLineNumber`) only — content placement never
+ * names a window for a retired bound.
+ */
+function interceptLeaseBoundaries(args: {
+  startHash: string;
+  endHash: string;
+  fileHashes: string[];
+  fileLines: string[];
+  filePath?: string;
+  leaseSource: LeaseSpanSource;
+}): void {
+  const { fileHashes, fileLines, leaseSource } = args;
+  const fromLease = leaseSource.leaseFor(args.startHash);
+  const toLease = leaseSource.leaseFor(args.endHash);
+  if (fromLease === undefined || toLease === undefined) {
+    throwUnknownOrForeign({
+      ...(args.filePath !== undefined ? { filePath: args.filePath } : {}),
+      refused: [
+        ...(fromLease === undefined ? [args.startHash] : []),
+        ...(toLease === undefined ? [args.endHash] : []),
+      ],
+      source: leaseSource,
+    });
+  }
+  const fromDecision = lineIdentityDecision(fromLease, leaseSource);
+  const toDecision = lineIdentityDecision(toLease, leaseSource);
+  if (fromDecision.kind === "stale" || toDecision.kind === "stale") {
+    const fromLiveUnshifted =
+      fromDecision.kind === "line" && fromDecision.line === fromLease.servedLineNumber;
+    const toLiveUnshifted =
+      toDecision.kind === "line" && toDecision.line === toLease.servedLineNumber;
+    const staleServedLine =
+      fromDecision.kind === "stale" ? fromLease.servedLineNumber : toLease.servedLineNumber;
+    const exactlyOneStale = (fromDecision.kind === "stale") !== (toDecision.kind === "stale");
+    const survivorLiveUnshifted =
+      fromDecision.kind === "stale" ? toLiveUnshifted : fromLiveUnshifted;
+    if (exactlyOneStale && survivorLiveUnshifted) {
+      const rawStart = Math.min(fromLease.servedLineNumber, toLease.servedLineNumber);
+      const rawEnd = Math.max(fromLease.servedLineNumber, toLease.servedLineNumber);
+      const len = fileHashes.length;
+      const startLine = Math.max(1, rawStart);
+      const endLine = Math.min(len, rawEnd);
+      // Collapsed-window guard: fail closed to `E_TARGET_LOST` when the named window
+      // collapses (e.g. served startLine 10 against a 4-line file) or misses the file.
+      if (len > 0 && startLine <= endLine && rawEnd >= 1 && rawStart <= len) {
+        const servedRows = buildRangeEcho(startLine, endLine, fileHashes);
+        const totalLen = endLine - startLine + 1;
+        const tail =
+          servedRows.length < totalLen
+            ? `\n${paginationHint(startLine + servedRows.length, totalLen - servedRows.length)}`
+            : "";
+        throw new DomainError("E_UNVERIFIED_RANGE", {
+          servedRows,
+          servedBlock: fmtServedRows(servedRows, fileLines) + tail,
+          cause: "retirement",
+          firstOffendingLine: staleServedLine,
+        });
+      }
+    }
+    throw new DomainError("E_TARGET_LOST", {
+      servedLine: staleServedLine,
+      ...(args.filePath !== undefined ? { path: args.filePath } : {}),
+      cause: "retirement",
+    });
+  }
 }
 
 /**
@@ -764,6 +883,22 @@ export function verifyServedRange(args: {
     }
   }
 
+  // The leased route resolves boundaries through the lease seam FIRST (upstream
+  // b92e0ec:src/hashline/lease-resolve.ts:120-200): a missing or stale boundary lease rejects
+  // before content placement can substitute a look-alike for the lost identity. The non-leased
+  // route keeps mirror placement alone (upstream's non-leased analogue,
+  // served-verification.ts:745, is the zero-position arm below).
+  if (args.leaseSource !== undefined) {
+    interceptLeaseBoundaries({
+      startHash,
+      endHash,
+      fileHashes,
+      fileLines,
+      ...(filePath !== undefined ? { filePath } : {}),
+      leaseSource: args.leaseSource,
+    });
+  }
+
   const startPositions = servedPositionsOf(served, startHash);
   const endPositions = servedPositionsOf(served, endHash);
   const currentLen = endLine - startLine + 1;
@@ -777,15 +912,27 @@ export function verifyServedRange(args: {
     to = Math.max(startPositions[0]!, endPositions[0]!);
   }
   if (from === undefined || to === undefined) {
+    const missing = [
+      ...new Set([
+        ...(startPositions.length === 0 ? [startHash] : []),
+        ...(endPositions.length === 0 ? [endHash] : []),
+      ]),
+    ];
+    if (missing.length > 0) {
+      // A boundary anchor the mirror never placed was never served for this file: the
+      // rejection carries no rows — with nothing served there is nothing trustworthy to
+      // retry with, only a read restores grounding (port of upstream
+      // b92e0ec:src/hashline/served-verification.ts:729-749).
+      throw new DomainError("E_UNKNOWN_ANCHOR", {
+        path: filePath ?? "this file",
+        anchors: missing,
+      });
+    }
     const problems: string[] = [];
-    if (startPositions.length === 0) {
-      problems.push(`anchor_from "${startHash}" has no served position`);
-    } else if (startPositions.length > 1) {
+    if (startPositions.length > 1) {
       problems.push(`anchor_from "${startHash}" was served at ${startPositions.length} positions`);
     }
-    if (endPositions.length === 0) {
-      problems.push(`anchor_to "${endHash}" has no served position`);
-    } else if (endPositions.length > 1) {
+    if (endPositions.length > 1) {
       problems.push(`anchor_to "${endHash}" was served at ${endPositions.length} positions`);
     }
     throw new ServedRejectionError({

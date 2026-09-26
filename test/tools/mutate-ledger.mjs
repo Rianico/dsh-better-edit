@@ -91,8 +91,6 @@ const T6 = {
   armFlag: "no range-family arm carries the deleted retry flag (arm counts pinned)",
   nullRowGate: "fails closed on a null row inside the window — the gate is directly callable",
   lengthDisagree: "rejects a window whose served and rebased lengths disagree",
-  deletedExternally:
-    "rejects E_STALE_RANGE and writes nothing when the anchored line was deleted externally",
   neverGuard: "W_NEVER_SERVED_SHAPE's guard holds while the source scan sees no producer for it",
   mismatchGuard:
     "W_SERVED_PREFIX_MISMATCH's guard holds while the source scan sees no producer for it",
@@ -100,6 +98,10 @@ const T6 = {
     "the deferred predicates refute a constant: their own code falsifies, others do not",
   orderIndependence:
     "the witness is per-call: a different source set yields a different witness and verdicts",
+  // `deletedExternally` retired here: FU-4 renamed the cell to "rejects E_TARGET_LOST …" and the
+  // rejection no longer routes through the `E_STALE_RANGE` formatter, so T6M1 cannot redden it.
+  // The retry-affordance ban is still pinned by T4.spanLength, T6.regionOracle and the E_TARGET_LOST
+  // cell's own `not.toContain(Retry with these anchors)` assertion.
 };
 
 /**
@@ -345,7 +347,6 @@ const MUTANTS = {
       T6.nullRowGate,
       T6.lengthDisagree,
       T6.regionOracle,
-      T6.deletedExternally,
       T6.formatterHint,
       // T6b (ADR-0023): the two multi-region cells assert their E_STALE_RANGE payloads through
       // `assertRegionPayload`, which bans the restored affordance — measured 3/3 in this file.
@@ -445,18 +446,11 @@ const MUTANTS = {
       },
     ],
   },
-  M7: {
-    what: "re-add E_TARGET_LOST as a union member with no producer and no deferral",
-    scope: null, // full suite
-    expected: [T4R3.forward, T4R3.deleted, T4R5.parity],
-    edits: [
-      {
-        file: DOMAIN_ERRORS,
-        old: '  | "E_STALE_RANGE"\n  | "E_MALFORMED_ANCHOR"',
-        new: '  | "E_STALE_RANGE"\n  | "E_TARGET_LOST"\n  | "E_MALFORMED_ANCHOR"',
-      },
-    ],
-  },
+  // M7 retired here: its subject was re-adding `E_TARGET_LOST` as a union member with no
+  // producer and no deferral — FU-4 ports the code WITH a producer (anchor-pipeline.ts:703),
+  // so the scenario no longer exists. Re-anchoring it to a fictional member would duplicate
+  // M14 (declared-without-registry-entry); the unproduced-member guard stays pinned by
+  // T4R3.forward's own cell.
   M8: {
     what: "delete DECLARATION_ONLY_FIELDS while `remedy` still has no reader",
     scope: null, // full suite
@@ -548,9 +542,11 @@ const MUTANTS = {
     expected: [T4R5.parity, T4R3.forward],
     edits: [
       {
+        // Re-anchored by FU-4: the union now carries the ported codes between E_STALE_RANGE
+        // and E_MALFORMED_ANCHOR, so the insertion point moved with the neighbor.
         file: DOMAIN_ERRORS,
-        old: '  | "E_STALE_RANGE"\n  | "E_MALFORMED_ANCHOR"',
-        new: '  | "E_STALE_RANGE"\n  | "E_ORPHAN"\n  | "E_MALFORMED_ANCHOR"',
+        old: '  | "E_STALE_RANGE"\n  | "E_TARGET_LOST"',
+        new: '  | "E_STALE_RANGE"\n  | "E_ORPHAN"\n  | "E_TARGET_LOST"',
       },
     ],
   },

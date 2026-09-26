@@ -884,6 +884,9 @@ function makeDomainStore(
     leaseFor(sessionKey, path, anchor) {
       return lineageStore.leaseFor(sessionKey, path, anchor);
     },
+    leaseHomes(sessionKey, excludePath, anchor) {
+      return lineageStore.leaseHomes(sessionKey, excludePath, anchor);
+    },
     snapshotIdFor(path, snapshotHash) {
       return lineageStore.snapshotIdFor(path, snapshotHash);
     },

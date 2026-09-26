@@ -75,7 +75,11 @@ export type DomainErrorCode =
   | "E_BAD_PAYLOAD"
   | "E_EMPTY_RANGE"
   | "E_STALE_ANCHOR"
+  | "E_UNKNOWN_ANCHOR"
+  | "E_FOREIGN_ANCHOR"
   | "E_STALE_RANGE"
+  | "E_TARGET_LOST"
+  | "E_UNVERIFIED_RANGE"
   | "E_MALFORMED_ANCHOR"
   | "E_SUSPICIOUS_TEXT"
   | "E_BATCH_ABORT"
@@ -128,6 +132,15 @@ export interface ErrorPayloadMap {
     servedBlock?: string;
     cause?: RangeCause;
   };
+  E_UNKNOWN_ANCHOR: {
+    path: string;
+    anchors: string[];
+  };
+  E_FOREIGN_ANCHOR: {
+    path: string;
+    anchors: string[];
+    homes: string[];
+  };
   E_STALE_RANGE: {
     headline: string;
     servedRows: ServedRow[];
@@ -140,6 +153,18 @@ export interface ErrorPayloadMap {
     // was a constant `true` on every producer, so the payload's rows (`servedRows.length`)
     // carry the distinction — empty means the region is unidentifiable and only a read
     // restores it; non-empty means the rows are the named region's current anchors.
+  };
+  E_TARGET_LOST: {
+    servedLine: number;
+    path?: string;
+    cause: RangeCause;
+    firstOffendingLine?: number;
+  };
+  E_UNVERIFIED_RANGE: {
+    servedRows: ServedRow[];
+    servedBlock: string;
+    cause: RangeCause;
+    firstOffendingLine?: number;
   };
   E_MALFORMED_ANCHOR: {
     rawAnchor: string;
@@ -424,6 +449,47 @@ export function numericAnchorNote(anchors: string[]): string {
   );
 }
 
+/** SAFETY: exact heading for an unverified fresh-read serve — machine-checkable. */
+export const FRESH_READ_HEADING = "Current range (fresh read):";
+
+/** SAFETY: one general headline clause for an unplaceable bound — no narration. */
+export const UNVERIFIED_HEADLINE =
+  "a bound of this range no longer resolves to the line identity it was served with.";
+
+/** SAFETY: recovery sentence for a target-lost rejection — the only retry is a read. */
+export const TARGET_LOST_RECOVERY =
+  "The line you targeted was deleted or replaced; your anchors describe a version of this file that no longer exists. Read the file and re-target.";
+
+function unknownAnchorFormat(payload: ErrorPayloadMap["E_UNKNOWN_ANCHOR"]): string {
+  const anchors = payload.anchors;
+  if (anchors.length === 1) {
+    return `${payload.path} has not served the anchor "${anchors[0]}"; nothing was written.${numericAnchorNote(anchors)}`;
+  }
+  if (anchors.length === 0) {
+    return `${payload.path} has not served an anchor; nothing was written.`;
+  }
+  return `${payload.path} has not served the anchors ${anchors.map((a) => `"${a}"`).join(", ")}; nothing was written.${numericAnchorNote(anchors)}`;
+}
+
+function foreignHomesDisplay(homes: string[]): string {
+  if (homes.length <= 3) return homes.join(", ");
+  return `${homes.slice(0, 3).join(", ")} and ${homes.length - 3} more`;
+}
+
+function foreignAnchorFormat(payload: ErrorPayloadMap["E_FOREIGN_ANCHOR"]): string {
+  const anchors = payload.anchors;
+  const noun =
+    anchors.length === 1
+      ? `the anchor "${anchors[0]}"`
+      : `the anchors ${anchors.map((a) => `"${a}"`).join(", ")}`;
+  const verb = anchors.length === 1 ? "is" : "are";
+  const homes = foreignHomesDisplay(payload.homes);
+  if (homes.length === 0) {
+    return `${noun} ${verb} inconsistent with ${payload.path}; nothing was written.`;
+  }
+  return `${noun} ${verb} inconsistent with ${payload.path}; served for ${homes}; nothing was written.`;
+}
+
 const BATCH_ATOMICITY_TRAILER =
   "The whole batch was rejected and NOTHING was written — no file changed and earlier items in the batch were NOT applied.";
 
@@ -492,9 +558,29 @@ export const ERROR_REGISTRY: { [K in DomainErrorCode]: CodeSpec<ErrorPayloadMap[
     // so the only fail-closed recovery is a read.
     remedy: "Read the file again for fresh anchors, then retry.",
   },
+  E_UNKNOWN_ANCHOR: {
+    audience: "MODEL",
+    format: unknownAnchorFormat,
+  },
+  E_FOREIGN_ANCHOR: {
+    audience: "MODEL",
+    format: foreignAnchorFormat,
+  },
   E_STALE_RANGE: {
     audience: "MODEL",
     format: staleRangeFormat,
+  },
+  E_TARGET_LOST: {
+    audience: "MODEL",
+    format: ({ servedLine, path }) =>
+      `line ${servedLine}${path ? ` in ${path}` : ""} no longer resolves to the line identity it was served with.\n${TARGET_LOST_RECOVERY}`,
+    // WHY remedy: the leased identity is gone with no surviving window to serve — servedLine
+    // names the dead line, so recovery is a read (upstream b92e0ec:src/domain-errors.ts:381).
+    remedy: "Read the file and re-target.",
+  },
+  E_UNVERIFIED_RANGE: {
+    audience: "MODEL",
+    format: ({ servedBlock }) => `${UNVERIFIED_HEADLINE}\n${FRESH_READ_HEADING}\n${servedBlock}`,
   },
   E_MALFORMED_ANCHOR: {
     audience: "MODEL",
@@ -858,15 +944,18 @@ export const DECLARATION_ONLY_FIELDS: Readonly<Record<string, AllowlistEntry>> =
  * Upstream parity is NOT a reason to keep a code nothing can produce — and it
  * is not a reason to hide one either. T4 (CP1-r3) removed four declarations
  * that had zero local producers, zero reachable messages and no nameable local
- * owner; their upstream producers exist only in the range our next absorb
- * covers, so the four are recorded here instead of declared:
+ * owner. FU-4 (absorb/follow-upstream, upstream `pi-better-edit@b92e0ec`)
+ * re-introduced all four WITH their producers — per-code decision: **adopt the
+ * upstream diagnostic** (the alternative, mapping onto `E_STALE_RANGE` /
+ * `E_UNSERVED_RANGE`, is what ADR-0022 recorded and what this absorb
+ * supersedes):
  *
- * | unported upstream diagnostic | upstream producer (pi-better-edit@00f8c34) |
- * |---|---|
- * | `E_FOREIGN_ANCHOR` | `lease-resolve.ts:116` |
- * | `E_UNKNOWN_ANCHOR` | `lease-resolve.ts:118`, `served-verification.ts:745`, `apply.ts:278` |
- * | `E_UNVERIFIED_RANGE` | `lease-resolve.ts:186`, `served-verification.ts:187` |
- * | `E_TARGET_LOST` | `served-verification.ts:170` |
+ * | ported upstream diagnostic | upstream producer (pi-better-edit@b92e0ec) | local producer |
+ * |---|---|---|
+ * | `E_FOREIGN_ANCHOR` | `lease-resolve.ts:116` | `anchor-pipeline.ts` (`throwUnknownOrForeign`, boundary placement) |
+ * | `E_UNKNOWN_ANCHOR` | `lease-resolve.ts:118`, `served-verification.ts:745` | `anchor-pipeline.ts` (boundary placement, pre-gate) |
+ * | `E_UNVERIFIED_RANGE` | `lease-resolve.ts:186`, `served-verification.ts:187` | `anchor-pipeline.ts` (pre-gate stale-boundary arm) |
+ * | `E_TARGET_LOST` | `served-verification.ts:170`, `lease-resolve.ts:196` | `anchor-pipeline.ts` (pre-gate stale-boundary arm) |
  *
  * Their owner is `"upstream absorb"` and their trigger is the absorb that
  * ports the corresponding producer. When that happens, reintroduce the code

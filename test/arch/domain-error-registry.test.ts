@@ -339,25 +339,21 @@ describe("arch: domain-error registry", () => {
     expect(namesInCode([registryFile], ["PRODUCED_WARNINGS", "firedWarnings"])).toEqual([]);
   });
 
-  // C9 (F10): the deletion is a commitment, not a tidy-up. The four names may
-  // live in PROSE — the `DEFERRED_PRODUCERS` doc comment is the record — never
-  // in code, so the scan strips comments first. The union half is what a ported
-  // upstream producer trips: the code must come back WITH its producer.
-  it("deleting a deferred code's producer *stays* deleted", () => {
-    const deleted = [
+  // C9 (F10; inverted by FU-4): the four codes came back **with** their producers, which is
+  // what this cell's own deletion rule demanded ("the code must come back WITH its producer").
+  // The guard flips from absence to the conjunction: declared union member AND literal-visible
+  // producer — so a future port that drops a producer without dropping the declaration
+  // reddens totality-forward, and a declaration without a union member reddens C15.
+  it("the four ported codes are union members WITH literal producers (C9, FU-4)", () => {
+    const ported = [
       "E_UNKNOWN_ANCHOR",
       "E_FOREIGN_ANCHOR",
       "E_TARGET_LOST",
       "E_UNVERIFIED_RANGE",
     ] as const;
-    expect(namesInCode(files, deleted), "re-declared without a producer (code, not prose)").toEqual(
-      [],
-    );
-    for (const name of deleted) {
-      expect(
-        isDomainErrorCode(name),
-        `${name} is a union member again — it must come back WITH a producer`,
-      ).toBe(false);
+    for (const name of ported) {
+      expect(isDomainErrorCode(name), `${name} is a declared union member`).toBe(true);
+      expect(produced.has(name), `${name} has a literal-visible producer in src/`).toBe(true);
     }
   });
 

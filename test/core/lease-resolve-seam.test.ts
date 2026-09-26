@@ -10,6 +10,7 @@ import {
   verifyRebasedSpan,
   type LeaseSpanSource,
 } from "../../src/hashline/index.js";
+import { DomainError } from "../../src/domain-errors.js";
 import { initHasher } from "../../src/hashline/hasher.js";
 import { loadHashStore, shutdownHashStore } from "../../src/hash-store.js";
 import { makeLeaseSource } from "../../src/mutation/engine.js";
@@ -134,7 +135,7 @@ describe("lease-resolve seam — identity replaces the position check (obligatio
     });
   });
 
-  it("rejects E_UNSERVED_RANGE when the anchor was never served in this session", async () => {
+  it("rejects E_UNKNOWN_ANCHOR when the anchor was never served in this session", async () => {
     await withTempFile("never.txt", CONTENT, async ({ cwd, path }) => {
       const { editTool } = setupIntegrationTest(cwd);
       // Served to ANOTHER session: this session's mirror holds nothing for the file.
@@ -154,10 +155,48 @@ describe("lease-resolve seam — identity replaces the position check (obligatio
       } catch (e) {
         error = e;
       }
-      // Rejects as it did before the seam: the boundary anchor has no served position, so the
-      // exact-boundary rule throws before the identity gate is ever reached.
+      // FU-4 granularity: the boundary anchor has no lease in this session (it was served to
+      // ANOTHER session, and the `(session_id, anchor)` homes lookup is session-scoped), so the
+      // leased-route interception refuses it as E_UNKNOWN_ANCHOR with no rows — never a
+      // range-serve.
       expect(error).toBeDefined();
-      expect(String((error as Error).message)).toMatch(/E_UNSERVED_RANGE/);
+      expect(String((error as Error).message)).toMatch(/E_UNKNOWN_ANCHOR/);
+      expect(await readFile(path, "utf-8")).toBe(CONTENT);
+    });
+  });
+
+  it("rejects E_FOREIGN_ANCHOR when the anchor is leased to another file in this session", async () => {
+    await withTempFile("home.ts", CONTENT, async ({ cwd, path }) => {
+      // Same content at the same positions: `line 5`'s anchor is byte-identical in both
+      // files, so the home.ts lease names a real home for the anchor submitted against foreign.ts.
+      const foreign = join(cwd, "foreign.ts");
+      await writeFile(foreign, CONTENT, "utf-8");
+      const { readTool, editTool } = setupIntegrationTest(cwd);
+      const anchor = anchorOfRendered(
+        await readTool.execute("read", { path: "home.ts" }),
+        "line 5",
+      );
+
+      let error: unknown;
+      try {
+        await editTool.execute("foreign", {
+          path: "foreign.ts",
+          anchor_from: anchor,
+          anchor_to: anchor,
+          replace_with: "changed",
+        });
+      } catch (e) {
+        error = e;
+      }
+      // FU-4 granularity: the homes lookup finds a session lease for ANOTHER path, which
+      // wins over the unknown refusal (upstream b92e0ec:src/hashline/lease-resolve.ts:116-118);
+      // the message names the home and nothing was written to either file.
+      expect(error).toBeDefined();
+      const message = String((error as Error).message);
+      expect(message).toMatch(/E_FOREIGN_ANCHOR/);
+      expect(message).toContain("served for");
+      expect(message).toContain("home.ts");
+      expect(await readFile(foreign, "utf-8")).toBe(CONTENT);
       expect(await readFile(path, "utf-8")).toBe(CONTENT);
     });
   });
@@ -234,19 +273,65 @@ describe("verifyRebasedSpan — the gate's arms", () => {
     expect(codeOfCall(() => verify(stale))).toBe("E_STALE_RANGE");
   });
 
-  it("rejects when the served row holds no lease (a serve predating lease granting)", () => {
+  // FU-4 granularity: on the WIRED route a boundary anchor with no lease is refused by the
+  // interception as E_UNKNOWN_ANCHOR with no rows (never a range-serve) — the gate's
+  // un-leased arm below stays pinned by the direct call.
+  it("rejects an unleased boundary at the interception with E_UNKNOWN_ANCHOR (FU-4)", () => {
     const unleased: LeaseSpanSource = {
       leaseFor: () => undefined,
       rebasedLineOf: () => 1,
     };
-    const error = rejectionFrom(() => verify(unleased));
+    let thrown: unknown;
+    try {
+      verify(unleased);
+    } catch (error) {
+      thrown = error;
+    }
+    expect(thrown).toBeInstanceOf(DomainError);
+    expect(thrown).not.toBeInstanceOf(ServedRejectionError);
+    const error = thrown as DomainError;
+    expect(codeOf(error)).toBe("E_UNKNOWN_ANCHOR");
+    expect(error.servedRows).toEqual([]);
+    expect(String(error.message)).toContain("has not served the anchors");
+  });
+
+  it("verifyRebasedSpan rejects a served row that holds no lease (direct call)", () => {
+    const unleased: LeaseSpanSource = {
+      leaseFor: () => undefined,
+      rebasedLineOf: () => 1,
+    };
+    const error = rejectionFrom(() =>
+      verifyRebasedSpan({
+        served: [FILE_HASHES[0]!, FILE_HASHES[1]!],
+        servedStart: 1,
+        servedEnd: 2,
+        rebasedStart: 1,
+        rebasedEnd: 2,
+        leaseSource: unleased,
+        echo: "echo-block",
+        echoRows: [{ position: 0, hash: FILE_HASHES[0]! }],
+        where: " in x.ts",
+      }),
+    );
     expect(codeOf(error)).toBe("E_STALE_RANGE");
     expect(String(error.message)).toContain("has no served line identity.");
     expect(error.details.cause).toBe("never-served");
   });
 
-  it("rejects when the leased line was retired", () => {
-    const error = rejectionFrom(() => verify(leaseSource({ retired: true })));
+  it("verifyRebasedSpan rejects a retired leased row (direct call)", () => {
+    const error = rejectionFrom(() =>
+      verifyRebasedSpan({
+        served: [FILE_HASHES[0]!, FILE_HASHES[1]!],
+        servedStart: 1,
+        servedEnd: 2,
+        rebasedStart: 1,
+        rebasedEnd: 2,
+        leaseSource: leaseSource({ retired: true }),
+        echo: "echo-block",
+        echoRows: [{ position: 0, hash: FILE_HASHES[0]! }],
+        where: " in x.ts",
+      }),
+    );
     expect(codeOf(error)).toBe("E_STALE_RANGE");
     expect(String(error.message)).toContain(
       "no longer resolves to the line identity it was served with.",
@@ -254,10 +339,128 @@ describe("verifyRebasedSpan — the gate's arms", () => {
     expect(error.details.cause).toBe("retirement");
   });
 
+  // FU-4 granularity: on the wired route both bounds are stale (the same lease is retired for
+  // both anchors), so `exactlyOneStale` is false and the interception refuses with the
+  // row-less E_TARGET_LOST before the gate runs (upstream b92e0ec:src/hashline/lease-resolve.ts:160-200).
+  it("rejects a retired boundary at the interception with E_TARGET_LOST, no rows (FU-4)", () => {
+    let thrown: unknown;
+    try {
+      verify(leaseSource({ retired: true }));
+    } catch (error) {
+      thrown = error;
+    }
+    expect(thrown).toBeInstanceOf(DomainError);
+    expect(thrown).not.toBeInstanceOf(ServedRejectionError);
+    const error = thrown as DomainError;
+    expect(codeOf(error)).toBe("E_TARGET_LOST");
+    expect(error.servedRows).toEqual([]);
+    expect(String(error.message)).toContain(
+      "no longer resolves to the line identity it was served with.",
+    );
+    expect(String(error.message)).toContain("Read the file and re-target.");
+  });
+
+  // FU-4 granularity: the third interception landing — a lease held for ANOTHER file wins over
+  // holding no lease anywhere (upstream b92e0ec:src/hashline/lease-resolve.ts:87-118). Refusable
+  // only through the seam: the real store's homes lookup needs a second served file.
+  it("rejects another file's leased boundary at the interception with E_FOREIGN_ANCHOR (FU-4)", () => {
+    const foreign: LeaseSpanSource = {
+      leaseFor: () => undefined,
+      rebasedLineOf: () => 1,
+      anchorHomes: () => ["other.ts"],
+    };
+    let thrown: unknown;
+    try {
+      verify(foreign);
+    } catch (error) {
+      thrown = error;
+    }
+    expect(thrown).toBeInstanceOf(DomainError);
+    expect(thrown).not.toBeInstanceOf(ServedRejectionError);
+    const error = thrown as DomainError;
+    expect(codeOf(error)).toBe("E_FOREIGN_ANCHOR");
+    expect(error.servedRows).toEqual([]);
+    expect(String(error.message)).toContain(
+      "are inconsistent with this file; served for other.ts; nothing was written.",
+    );
+  });
+
+  // FU-4 granularity: the row-carrying stale landing (upstream
+  // b92e0ec:src/hashline/lease-resolve.ts:160-196): exactly one bound is stale AND the survivor
+  // is live at its SERVED coordinate (no shift occurred), so the served window is trustworthy
+  // enough to echo as a fresh read. Here start's lease (line_id 11, served line 2) has no
+  // coordinate in the buffer while end's (line_id 12, served line 3) lives unshifted at 3.
+  it("rejects with E_UNVERIFIED_RANGE echoing the window when one bound is stale and the survivor is unshifted (FU-4)", () => {
+    const oneStale: LeaseSpanSource = {
+      leaseFor: (anchor) => {
+        const lineId = anchor === FILE_HASHES[0] ? 11 : anchor === FILE_HASHES[1] ? 12 : undefined;
+        if (lineId === undefined) return undefined;
+        return {
+          lineId,
+          servedLineNumber: lineId - 9,
+          servedSnapshotHash: "S",
+          retiredAt: null,
+        };
+      },
+      rebasedLineOf: (lineId) => (lineId === 12 ? 3 : undefined),
+    };
+    let thrown: unknown;
+    try {
+      verify(oneStale);
+    } catch (error) {
+      thrown = error;
+    }
+    expect(thrown).toBeInstanceOf(DomainError);
+    expect(thrown).not.toBeInstanceOf(ServedRejectionError);
+    const error = thrown as DomainError;
+    expect(codeOf(error)).toBe("E_UNVERIFIED_RANGE");
+    // The named window is the bounds' served lines 2–3, echoed from the CURRENT file hashes —
+    // positions 1 and 2, rows rendered with the live text.
+    expect(error.servedRows).toEqual([
+      { position: 1, hash: FILE_HASHES[1] },
+      { position: 2, hash: FILE_HASHES[2] },
+    ]);
+    expect(String(error.message)).toContain(
+      "a bound of this range no longer resolves to the line identity it was served with.",
+    );
+    expect(String(error.message)).toContain("Current range (fresh read):");
+    expect(String(error.message)).toContain("│beta");
+    expect(String(error.message)).toContain("│gamma");
+    expect(error.details.cause).toBe("retirement");
+    expect(error.firstOffendingLine).toBe(2);
+  });
+
+  // The fresh-read echo names the window from the bounds' SERVED lines; when that window
+  // falls outside the (now much shorter) file it cannot be echoed — the guard fails closed
+  // to the row-less E_TARGET_LOST instead of serving a fabricated range.
+  it("fails closed to E_TARGET_LOST when the fresh-read window collapses outside the file (collapsed-window guard)", () => {
+    const beyond: LeaseSpanSource = {
+      leaseFor: (anchor) => {
+        if (anchor === FILE_HASHES[0])
+          return { lineId: 19, servedLineNumber: 10, servedSnapshotHash: "S", retiredAt: null };
+        if (anchor === FILE_HASHES[1])
+          return { lineId: 20, servedLineNumber: 11, servedSnapshotHash: "S", retiredAt: null };
+        return undefined;
+      },
+      rebasedLineOf: (lineId) => (lineId === 20 ? 11 : undefined),
+    };
+    let thrown: unknown;
+    try {
+      verify(beyond);
+    } catch (error) {
+      thrown = error;
+    }
+    expect(thrown).toBeInstanceOf(DomainError);
+    const error = thrown as DomainError;
+    expect(codeOf(error)).toBe("E_TARGET_LOST");
+    expect(error.servedRows).toEqual([]);
+    expect(String(error.message)).toContain("line 10");
+  });
+
   it("does not mutate the served mirror", () => {
     const before = [...SERVED];
     expect(codeOfCall(() => verify(leaseSource()))).toBeUndefined();
-    expect(codeOfCall(() => verify(leaseSource({ retired: true })))).toBe("E_STALE_RANGE");
+    expect(() => verify(leaseSource({ retired: true }))).toThrow(/E_TARGET_LOST/);
     expect(SERVED).toEqual(before);
     expect(SERVED_CANONS).toEqual([canon("gone"), ...FILE_LINES.map((line) => canon(line))]);
   });
@@ -465,7 +668,7 @@ describe("resolution is read-only (runtime)", () => {
     });
   });
 
-  it("writes nothing when the gate rejects a look-alike rebind", async () => {
+  it("writes nothing when the boundary identity is gone (E_TARGET_LOST via the interception)", async () => {
     await withTempFile("ro-reject.txt", TWIN_CONTENT_A, async ({ cwd }) => {
       const sessionKey = "test-session";
       const absolutePath = join(cwd, "ro-reject.txt");
@@ -484,21 +687,28 @@ describe("resolution is read-only (runtime)", () => {
       expect(source).toBeDefined();
       const served = await loadServed(sessionKey, absolutePath);
       const servedCanons = await loadServedCanons(sessionKey, absolutePath);
-      expect(
-        codeOfCall(() =>
-          verifyServedRange({
-            served,
-            servedCanons,
-            startHash: anchor,
-            endHash: anchor,
-            startLine: 5,
-            endLine: 5,
-            fileHashes: lineHashesPure(TWIN_CONTENT_B),
-            fileLines: rebindLines,
-            leaseSource: source,
-          }),
-        ),
-      ).toBe("E_STALE_RANGE");
+      // FU-4 granularity: the leased line was deleted (only the twin's bytes survive), so the
+      // live lease has no coordinate — a stale identity with no window to serve rejects as the
+      // row-less E_TARGET_LOST at the pre-gate interception, not at the gate's rebind arm.
+      let thrown: unknown;
+      try {
+        verifyServedRange({
+          served,
+          servedCanons,
+          startHash: anchor,
+          endHash: anchor,
+          startLine: 5,
+          endLine: 5,
+          fileHashes: lineHashesPure(TWIN_CONTENT_B),
+          fileLines: rebindLines,
+          leaseSource: source,
+        });
+      } catch (error) {
+        thrown = error;
+      }
+      expect(thrown).toBeInstanceOf(DomainError);
+      expect(thrown).not.toBeInstanceOf(ServedRejectionError);
+      expect(codeOf(thrown as DomainError)).toBe("E_TARGET_LOST");
 
       expect(storeRows()).toBe(before);
     });

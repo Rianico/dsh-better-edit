@@ -2,6 +2,10 @@
 
 Date: 2026-09-25
 Status: accepted
+Amended: 2026-09-26 (FU-4, absorb of `pi-better-edit@b92e0ec`) — Decision 2's
+row-count-only disjointness and the _Deliberate divergence_ collapse are superseded;
+the region invariant (Decision 1) and the retry-affordance deletion (Decision 3) stand.
+See §Amendment at the end.
 Related: `src/hashline/anchor-pipeline.ts` (`verifyServedRange`, `buildRangeEcho`,
 `fmtMismatchWithServes`), `src/domain-errors.ts` (`E_STALE_RANGE`, `E_UNSERVED_RANGE`
 formatters), `src/fs-bridge.ts` (the F7 version-guard arm), `CONTEXT.md`
@@ -44,9 +48,11 @@ about which positions the arm happened to choose.
    `hash` is `fileHashes[position]`, and its rendered content is `fileLines[position]` of the
    **same** snapshot. Never a content match, never the model's replacement text, never a
    position outside the named window. The rendered envelope must reproduce those bytes exactly.
-2. **The disjointness signal is the row count, not the code.** Locally there is no
-   `E_TARGET_LOST` / `E_UNVERIFIED_RANGE` (they are unported upstream debt, ADR-0021 §Debt,
-   `src/domain-errors.ts:871-872`), so the payload shape decides:
+2. **The disjointness signal is the row count, not the code.** ~~Locally there is no
+   `E_TARGET_LOST` / `E_UNVERIFIED_RANGE`~~ — **superseded by the FU-4 amendment**: the codes
+   are ported with their producers and the signal is the code again, with the row-count rule
+   surviving as a property of each payload (rows only for the region the anchors identify).
+   At this ADR's date:
    - **rows present** ⇒ the region is identifiable and the rows are its current anchors; the
      envelope renders the `Current range:` heading and the rows, and offers **no** retry
      affordance beyond them;
@@ -66,6 +72,10 @@ about which positions the arm happened to choose.
    and each constructed violation must **fail** the check.
 
 ### Deliberate divergence from upstream (recorded)
+
+> **Retired by the FU-4 amendment (2026-09-26).** The divergence below was the design at this
+> ADR's date; FU-4 executed the exit this section named — the codes returned **with** their
+> producers in the absorb — and the collapse is gone. Kept verbatim as the historical record.
 
 Upstream distinguishes the payload's remedy by **code** (`[E_TARGET_LOST]` ⇒ no rows,
 `[E_UNVERIFIED_RANGE]` ⇒ rows under `Current range (fresh read):` with no hint,
@@ -215,6 +225,37 @@ servedRows.length === 0`" reading would require flipping 13 arms to omit it whil
 - **Add `E_TARGET_LOST` as a bare union member so the payload shape is code-readable** — rejected:
   a declared-but-unproduced code is the exact defect T4 removed (`test/arch/domain-error-registry.test.ts`
   "deleting a deferred code's producer _stays_ deleted"). The code may return **with** its producer,
-  in the absorb that ports it.
+  in the absorb that ports it. (FU-4 is that absorb: the codes returned with literal producers,
+  which is the form this bullet already allowed.)
+
+## Amendment (FU-4, 2026-09-26) — the collapse is superseded by the port
+
+FU-4 (absorb of `pi-better-edit@b92e0ec`) ports the granular taxonomy this ADR deliberately
+collapsed. What changes and what stands:
+
+- **Superseded:** Decision 2's row-count-only disjointness signal and the _Deliberate divergence_
+  section's code collapse. `E_UNKNOWN_ANCHOR`, `E_FOREIGN_ANCHOR`, `E_TARGET_LOST` and
+  `E_UNVERIFIED_RANGE` are now union members **with literal producers** (no declared-but-unproduced
+  code — the T4 defect stays excluded, and `test/arch/domain-error-registry.test.ts` C9 asserts
+  membership + producer per code). Producers: `src/hashline/anchor-pipeline.ts`
+  `throwUnknownOrForeign` / `interceptLeaseBoundaries` (port of upstream
+  `b92e0ec:src/hashline/lease-resolve.ts:87-200`) and the placement arm's zero-position refusal
+  (upstream analogue `b92e0ec:src/hashline/served-verification.ts:729-749`).
+- **Stands:** Decision 1's region invariant (rows only for the anchors' region, derived from the
+  live mapping, never a content lookup), Decision 3's retry-affordance deletion (the ported codes
+  carry no remedy hint; `RETRY_HINT` stays gone), and Decision 4's oracle —
+  `test/arch/rejection-payload-region.test.ts` now asserts the granular refusals directly at
+  their cells.
+- **Reference map:** rows 1–2 of _Upstream → local reference map_ flipped back to parity —
+  `[E_UNVERIFIED_RANGE]` renders `Current range (fresh read):` with rows; `[E_TARGET_LOST]`
+  renders the headline + re-target remedy with no rows. Rows 3–5 stand.
+- **Residuals (disclosed):** the `src/fs-bridge.ts` F7 version-guard arm keeps a row-less
+  `E_STALE_RANGE` — its payload cannot carry the `servedLine` the TARGET_LOST shape needs; and
+  local `E_STALE_RANGE` keeps rendering `Current range:` where upstream renders the fresh-read
+  heading (existing-code render, out of FU-4's scope).
+- **Ledger:** mutant `M7` retired (its subject — `E_TARGET_LOST` declared without producer or
+  deferral — no longer exists); `M14` re-anchored; `T6M1`'s expected set dropped the deleted-twin
+  cell, which now rejects via `E_TARGET_LOST` and no longer routes through the `E_STALE_RANGE`
+  formatter.
 - **Keep serving context rows for the target-lost case (unleased)** — rejected upstream and here:
   a context row grounds no decision, and serving it would reintroduce a non-leasing serve.

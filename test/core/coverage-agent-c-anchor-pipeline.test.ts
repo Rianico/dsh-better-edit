@@ -235,21 +235,29 @@ describe("coverage: anchor-pipeline verifyServedRange / buildRangeEcho", () => {
     expect(txt).toContain("│a");
   });
 
-  it("verifyServedRange throws E_UNSERVED_RANGE when no served positions", () => {
+  it("verifyServedRange throws E_UNKNOWN_ANCHOR when no served positions (FU-4 granularity)", () => {
     const content = "a\nb\nc";
     const hashes = lineHashesPure(content);
     const served: (string | null)[] = [null, null, null];
-    expect(() =>
-      verifyServedRange({
-        served,
-        startHash: hashes[0]!,
-        endHash: hashes[1]!,
-        startLine: 1,
-        endLine: 2,
-        fileHashes: hashes,
-        fileLines: ["a", "b", "c"],
-      }),
-    ).toThrow(/E_UNSERVED_RANGE/);
+    const caught = (() => {
+      try {
+        verifyServedRange({
+          served,
+          startHash: hashes[0]!,
+          endHash: hashes[1]!,
+          startLine: 1,
+          endLine: 2,
+          fileHashes: hashes,
+          fileLines: ["a", "b", "c"],
+        });
+        return undefined;
+      } catch (error) {
+        return error as { code?: string; servedRows?: unknown[] };
+      }
+    })();
+    expect(caught?.code).toBe("E_UNKNOWN_ANCHOR");
+    // Grounding void: neither bound was ever served, so the refusal carries no rows.
+    expect(caught?.servedRows ?? []).toEqual([]);
   });
 
   it("verifyServedRange throws E_UNSERVED_RANGE when served null in range", () => {

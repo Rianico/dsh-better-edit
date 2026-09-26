@@ -91,7 +91,7 @@ describe("coverage-f: anchor-pipeline fmtMismatch", () => {
         fileHashes: hashes,
         fileLines: ["a", "b", "c"],
       }),
-    ).toThrow(/E_(STALE|UNSERVED)_RANGE/);
+    ).toThrow(/E_UNKNOWN_ANCHOR/);
     const servedUnserved: any = [hashes[0]!, null, hashes[2]!];
     expect(() =>
       verifyServedRange({
@@ -115,7 +115,7 @@ describe("coverage-f: anchor-pipeline fmtMismatch", () => {
         fileHashes: hashes,
         fileLines: ["a", "b", "c"],
       }),
-    ).toThrow(/E_UNSERVED_RANGE/);
+    ).toThrow(/E_UNKNOWN_ANCHOR/);
   });
 });
 

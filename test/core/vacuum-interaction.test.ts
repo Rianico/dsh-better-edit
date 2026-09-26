@@ -230,14 +230,14 @@ describe("vacuum — interaction with lineage, leases and the tools", () => {
         } catch (error) {
           failure = `${codeOf(error) ?? ""} :: ${error instanceof Error ? error.message : String(error)}`;
         }
-        // Measured at HEAD: the fail-closed rejection is `E_STALE_RANGE` inside the batch
-        // envelope. `E_TARGET_LOST` / `E_UNVERIFIED_RANGE` are upstream-only codes this tree
-        // never produces (`rg -n 'E_TARGET_LOST' src/` → one comment in `DEFERRED_PRODUCERS`).
-        expect(failure).toContain("[E_STALE_RANGE]");
+        // FU-4 ports the granular codes: the evicted snapshot leaves the boundary's lease
+        // without a live line identity, so `interceptLeaseBoundaries` fails closed with
+        // `E_TARGET_LOST` (no rows) inside the batch envelope — the collapsed
+        // `E_STALE_RANGE` shape this cell pinned pre-FU-4 is retired.
+        expect(failure).toContain("[E_TARGET_LOST]");
         expect(failure).toContain("no longer resolves to the line identity it was served with");
         expect(failure).toContain("NOTHING was written");
-        expect(failure).not.toContain("E_TARGET_LOST");
-        expect(failure).not.toContain("E_UNVERIFIED_RANGE");
+        expect(failure).not.toContain("[E_STALE_RANGE]");
         expect(await readFile(path, "utf-8")).toBe(bytesBefore);
       } finally {
         db.close();

@@ -598,6 +598,9 @@ function leaseSourceFrom(
       };
     },
     rebasedLineOf: (lineId) => positions.get(lineId),
+    // Failure-path only (upstream b92e0ec:src/hashline/resolve.ts:41-49): the lease-miss
+    // rejection asks which OTHER files this session served the anchor for.
+    anchorHomes: (anchor) => internal.leaseHomes(sessionKey, absolutePath, anchor),
   };
 }
 

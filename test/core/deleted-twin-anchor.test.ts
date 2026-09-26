@@ -19,21 +19,25 @@ beforeAll(async () => {
  * CONTRACT: a served span is verified against the file EXACTLY. Each boundary anchor
  * must have exactly one served position, the served span's length must equal the
  * requested range's length, and every line's hash must equal the served hash at its
- * served position. Anything else rejects with `ServedRejectionError` (`E_STALE_RANGE`,
- * or `E_UNSERVED_RANGE` when a boundary anchor has zero or multiple served positions).
- * The edit NEVER re-binds onto a surviving twin.
+ * served position. Since FU-4 the rejections are granular: a leased boundary whose line
+ * identity is gone rejects `E_TARGET_LOST` at the interception
+ * (`src/hashline/anchor-pipeline.ts:703`), a zero-served-position anchor rejects
+ * `E_UNKNOWN_ANCHOR` (`:923`), an ambiguous boundary keeps `E_UNSERVED_RANGE` with rows,
+ * and the `verifyRebasedSpan` gate keeps `E_STALE_RANGE`. The edit NEVER re-binds onto a
+ * surviving twin.
  *
  * Case 1 — externally deleting the anchored line leaves the surviving byte-identical
  * twin holding the deleted line's anchor; the edit must reject and write nothing.
  * Refutability (a) identity arms, not the position check: Case 1 runs on the tool path (a lease
- * source is present), so `verifyServedRange` takes `verifyRebasedSpan` and the position check is
- * never reached for it. Knocking out BOTH arms — the retired arm
- * (`src/hashline/anchor-pipeline.ts:673`) and the rebased-coordinate arm (`:683`) — turns this test
- * red; either arm ALONE leaves it green (they are redundant here), pinned individually by
- * `test/core/lease-resolve-seam.test.ts` "rejects when the leased line was retired" (`:277`) and
- * "rejects when the leased line sits at a different coordinate (look-alike rebind)" (`:260`). The twin
- * keeps the deleted line's hash and its canon still matches — only identity disagrees. The position
- * check (`:833`) is the lease-less fallback, pinned by the pos-free test in this file (`:152`), not Case 1.
+ * source is present), so the boundary reaches `interceptLeaseBoundaries` before any placement or
+ * gate check, and the position check is never reached for it. Knocking out the interception's
+ * stale-identity landing — the `E_TARGET_LOST` mint (`src/hashline/anchor-pipeline.ts:703`) —
+ * demotes the rejection to the downstream `verifyRebasedSpan` arms (retired `:806`,
+ * rebind-mismatch `:816`), which report `E_STALE_RANGE`: this test goes red either way. The seam's
+ * arm-level pins moved to `test/core/lease-resolve-seam.test.ts` (direct `verifyRebasedSpan` calls).
+ * The twin keeps the deleted line's hash and its canon still matches — only identity disagrees. The
+ * position check (`:1001`) is the lease-less fallback, pinned by the pos-free test in this file
+ * (`:159`), not Case 1.
  *
  * Case 2 — an orphaned serve (the same hash written at a new position while the old
  * served slot survives) makes the boundary anchor ambiguous; the span must reject with
@@ -44,7 +48,7 @@ beforeAll(async () => {
  * That search IS the "heal and proceed" arm this contract removes.
  */
 describe("deleted twin anchor (exact position lock)", () => {
-  it("rejects E_STALE_RANGE and writes nothing when the anchored line was deleted externally", async () => {
+  it("rejects E_TARGET_LOST and writes nothing when the anchored line was deleted externally", async () => {
     const initial =
       "export function alpha() {\n" +
       "  return compute(value);\n" +
@@ -83,13 +87,18 @@ describe("deleted twin anchor (exact position lock)", () => {
       }
       // The call rejects …
       expect(error).toBeDefined();
-      // … with E_STALE_RANGE (surfaced inside the batch wrapper) …
-      expect(String((error as Error).message)).toMatch(/E_STALE_RANGE/);
-      // F7 pin: read-required shape — the gate's upstream headline (FU-3: no "Re-read." suffix on
-      // the `verifyRebasedSpan` arms), a non-empty `Current range:` section, and no retry hint.
+      // … with E_TARGET_LOST at the interception (surfaced inside the batch wrapper) …
+      expect(String((error as Error).message)).toMatch(/E_TARGET_LOST/);
+      // FU-4 granular shape: the TARGET_LOST headline names the gone line identity and
+      // carries the re-target remedy, with NO rows — the payload renders no `Current range:`
+      // heading (the envelope's own `Current on-disk range` note is not a payload row), and
+      // no retry hint.
       const message = String((error as Error).message);
-      expect(message).toContain("no longer resolves to the line identity it was served with.");
-      expect(message).toContain("Current range:");
+      expect(message).toContain(
+        "line 2 in twins.ts no longer resolves to the line identity it was served with.",
+      );
+      expect(message).toContain("Read the file and re-target.");
+      expect(message).not.toContain("Current range:");
       expect(message).not.toContain("Retry with these anchors");
       // … and the file on disk is byte-identical to the externally-written
       // content: the edit never re-bound onto the surviving twin.
@@ -195,12 +204,14 @@ describe("deleted twin anchor (exact position lock)", () => {
     expect(servedCanons).toEqual([canon("other"), canon("twin")]);
   });
 
-  it("rejects E_STALE_RANGE when a WINDOWED read could not pin the epoch (reachable pos-free route)", async () => {
+  it("rejects E_TARGET_LOST when a WINDOWED read served the twin (leased boundary route)", async () => {
     // The reachable route this pins: the epoch pin was written only inside
     // `if (isFullRead)` and `isFullRead` requires `rows.length === full.hashes.length`, so a
-    // WINDOWED read never pinned it for that (session, path), whether or not the file
-    // changed. Before the position check was made unconditional this edit silently applied
-    // to the surviving twin.
+    // WINDOWED read never pinned it for that (session, path). Since FU-4 the windowed
+    // read's served rows still carry leases, so the deleted boundary is caught by
+    // `interceptLeaseBoundaries` (→ `E_TARGET_LOST`) before the position check matters;
+    // the pos-free route itself is pinned by the direct cell above. Before the position
+    // check was made unconditional this edit silently applied to the surviving twin.
     const initial =
       "export function alpha() {\n" +
       "  return compute(value);\n" +
@@ -243,7 +254,7 @@ describe("deleted twin anchor (exact position lock)", () => {
         error = e;
       }
       expect(error).toBeDefined();
-      expect(String((error as Error).message)).toMatch(/E_STALE_RANGE/);
+      expect(String((error as Error).message)).toMatch(/E_TARGET_LOST/);
       // Byte-identical: the edit never re-bound onto the surviving twin.
       expect(await readFile(path, "utf-8")).toBe(external);
     });
