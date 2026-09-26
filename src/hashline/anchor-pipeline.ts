@@ -492,10 +492,6 @@ export class ServedRejectionError extends DomainError<DomainErrorCode> {
   }
 }
 
-export function isServedRejection(error: unknown): error is ServedRejectionError {
-  return error instanceof ServedRejectionError;
-}
-
 // F8: narrowed to the codes the reject-and-serve branches actually handle —
 // the class's meaning is type-enforced instead of carried by convention.
 export class AnchorMismatchError extends DomainError<DomainErrorCode> {
