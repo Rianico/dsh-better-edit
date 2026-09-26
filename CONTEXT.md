@@ -108,7 +108,7 @@ _Avoid_: warning (the operation succeeded; it is information, not a warning)
 A model-visible signal the tool must include in `content` for correctness (e.g. `anchor staleness`, `served-range staleness`, `E_STALE_*`/`E_UNSERVED_*`, `E_SUSPICIOUS_TEXT`). The model needs it to retry correctly.
 
 **user-facing signal**:
-A model-visible signal informative for the human only, emitted in `details`/`warnings` and rendered collapsed in TUI (e.g. drift notice, Batch drift note). Not in model content.
+A model-visible signal informative for the human only, emitted in `details`/`warnings` and rendered collapsed in TUI (e.g. drift notice; the former `Batch drift note` was retired — see ADR-0006's Amendment). Not in model content.
 
 **orphaned serve**:
 An entry in served state whose hash no longer matches the current file at that position — the mirror retained a hash that the file has moved or removed elsewhere. Contrast with never-served. An orphan is drift, but at a single position rather than a range.

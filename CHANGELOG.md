@@ -11,9 +11,37 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Features
+
+* **served:** a rejected edit now answers with the current rows of exactly the region the submitted anchors name (region-matched serve); the payload never re-binds another region, and re-read stays the recovery
+* **store:** v7 content-addressed line identity — lines carry stable ids with lineage, leases key on identity, and materialization/undo resolve through it instead of position
+
 ### Bug Fixes
 
 * 对齐 DSH 0.1.6-alpha.2 并修复本地测试
+* **edit:** a stale served span no longer heals silently onto a look-alike line — verification is exact-position and fail-closed (`E_STALE_RANGE` / `E_UNSERVED_RANGE`), removing the position-misaligned accept path
+* **edit:** a rejected edit records and grants nothing, so the next fresh read cannot turn the rejection into a duplicate anchor
+* **store:** the version-flap guard refuses an out-of-order store write instead of letting it clobber the newer version
+* **store:** corrupt lineage repairs terminate, and store writes land as atomic snapshot+lineage pairs — no half-written families
+* **errors:** the copied-anchor echo is one deny code (`E_SUSPICIOUS_TEXT`) across edit/write with a diagnosis that names the served line; the range family's re-read remedy is now truthful
+
+### Performance Improvements
+
+* **snapshot-store:** an LRU vacuum bounds snapshot retention — global and per-path budgets with lease/undo pins honored; the deferred state is reported, never resolved by evicting a pin
+
+### Code Refactoring
+
+* **errors:** the domain-error registry is the single source — declaration-only codes with no producer are deleted, and deferred upstream producers are gated per code by a producer oracle
+* **served:** the orphaned-serve healing and candidate-span enumeration are gone; lease identity is the span-verification authority
+
+### Documentation
+
+* **docs:** the v2 absorb's decisions are recorded — ADR-0016 through ADR-0024 landed, stale code names in older ADRs and the glossary are annotated as historical with their rename chain, the dangling supersession in ADR-0003 is annotated in place, upstream-numbered ADR cites are qualified, and the absorb plan carries the upstream-to-local ADR mapping
+
+### Continuous Integration
+
+* **ci:** the changelog ledger is curated, not projected — one gate (`scripts/changelog-gate.py`) checks both CI boundaries (PR run and durable `main` run) with the waiver as the only recorded escape; the amending pre-push hook is retired and the local signal is the read-only `check` probe
+* **ci:** the release job no longer runs Python — the handoff `clear` step and the now-consumer-less `setup-python` pin are deleted, and release notes come from the curated `[Unreleased]` block through the release-changelog plugin
 
 ## [0.8.2](https://github.com/Rianico/dsh-better-edit/compare/v0.8.1...v0.8.2) (2026-09-14)
 
