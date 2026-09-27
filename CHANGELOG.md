@@ -11,6 +11,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.0.0] - 2026-09-27
+
 ### Features
 
 * **absorb:** land the upstream v2 line-identity redesign on this branch - seam ports, lease identity, and served-span verification across 177 gated, mutant-proven commits (#81)
