@@ -601,7 +601,7 @@ export interface LeaseSpanSource {
    * Backed by the store's `(session_id, anchor)` lookup; it runs on the failure path only,
    * so the happy path pays nothing (upstream b92e0ec:src/hashline/resolve.ts:41-49).
    */
-  anchorHomes?(anchor: string): string[];
+  anchorHomes(anchor: string): string[];
 }
 
 /**
@@ -674,9 +674,7 @@ function throwUnknownOrForeign(args: {
 }): never {
   const path = args.filePath ?? "this file";
   const refused = [...new Set(args.refused)];
-  const homes = [
-    ...new Set(refused.flatMap((anchor) => args.source.anchorHomes?.(anchor) ?? [])),
-  ].sort();
+  const homes = [...new Set(refused.flatMap((anchor) => args.source.anchorHomes(anchor)))].sort();
   if (homes.length > 0) {
     throw new DomainError("E_FOREIGN_ANCHOR", { path, anchors: refused, homes });
   }

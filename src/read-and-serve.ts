@@ -9,7 +9,7 @@
  */
 
 import { abortIf } from "./utils.js";
-import { readView } from "./file-view.js";
+import { hasRequestedWindows, readView } from "./file-view.js";
 import { canon } from "./hashline/hash-assign.js";
 import { splitLines } from "./utils.js";
 import { getAutoGuessFooter } from "./fs-bridge.js";
@@ -199,15 +199,12 @@ export async function readAndServe(
   }
   // #69: epoch lifecycle belongs to full reads — a partial (paged or
   // truncated) read merges window rows only and must not clear the
-  // drift-reported marks; only a full read resets them.
-  // FU-6 (2334352) WHY: `windows: []` falls back to a full read in the preview, so the full-read
-  // contract has to follow the same rule — otherwise an empty array silently skips the drift clear
-  // that a full read owes. A non-empty multi-window read serves sparse rows, never the full file.
-  const hasWindows = Array.isArray(options.windows) && options.windows.length > 0;
+  // drift-reported marks; only a full read resets them. The `undefined`/`[]` →
+  // no-windows rule is owned by file-view's `hasRequestedWindows` (FU-6 WHY moved there with it).
   const isFullRead =
     options.offset === undefined &&
     options.limit === undefined &&
-    !hasWindows &&
+    !hasRequestedWindows(options.windows) &&
     !view.truncation?.truncated;
   if (isFullRead) await clearDriftReported(sessionKey, view.absolutePath);
   const autoFooter =

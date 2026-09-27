@@ -44,6 +44,7 @@ function denseSource(): LeaseSpanSource {
       };
     },
     rebasedLineOf: (lineId) => (lineId >= 11 && lineId <= 13 ? lineId - 10 : undefined),
+    anchorHomes: () => [],
   };
 }
 
@@ -161,6 +162,7 @@ describe("interior-hole conjunction — ServedEvidenceRoute answers the five sit
     const noStartLease: LeaseSpanSource = {
       leaseFor: (anchor) => (anchor === H2 ? denseSource().leaseFor(H2) : undefined),
       rebasedLineOf: () => 3,
+      anchorHomes: () => [],
     };
     let thrown: unknown;
     try {

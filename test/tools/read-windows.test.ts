@@ -6,7 +6,7 @@ import { buildReadTool } from "../../src/tool-read.js";
 import { readAndServe } from "../../src/read-and-serve.js";
 import { localIO } from "../../src/fs-bridge.js";
 import { driftReported, markDriftReported } from "../../src/session-view.js";
-import { sessionKeyFor } from "../../src/workspace-context.js";
+import { sessionKeyFor, withWorkspace } from "../../src/workspace-context.js";
 import { initHasher } from "../../src/hashline/hasher.js";
 import {
   extractHash,
@@ -304,6 +304,27 @@ describe("read tool — windows", () => {
       });
       expect(sparse.served.map((row) => row.position)).toEqual([0, 1, 10, 11]);
       expect(await driftReported(sessionKey, path)).toEqual(new Set(["abc"]));
+    });
+  });
+
+  it("the preview echoes the windows rule: windows: [] through the read tool is a full read, drift clear included", async () => {
+    await withTempFile("echo-windows.ts", TWELVE, async ({ cwd, path }) => {
+      const { readTool } = setupIntegrationTest(cwd);
+      // The fixture's exec session (`makeExec` pins the session id).
+      const sessionKey = "test-session";
+      // The tool's store resolves against its workspace context; enter the same one so the
+      // marks observed here are the marks the tool's full read clears.
+      await withWorkspace(cwd, async () => {
+        await markDriftReported(sessionKey, path, ["abc"]);
+        const result = await readTool.execute("r1", { path: "echo-windows.ts", windows: [] });
+        // Preview echo: `[]` maps to no-windows exactly like the serve-side rule — the plain
+        // full-read rendering, no window headers.
+        const text = getText(result);
+        expect(text).not.toContain("=== Lines");
+        expect(rowsOf(text)).toEqual(TWELVE.trimEnd().split("\n"));
+        // The full-read contract read-and-serve's isFullRead owes the same rule: drift cleared.
+        expect(await driftReported(sessionKey, path)).toEqual(new Set());
+      });
     });
   });
 

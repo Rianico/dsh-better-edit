@@ -1164,6 +1164,28 @@ const MUTANTS = {
       },
     ],
   },
+  RX4M1: {
+    what: "break the windows single-source rule — `[]` counts as windows in the shared predicate (APSD-P2 refuter)",
+    scope: null, // full suite
+    // `hasRequestedWindows` (src/file-view.ts) is the one owner of the `undefined`/`[]` →
+    // no-windows mapping; counting `[]` as windows diverges the serve-side full-read contract
+    // from the preview fallback. Measured at the RX-4 commit: the preview unit cell, the
+    // direct-seam full-read cell, and the preview-echo tool cell all go red; the predicate's
+    // `normWindows` consumer keeps rendering full reads (an empty array is still falsy at the
+    // dispatch), so only the full-read/drift side moves. 3/3.
+    expected: [
+      "treats an empty windows array as no windows",
+      "treats windows: [] as a full read and a partial read as not",
+      "the preview echoes the windows rule: windows: [] through the read tool is a full read, drift clear included",
+    ],
+    edits: [
+      {
+        file: "src/file-view.ts",
+        old: "  return windows !== undefined && windows.length > 0;",
+        new: "  return windows !== undefined;",
+      },
+    ],
+  },
 };
 
 function run(cmd, args, opts = {}) {

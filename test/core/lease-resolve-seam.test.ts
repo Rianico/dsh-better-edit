@@ -239,6 +239,7 @@ describe("verifyRebasedSpan — the gate's arms", () => {
         };
       },
       rebasedLineOf: overrides?.rebasedLineOf ?? ((lineId) => positions.get(lineId)),
+      anchorHomes: () => [],
     };
   }
 
@@ -285,6 +286,7 @@ describe("verifyRebasedSpan — the gate's arms", () => {
     const unleased: LeaseSpanSource = {
       leaseFor: () => undefined,
       rebasedLineOf: () => 1,
+      anchorHomes: () => [],
     };
     let thrown: unknown;
     try {
@@ -304,6 +306,7 @@ describe("verifyRebasedSpan — the gate's arms", () => {
     const unleased: LeaseSpanSource = {
       leaseFor: () => undefined,
       rebasedLineOf: () => 1,
+      anchorHomes: () => [],
     };
     const error = rejectionFrom(() =>
       verifyRebasedSpan({
@@ -408,6 +411,7 @@ describe("verifyRebasedSpan — the gate's arms", () => {
         };
       },
       rebasedLineOf: (lineId) => (lineId === 12 ? 3 : undefined),
+      anchorHomes: () => [],
     };
     let thrown: unknown;
     try {
@@ -453,6 +457,7 @@ describe("verifyRebasedSpan — the gate's arms", () => {
       },
       // Start has no coordinate (stale); the survivor lives at 4, one below its served line 3.
       rebasedLineOf: (lineId) => (lineId === 12 ? 4 : undefined),
+      anchorHomes: () => [],
     };
     let thrown: unknown;
     try {
@@ -485,6 +490,7 @@ describe("verifyRebasedSpan — the gate's arms", () => {
         return undefined;
       },
       rebasedLineOf: (lineId) => (lineId === 20 ? 11 : undefined),
+      anchorHomes: () => [],
     };
     let thrown: unknown;
     try {
@@ -535,6 +541,7 @@ describe("verifyRebasedSpan — the gate's arms", () => {
         };
       },
       rebasedLineOf: (lineId) => holedPositions.get(lineId),
+      anchorHomes: () => [],
     };
   }
 
