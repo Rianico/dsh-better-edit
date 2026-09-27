@@ -1294,11 +1294,12 @@ function parseVitest(output) {
   const summary = { testFiles: null, tests: null };
   const failing = [];
   for (const raw of output.split("\n")) {
-    const files = raw.match(/^\s*Test Files\s+(.*\S)\s*$/);
+    const line = raw.replace(/\x1b\[[0-9;]*m/g, "");
+    const files = line.match(/^\s*Test Files\s+(.*\S)\s*$/);
     if (files && summary.testFiles === null) summary.testFiles = files[1];
-    const tests = raw.match(/^\s*Tests\s+(.*\S)\s*$/);
+    const tests = line.match(/^\s*Tests\s+(.*\S)\s*$/);
     if (tests && summary.tests === null) summary.tests = tests[1];
-    const cell = raw.match(/^\s*[×✕]\s+(.*\S)$/);
+    const cell = line.match(/^\s*[×✕]\s+(.*\S)$/);
     if (cell) {
       const body = cell[1].replace(/\s+\d+(?:\.\d+)?m?s$/, "");
       const segments = body.split(" > ");

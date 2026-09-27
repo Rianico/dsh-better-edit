@@ -2,7 +2,7 @@
  * The sandbox-escalation API for the hashline mutating tools, mirroring
  * `@deepseek-ai/dsh-tool-fs`'s `FsSandboxController` (same vocabulary, same
  * fail-closed approval sequence, shared `@deepseek-ai/dsh-sandbox` pieces) so
- * `edit`/`batch_edit`/`undo_last_edit` escalate exactly like the built-in
+ * `edit`/`undo_last_edit` escalate exactly like the built-in
  * `write`/`edit` — and, critically, stamp the per-call policy with the SESSION
  * workspace root. Without the policy the sandbox backend falls back to the
  * deployment default root, so an edit inside the session workspace is denied

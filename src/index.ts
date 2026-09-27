@@ -1,5 +1,5 @@
 /**
- * dsh-better-edit — hash-anchored read/edit/batch_edit/undo_last_edit for
+ * dsh-better-edit — hash-anchored read/edit/undo_last_edit for
  * DeepSeek Harness, a dsh port of pi-hashline-edit-lsz.
  *
  * Cordis host-plane plugin (mounted by the bundle's cordis.patch.yml). On

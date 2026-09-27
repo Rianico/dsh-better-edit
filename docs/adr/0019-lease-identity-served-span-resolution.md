@@ -2,7 +2,7 @@
 
 Date: 2026-09-24
 Status: accepted; supersedes [ADR-0018](0018-exact-position-served-span-verification.md) in part
-Related: `src/hashline/anchor-pipeline.ts` (`LeaseSpanSource`, `verifyRebasedSpan`,
+Related: `src/hashline/anchor-pipeline.ts` (`LeaseSpanSource`, `ServedEvidenceRoute`, `verifyRebasedSpan`,
 `verifyServedRange`), `src/snapshot-store/lineage-store.ts` (`positionsByIdentity`, `commitSnapshot`),
 `src/snapshot-store/pairing.ts`, `src/mutation/engine.ts` (`makeLeaseSource`, `runFileEdits`),
 `src/mutation.ts` (`execute`, `applySequence`), [ADR-0013](0013-pos-free-roundtrip-optimization.md),
@@ -56,6 +56,11 @@ route's evidence rule). Pinned by `test/core/lease-resolve-seam.test.ts`
 look-alike rebind, boundary null, truncated slot, length mismatch — the 3 accept arms — benign
 shift, interior hole at the gate, interior hole end-to-end — the opt-in position-check arm and the
 no-mirror-mutation arm).
+
+**Identity-read fail-open signals (RX-3, keel K-1).** The seed-read degrade is no longer silent:
+`reportIdentityDegrade` emits one warn per `absolutePath` (capped set, oldest evicted — mirrors
+`reportVacuum`'s shape) and the leased-identity guard falls back to the unconditional position check.
+Pinned by RX3M1 (2/2: fires exactly on degrade, silent otherwise).
 
 **Why the seam is opt-in.** No `LeaseSpanSource` ⇒ the unconditional position check, byte-identical.
 If the **seed** read throws — `identityPositions`, `src/mutation/engine.ts:620-630` — there is no
