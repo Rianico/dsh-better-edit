@@ -1126,6 +1126,21 @@ const MUTANTS = {
       },
     ],
   },
+  RX2M1: {
+    what: "relax the shifted-survivor arm — one stale bound serves E_UNVERIFIED_RANGE even when the survivor moved (CRUX-P2-1 refuter)",
+    scope: null, // full suite
+    // Measured at the RX-2 commit: the geometry (one stale + shifted-live survivor) is
+    // refuted exactly by the ported upstream cell; no other full-suite path reaches
+    // `exactlyOneStale && !survivorLiveUnshifted`. 1/1.
+    expected: ["emits E_TARGET_LOST when the live bound shifted (one stale, one moved)"],
+    edits: [
+      {
+        file: ANCHOR_PIPELINE,
+        old: "    if (exactlyOneStale && survivorLiveUnshifted) {",
+        new: "    if (exactlyOneStale) {",
+      },
+    ],
+  },
 };
 
 function run(cmd, args, opts = {}) {

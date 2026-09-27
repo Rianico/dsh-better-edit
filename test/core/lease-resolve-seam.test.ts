@@ -430,6 +430,43 @@ describe("verifyRebasedSpan — the gate's arms", () => {
     expect(error.firstOffendingLine).toBe(2);
   });
 
+  // CRUX-P2-1: the shifted-survivor landing (port of upstream
+  // b92e0ec:test/hashline/lease-resolve.test.ts:784). One stale bound AND a survivor that is
+  // live but MOVED (rebased 4 != served 3) — `survivorLiveUnshifted` is false, so there is no
+  // evidence the window is trustworthy: the row-less E_TARGET_LOST stands, the named line is
+  // the stale bound's served line. A custom source, not the local `leaseSource` helper: its
+  // `retired: true` retires BOTH anchors, which is the both-stale geometry the arm already
+  // refuses without consulting `survivorLiveUnshifted`. Refuted by ledger id RX2M1.
+  it("emits E_TARGET_LOST when the live bound shifted (one stale, one moved)", () => {
+    const movedSurvivor: LeaseSpanSource = {
+      leaseFor: (anchor) => {
+        if (anchor === FILE_HASHES[0])
+          return { lineId: 11, servedLineNumber: 2, servedSnapshotHash: "S", retiredAt: 1 };
+        if (anchor === FILE_HASHES[1])
+          return { lineId: 12, servedLineNumber: 3, servedSnapshotHash: "S", retiredAt: null };
+        return undefined;
+      },
+      // Start has no coordinate (stale); the survivor lives at 4, one below its served line 3.
+      rebasedLineOf: (lineId) => (lineId === 12 ? 4 : undefined),
+    };
+    let thrown: unknown;
+    try {
+      verify(movedSurvivor);
+    } catch (error) {
+      thrown = error;
+    }
+    expect(thrown).toBeInstanceOf(DomainError);
+    expect(thrown).not.toBeInstanceOf(ServedRejectionError);
+    const error = thrown as DomainError;
+    expect(codeOf(error)).toBe("E_TARGET_LOST");
+    expect(error.servedRows).toEqual([]);
+    // The stale start lease (line_id 11) was served at line 2; the shifted survivor names no
+    // window (upstream keeps the diagnosis on the lost bound only).
+    expect(String(error.message)).toMatch(/line 2/);
+    expect(String(error.message)).not.toMatch(/line 4/);
+    expect(error.details.cause).toBe("retirement");
+  });
+
   // The fresh-read echo names the window from the bounds' SERVED lines; when that window
   // falls outside the (now much shorter) file it cannot be echoed — the guard fails closed
   // to the row-less E_TARGET_LOST instead of serving a fabricated range.
