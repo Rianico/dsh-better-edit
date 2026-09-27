@@ -456,7 +456,9 @@ describe("arch: domain-error registry", () => {
     expect(producedCodesInText('new DomainError("E_RANGE2", { cause: "x" });\n')).toEqual([
       "E_RANGE2",
     ]);
-    expect(findRawHeaders("src/fake.ts", 'const x = "[MODEL] [E_RANGE2] boom";\n')).toHaveLength(1);
+    expect(findRawHeaders("src/fake.ts", 'const x = "[TO MODEL] [E_RANGE2] boom";\n')).toHaveLength(
+      1,
+    );
     // (2) The oracle's header regex is built from the shared shape.
     expect(RAW_HEADER_RE.source).toContain(CODE_SHAPE);
     // (3) Structural: the only bracketed shape literal in the scanner is the
@@ -559,14 +561,14 @@ describe("arch: domain-error registry", () => {
   // stripper this reported [] (blind); the string-aware scanner reports line 2.
   it("scanner stays sighted when a string holds comment syntax (N2)", () => {
     const planted =
-      'const glob = "src/**/*.ts /* not a comment";\nconst x = "[MODEL] [E_PLANTED] boom";\n/* real comment */\n';
+      'const glob = "src/**/*.ts /* not a comment";\nconst x = "[TO MODEL] [E_PLANTED] boom";\n/* real comment */\n';
     const hits = findRawHeaders("src/fake.ts", planted);
     expect(hits).toHaveLength(1);
     expect(hits[0]).toContain(":2:");
     expect(hits[0]).toContain("[E_PLANTED]");
     // And a real // comment holding a header stays stripped (prose is free).
-    expect(findRawHeaders("src/fake.ts", "// [MODEL] [E_PLANTED] prose\nconst ok = 1;\n")).toEqual(
-      [],
-    );
+    expect(
+      findRawHeaders("src/fake.ts", "// [TO MODEL] [E_PLANTED] prose\nconst ok = 1;\n"),
+    ).toEqual([]);
   });
 });

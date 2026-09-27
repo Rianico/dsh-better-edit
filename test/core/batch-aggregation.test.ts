@@ -37,7 +37,7 @@ describe("batch aggregation", () => {
       } catch (error) {
         message = String((error as Error).message);
       }
-      expect(message).toMatch(/\[MODEL\] \[E_BATCH_ABORT\]/);
+      expect(message).toMatch(/\[TO MODEL\] \[E_BATCH_ABORT\]/);
       expect(message.match(/edits\[\d+\] \(batch-single\.txt\) failed:/g)).toHaveLength(1);
       expect(message).toContain("edits[1] (batch-single.txt) failed:");
       expect(message).toContain("[E_STALE_ANCHOR]");
@@ -69,7 +69,7 @@ describe("batch aggregation", () => {
       } catch (error) {
         message = String((error as Error).message);
       }
-      expect(message).toMatch(/\[MODEL\] \[E_BATCH_ABORT\]/);
+      expect(message).toMatch(/\[TO MODEL\] \[E_BATCH_ABORT\]/);
       expect(message).toContain("edits[0] (batch-multi.txt) failed:");
       expect(message).toContain("edits[1] (batch-multi.txt) failed:");
       expect(message.indexOf("edits[0]")).toBeLessThan(message.indexOf("edits[1]"));
@@ -130,7 +130,7 @@ describe("batch aggregation", () => {
       } catch (error) {
         message = String((error as Error).message);
       }
-      expect(message).toMatch(/\[MODEL\] \[E_BATCH_ABORT\]/);
+      expect(message).toMatch(/\[TO MODEL\] \[E_BATCH_ABORT\]/);
       expect(await readFile(path, "utf-8")).toBe(initial);
     });
   });

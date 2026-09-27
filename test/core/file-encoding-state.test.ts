@@ -112,7 +112,7 @@ describe("file-encoding-state — deterministic admission (pure, no filesystem)"
     ]);
     expect(msg).toMatch(/top guesses: gbk/);
     expect(msg).toMatch(/try read\({encoding/);
-    expect(msg).toMatch(/^\[MODEL\] \[E_UNSUPPORTED_FILE\]/);
+    expect(msg).toMatch(/^\[TO MODEL\] \[E_UNSUPPORTED_FILE\]/);
   });
 
   it("E_UNSUPPORTED_FILE when hint bytes cannot be decoded", async () => {

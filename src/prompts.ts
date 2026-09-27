@@ -17,7 +17,7 @@ export const EDIT_DESCRIPTION =
   '`file` is the text file (a file, never a directory). `read` shows `HASH\u2502content` (e.g. `wUp\u2502  "site": {`) \u2014 use bare 3-char HASH anchors for ' +
   '`anchor_from`/`anchor_to` (e.g. "wUp"), never `HASH\u2502content`. `replace_with` is bare content, \\n joins lines, "" deletes. ' +
   'Example: `{"file":"a.py","edits":[{"anchor_from":"wUp","anchor_to":"AU6","replace_with":"new"}]}` (legacy tuples still fold). Reuse `HASH\u2502content` from the diff after success unless the result says NOT recorded as served, then re-read. ' +
-  "On failure follow the error hint: `[MODEL]` errors need a retry with fresh anchors, `[USER]` is human-only.";
+  "On failure follow the error hint: `[TO MODEL]` errors need a retry with fresh anchors, `[USER]` is human-only.";
 
 export const EDIT_GUIDANCE: ToolGuidance = {
   intro:
@@ -30,7 +30,7 @@ export const EDIT_GUIDANCE: ToolGuidance = {
     "`edit`: `edits` entries are objects `{anchor_from, anchor_to, replace_with}` \u2014 legacy tuples still fold pre-validation; unknown fields are rejected.",
     "`edit`: after an edit whose serve landed, the returned diff shows fresh anchors (`HASH\u2502content`) \u2014 copy new `HASH` values from there for the next edit; if the result says the rows were NOT recorded as served, re-read instead.",
     "`edit`: `anchor_from`/`anchor_to` are inclusive; batch multiple edits to the same file only when independent \u2014 they apply atomically (fail \u2192 nothing written).",
-    "`edit`: `[MODEL]` errors (e.g. `E_STALE_*`, `E_UNSERVED_*`, `E_BAD_PAYLOAD`, `E_SUSPICIOUS_TEXT`) need a retry \u2014 `[USER]` warnings/`drift:` notices are human-only.",
+    "`edit`: `[TO MODEL]` errors (e.g. `E_STALE_*`, `E_UNSERVED_*`, `E_BAD_PAYLOAD`, `E_SUSPICIOUS_TEXT`) need a retry \u2014 `[USER]` warnings/`drift:` notices are human-only.",
     "`edit`: on `E_STALE_ANCHOR` re-read for fresh anchors; on `E_STALE_RANGE`/`E_UNSERVED_RANGE` the echoed rows are the file's current anchors, NOT serves — re-read before retrying.",
   ],
 };

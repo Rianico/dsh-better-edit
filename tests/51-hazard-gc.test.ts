@@ -91,7 +91,7 @@ describe("51 hazard GC", () => {
   it("anchor space exhaustion throws E_LARGE_FILE (hash-space) via AnchorSpaceExhaustedError", async () => {
     const content = Array.from({ length: HASH_SPACE + 1 }, () => "x").join("\n");
     expect(() => lineHashesPure(content)).toThrow(
-      "[MODEL] [E_LARGE_FILE] Cannot allocate a unique hash anchor",
+      "[TO MODEL] [E_LARGE_FILE] Cannot allocate a unique hash anchor",
     );
     expect(() => lineHashesPure(content)).toThrowError(AnchorSpaceExhaustedError);
     const { normFromText } = await import("../src/file-view.js");

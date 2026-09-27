@@ -105,7 +105,7 @@ describe("str_replace_editor shadow tool (TDD red)", () => {
       ...localIO(),
       readText: async () => {
         throw new Error(
-          `[MODEL] [E_UNSUPPORTED_FILE] Path is not a readable UTF-8 text file: x. Top-3 guesses: gbk("a"), big5("b"), shift_jis("c"). Try read({encoding: "<encoding>"})`,
+          `[TO MODEL] [E_UNSUPPORTED_FILE] Path is not a readable UTF-8 text file: x. Top-3 guesses: gbk("a"), big5("b"), shift_jis("c"). Try read({encoding: "<encoding>"})`,
         );
       },
     } as unknown as ReturnType<typeof localIO>;

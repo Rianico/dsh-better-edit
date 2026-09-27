@@ -183,7 +183,7 @@ describe("hash collision stress tests", () => {
     const line = "x";
     const content = Array.from({ length: HASH_SPACE + 1 }, () => line).join("\n");
     expect(() => lineHashesPure(content)).toThrow(
-      "[MODEL] [E_LARGE_FILE] Cannot allocate a unique hash anchor",
+      "[TO MODEL] [E_LARGE_FILE] Cannot allocate a unique hash anchor",
     );
   }, 300_000);
 });

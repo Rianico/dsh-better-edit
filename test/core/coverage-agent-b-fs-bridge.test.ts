@@ -71,7 +71,7 @@ describe("mapFsError", () => {
     }
     expect(caught).toBeDefined();
     expect(caught!.message).toBe(
-      "[MODEL] [E_STALE_RANGE] The file changed on disk since it was read (version guard rejected the write). " +
+      "[TO MODEL] [E_STALE_RANGE] The file changed on disk since it was read (version guard rejected the write). " +
         "Call read() to get fresh anchors, then retry.",
     );
     expect(caught!.message).not.toContain("Current range:");

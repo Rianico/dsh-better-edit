@@ -99,7 +99,7 @@ describe("range-family retry truth (T4)", () => {
       });
       expect({
         applied: first.applied,
-        envelope: first.message.startsWith("[MODEL] [E_BATCH_ABORT]"),
+        envelope: first.message.startsWith("[TO MODEL] [E_BATCH_ABORT]"),
         code: first.message.includes("[E_STALE_RANGE]"),
         arm: first.message.includes(
           "served span (4 lines) no longer matches current range (5 lines)",
@@ -189,7 +189,7 @@ describe("range-family retry truth (T4)", () => {
       });
       expect({
         applied: first.applied,
-        envelope: first.message.startsWith("[MODEL] [E_BATCH_ABORT]"),
+        envelope: first.message.startsWith("[TO MODEL] [E_BATCH_ABORT]"),
         code: first.message.includes("[E_STALE_ANCHOR]"),
         headlineInstruction: first.message.includes("Re-read for fresh anchors."),
         envelopeInstruction: first.message.includes("Call read() to get fresh anchors."),
