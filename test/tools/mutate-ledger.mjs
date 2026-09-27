@@ -1101,6 +1101,31 @@ const MUTANTS = {
       },
     ],
   },
+  RX1M1: {
+    what: "invert the leased route's interior-hole rule in `acceptsInteriorHole` — boundaries accepted, holes rejected (the RX-1 flip-test, made durable)",
+    scope: null, // full suite
+    // Measured at the RX-1 commit: the RED set is exactly the interior-hole family — the gate's
+    // accept/boundary arms and the end-to-end hole cell (lease-resolve-seam), the C2 leased-route
+    // truth (range-family-retry-truth), the three conjunction cells (served-evidence-route), and
+    // the multi-window span cell whose edit crosses an unserved gap (read-windows). 8/8.
+    expected: [
+      "accepts an unread interior row between two leased boundaries (upstream ADR-0024 decision 1)",
+      "accepts the same hole end-to-end through verifyServedRange with a lease source",
+      "rejects a never-served boundary row — a two-row window is all boundary (decision 1 keeps it fail-closed)",
+      "never-served interior edit applies on the leased route (C2, flipped by FU-3)",
+      "interior-hole conjunction: the gate accepts an interior null and verifies the boundary leases",
+      "interior-hole conjunction: the gate rejects a null end-boundary — the named anchor stays fail-closed",
+      "interior-hole conjunction: the leased route accepts a holed window end-to-end",
+      "serves anchors from every window so one edit can span them",
+    ],
+    edits: [
+      {
+        file: ANCHOR_PIPELINE,
+        old: '  return route.kind === "leased" && k !== 0 && k !== servedLen - 1;',
+        new: '  return route.kind === "leased" && (k === 0 || k === servedLen - 1);',
+      },
+    ],
+  },
 };
 
 function run(cmd, args, opts = {}) {

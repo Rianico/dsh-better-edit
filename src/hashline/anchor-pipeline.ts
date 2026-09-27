@@ -605,6 +605,62 @@ export interface LeaseSpanSource {
 }
 
 /**
+ * The served-evidence route: which evidence owns verification of a served span. Constructed
+ * EXACTLY ONCE per `verifyServedRange` call from the opt-in `leaseSource` seam, so the
+ * leased/mirror conjunction — boundary interception, never-served interior scan, identity-gate
+ * route, position-check null handling, and the gate's interior-hole rule — is one value's
+ * decisions instead of five comment-enforced presence-tests.
+ *
+ * The union answers exactly three questions (below): `owesInteriorScan`, `acceptsInteriorHole`
+ * and `checksPosition`. The `kind` discriminator itself routes the boundary interception and
+ * the identity gate (obligation (c)).
+ */
+export type ServedEvidenceRoute = { kind: "leased"; source: LeaseSpanSource } | { kind: "mirror" };
+
+function servedEvidenceRoute(leaseSource: LeaseSpanSource | undefined): ServedEvidenceRoute {
+  return leaseSource === undefined ? { kind: "mirror" } : { kind: "leased", source: leaseSource };
+}
+
+/**
+ * Question 1: does this route owe the never-served interior scan (upstream ADR-0024 decision 2)?
+ * On the mirror route the mirror is the only evidence, so an interior hole rejects there.
+ * The leased route does not scan: the identity gate owns verification — its two boundary
+ * leases pin the span's extent, so an interior `null` carries no identity to verify and
+ * `acceptsInteriorHole` admits it (decision 1, adopted; supersedes ADR-0019's decline).
+ * Rejecting the hole on the scan would shadow the gate and keep taxing correct edits upstream
+ * measured at 8/242 calls.
+ */
+function owesInteriorScan(route: ServedEvidenceRoute): boolean {
+  return route.kind === "mirror";
+}
+
+/**
+ * Question 2: is slot `k` of a `servedLen`-row gate window an interior hole the leased
+ * identity gate accepts? Upstream ADR-0024 decision 1 (adopted; supersedes ADR-0019's
+ * decline) narrows informed destruction to the boundaries: an unread interior row has no
+ * identity to check, and the two verified boundary leases already fix the span's extent, so
+ * refusing it only taxed a correct edit. A `null` boundary is the named anchor itself —
+ * unverifiable by construction — so it keeps the fail-closed diagnosis. The mirror route
+ * answers uniformly: `owesInteriorScan` has already rejected its holes before the gate can
+ * be reached.
+ */
+function acceptsInteriorHole(route: ServedEvidenceRoute, k: number, servedLen: number): boolean {
+  return route.kind === "leased" && k !== 0 && k !== servedLen - 1;
+}
+
+/**
+ * Question 3: does this slot take part in the position comparison? On the leased route a
+ * `null` slot carries no evidence to compare and the identity gate has already adjudicated
+ * the window (accepting an interior hole per upstream ADR-0024 decision 1); failing the
+ * position check on it here would re-shadow the gate. The non-leased route rejects its holes
+ * in the interior scan above (decision 2 keeps its interior diagnosis) and compares every
+ * slot as before.
+ */
+function checksPosition(route: ServedEvidenceRoute, slot: string | null): boolean {
+  return route.kind !== "leased" || slot !== null;
+}
+
+/**
  * Refuses anchors the lease seam cannot place: the session holds no lease for them in this file.
  * Deterministic precedence, one condition per code — a lease held for ANOTHER file
  * (`E_FOREIGN_ANCHOR`) wins over holding no lease anywhere (`E_UNKNOWN_ANCHOR`). Neither
@@ -743,12 +799,14 @@ export function verifyRebasedSpan(args: {
   servedEnd: number;
   rebasedStart: number;
   rebasedEnd: number;
-  leaseSource: LeaseSpanSource;
+  /** The leased evidence route — this gate is what the leased kind owns. */
+  route: Extract<ServedEvidenceRoute, { kind: "leased" }>;
   echo: string;
   echoRows: ServedRow[];
   where: string;
 }): void {
-  const { served, leaseSource, echo, echoRows, where } = args;
+  const { served, route, echo, echoRows, where } = args;
+  const leaseSource = route.source;
   const servedLen = args.servedEnd - args.servedStart + 1;
   const rebasedLen = args.rebasedEnd - args.rebasedStart + 1;
   if (rebasedLen !== servedLen) {
@@ -780,12 +838,11 @@ export function verifyRebasedSpan(args: {
       });
     }
     if (servedAnchor === null) {
-      // WHY: upstream ADR-0024 decision 1 (adopted; supersedes ADR-0019's decline) narrows informed
-      // destruction to the boundaries: an unread interior row has no identity to check, and the
-      // two verified boundary leases already fix the span's extent, so refusing it only taxed a
-      // correct edit. A `null` boundary is the named anchor itself — unverifiable by
-      // construction — so it keeps the fail-closed diagnosis.
-      if (k === 0 || k === servedLen - 1) {
+      // WHY: the interior-accept / boundary-reject split is the route's `acceptsInteriorHole`
+      // decision (upstream ADR-0024 decision 1, adopted; supersedes ADR-0019's decline) — see
+      // its doc for why an unread interior row passes and a `null` boundary keeps the
+      // fail-closed diagnosis.
+      if (!acceptsInteriorHole(route, k, servedLen)) {
         throw new ServedRejectionError({
           code: "E_STALE_RANGE",
           headline: `line ${currentLine}${where} was never served.`,
@@ -847,13 +904,18 @@ export function verifyServedRange(args: {
   servedCanons?: (string | null)[];
   retired?: ReadonlySet<string>;
   /**
-   * Present => the identity gate (`verifyRebasedSpan`) replaces the position check below
-   * (obligation (c)). Absent => the unconditional position check. Identity only, never a weaker
-   * position check.
+   * Present => the leased evidence route (identity gate `verifyRebasedSpan` replaces the position
+   * check below, obligation (c)); absent => the mirror route with its unconditional position
+   * check. Identity only, never a weaker position check. Turns into the single
+   * `ServedEvidenceRoute` value at the top of the body — the rest of the function never
+   * presence-tests this argument.
    */
   leaseSource?: LeaseSpanSource;
 }): void {
   const { served, startHash, endHash, startLine, endLine, fileHashes, fileLines, filePath } = args;
+  // The one route construction (obligation (c)): every leased/mirror decision below consults
+  // this value, so the conjunction cannot drift site by site.
+  const route = servedEvidenceRoute(args.leaseSource);
   const where = filePath ? ` in ${filePath}` : "";
   const retiredSet = args.retired ?? new Set<string>();
   const servedCanons = args.servedCanons;
@@ -894,14 +956,14 @@ export function verifyServedRange(args: {
   // before content placement can substitute a look-alike for the lost identity. The non-leased
   // route keeps mirror placement alone (upstream's non-leased analogue,
   // served-verification.ts:745, is the zero-position arm below).
-  if (args.leaseSource !== undefined) {
+  if (route.kind === "leased") {
     interceptLeaseBoundaries({
       startHash,
       endHash,
       fileHashes,
       fileLines,
       ...(filePath !== undefined ? { filePath } : {}),
-      leaseSource: args.leaseSource,
+      leaseSource: route.source,
     });
   }
 
@@ -954,13 +1016,10 @@ export function verifyServedRange(args: {
     });
   }
 
-  // WHY: the never-served interior scan is the non-leased route's evidence rule (upstream ADR-0024
-  // decision 2): there the mirror is the only evidence, so an interior hole rejects. With a
-  // lease source the identity gate owns verification — its two boundary leases pin the span's
-  // extent, so an interior `null` carries no identity to verify and `verifyRebasedSpan`
-  // accepts it (decision 1, adopted; supersedes ADR-0019's decline). Rejecting the hole here
-  // would shadow the gate and keep taxing correct edits upstream measured at 8/242 calls.
-  if (args.leaseSource === undefined) {
+  // The never-served interior scan is the mirror route's evidence rule (upstream ADR-0024
+  // decision 2); the leased route skips it because the identity gate owns interior holes
+  // there (decision 1) — the full rationale lives on `owesInteriorScan`.
+  if (owesInteriorScan(route)) {
     for (let i = from; i <= to; i++) {
       if (served[i] === null) {
         throw new ServedRejectionError({
@@ -995,14 +1054,14 @@ export function verifyServedRange(args: {
   // weaker position check. The pos-free route is REACHABLE on a normal session route (a windowed
   // read never pinned the epoch; a preview/no-store edit carries no leases), which is why this
   // fallback cannot be dropped.
-  if (args.leaseSource !== undefined) {
+  if (route.kind === "leased") {
     verifyRebasedSpan({
       served,
       servedStart: from + 1,
       servedEnd: to + 1,
       rebasedStart: startLine,
       rebasedEnd: endLine,
-      leaseSource: args.leaseSource,
+      route,
       echo,
       echoRows,
       where,
@@ -1052,11 +1111,9 @@ export function verifyServedRange(args: {
     }
   }
   for (let k = 0; k < servedLen; k++) {
-    // WHY: on the leased route a `null` slot carries no evidence to compare and the identity gate
-    // has already adjudicated the window (accepting an interior hole per upstream ADR-0024
-    // decision 1); failing the position check on it here would re-shadow the gate. The
-    // non-leased route rejects the hole above (decision 2 keeps its interior diagnosis).
-    if (args.leaseSource !== undefined && served[from + k] === null) continue;
+    // The leased route's `null` skip is `checksPosition`'s decision (the identity gate already
+    // adjudicated the hole); the mirror route's holes rejected in the scan above.
+    if (!checksPosition(route, served[from + k])) continue;
     if (served[from + k] !== fileHashes[startLine - 1 + k]) {
       const offendingLine = startLine + k;
       throw new ServedRejectionError({
