@@ -12,7 +12,12 @@ import {
 } from "../../src/hashline/index.js";
 import { DomainError } from "../../src/domain-errors.js";
 import { initHasher } from "../../src/hashline/hasher.js";
-import { loadHashStore, shutdownHashStore } from "../../src/hash-store.js";
+import {
+  loadHashStore,
+  shutdownHashStore,
+  type HashStore,
+  type InternalHashStore,
+} from "../../src/hash-store.js";
 import { makeLeaseSource } from "../../src/mutation/engine.js";
 import { loadServed, loadServedCanons } from "../../src/session-view.js";
 import { hashStorePath } from "../../src/store-tenancy.js";
@@ -748,6 +753,81 @@ describe("resolution is read-only (runtime)", () => {
       expect(codeOf(thrown as DomainError)).toBe("E_TARGET_LOST");
 
       expect(storeRows()).toBe(before);
+    });
+  });
+});
+
+describe("identityPositions degrade signal — log-once warn (KEEL K-1)", () => {
+  /**
+   * Run with `store.positionsByIdentity` made to throw, then restore it. The method is a plain
+   * writable property on the memoized store object; no other call path reaches it (the lineage
+   * internals call their delegate directly), so the blast radius is exactly the engine's
+   * identity read. Pass the store the code under test will open: the engine's own
+   * `loadHashStore()` resolves against the tool's workspace, so the end-to-end cell hands in
+   * `loadHashStore(cwd)`.
+   */
+  async function withThrowingIdentityRead<T>(store: HashStore, run: () => Promise<T>): Promise<T> {
+    const internal = store as unknown as InternalHashStore;
+    const original = internal.positionsByIdentity;
+    internal.positionsByIdentity = () => {
+      throw new Error("K-1: simulated lineage read failure");
+    };
+    try {
+      return await run();
+    } finally {
+      internal.positionsByIdentity = original;
+    }
+  }
+
+  it("warns exactly once per file on the first degrade and stays silent on repeats", async () => {
+    await withTempFile("k1-degrade.txt", CONTENT, async ({ cwd }) => {
+      const absolutePath = join(cwd, "k1-degrade.txt");
+      const store = await loadHashStore();
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      try {
+        await withThrowingIdentityRead(store, async () => {
+          // The fail-open is unchanged: no lease source, the weaker route keeps guarding.
+          expect(makeLeaseSource(store, "k1-session", absolutePath, CONTENT)).toBeUndefined();
+          expect(makeLeaseSource(store, "k1-session", absolutePath, CONTENT)).toBeUndefined();
+        });
+        expect(warn).toHaveBeenCalledTimes(1);
+        const message = String(warn.mock.calls[0]?.[0]);
+        expect(message).toMatch(/^dsh-better-edit: /);
+        expect(message).toContain(absolutePath);
+        expect(message).toContain("K-1: simulated lineage read failure");
+      } finally {
+        warn.mockRestore();
+      }
+    });
+  });
+
+  it("the edit still applies under the degrade — signal added, behavior unchanged", async () => {
+    await withTempFile("k1-edit.txt", CONTENT, async ({ cwd, path }) => {
+      const { readTool, editTool } = setupIntegrationTest(cwd);
+      const anchor = anchorOfRendered(
+        await readTool.execute("read", { path: "k1-edit.txt" }),
+        "line 5",
+      );
+      // The same memoized object the engine opens inside the tool's workspace context.
+      const store = await loadHashStore(cwd);
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      try {
+        await withThrowingIdentityRead(store, async () => {
+          await editTool.execute("k1-degraded-edit", {
+            path: "k1-edit.txt",
+            anchor_from: anchor,
+            anchor_to: anchor,
+            replace_with: "line 5 changed",
+          });
+          // The pre-pass and the loop item both degrade against the same file — one context,
+          // one warn (the batch item goes through `makeLeaseSource` again).
+          expect(warn).toHaveBeenCalledTimes(1);
+          expect(String(warn.mock.calls[0]?.[0])).toMatch(/^dsh-better-edit: /);
+        });
+      } finally {
+        warn.mockRestore();
+      }
+      expect(await readFile(path, "utf-8")).toBe(CONTENT.replace("line 5\n", "line 5 changed\n"));
     });
   });
 });

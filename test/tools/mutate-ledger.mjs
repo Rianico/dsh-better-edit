@@ -1141,6 +1141,29 @@ const MUTANTS = {
       },
     ],
   },
+  RX3M1: {
+    what: "silence the identity-read degrade signal — restore the silent fail-open catch (KEEL K-1 refuter)",
+    scope: null, // full suite
+    // The mutate-ledger anchor is the whole catch block; the mutation removes the report call
+    // and the binding (behavior unchanged — only the signal goes). Measured at the RX-3
+    // commit: both K-1 cells ride the warn assertion; the edit itself still applies under
+    // either code, so no other full-suite cell moves. 2/2.
+    expected: [
+      "warns exactly once per file on the first degrade and stays silent on repeats",
+      "the edit still applies under the degrade — signal added, behavior unchanged",
+    ],
+    edits: [
+      {
+        file: ENGINE,
+        old:
+          "  } catch (cause) {\n" +
+          "    reportIdentityDegrade(absolutePath, cause);\n" +
+          "    return undefined;\n" +
+          "  }",
+        new: "  } catch {\n    return undefined;\n  }",
+      },
+    ],
+  },
 };
 
 function run(cmd, args, opts = {}) {

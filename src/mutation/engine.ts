@@ -573,10 +573,42 @@ function internalStore(store: HashStore): InternalHashStore {
   return store as unknown as InternalHashStore;
 }
 
+// WHY — KEEL K-1: every sibling degrade path signals at warn tier through a module-owned ledger
+// (`reportVacuum`'s overflow/skip sets); a throwing `positionsByIdentity` was the one silent
+// fail-open — it silently downgraded the leased-identity guard to the unconditional position
+// check. One warn per file path: the identity of the degrade is the path, stable across retries,
+// so a persistently broken lineage read warns once instead of on every edit. Observability only:
+// never throws, never changes the outcome.
+// BOUND (mirror of vacuum.ts's `REPORT_CONTEXT_CAP`): the ledger holds at most
+// IDENTITY_DEGRADE_REPORT_CAP paths and evicts the oldest inserted first, so the state is capped
+// rather than unbounded across distinct file paths. A process touching more distinct paths than
+// the cap can re-report an evicted one — strictly cheaper than an unbounded Set.
+const IDENTITY_DEGRADE_REPORT_CAP = 256;
+const identityDegradeReported = new Map<string, true>();
+
+/** The single report owner for the identity-read degrade: one warn per `absolutePath`. */
+function reportIdentityDegrade(absolutePath: string, cause: unknown): void {
+  try {
+    if (identityDegradeReported.has(absolutePath)) return;
+    if (identityDegradeReported.size >= IDENTITY_DEGRADE_REPORT_CAP) {
+      const oldest = identityDegradeReported.keys().next();
+      if (oldest.done !== true) identityDegradeReported.delete(oldest.value);
+    }
+    identityDegradeReported.set(absolutePath, true);
+    console.warn(
+      `dsh-better-edit: line-identity read failed for ${absolutePath} (${String(cause)}) — the ` +
+        `edit proceeds under the unconditional position check.`,
+    );
+  } catch {
+    // SAFETY: observability only — a broken diagnostic sink must never fail the caller.
+  }
+}
+
 /**
  * The `line_id` -> line-number map for one buffer, or undefined when the store read throws.
  * `undefined` means "no source": the unconditional position check keeps guarding the edit, never a
- * weaker check. `positionsByIdentity` itself writes nothing.
+ * weaker check. The throw is reported once per file (KEEL K-1) — the fail-open stays, the silence
+ * goes. `positionsByIdentity` itself writes nothing.
  */
 function identityPositions(
   store: HashStore,
@@ -585,7 +617,8 @@ function identityPositions(
 ): Map<number, number> | undefined {
   try {
     return internalStore(store).positionsByIdentity(absolutePath, content);
-  } catch {
+  } catch (cause) {
+    reportIdentityDegrade(absolutePath, cause);
     return undefined;
   }
 }
