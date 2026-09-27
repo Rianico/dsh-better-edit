@@ -512,11 +512,11 @@ function normReqInt(value: unknown, name: string): number {
 }
 
 /**
- * The FU-6 windows rule, owned here so the preview and the serve-side full-read contract
+ * The windows rule, owned here so the preview and the serve-side full-read contract
  * cannot disagree: `undefined` and `[]` both mean "no windows" — the caller falls back to the
  * single-window `offset`/`limit` contract, so an empty array stays backward compatible.
  *
- * FU-6 (2334352) WHY (moved with the rule from read-and-serve): `windows: []` falls back to a
+ * WHY (moved with the rule from read-and-serve): `windows: []` falls back to a
  * full read in the preview, so the full-read contract has to follow the same rule — otherwise an
  * empty array silently skips the drift clear that a full read owes. A non-empty multi-window
  * read serves sparse rows, never the full file.
