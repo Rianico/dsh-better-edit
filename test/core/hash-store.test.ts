@@ -1059,8 +1059,8 @@ describe("hash-store — schema versioning", () => {
       );
       expect(failure).toBeInstanceOf(DomainError);
       expect((failure as DomainError).code).toBe("E_STORE_NEWER_VERSION");
-      expect(String((failure as Error).message)).toContain("[MODEL] [E_STORE_NEWER_VERSION]");
-      await expect(loadHashStore()).rejects.toThrow("[MODEL] [E_STORE_NEWER_VERSION]");
+      expect(String((failure as Error).message)).toContain("[TO MODEL] [E_STORE_NEWER_VERSION]");
+      await expect(loadHashStore()).rejects.toThrow("[TO MODEL] [E_STORE_NEWER_VERSION]");
 
       const after = await readFile(sqlitePath(home));
       expect(after.equals(before)).toBe(true);

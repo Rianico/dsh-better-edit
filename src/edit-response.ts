@@ -5,7 +5,7 @@ import { visLines, clipLine } from "./utils.js";
 
 export type EditDetails = {
   diff: string;
-  /** Bare `E_*` code for the primary error signal, if any (no `[MODEL]` prefix). Structured counterpart to message-string codes. */
+  /** Bare `E_*` code for the primary error signal, if any (no `[TO MODEL]` prefix). Structured counterpart to message-string codes. */
   errCode?: string;
   /** Disambiguator for `E_UNSERVED_RANGE`: boundary miss vs interior hole. */
   unservedKind?: "boundary" | "interior";

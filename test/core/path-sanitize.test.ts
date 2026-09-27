@@ -6,7 +6,7 @@ describe("gemma-4 tool-call bleed hardening (#55)", () => {
   it("keeps EDIT_DESCRIPTION under 800 chars with canonical shape", () => {
     expect(EDIT_DESCRIPTION.length).toBeLessThan(800);
     expect(EDIT_DESCRIPTION).toContain('{ "file": file, "edits":');
-    expect(EDIT_DESCRIPTION).toContain("[MODEL]");
+    expect(EDIT_DESCRIPTION).toContain("[TO MODEL]");
     expect(EDIT_DESCRIPTION).toContain("[USER]");
   });
 

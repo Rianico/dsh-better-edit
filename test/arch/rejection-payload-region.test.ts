@@ -306,7 +306,7 @@ describe("rejection payload region rule (ADR-0022)", () => {
     const planted = plantedError({
       code: "E_STALE_RANGE",
       // The planted payload wears the right heading, so the check fails on the row identity.
-      message: `[MODEL] [E_STALE_RANGE] line 2 differs.\nCurrent range:\n${misplaced.hash}│alpha`,
+      message: `[TO MODEL] [E_STALE_RANGE] line 2 differs.\nCurrent range:\n${misplaced.hash}│alpha`,
       servedRows: [misplaced],
       servedBlock: `${misplaced.hash}│alpha`,
     });
@@ -327,7 +327,7 @@ describe("rejection payload region rule (ADR-0022)", () => {
     const outside: ServedRow = { position: 2, hash: hashes[2]! };
     const planted = plantedError({
       code: "E_STALE_RANGE",
-      message: `[MODEL] [E_STALE_RANGE] x.\nCurrent range:\n${hashes[2]}│gamma`,
+      message: `[TO MODEL] [E_STALE_RANGE] x.\nCurrent range:\n${hashes[2]}│gamma`,
       servedRows: [outside],
       servedBlock: `${hashes[2]}│gamma`,
     });
@@ -347,7 +347,7 @@ describe("rejection payload region rule (ADR-0022)", () => {
     const hashes = lineHashesPure(DISK.trimEnd());
     const planted = plantedError({
       code: "E_STALE_RANGE",
-      message: `[MODEL] [E_STALE_RANGE] x.\n${hashes[0]}│alpha`,
+      message: `[TO MODEL] [E_STALE_RANGE] x.\n${hashes[0]}│alpha`,
       servedRows: [{ position: 0, hash: hashes[0]! }],
       servedBlock: `${hashes[0]}│alpha`,
     });
@@ -367,7 +367,7 @@ describe("rejection payload region rule (ADR-0022)", () => {
     const hashes = lineHashesPure("alpha\nbeta\ndelta".trimEnd());
     const planted = plantedError({
       code: "E_STALE_RANGE",
-      message: `[MODEL] [E_STALE_RANGE] line 3 gone.\nCurrent range:\n${hashes[2]}│delta`,
+      message: `[TO MODEL] [E_STALE_RANGE] line 3 gone.\nCurrent range:\n${hashes[2]}│delta`,
       servedRows: [{ position: 2, hash: hashes[2]! }],
       servedBlock: `${hashes[2]}│delta`,
     });
@@ -386,7 +386,7 @@ describe("rejection payload region rule (ADR-0022)", () => {
   it("negative control: a row-less payload without a read instruction fails the check", () => {
     const planted = plantedError({
       code: "E_STALE_RANGE",
-      message: "[MODEL] [E_STALE_RANGE] the target is gone.",
+      message: "[TO MODEL] [E_STALE_RANGE] the target is gone.",
       servedRows: [],
       servedBlock: "",
     });
@@ -406,7 +406,7 @@ describe("rejection payload region rule (ADR-0022)", () => {
     const hashes = lineHashesPure(DISK.trimEnd());
     const planted = plantedError({
       code: "E_STALE_RANGE",
-      message: `[MODEL] [E_STALE_RANGE] x.\nCurrent range:\n${hashes[0]}│alpha\n${RETRY_AFFORDANCE} (no read needed).`,
+      message: `[TO MODEL] [E_STALE_RANGE] x.\nCurrent range:\n${hashes[0]}│alpha\n${RETRY_AFFORDANCE} (no read needed).`,
       servedRows: [{ position: 0, hash: hashes[0]! }],
       servedBlock: `${hashes[0]}│alpha`,
     });
@@ -453,7 +453,7 @@ describe("rejection payload region rule (ADR-0022)", () => {
       // The failure is exactly the offending-field line: the `hint` suffix (src/utils.ts:26-40) is
       // the only place an allowed-set list could be appended, and any hint changes this string.
       expect(message).toBe(
-        "[MODEL] [E_BAD_PAYLOAD] Read request contains unknown or unsupported fields: ranges.",
+        "[TO MODEL] [E_BAD_PAYLOAD] Read request contains unknown or unsupported fields: ranges.",
       );
       // The invariant, stated in terms of the DERIVED schema — no retyped list enters this file.
       assertNoAllowedSetLeak(message, allowed);

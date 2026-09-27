@@ -29,7 +29,7 @@ describe("numeric-anchor diagnosis", () => {
     } catch (error) {
       message = String((error as Error).message);
     }
-    expect(message).toMatch(/\[MODEL\] \[E_STALE_ANCHOR\]/);
+    expect(message).toMatch(/\[TO MODEL\] \[E_STALE_ANCHOR\]/);
     expect(message).toContain('2 stale anchors in a.py: "833", "833". Re-read for fresh anchors.');
     expect(message).toContain('Note: anchors "833", "833" consist only of digits');
     expect(message).toContain("resemble line numbers");
@@ -64,7 +64,7 @@ describe("numeric-anchor diagnosis", () => {
     } catch (error) {
       message = String((error as Error).message);
     }
-    expect(message).toMatch(/\[MODEL\] \[E_STALE_ANCHOR\]/);
+    expect(message).toMatch(/\[TO MODEL\] \[E_STALE_ANCHOR\]/);
     expect(message).not.toContain("Note:");
   });
 });

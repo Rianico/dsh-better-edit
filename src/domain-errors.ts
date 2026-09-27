@@ -50,6 +50,11 @@
  * @module dsh-better-edit/domain-errors
  */
 
+/**
+ * Message channel: `formatError` prefixes every rendered error with
+ * `[TO <AUDIENCE>]` — the `TO` marks the addressee (who must act), while the
+ * remedy text names the action.
+ */
 export type Audience = "MODEL" | "USER";
 
 /**
@@ -829,7 +834,7 @@ export function formatWarning<K extends DomainWarningCode>(
 }
 
 /**
- * SAFETY: the sole composer of `[<AUDIENCE>] [<E_CODE>]` prefixes for errors.
+ * SAFETY: the sole composer of `[TO <AUDIENCE>] [<E_CODE>]` prefixes for errors.
  * `DomainError` delegates here, so header construction has exactly one site.
  */
 export function formatError<K extends DomainErrorCode>(
@@ -837,7 +842,7 @@ export function formatError<K extends DomainErrorCode>(
   payload: ErrorPayloadMap[K],
 ): string {
   const spec = ERROR_REGISTRY[code] as CodeSpec<ErrorPayloadMap[K]>;
-  return `[${spec.audience}] [${code}] ${spec.format(payload)}`;
+  return `[TO ${spec.audience}] [${code}] ${spec.format(payload)}`;
 }
 
 export class DomainError<K extends DomainErrorCode = DomainErrorCode> extends Error {

@@ -134,7 +134,7 @@ describe("structured error codes (#55 S1)", () => {
     const error = new AnchorMismatchError("E_STALE_ANCHOR", { headline: "m", servedRows: [] });
     expect(error).toBeInstanceOf(DomainError);
     expect(error.code).toBe("E_STALE_ANCHOR");
-    expect(error.message).toBe("[MODEL] [E_STALE_ANCHOR] m");
+    expect(error.message).toBe("[TO MODEL] [E_STALE_ANCHOR] m");
     expect(codeOf(error)).toBe("E_STALE_ANCHOR");
   });
 
@@ -149,7 +149,7 @@ describe("structured error codes (#55 S1)", () => {
     // Structured code, message header and audience agree …
     expect(error).toBeInstanceOf(DomainError);
     expect(error.code).toBe("E_SUSPICIOUS_TEXT");
-    expect(error.message.startsWith("[MODEL] [E_SUSPICIOUS_TEXT] ")).toBe(true);
+    expect(error.message.startsWith("[TO MODEL] [E_SUSPICIOUS_TEXT] ")).toBe(true);
     expect(error.audience).toBe("MODEL");
     // … while the existing reject-and-serve branches still recognise it.
     expect(error).toBeInstanceOf(AnchorMismatchError);
@@ -159,7 +159,7 @@ describe("structured error codes (#55 S1)", () => {
   });
 
   it("codeOf falls back to message convention, else undefined", () => {
-    expect(codeOf(new Error("[MODEL] [E_EMPTY_RANGE] x"))).toBe("E_EMPTY_RANGE");
+    expect(codeOf(new Error("[TO MODEL] [E_EMPTY_RANGE] x"))).toBe("E_EMPTY_RANGE");
     expect(codeOf(new Error("plain failure"))).toBeUndefined();
     expect(codeOf("nope")).toBeUndefined();
   });
@@ -197,7 +197,7 @@ describe("registry range-shape rules (F7)", () => {
       servedRows: [],
       servedBlock: "",
     });
-    expect(message).toBe("[MODEL] [E_STALE_RANGE] The file changed on disk since it was read.");
+    expect(message).toBe("[TO MODEL] [E_STALE_RANGE] The file changed on disk since it was read.");
   });
   it("E_STALE_ANCHOR renders headline plus block, never a heading or a retry affordance", () => {
     const message = formatError("E_STALE_ANCHOR", {
@@ -227,7 +227,7 @@ describe("registry range-shape rules (F7)", () => {
       withRowsShowsHint: withRows.includes("Retry with these anchors"),
       withoutRowsShowsHeading: withoutRows.includes("Current range:"),
       withoutRowsIsHeadlineOnly:
-        withoutRows === "[MODEL] [E_UNSERVED_RANGE] line 2 was never served.",
+        withoutRows === "[TO MODEL] [E_UNSERVED_RANGE] line 2 was never served.",
     }).toEqual({
       withRowsShowsHeading: true,
       withRowsShowsHint: false,
@@ -252,7 +252,7 @@ describe("E_FOREIGN_ANCHOR homes display (FU-R R4c)", () => {
         homes: ["one.ts", "two.ts", "three.ts"],
       }),
     ).toBe(
-      '[MODEL] [E_FOREIGN_ANCHOR] the anchor "aB3" is inconsistent with target.ts; ' +
+      '[TO MODEL] [E_FOREIGN_ANCHOR] the anchor "aB3" is inconsistent with target.ts; ' +
         "served for one.ts, two.ts, three.ts; nothing was written.",
     );
   });
@@ -263,7 +263,7 @@ describe("E_FOREIGN_ANCHOR homes display (FU-R R4c)", () => {
         homes: ["one.ts", "two.ts", "three.ts", "four.ts", "five.ts"],
       }),
     ).toBe(
-      '[MODEL] [E_FOREIGN_ANCHOR] the anchor "aB3" is inconsistent with target.ts; ' +
+      '[TO MODEL] [E_FOREIGN_ANCHOR] the anchor "aB3" is inconsistent with target.ts; ' +
         "served for one.ts, two.ts, three.ts and 2 more; nothing was written.",
     );
   });
