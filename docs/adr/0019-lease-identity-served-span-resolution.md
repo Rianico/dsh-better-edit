@@ -182,3 +182,24 @@ earlier item **created** still rejects — fail-closed, pinned by `test/core/bat
   (`rg -n 'currentSnapshotHash' src/ test/ tests/` → 0 hits).
 - The position check stays, as the fallback and as the instrument for every route that carries no
   lease source — identity replaces it, it does not disappear.
+
+## Amendment (2026-09-27, keel K-12) — the dual retired-anchor stores carry one reconciliation invariant
+
+Retired-anchor truth lives in two stores, each single-writer and each consumed by a distinct gate arm:
+the `served.retired` JSON tombstone (written by `src/session-view.ts`, swept by cards/epoch) and
+`served_leases.retired_at` (written by materialization in `src/snapshot-store/lineage-store.ts`).
+Upstream keeps the same split. FU-8 showed the two sides can _move independently_ under port churn, so
+the cross-store rule is stated here rather than assumed: **an anchor hash retired in the leases must be
+tombstone-visible or re-servable** — no gate arm may treat the silence of one store as proof of service
+in the other, and a hash retired on the lease side must never present as live on the JSON side. No
+divergence is measurable today; this paragraph is the invariant the next absorb's drift check compares
+against.
+
+## Amendment (2026-09-27, keel K-11) — retirement condition named for the InternalHashStore reach-arounds
+
+Two exceptions let callers reach past the SessionView sole-owner rule to the internal store face: the
+engine's dynamic import of `loadServedStore` (`src/mutation/engine.ts`) and the barrel re-export of
+`loadHashStore`/`InternalHashStore` (`src/store/index.ts`, "for testability"). Per keel §6 an exception
+owes an owner and a removal trigger; the trigger is named here: **both reach-arounds retire when
+SessionView exposes a read-only lease face.** Until then the sole-owner rule stays enforced by
+convention + SAFETY casts, and that state is a recorded exception, not a silent one.

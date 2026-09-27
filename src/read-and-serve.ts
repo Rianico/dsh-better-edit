@@ -200,7 +200,7 @@ export async function readAndServe(
   // #69: epoch lifecycle belongs to full reads — a partial (paged or
   // truncated) read merges window rows only and must not clear the
   // drift-reported marks; only a full read resets them. The `undefined`/`[]` →
-  // no-windows rule is owned by file-view's `hasRequestedWindows` (FU-6 WHY moved there with it).
+  // no-windows rule is owned by file-view's `hasRequestedWindows`.
   const isFullRead =
     options.offset === undefined &&
     options.limit === undefined &&

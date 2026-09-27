@@ -42,9 +42,9 @@ export function buildReadTool(io: FileIO) {
         type: "number",
         description: "Maximum number of lines to read",
       },
-      // FU-6 (port of pi-better-edit@2334352): upstream enforces the 16-window cap twice (TypeBox
-      // schema + preview); the dsh value-schema DSL has no maxItems on array nodes, so the bound is
-      // enforced in file-view's normWindows and stated in the description to stay discoverable.
+      // Upstream enforces the 16-window cap twice (TypeBox schema + preview); the dsh
+      // value-schema DSL has no maxItems on array nodes, so the bound is enforced in
+      // file-view's normWindows and stated in the description to stay discoverable.
       windows: {
         type: "array",
         description: `Optional array of up to ${MAX_READ_WINDOWS} line windows to read in a single turn; every window's rows are served, so anchors from all of them are usable in one edit`,

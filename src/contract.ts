@@ -50,25 +50,14 @@ export interface ReadParams {
   limit?: number;
   encoding?: string;
   /**
-   * FU-6 (port of pi-better-edit@2334352): multi-window read — disjoint line ranges served in
-   * one call. Shape and count (max MAX_READ_WINDOWS) are validated in file-view's normWindows.
+   * Multi-window read — disjoint line ranges served in one call. Shape and count
+   * (max MAX_READ_WINDOWS) are validated in file-view's normWindows.
    */
   windows?: ReadWindow[];
 }
 
 export interface UndoParams {
   path: string;
-}
-
-// legacy batch types removed — kept as type alias for test shims (never used at runtime)
-export interface BatchItemParams {
-  file?: string;
-  anchor_from: string;
-  anchor_to: string;
-  replace_with: string;
-}
-export interface BatchEditParams {
-  edits: BatchItemParams[];
 }
 
 // ---- normalized marker -----------------------------------------------------
@@ -335,14 +324,6 @@ export function assertEditRequest(request: unknown): asserts request is Normaliz
       });
     }
   }
-}
-
-// legacy — now always fails with new shape message (batch_edit removed)
-export function assertBatchEditRequest(_request: unknown): asserts _request is BatchEditParams {
-  throw new DomainError("E_BAD_PAYLOAD", {
-    message:
-      "batch_edit has been removed. Use edit with { file, edits: [{ anchor_from, anchor_to, replace_with }, ...] }.",
-  });
 }
 
 export function assertReadRequest(request: unknown): asserts request is ReadParams {

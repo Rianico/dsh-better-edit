@@ -223,9 +223,8 @@ export function findNeverServedAnchorShapes(
  * no rewrite. `count` states how many replacement lines match the tool's own row
  * shape with anchors never served for this session and file. The trailing clause
  * is gated on `if ... unintended` — a conditional reference, not an order.
- * FU-R conformance (upstream `mutation-engine/pipeline.ts:1036-1038`): the per-item count
- * travels as data (`neverServedCount`, anchor-pipeline) and the batch engine aggregates,
- * rendering ONE counted hint per CALL — the old per-applied-item rendering is retired.
+ * The per-item count travels as data (`neverServedCount`, anchor-pipeline); the batch engine
+ * aggregates, rendering ONE counted hint per CALL.
  * Surfaced through the warnings seam (rendered by warnBlock) on the model-visible channel.
  */
 export function buildNeverServedEditHint(args: { count: number }): string {

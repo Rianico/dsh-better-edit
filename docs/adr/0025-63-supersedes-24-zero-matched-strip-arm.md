@@ -130,7 +130,9 @@ ticket: it ports the upstream producers and closes the debt.
   the `servedCanons` raw canon strings (`read-and-serve.ts:173`). Tier semantics identical.
 - Disclosed deviations: (1) upstream aggregates `neverServedCount` per batch item in the engine and renders
   ONE hint per call (`mutation-engine/pipeline.ts:1037`); the engine was ruled out of this lane, so the hint
-  renders per applied `applyEdit` item. (2) The upstream write-channel note builder
+  rendered per applied `applyEdit` item. **Closed 2026-09-27 (FU-R R1, `fcad66e`):** the engine seam now
+  aggregates the per-item `neverServedCount` (counted data, not a rendered string) and emits ONE hint per
+  call, matching upstream; the per-item interim is history. (2) The upstream write-channel note builder
   (`lifecycle-hooks/index.ts:188-197`) is not ported — `src/write-hook.ts` is outside the lane's target
   files (corrected measurement: the local write channel exists, `target: "write"` at `write-hook.ts:74`).
 - Re-pinned tests: the #63 write-through cells now assert the warning path alongside byte equality

@@ -37,11 +37,9 @@ export const MAX_HASH_LINES = HASH_SPACE;
 export const DEFAULT_MAX_LINES = 2000;
 export const DEFAULT_MAX_BYTES = 50 * 1024;
 
-// FU-6 (port of pi-better-edit@2334352; upstream keeps this in src/constants.ts,
-// which the FU-6 scope reserves — co-located here with the other read budgets):
 // WHY: a multi-window read is still ONE tool result, so the window count is bounded — otherwise
 // WHY: `windows` would multiply the auto-read budget by N — and every window draws on the same
-// WHY: budget (buildWindowedPreview below).
+// WHY: budget (buildWindowedPreview below). Co-located here with the other read budgets.
 export const MAX_READ_WINDOWS = 16;
 
 // --- Truncate (from truncate.ts, private to this seam) ---

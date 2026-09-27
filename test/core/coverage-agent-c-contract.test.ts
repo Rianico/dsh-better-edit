@@ -5,7 +5,6 @@ import {
   normalizeRequest,
   prepareEditArguments,
   assertEditRequest,
-  assertBatchEditRequest,
   assertReadRequest,
   assertUndoRequest,
   isNormalizedEdit,
@@ -194,10 +193,6 @@ describe("coverage: contract.ts", () => {
     };
     Object.defineProperty(badItem, normalizedEdit, { value: true, enumerable: false });
     expect(() => assertEditRequest(badItem)).toThrow(/edits\[0\]/);
-  });
-
-  it("assertBatchEditRequest always throws", () => {
-    expect(() => assertBatchEditRequest({} as any)).toThrow(/batch_edit has been removed/);
   });
 
   it("assertReadRequest validates", () => {

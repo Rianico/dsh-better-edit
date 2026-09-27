@@ -41,28 +41,30 @@ function fmtDiffLine(prefix: " " | "+" | "-", line: string, hash: string | undef
 const ELLIPSIS_MARKER: unique symbol = Symbol("ellipsis");
 const isEllipsisMarker = (line: string | symbol): line is symbol => line === ELLIPSIS_MARKER;
 
-function pushRemovedLines(
+function formatRemovedLines(
   displayLines: string[],
   oldContentHashes: string[] | undefined,
-  oldLineNum: { value: number },
-  output: string[],
-): void {
+  oldLineNum: number,
+): { rows: string[]; nextOldLineNum: number } {
+  const rows: string[] = [];
+  let cursor = oldLineNum;
   const emit = (line: string): void => {
-    const hash = oldContentHashes?.[oldLineNum.value - 1];
-    output.push(fmtDiffLine("-", line, hash));
-    oldLineNum.value++;
+    const hash = oldContentHashes?.[cursor - 1];
+    rows.push(fmtDiffLine("-", line, hash));
+    cursor++;
   };
   if (displayLines.length <= DIFF_REMOVED_CAP) {
     for (const line of displayLines) emit(line);
-    return;
+    return { rows, nextOldLineNum: cursor };
   }
   const omitted = displayLines.length - DIFF_REMOVED_EDGE * 2;
   for (const line of displayLines.slice(0, DIFF_REMOVED_EDGE)) emit(line);
   // WHY: ADR-0024/D3 — the model sees the deletion's head, tail, and exact size; the omitted rows
   // WHY: still advance the cursor so every later row keeps its exact old line number and hash.
-  output.push(` - ... [${omitted} lines omitted] ...`);
-  oldLineNum.value += omitted;
+  rows.push(` - ... [${omitted} lines omitted] ...`);
+  cursor += omitted;
   for (const line of displayLines.slice(-DIFF_REMOVED_EDGE)) emit(line);
+  return { rows, nextOldLineNum: cursor };
 }
 
 export function genDiff(
@@ -104,9 +106,9 @@ export function genDiff(
           newLineNum++;
         }
       } else {
-        const o = { value: oldLineNum };
-        pushRemovedLines(displayLines, oldContentHashes, o, output);
-        oldLineNum = o.value;
+        const removed = formatRemovedLines(displayLines, oldContentHashes, oldLineNum);
+        for (const row of removed.rows) output.push(row);
+        oldLineNum = removed.nextOldLineNum;
       }
       lastWasChange = true;
       continue;
