@@ -4,7 +4,8 @@ Date: 2026-09-05 (adapted for dsh-better-edit from pi-better-edit ADR-0014, `dd1
 
 ## Status
 
-accepted (adapted for dsh-better-edit — AnchorPipeline, SessionView, contract.ts, edit-response.ts)
+accepted (adapted for dsh-better-edit — AnchorPipeline, SessionView, contract.ts, edit-response.ts);
+error-header rendering amended by #79 — see the §#79 amendment at the foot.
 
 ## Context
 
@@ -44,3 +45,16 @@ the wrong body. Upstream's forwarding exists because its wrapper is a plain Erro
 `toFailure`; locally `E_BATCH_ABORT` is itself a registry member that routes the typed path, so
 the forwarding has no consumer. Pinned by `test/core/batch-aggregation.test.ts`
 ("envelope cause semantics").
+
+## Amendment (#79, 2026-09-27 — error headers address the audience: `[TO <AUDIENCE>]`)
+
+`formatError` (sole composer, `src/domain-errors.ts`) now renders
+`[TO MODEL] [E_*]` — the `TO` preposition marks the addressee, so the first bracket
+cannot be misread as a role label (issue #79); the remedy text names the action.
+The audience axis and bare-code matching of this ADR's Decision are untouched.
+The old-shape strings in the Decision/Consequences bullets and the FU-7 amendment
+above are the historical record as decided and are NOT rewritten — read every
+thrown-error `[MODEL] [E_*]` citation there as `[TO MODEL] [E_*]` post-amendment.
+Warnings (`formatWarning`) and the `[USER] drift:` heading keep their bare
+`[USER]`/`[MODEL]` brackets — out of the approved scope of #79; any change there
+needs its own ruling.
