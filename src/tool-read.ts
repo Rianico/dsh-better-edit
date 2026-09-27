@@ -13,6 +13,8 @@ import { normalizeRequest as normReq, assertReadRequest, pathSchema } from "./co
 import { readAndServe } from "./read-and-serve.js";
 import { READ_DESCRIPTION } from "./prompts.js";
 import { normalizeEncoding } from "./encoding.js";
+import { DomainError } from "./domain-errors.js";
+import { MAX_READ_WINDOWS } from "./file-view.js";
 
 import type { FileIO } from "./fs-bridge.js";
 import { renderTextWarning } from "./render-text-warning.js";
@@ -40,6 +42,29 @@ export function buildReadTool(io: FileIO) {
         type: "number",
         description: "Maximum number of lines to read",
       },
+      // Upstream enforces the 16-window cap twice (TypeBox schema + preview); the dsh
+      // value-schema DSL has no maxItems on array nodes, so the bound is enforced in
+      // file-view's normWindows and stated in the description to stay discoverable.
+      windows: {
+        type: "array",
+        description: `Optional array of up to ${MAX_READ_WINDOWS} line windows to read in a single turn; every window's rows are served, so anchors from all of them are usable in one edit`,
+        items: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            offset: {
+              type: "number",
+              required: true,
+              description: "Line number to start reading from (1-indexed)",
+            },
+            limit: {
+              type: "number",
+              required: true,
+              description: "Maximum number of lines to read",
+            },
+          },
+        },
+      },
       encoding: {
         type: "string",
         description:
@@ -65,9 +90,9 @@ export function buildReadTool(io: FileIO) {
         if (encoding !== undefined) {
           const norm = normalizeEncoding(String(encoding));
           if (!norm)
-            throw new Error(
-              `[E_BAD_ENCODING] Unknown encoding: ${String(encoding)}. Supported: utf8, gbk, big5, shift_jis, euc-kr, windows-1251, iso-8859-1`,
-            );
+            throw new DomainError("E_BAD_PAYLOAD", {
+              message: `Unknown encoding: ${String(encoding)}. Supported: utf8, gbk, big5, shift_jis, euc-kr, windows-1251, iso-8859-1`,
+            });
         }
         const canonical = normReq(args);
         assertReadRequest(canonical);
@@ -78,6 +103,7 @@ export function buildReadTool(io: FileIO) {
           signal,
           offset: canonical.offset,
           limit: canonical.limit,
+          windows: canonical.windows,
           encoding: encoding as string | undefined,
         });
         // Record the present observation with the fs policy gate so later

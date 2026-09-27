@@ -2,9 +2,10 @@
  * The hash store — ONE deep persistence module for the hashline domain.
  *
  * Owns the sqlite db, the schema and migrations, corruption quarantine,
- * busy-retry, WAL, the legacy-JSON migration, AND the three narrow row APIs
- * the rest of the plugin needs: hash snapshots, undo entries, and served
- * rows. The prepared statements are a private implementation detail — callers
+ * Owns the sqlite db, the schema and migrations, corruption quarantine, WAL,
+ * the legacy-JSON migration, and the undo/served row APIs. Hash snapshots
+ * live in snapshot-store (shared busy-retry policy in store-retry), adapted
+ * here so the HashStore surface stays stable for its duck-typed callers.
  * use domain methods, never SQL.
  *
  * Corrupt-row handling (parse the JSON column → validate against the hash
@@ -15,38 +16,34 @@
  */
 
 import { appendFileSync, existsSync, readFileSync } from "node:fs";
-import { readFile, readdir, rename, rm, mkdir, stat } from "node:fs/promises";
+import { readdir, rename, rm, mkdir, stat } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { hashStorePath } from "./store-tenancy.js";
 import { onStoreOpen, setStoresGetter } from "./store-lifecycle.js";
 import { workspaceCwd } from "./workspace-context.js";
 import { errCode, splitLines } from "./utils.js";
-import { initHasher, contentChecksum, HASH_RE, CANON_VERSION } from "./hashline/hash-assign.js";
+import { initHasher, HASH_RE } from "./hashline/hash-assign.js";
 import { HASH_STORE_VERSION, HASH_STORE_BUSY_TIMEOUT, SERVED_TTL_MS } from "./constants.js";
-
+import { DomainError } from "./domain-errors.js";
+import {
+  createSnapshotStore,
+  isValidHashList,
+  reportVacuum,
+  vacuumSnapshots as runVacuumSnapshots,
+  type SnapshotStore,
+  type VacuumResult,
+} from "./snapshot-store/index.js";
+import { withBusyRetry } from "./store-retry.js";
+import { migrateLegacyStore } from "./snapshot-store/migrate.js";
+import {
+  createLineageStore,
+  ensureLineageTables,
+  snapshotHashFor,
+  type LineageStore,
+} from "./snapshot-store/lineage-store.js";
+import { withTransaction } from "./snapshot-store/txn.js";
 // ---- validators (owned here; the store's corruption handling uses them) ----
-
-/** The legacy JSON snapshot shape (pre-sqlite stores). */
-export interface LegacySnapshot {
-  content: string;
-  hashes: string[];
-}
-
-export function isValidHashList(value: unknown): value is string[] {
-  if (!Array.isArray(value)) return false;
-  for (const hash of value) {
-    if (typeof hash !== "string" || !HASH_RE.test(hash)) return false;
-  }
-  return true;
-}
-
-export function isValidSnapshot(value: unknown): value is LegacySnapshot {
-  if (typeof value !== "object" || value === null) return false;
-  const v = value as Record<string, unknown>;
-  if (typeof v.content !== "string") return false;
-  return isValidHashList(v.hashes);
-}
 
 /** A served-row array: per-position hash, or null for never-served slots. */
 export function isValidCanonsList(value: unknown): value is (string | null)[] {
@@ -67,10 +64,6 @@ export function isValidServedList(value: unknown): value is (string | null)[] {
   return true;
 }
 
-function cacheKey(checksum: string): string {
-  return `${CANON_VERSION}:${checksum}`;
-}
-
 /** The undo row contract shared by undo-edit and the store. */
 export interface UndoRecord {
   content: string;
@@ -80,20 +73,85 @@ export interface UndoRecord {
   resultContent: string;
 }
 
+/** The v7 undo row contract: legacy state plus the snapshot pin. */
+export interface FileUndoRecord {
+  content: string;
+  bom: string;
+  ending: string;
+  hashes: string[];
+  resultContent: string;
+  snapshotHash: string | null;
+  updatedAt: number;
+}
+
+/**
+ * The v7 undo WRITE input: everything `writeUndoPair` stores except `updatedAt`.
+ * The pair's stamp is a pair property owned by the store clock (`writeUndoPairImpl`),
+ * so a caller-supplied timestamp would be a required field that is never read.
+ */
+export type FileUndoWrite = Omit<FileUndoRecord, "updatedAt">;
+
+/** A `file_undo` row exactly as selected (all columns non-nullable except the pin). */
+interface FileUndoRow {
+  content: string;
+  bom: string;
+  ending: string;
+  hashes: string;
+  result_content: string;
+  snapshot_hash: string | null;
+  updated_at: number;
+}
+
+/**
+ * Map a raw `file_undo` SELECT row to `FileUndoRow`, validating every column at the
+ * boundary. Replaces an `as unknown as FileUndoRow` double cast that the compiler cannot
+ * check (node:sqlite returns `Record<string, unknown>`): a SELECT/mapper drift used to
+ * surface as a silently `undefined` field instead of an error.
+ */
+function mapFileUndoRow(row: Record<string, unknown>): FileUndoRow {
+  const content = row["content"];
+  const bom = row["bom"];
+  const ending = row["ending"];
+  const hashes = row["hashes"];
+  const resultContent = row["result_content"];
+  const snapshotHash = row["snapshot_hash"];
+  const updatedAt = row["updated_at"];
+  if (
+    typeof content !== "string" ||
+    typeof bom !== "string" ||
+    typeof ending !== "string" ||
+    typeof hashes !== "string" ||
+    typeof resultContent !== "string" ||
+    !(snapshotHash === null || typeof snapshotHash === "string") ||
+    typeof updatedAt !== "number"
+  ) {
+    throw new TypeError("invalid file_undo row shape");
+  }
+  return {
+    content,
+    bom,
+    ending,
+    hashes,
+    result_content: resultContent,
+    snapshot_hash: snapshotHash,
+    updated_at: updatedAt,
+  };
+}
+
 // ---- the domain interface --------------------------------------------------
 
 type SqlParams = (string | number)[];
 
 interface Prepared {
-  get: (...params: SqlParams) => Record<string, unknown> | undefined;
   allPaths: (...params: SqlParams) => Record<string, unknown>[];
-  allHashes: (...params: SqlParams) => Record<string, unknown>[];
-  deleteOne: (...params: SqlParams) => void;
-  upsert: (...params: SqlParams) => void;
   undoUpsert: (...params: SqlParams) => void;
   undoGet: (...params: SqlParams) => Record<string, unknown> | undefined;
   undoDelete: (...params: SqlParams) => void;
-  undoPruneOlderThan: (...params: SqlParams) => void;
+  undoPrunePair: (...params: SqlParams) => void;
+  fileUndoPrunePair: (...params: SqlParams) => void;
+  fileUndoUpsert: (...params: (string | number | null)[]) => void;
+  fileUndoGet: (...params: SqlParams) => FileUndoRow | undefined;
+  fileUndoDelete: (...params: SqlParams) => void;
   servedGet: (...params: SqlParams) => Record<string, unknown> | undefined;
   servedAllForPath: (...params: SqlParams) => Record<string, unknown>[];
   servedUpsert: (...params: SqlParams) => void;
@@ -103,8 +161,6 @@ interface Prepared {
   servedRetiredClear: (...params: SqlParams) => void;
   servedCanonsUpsert: (...params: SqlParams) => void;
   servedCanonsClear: (...params: SqlParams) => void;
-  servedSnapshotUpsert: (...params: SqlParams) => void;
-  servedSnapshotClear: (...params: SqlParams) => void;
   servedCardsUpsert: (...params: SqlParams) => void;
   servedCardsClear: (...params: SqlParams) => void;
   servedDelete: (...params: SqlParams) => void;
@@ -123,7 +179,13 @@ export interface HashStore {
   // ---- hash snapshots (stable anchors keyed by path+checksum+line count) ----
   /** The stored hashes for a path+content, or undefined on a miss; a corrupt row is deleted (when deleteCorrupt) and treated as a miss. */
   getSnapshot(path: string, content: string, deleteCorrupt?: boolean): string[] | undefined;
-  upsertSnapshot(path: string, checksum: string, lineCount: number, hashes: string[]): void;
+  upsertSnapshot(
+    path: string,
+    checksum: string,
+    lineCount: number,
+    hashes: string[],
+    content?: string,
+  ): void;
   /** Every path referenced by any row family (snapshots ∪ undo ∪ served). */
   allKnownPaths(): { path: string }[];
   /** Every snapshot's path and raw hashes JSON (for path-by-hash scans). */
@@ -133,15 +195,25 @@ export interface HashStore {
   findSnapshotPaths(hashes: string[]): string[];
 
   // ---- undo entries (one per path) ----------------------------------------
+  // Undo rows move together: all production writes go through the pair face below
+  // (one writer rule). Legacy-only rows exist only as pre-v7 data on disk.
   /** The undo row for a path, healing a corrupt row (parse → validate → delete). */
   getUndo(path: string): UndoRecord | undefined;
-  upsertUndo(path: string, entry: UndoRecord): void;
-  deleteUndo(path: string): void;
   pruneUndoOlderThan(ts: number): void;
-
+  /** The single undo writer: write-back-or-delete each side in one transaction. */
+  writeUndoPair(path: string, legacy: UndoRecord | undefined, v7: FileUndoWrite | undefined): void;
+  /** Both undo rows in one transaction. */
+  deleteUndoPair(path: string): void;
+  /** The v7 undo row for a path, same healing contract as the legacy row. Sole consumer: undo-edit readFileUndo (rg-verified); kept on the store face beside getUndo because both readers share the pair-healing closures. */
+  getFileUndo(path: string): FileUndoRecord | undefined;
   // ---- maintenance ---------------------------------------------------------
   /** Delete every row family's entries for paths that no longer exist on disk. */
   pruneMissing(): Promise<void>;
+  /**
+   * Run the snapshot retention pass and return its result. The caller (a trigger) owns the report:
+   * it calls `reportVacuum(result, context)` so exactly one site decides what an operator sees.
+   */
+  vacuumSnapshots(): VacuumResult;
 }
 
 /**
@@ -155,7 +227,6 @@ export interface ServedPersistence {
   getRetiredAnchors(sessionKey: string, path: string): Set<string>;
   getRetiredEntries(sessionKey: string, path: string): RetiredEntry[];
   getServedCanons(sessionKey: string, path: string): (string | null)[];
-  getEpochSnapshotId(sessionKey: string, path: string): string | undefined;
   getCards(sessionKey: string, path: string): Set<number>;
   upsertCards(sessionKey: string, path: string, cardsJson: string): void;
   clearCards(sessionKey: string, path: string): void;
@@ -166,8 +237,6 @@ export interface ServedPersistence {
   clearRetiredAnchors(sessionKey: string, path: string): void;
   upsertServedCanons(sessionKey: string, path: string, canonsJson: string): void;
   clearServedCanons(sessionKey: string, path: string): void;
-  upsertEpochSnapshotId(sessionKey: string, path: string, snapshotId: string): void;
-  clearEpochSnapshotId(sessionKey: string, path: string): void;
   deleteServed(sessionKey: string, path: string): void;
   deleteServedByPath(path: string): void;
   wipeServed(sessionKey: string): void;
@@ -238,10 +307,10 @@ function parseRetiredJson(raw: string | null | undefined): RetiredEntry[] {
   }
 }
 
-export type InternalHashStore = HashStore & ServedPersistence;
+export type InternalHashStore = HashStore & ServedPersistence & LineageStore;
 
 /** Load the store as served persistence — internal, for SessionView only. */
-// SAFETY: loadHashStore returns InternalHashStore (HashStore & ServedPersistence) — cast narrows to served view, validated via ServedPersistence interface; safe because InternalHashStore extends both.
+// SAFETY: loadHashStore returns InternalHashStore (HashStore & ServedPersistence & LineageStore) — cast narrows to served view, validated via ServedPersistence interface; safe because InternalHashStore extends all three.
 export function loadServedStore(cwd?: string): Promise<ServedPersistence> {
   return loadHashStore(cwd) as unknown as Promise<ServedPersistence>;
 }
@@ -249,6 +318,7 @@ export function loadServedStore(cwd?: string): Promise<ServedPersistence> {
 // ---- db plumbing (private) --------------------------------------------------
 
 export function isCorruptionError(error: unknown): boolean {
+  if (error instanceof DomainError) return false;
   if (error && typeof error === "object") {
     const errcode = (error as { errcode?: unknown }).errcode;
     if (typeof errcode === "number") {
@@ -261,36 +331,6 @@ export function isCorruptionError(error: unknown): boolean {
     error instanceof Error &&
     /corrupt|not a database|malformed|database disk image/i.test(error.message)
   );
-}
-
-function isBusyError(error: unknown): boolean {
-  if (error && typeof error === "object") {
-    const errcode = (error as { errcode?: unknown }).errcode;
-    if (typeof errcode === "number") return errcode === 5 || errcode === 6;
-  }
-  return error instanceof Error && /busy|locked/i.test(error.message);
-}
-
-function sleepSync(ms: number): void {
-  const sab = new Int32Array(new SharedArrayBuffer(4));
-  Atomics.wait(sab, 0, 0, ms);
-}
-
-const BUSY_RETRIES = 3;
-const BUSY_RETRY_DELAY_MS = 100;
-
-function withBusyRetry<T>(fn: () => T): T {
-  let lastError: unknown;
-  for (let attempt = 0; attempt <= BUSY_RETRIES; attempt++) {
-    try {
-      return fn();
-    } catch (error) {
-      lastError = error;
-      if (!isBusyError(error) || attempt === BUSY_RETRIES) throw error;
-      sleepSync(BUSY_RETRY_DELAY_MS);
-    }
-  }
-  throw lastError;
 }
 
 function openDbWithBusyRetry(storePath: string): {
@@ -316,7 +356,7 @@ function openDb(storePath: string): { db: DatabaseSync; stmts: Prepared } {
     timeout: HASH_STORE_BUSY_TIMEOUT,
   });
   try {
-    return buildStore(db);
+    return buildStore(db, storePath);
   } catch (error) {
     try {
       db.close();
@@ -327,9 +367,88 @@ function openDb(storePath: string): { db: DatabaseSync; stmts: Prepared } {
   }
 }
 
-function buildStore(db: DatabaseSync): { db: DatabaseSync; stmts: Prepared } {
-  db.exec("PRAGMA journal_mode = WAL");
-  db.exec("PRAGMA synchronous = NORMAL");
+/**
+ * Read-only probe of the store's schema stamp. Safe on a store whose schema
+ * we do not own: two SELECTs, no DDL, no PRAGMA, no run(). Returns undefined
+ * when the meta table or the version row is absent, or when the value does
+ * not parse as a base-10 integer. Probe errors propagate — a malformed meta
+ * is genuine corruption and must keep flowing to the corruption path.
+ */
+function storedVersion(db: DatabaseSync): number | undefined {
+  const metaRow = db
+    .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'meta'")
+    .get() as { name?: string } | undefined;
+  if (metaRow === undefined) return undefined;
+  const versionRow = db.prepare("SELECT value FROM meta WHERE key = 'version'").get() as
+    | { value?: string }
+    | undefined;
+  if (versionRow?.value === undefined) return undefined;
+  const parsed = Number.parseInt(versionRow.value, 10);
+  return Number.isInteger(parsed) ? parsed : undefined;
+}
+
+/**
+ * Idempotent column backfill: ALTER TABLE only when the column is missing.
+ * Table/column/type ride an identifier allowlist (SQLite has no bind
+ * parameters for DDL identifiers); every current caller passes constants.
+ *
+ * pi-lens's `sql-injection` rule (`inline_tier: blocking`) flags any `db.exec`/`db.prepare`
+ * that receives a template literal with a substitution, including the two DDL statements
+ * below. That finding is a false positive here: SCHEMA_IDENTIFIER_RE rejects anything that
+ * is not `[A-Za-z_][A-Za-z0-9_]*` before the SQL text is built, and the rule cannot see
+ * that guard. Trigger: re-open if a caller stops passing a literal, SCHEMA_IDENTIFIER_RE is
+ * relaxed or removed, or a non-constant reaches table/column/type.
+ */
+const SCHEMA_IDENTIFIER_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
+function addColumnIfMissing(db: DatabaseSync, table: string, column: string, type: string): void {
+  for (const identifier of [table, column, type]) {
+    if (!SCHEMA_IDENTIFIER_RE.test(identifier)) {
+      throw new Error(`Refused schema backfill for non-identifier: ${identifier}`);
+    }
+  }
+  const columns = db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[];
+  if (!columns.some((entry) => entry.name === column)) {
+    db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${type}`);
+  }
+}
+
+/**
+ * v7 state tables. All additive (IF NOT EXISTS), owned by this build: a v6
+ * process never names them, so a version flap cannot cost v7 anything.
+ */
+function ensureV7Tables(db: DatabaseSync): void {
+  ensureLineageTables(db);
+  db.exec(
+    "CREATE TABLE IF NOT EXISTS file_undo (" +
+      "path TEXT PRIMARY KEY, " +
+      "content TEXT NOT NULL, " +
+      "bom TEXT NOT NULL, " +
+      "ending TEXT NOT NULL, " +
+      "hashes TEXT NOT NULL, " +
+      "result_content TEXT NOT NULL, " +
+      "snapshot_hash TEXT, " +
+      "updated_at INTEGER NOT NULL" +
+      ")",
+  );
+}
+
+/**
+ * Non-destructive, idempotent schema build. Runs on every open: CREATE TABLE
+ * IF NOT EXISTS for the current shapes, backfill of the newer served columns,
+ * and DROP TABLE served only for the pre-session-keyed shell (no session_id —
+ * unusable by either version). No DELETE FROM anywhere on this path.
+ */
+function ensureSchema(db: DatabaseSync): void {
+  db.exec(
+    "CREATE TABLE IF NOT EXISTS meta (" + "key TEXT PRIMARY KEY, " + "value TEXT NOT NULL" + ")",
+  );
+  ensureV7Tables(db);
+  // WHY the v6 shells stay whole: an un-restarted v6 session — or a v6
+  // process in a concurrent worktree — prepares statements against these
+  // exact tables, so they are created complete on every open and never
+  // dropped or reshaped here. v7 state stays isolated in the v7 tables
+  // above. `cards` is kept because the released v6 build names it at store
+  // open; porting upstream's column list would break it.
   db.exec(
     "CREATE TABLE IF NOT EXISTS snapshots (" +
       "path TEXT PRIMARY KEY, " +
@@ -338,9 +457,6 @@ function buildStore(db: DatabaseSync): { db: DatabaseSync; stmts: Prepared } {
       "hashes TEXT NOT NULL, " +
       "updated_at INTEGER NOT NULL" +
       ")",
-  );
-  db.exec(
-    "CREATE TABLE IF NOT EXISTS meta (" + "key TEXT PRIMARY KEY, " + "value TEXT NOT NULL" + ")",
   );
   db.exec(
     "CREATE TABLE IF NOT EXISTS undo (" +
@@ -353,19 +469,10 @@ function buildStore(db: DatabaseSync): { db: DatabaseSync; stmts: Prepared } {
       "updated_at INTEGER NOT NULL" +
       ")",
   );
-  const versionRow = db.prepare("SELECT value FROM meta WHERE key = 'version'").get() as
-    | { value?: string }
-    | undefined;
-  const versionChanged =
-    versionRow !== undefined && versionRow.value !== String(HASH_STORE_VERSION);
-  if (versionChanged) {
-    db.exec("DELETE FROM snapshots");
-    db.exec("DELETE FROM undo");
-  }
   const servedColumns = db.prepare("PRAGMA table_info(served)").all() as {
     name: string;
   }[];
-  if (versionChanged || !servedColumns.some((column) => column.name === "session_id")) {
+  if (!servedColumns.some((column) => column.name === "session_id")) {
     db.exec("DROP TABLE IF EXISTS served");
   }
   db.exec(
@@ -376,75 +483,82 @@ function buildStore(db: DatabaseSync): { db: DatabaseSync; stmts: Prepared } {
       "reported TEXT, " +
       "retired TEXT, " +
       "canons TEXT, " +
-      "snapshotId TEXT, " +
       "cards TEXT, " +
       "updated_at INTEGER NOT NULL, " +
       "PRIMARY KEY (session_id, path)" +
       ")",
   );
+  addColumnIfMissing(db, "served", "canons", "TEXT");
+  addColumnIfMissing(db, "served", "cards", "TEXT");
+}
+
+/**
+ * Fail-closed refusal shared by the pre-write fast path and the
+ * in-transaction re-check: a stamp newer than this build is never touched.
+ */
+function assertNotNewer(stored: number | undefined, storePath: string): void {
+  if (stored !== undefined && stored > HASH_STORE_VERSION) {
+    throw new DomainError("E_STORE_NEWER_VERSION", {
+      path: storePath,
+      storedVersion: stored,
+      supportedVersion: HASH_STORE_VERSION,
+    });
+  }
+}
+
+/**
+ * The single atomic forward migration. Called only when the stamp differs
+ * from HASH_STORE_VERSION (including an absent or non-integer stamp on a
+ * pre-versioning store). The sole writer of meta.version. CP1 has no data
+ * steps — later tickets add ordered, guarded data statements beside the stamp
+ * write inside the same transaction. The stamp is re-checked under the
+ * RESERVED lock: a newer writer that committed between the probe and
+ * BEGIN IMMEDIATE is refused here, so the stamp write can never silently
+ * downgrade a newer store.
+ */
+function migrateForward(db: DatabaseSync, storePath: string): void {
+  let migrationOpen = false;
+  try {
+    db.exec("BEGIN IMMEDIATE");
+    migrationOpen = true;
+    assertNotNewer(storedVersion(db), storePath);
+    db.prepare(
+      "INSERT INTO meta (key, value) VALUES ('version', ?) " +
+        "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+    ).run(String(HASH_STORE_VERSION));
+    db.exec("COMMIT");
+    migrationOpen = false;
+  } catch (error) {
+    if (migrationOpen) {
+      try {
+        db.exec("ROLLBACK");
+      } catch (rollbackError) {
+        console.warn(rollbackError);
+      }
+    }
+    throw error;
+  }
+}
+
+function buildStore(db: DatabaseSync, storePath: string): { db: DatabaseSync; stmts: Prepared } {
+  const stored = storedVersion(db);
+  assertNotNewer(stored, storePath);
+  db.exec("PRAGMA journal_mode = WAL");
+  db.exec("PRAGMA synchronous = NORMAL");
+  // Explicit intent: node:sqlite already enables FK constraints by default.
+  db.exec("PRAGMA foreign_keys = ON");
+  ensureSchema(db);
+  if (stored !== HASH_STORE_VERSION) migrateForward(db, storePath);
   const currentServedColumns = db.prepare("PRAGMA table_info(served)").all() as {
     name: string;
   }[];
   if (!currentServedColumns.some((column) => column.name === "retired")) {
-    let migrationOpen = false;
-    try {
-      db.exec("BEGIN IMMEDIATE");
-      migrationOpen = true;
-      const migrationColumns = db.prepare("PRAGMA table_info(served)").all() as { name: string }[];
-      if (!migrationColumns.some((column) => column.name === "retired")) {
-        db.exec("ALTER TABLE served ADD COLUMN retired TEXT");
-        // Pre-fix snapshots and undo entries may already bind a remembered
-        // anchor to the wrong position. Preserve served rows, but rebuild
-        // every source that could restore the rebound anchor.
-        db.exec("DELETE FROM snapshots");
-        db.exec("DELETE FROM undo");
-      }
-      db.exec("COMMIT");
-      migrationOpen = false;
-    } catch (error) {
-      if (migrationOpen) {
-        try {
-          db.exec("ROLLBACK");
-        } catch (rollbackError) {
-          console.warn(rollbackError);
-        }
-      }
-      throw error;
-    }
+    // Single idempotent ALTER needs no transaction: ALTER TABLE is atomic, and an
+    // upgrade must never destroy snapshot/undo rows (ADR-0017 retires the wipe).
+    db.exec("ALTER TABLE served ADD COLUMN retired TEXT");
   }
-  const canonsColumns = db.prepare("PRAGMA table_info(served)").all() as {
-    name: string;
-  }[];
-  if (!canonsColumns.some((column) => column.name === "canons")) {
-    db.exec("ALTER TABLE served ADD COLUMN canons TEXT");
-  }
-  const snapshotColumns = db.prepare("PRAGMA table_info(served)").all() as {
-    name: string;
-  }[];
-  if (!snapshotColumns.some((column) => column.name === "snapshotId")) {
-    db.exec("ALTER TABLE served ADD COLUMN snapshotId TEXT");
-  }
-  const cardsColumns = db.prepare("PRAGMA table_info(served)").all() as {
-    name: string;
-  }[];
-  if (!cardsColumns.some((column) => column.name === "cards")) {
-    db.exec("ALTER TABLE served ADD COLUMN cards TEXT");
-  }
-  db.prepare(
-    "INSERT INTO meta (key, value) VALUES ('version', ?) " +
-      "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-  ).run(String(HASH_STORE_VERSION));
-  const getStmt = db.prepare(
-    "SELECT hashes FROM snapshots WHERE path = ? AND checksum = ? AND line_count = ?",
-  );
   const allStmt = db.prepare(
-    "SELECT path FROM snapshots UNION SELECT path FROM undo UNION SELECT path FROM served",
-  );
-  const allHashesStmt = db.prepare("SELECT path, hashes FROM snapshots");
-  const delStmt = db.prepare("DELETE FROM snapshots WHERE path = ?");
-  const upsertStmt = db.prepare(
-    "INSERT INTO snapshots (path, checksum, line_count, hashes, updated_at) VALUES (?, ?, ?, ?, ?) " +
-      "ON CONFLICT(path) DO UPDATE SET checksum = excluded.checksum, line_count = excluded.line_count, hashes = excluded.hashes, updated_at = excluded.updated_at",
+    "SELECT path FROM snapshots UNION SELECT path FROM undo UNION SELECT path FROM served UNION SELECT path FROM file_undo UNION SELECT path FROM file_snapshots UNION SELECT path FROM line_id_counters UNION SELECT file_path FROM served_leases",
   );
   const undoUpsertStmt = db.prepare(
     "INSERT INTO undo (path, content, bom, ending, hashes, result_content, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?) " +
@@ -454,9 +568,32 @@ function buildStore(db: DatabaseSync): { db: DatabaseSync; stmts: Prepared } {
     "SELECT content, bom, ending, hashes, result_content FROM undo WHERE path = ?",
   );
   const undoDelStmt = db.prepare("DELETE FROM undo WHERE path = ?");
-  const undoPruneOlderThanStmt = db.prepare("DELETE FROM undo WHERE updated_at < ?");
+  // Pair-atomic age prune: a path's pair is pruned only when its NEWEST side is older
+  // than the cutoff — a recently written side keeps the pair alive. Decide per path,
+  // never one side alone (independent per-table deletes split the pair, F1 class).
+  // Each statement is a complete SQL literal — the predicate text is duplicated on purpose:
+  // a shared constant would be interpolated back into the SQL, so no future edit can turn
+  // this into an interpolation hole.
+  const undoPrunePairStmt = db.prepare(
+    "DELETE FROM undo WHERE path IN (SELECT path FROM (SELECT path, MAX(updated_at) AS newest FROM (" +
+      "SELECT path, updated_at FROM undo UNION ALL SELECT path, updated_at FROM file_undo" +
+      ") GROUP BY path) WHERE newest < ?)",
+  );
+  const fileUndoPrunePairStmt = db.prepare(
+    "DELETE FROM file_undo WHERE path IN (SELECT path FROM (SELECT path, MAX(updated_at) AS newest FROM (" +
+      "SELECT path, updated_at FROM undo UNION ALL SELECT path, updated_at FROM file_undo" +
+      ") GROUP BY path) WHERE newest < ?)",
+  );
+  const fileUndoUpsertStmt = db.prepare(
+    "INSERT INTO file_undo (path, content, bom, ending, hashes, result_content, snapshot_hash, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?) " +
+      "ON CONFLICT(path) DO UPDATE SET content = excluded.content, bom = excluded.bom, ending = excluded.ending, hashes = excluded.hashes, result_content = excluded.result_content, snapshot_hash = excluded.snapshot_hash, updated_at = excluded.updated_at",
+  );
+  const fileUndoGetStmt = db.prepare(
+    "SELECT content, bom, ending, hashes, result_content, snapshot_hash, updated_at FROM file_undo WHERE path = ?",
+  );
+  const fileUndoDelStmt = db.prepare("DELETE FROM file_undo WHERE path = ?");
   const servedGetStmt = db.prepare(
-    "SELECT hashes, reported, retired, canons, snapshotId, cards FROM served WHERE session_id = ? AND path = ?",
+    "SELECT hashes, reported, retired, canons, cards FROM served WHERE session_id = ? AND path = ?",
   );
   const servedAllForPathStmt = db.prepare(
     "SELECT session_id, hashes, retired FROM served WHERE path = ?",
@@ -486,13 +623,6 @@ function buildStore(db: DatabaseSync): { db: DatabaseSync; stmts: Prepared } {
   const servedCanonsClearStmt = db.prepare(
     "UPDATE served SET canons = NULL, updated_at = ? WHERE session_id = ? AND path = ?",
   );
-  const servedSnapshotUpsertStmt = db.prepare(
-    "INSERT INTO served (session_id, path, hashes, snapshotId, updated_at) VALUES (?, ?, '[]', ?, ?) " +
-      "ON CONFLICT(session_id, path) DO UPDATE SET snapshotId = excluded.snapshotId, updated_at = excluded.updated_at",
-  );
-  const servedSnapshotClearStmt = db.prepare(
-    "UPDATE served SET snapshotId = NULL, updated_at = ? WHERE session_id = ? AND path = ?",
-  );
   const servedCardsUpsertStmt = db.prepare(
     "INSERT INTO served (session_id, path, hashes, cards, updated_at) VALUES (?, ?, '[]', ?, ?) " +
       "ON CONFLICT(session_id, path) DO UPDATE SET cards = excluded.cards, updated_at = excluded.updated_at",
@@ -505,19 +635,7 @@ function buildStore(db: DatabaseSync): { db: DatabaseSync; stmts: Prepared } {
   const servedWipeStmt = db.prepare("DELETE FROM served WHERE session_id = ?");
   const servedPruneOlderThanStmt = db.prepare("DELETE FROM served WHERE updated_at < ?");
   const stmts: Prepared = {
-    get: (...params) => getStmt.get(...params) as Record<string, unknown> | undefined,
     allPaths: (...params) => allStmt.all(...params) as Record<string, unknown>[],
-    allHashes: (...params) => allHashesStmt.all(...params) as Record<string, unknown>[],
-    deleteOne: (...params) => {
-      withBusyRetry(() => {
-        delStmt.run(...params);
-      });
-    },
-    upsert: (...params) => {
-      withBusyRetry(() => {
-        upsertStmt.run(...params);
-      });
-    },
     undoUpsert: (...params) => {
       withBusyRetry(() => {
         undoUpsertStmt.run(...params);
@@ -529,9 +647,28 @@ function buildStore(db: DatabaseSync): { db: DatabaseSync; stmts: Prepared } {
         undoDelStmt.run(...params);
       });
     },
-    undoPruneOlderThan: (...params) => {
+    undoPrunePair: (...params) => {
       withBusyRetry(() => {
-        undoPruneOlderThanStmt.run(...params);
+        undoPrunePairStmt.run(...params);
+      });
+    },
+    fileUndoPrunePair: (...params) => {
+      withBusyRetry(() => {
+        fileUndoPrunePairStmt.run(...params);
+      });
+    },
+    fileUndoUpsert: (...params: (string | number | null)[]) => {
+      withBusyRetry(() => {
+        fileUndoUpsertStmt.run(...params);
+      });
+    },
+    fileUndoGet: (...params) => {
+      const row = fileUndoGetStmt.get(...params);
+      return row === undefined ? undefined : mapFileUndoRow(row);
+    },
+    fileUndoDelete: (...params) => {
+      withBusyRetry(() => {
+        fileUndoDelStmt.run(...params);
       });
     },
     servedGet: (...params) => servedGetStmt.get(...params) as Record<string, unknown> | undefined,
@@ -572,16 +709,6 @@ function buildStore(db: DatabaseSync): { db: DatabaseSync; stmts: Prepared } {
         servedCanonsClearStmt.run(params[1], params[0], params[2]);
       });
     },
-    servedSnapshotUpsert: (...params) => {
-      withBusyRetry(() => {
-        servedSnapshotUpsertStmt.run(...params);
-      });
-    },
-    servedSnapshotClear: (...params) => {
-      withBusyRetry(() => {
-        servedSnapshotClearStmt.run(params[1], params[0], params[2]);
-      });
-    },
     servedCardsUpsert: (...params) => {
       withBusyRetry(() => {
         servedCardsUpsertStmt.run(...params);
@@ -617,50 +744,173 @@ function buildStore(db: DatabaseSync): { db: DatabaseSync; stmts: Prepared } {
 }
 
 /** Wire the domain methods over the prepared statements. */
-function makeDomainStore(stmts: Prepared): InternalHashStore {
+function makeDomainStore(
+  stmts: Prepared,
+  snapshotStore: SnapshotStore,
+  lineageStore: LineageStore,
+  db: DatabaseSync,
+): InternalHashStore {
+  /**
+   * The post-materialization retention trigger. Runs the sweep after a v7 materialization has
+   * committed — outside that materialization's own `withTransaction` block — and reports the result
+   * through the sweep's single report owner. The deferral itself lives in `vacuumSnapshots` (TM
+   * probe M1: a joined sweep can be partially committed by its caller), so this site is safe from
+   * any caller-owned unit by construction and only decides whether there is a v7 row to protect:
+   * `content === undefined` means the legacy row alone, with no `file_snapshots` row to keep.
+   *
+   * Best-effort but never silent: a retention fault can never fail the read or edit that already
+   * committed, and it is reported observably (spec §3.6.1; the storage-error-transparency rule).
+   * The just-committed row is protected because its lease does not exist yet.
+   */
+  function vacuumAfterMaterialization(path: string, content: string | undefined): void {
+    if (content === undefined) return;
+    try {
+      const protectId = lineageStore.snapshotIdFor(path, snapshotHashFor(content));
+      const result = runVacuumSnapshots(
+        db,
+        protectId === undefined ? {} : { protectSnapshotIds: [protectId] },
+      );
+      reportVacuum(result, `materialize ${path}`);
+    } catch (error) {
+      console.warn(
+        `dsh-better-edit: snapshot vacuum failed after materializing ${path}: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    }
+  }
+  /**
+   * Transaction owner for the undo pair: the store's own `db` handle (opened in
+   * buildStore). Delegates to the single re-entrant owner so an undo-pair write
+   * joins an outer unit (e.g. pruneMissing) instead of nesting a BEGIN.
+   */
+
+  function withUndoPairTxn(fn: () => void): void {
+    withTransaction(db, fn);
+  }
+
+  function writeUndoPairImpl(
+    path: string,
+    legacy: UndoRecord | undefined,
+    v7: FileUndoWrite | undefined,
+  ): void {
+    // Contract: at least one side must be present (both-absent is deleteUndoPair's job).
+    if (!legacy && !v7) {
+      throw new TypeError(
+        "writeUndoPair requires at least one side; use deleteUndoPair to clear the pair",
+      );
+    }
+    // One stamp for both rows: the pair's age is a pair property. The old code stamped
+    // legacy from the store clock and v7 from the caller's updatedAt, so a straddled
+    // millisecond split the pair at prune time. The impl is the single clock now; the
+    // caller's updatedAt is advisory and intentionally unused.
+    const stamp = Date.now();
+    withUndoPairTxn(() => {
+      if (legacy) {
+        stmts.undoUpsert(
+          path,
+          legacy.content,
+          legacy.bom,
+          legacy.ending,
+          JSON.stringify(legacy.hashes),
+          legacy.resultContent,
+          stamp,
+        );
+      } else {
+        stmts.undoDelete(path);
+      }
+      if (v7) {
+        stmts.fileUndoUpsert(
+          path,
+          v7.content,
+          v7.bom,
+          v7.ending,
+          JSON.stringify(v7.hashes),
+          v7.resultContent,
+          v7.snapshotHash,
+          stamp,
+        );
+      } else {
+        stmts.fileUndoDelete(path);
+      }
+    });
+  }
+
+  function undoPairDeleteImpl(path: string): void {
+    withUndoPairTxn(() => {
+      stmts.undoDelete(path);
+      stmts.fileUndoDelete(path);
+    });
+  }
+
   return {
     engine: "node:sqlite",
 
     getSnapshot(path, content, deleteCorrupt = true) {
-      const checksum = cacheKey(contentChecksum(content));
-      const lineCount = splitLines(content).length;
-      const row = stmts.get(path, checksum, lineCount);
-      if (!row) return undefined;
-      try {
-        const parsed = JSON.parse(row.hashes as string);
-        if (isValidHashList(parsed)) return parsed;
-        if (deleteCorrupt) stmts.deleteOne(path);
-        return undefined;
-      } catch (error) {
-        if (deleteCorrupt) stmts.deleteOne(path);
-        return undefined;
+      // Lineage first: adopt refreshes stored anchors to the live assignment, so the
+      // lineage tracks the current snapshot and the legacy row stays the upgrade fallback.
+      const lineage = lineageStore.lineageFor(path, snapshotHashFor(content));
+      // A lineage hit shields a corrupt legacy row from healing by design —
+      // fallback-only healing is fail-closed (ADR-0017).
+      if (
+        lineage.length === splitLines(content).length &&
+        lineage.every((row, index) => row.lineNumber === index + 1 && HASH_RE.test(row.anchor))
+      ) {
+        return lineage.map((row) => row.anchor);
       }
+      return snapshotStore.get(path, content, deleteCorrupt);
     },
-    upsertSnapshot(path, checksum, lineCount, hashes) {
-      stmts.upsert(path, cacheKey(checksum), lineCount, JSON.stringify(hashes), Date.now());
+    upsertSnapshot(path, checksum, lineCount, hashes, content?) {
+      // Pair #5: the legacy `snapshots` row and the v7 family are ONE unit. A v7
+      // fault (or a crash) must not leave the legacy row written and v7 absent.
+      withTransaction(db, () => {
+        snapshotStore.upsert(path, checksum, lineCount, hashes);
+        if (content !== undefined) {
+          lineageStore.commitSnapshot({ path, content, hashes });
+        }
+      });
+      vacuumAfterMaterialization(path, content);
+    },
+    commitSnapshot(input) {
+      lineageStore.commitSnapshot(input);
+      vacuumAfterMaterialization(input.path, input.content);
+    },
+    lineageFor(path, snapshotHash) {
+      return lineageStore.lineageFor(path, snapshotHash);
+    },
+    positionsByIdentity(path, content) {
+      return lineageStore.positionsByIdentity(path, content);
+    },
+    leaseFor(sessionKey, path, anchor) {
+      return lineageStore.leaseFor(sessionKey, path, anchor);
+    },
+    leaseHomes(sessionKey, excludePath, anchor) {
+      return lineageStore.leaseHomes(sessionKey, excludePath, anchor);
+    },
+    snapshotIdFor(path, snapshotHash) {
+      return lineageStore.snapshotIdFor(path, snapshotHash);
+    },
+    /**
+     * The `LineageStore` seam member — LINEAGE FAMILY ONLY (file_snapshots, line_lineage,
+     * line_id_counters, served_leases). It is deliberately narrower than `pruneMissing`,
+     * which is the sole owner of whole-path deletion and calls the sub-stores directly.
+     * The name reads as "delete everything for this path"; it does not, and widening it
+     * here would duplicate pruneMissing's ownership.
+     */
+    deleteByPath(path) {
+      lineageStore.deleteByPath(path);
     },
     allKnownPaths() {
       return stmts.allPaths() as { path: string }[];
     },
     allSnapshotHashes() {
-      return stmts.allHashes() as { path: string; hashes: string }[];
+      return snapshotStore.allHashes();
     },
     deleteSnapshot(path) {
-      stmts.deleteOne(path);
+      snapshotStore.deleteByPath(path);
     },
     findSnapshotPaths(hashes) {
-      const rows = stmts.allHashes() as { path: string; hashes: string }[];
-      const matches: string[] = [];
-      for (const row of rows) {
-        try {
-          const parsed = JSON.parse(row.hashes) as unknown;
-          if (!isValidHashList(parsed)) continue;
-          if (hashes.every((h) => parsed.includes(h))) matches.push(row.path);
-        } catch (error) {
-          console.warn(error); // unparseable row → skip it
-        }
-      }
-      return matches;
+      return snapshotStore.findPathsContaining(hashes);
     },
 
     getUndo(path) {
@@ -669,7 +919,7 @@ function makeDomainStore(stmts: Prepared): InternalHashStore {
       try {
         const parsed = JSON.parse(row.hashes as string);
         if (!isValidHashList(parsed)) {
-          stmts.undoDelete(path);
+          undoPairDeleteImpl(path);
           return undefined;
         }
         return {
@@ -680,23 +930,48 @@ function makeDomainStore(stmts: Prepared): InternalHashStore {
           resultContent: row.result_content as string,
         };
       } catch (error) {
-        stmts.undoDelete(path);
+        undoPairDeleteImpl(path);
         return undefined;
       }
     },
-    upsertUndo(path, entry) {
-      stmts.undoUpsert(
-        path,
-        entry.content,
-        entry.bom,
-        entry.ending,
-        JSON.stringify(entry.hashes),
-        entry.resultContent,
-        Date.now(),
-      );
+    getFileUndo(path) {
+      // The SELECT is inside the try: `stmts.fileUndoGet` validates the raw row
+      // (`mapFileUndoRow`) and throws on a shape-corrupt row, which must take the
+      // same healing path as `getUndo`'s parse failure below.
+      try {
+        const row = stmts.fileUndoGet(path);
+        if (!row) return undefined;
+        const parsed = JSON.parse(row.hashes as string);
+        if (!isValidHashList(parsed)) {
+          undoPairDeleteImpl(path);
+          return undefined;
+        }
+        return {
+          content: row.content,
+          bom: row.bom,
+          ending: row.ending,
+          hashes: parsed as string[],
+          resultContent: row.result_content,
+          snapshotHash: row.snapshot_hash ?? null,
+          updatedAt: row.updated_at,
+        };
+      } catch (error) {
+        // Shape corruption (`mapFileUndoRow` throws `TypeError`) and payload corruption
+        // (`JSON.parse` throws `SyntaxError`) heal; infrastructure failures (BUSY, IO)
+        // must propagate, because swallowing one would delete a live pair and let
+        // `saveUndo` report `persisted: true` — undo silently destroyed, caller told it
+        // succeeded. Fail loud, never fail silent.
+        const healable = error instanceof TypeError || error instanceof SyntaxError;
+        if (!healable) throw error;
+        undoPairDeleteImpl(path);
+        return undefined;
+      }
     },
-    deleteUndo(path) {
-      stmts.undoDelete(path);
+    writeUndoPair(path, legacy, v7) {
+      writeUndoPairImpl(path, legacy, v7);
+    },
+    deleteUndoPair(path) {
+      undoPairDeleteImpl(path);
     },
 
     getServed(sessionKey, path) {
@@ -798,22 +1073,11 @@ function makeDomainStore(stmts: Prepared): InternalHashStore {
         return [];
       }
     },
-    getEpochSnapshotId(sessionKey, path) {
-      const row = stmts.servedGet(sessionKey, path);
-      if (!row || row.snapshotId === null || row.snapshotId === undefined) return undefined;
-      return row.snapshotId as string;
-    },
     upsertServedCanons(sessionKey, path, canonsJson) {
       stmts.servedCanonsUpsert(sessionKey, path, canonsJson, Date.now());
     },
     clearServedCanons(sessionKey, path) {
       stmts.servedCanonsClear(sessionKey, Date.now(), path);
-    },
-    upsertEpochSnapshotId(sessionKey, path, snapshotId) {
-      stmts.servedSnapshotUpsert(sessionKey, path, snapshotId, Date.now());
-    },
-    clearEpochSnapshotId(sessionKey, path) {
-      stmts.servedSnapshotClear(sessionKey, Date.now(), path);
     },
     getCards(sessionKey, path) {
       const row = stmts.servedGet(sessionKey, path);
@@ -847,20 +1111,32 @@ function makeDomainStore(stmts: Prepared): InternalHashStore {
       stmts.servedPruneOlderThan(ts);
     },
     pruneUndoOlderThan(ts) {
-      stmts.undoPruneOlderThan(ts);
+      withUndoPairTxn(() => {
+        stmts.undoPrunePair(ts);
+        stmts.fileUndoPrunePair(ts);
+      });
     },
 
     async pruneMissing() {
       const rows = stmts.allPaths() as { path: string }[];
       const missing = await statMissing(rows);
       if (missing.length === 0) return;
+      // Transaction owner: withStore — one unit for the legacy rows and the v7 family.
       withStore(() => {
         for (const path of missing) {
-          stmts.deleteOne(path);
+          snapshotStore.deleteByPath(path);
+          lineageStore.deleteByPath(path);
           stmts.undoDelete(path);
+          stmts.fileUndoDelete(path);
           stmts.servedDeletePath(path);
         }
       });
+    },
+    vacuumSnapshots() {
+      // WHY: the store-open boundary (spec §3.6.1) — on this store the open path is the only place
+      // that can reclaim a store that crashed over budget. The result goes back to the caller,
+      // which is the report owner; the sweep itself never writes to the console.
+      return runVacuumSnapshots(db);
     },
   };
 }
@@ -947,9 +1223,11 @@ async function openStore(storePath: string): Promise<HashStore> {
   const { db, stmts } = opened;
 
   if (!existed) {
-    await migrateLegacy(db, storePath);
+    await migrateLegacyStore(db, join(dirname(storePath), "hash-store.json"));
   }
-  const store = makeDomainStore(stmts);
+  const snapshotStore = createSnapshotStore(db);
+  const lineageStore = createLineageStore(db);
+  const store = makeDomainStore(stmts, snapshotStore, lineageStore, db);
   stores.set(storePath, { path: storePath, db, stmts, store });
   await onStoreOpen(storePath, stmts, store);
 
@@ -1002,87 +1280,15 @@ export function shutdownHashStore(): void {
 /**
  * Run `fn` inside one BEGIN IMMEDIATE transaction on the active workspace's
  * store. Without an open store for this context the call runs bare (the
- * caller has already loaded the store in every in-process path).
+ * caller has already loaded the store in every in-process path). Re-entrant:
+ * when a store already has a transaction open, `fn` joins it.
  */
 export function withStore(fn: () => void): void {
   const store = currentStore();
   if (store) {
-    withBusyRetry(() => {
-      store.db.exec("BEGIN IMMEDIATE");
-      try {
-        fn();
-        store.db.exec("COMMIT");
-      } catch (e) {
-        try {
-          store.db.exec("ROLLBACK");
-        } catch (error) {
-          console.warn(error); // best-effort rollback; the original error propagates
-        }
-        throw e;
-      }
-    });
+    withTransaction(store.db, fn);
   } else {
     fn();
-  }
-}
-
-async function migrateLegacy(db: DatabaseSync, storePath: string): Promise<void> {
-  const legacyPath = join(dirname(storePath), "hash-store.json");
-  let content: string;
-  try {
-    content = await readFile(legacyPath, "utf-8");
-  } catch (error: unknown) {
-    if (errCode(error) === "ENOENT") return;
-    console.error("Failed to read legacy hash store for migration:", error);
-    return;
-  }
-
-  let parsed: { snapshots?: Record<string, unknown> };
-  try {
-    parsed = JSON.parse(content) as typeof parsed;
-  } catch (error) {
-    console.error("Failed to parse legacy hash store, skipping migration:", error);
-    return;
-  }
-
-  const raw = parsed.snapshots;
-  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return;
-
-  const rows: [string, string, number, string, number][] = [];
-  for (const [key, value] of Object.entries(raw)) {
-    if (!isValidSnapshot(value)) continue;
-    if (new Set(value.hashes).size !== value.hashes.length) {
-      console.warn(
-        `Skipped legacy snapshot with duplicate hashes for ${key}; it will be re-hashed on next read.`,
-      );
-      continue;
-    }
-    rows.push([
-      key,
-      contentChecksum(value.content),
-      splitLines(value.content).length,
-      JSON.stringify(value.hashes),
-      Date.now(),
-    ]);
-  }
-  if (rows.length > 0) {
-    db.exec("BEGIN IMMEDIATE");
-    try {
-      const stmt = db.prepare(
-        "INSERT OR REPLACE INTO snapshots (path, checksum, line_count, hashes, updated_at) VALUES (?, ?, ?, ?, ?)",
-      );
-      for (const row of rows) stmt.run(...row);
-      db.exec("COMMIT");
-    } catch (e) {
-      db.exec("ROLLBACK");
-      throw e;
-    }
-  }
-
-  try {
-    await rename(legacyPath, `${legacyPath}.bak`);
-  } catch (error) {
-    console.error("Failed to rename legacy hash store after migration:", error);
   }
 }
 
@@ -1100,7 +1306,8 @@ export async function upsertSnapshotFor(
   checksum: string,
   lineCount: number,
   hashes: string[],
+  content?: string,
 ): Promise<void> {
   const store = await loadHashStore();
-  store.upsertSnapshot(path, checksum, lineCount, hashes);
+  store.upsertSnapshot(path, checksum, lineCount, hashes, content);
 }

@@ -18,15 +18,15 @@ describe("retired hash anchors", () => {
 
       await editTool.execute("free-anchor", {
         path: "config.ts",
-        remove_from: staleAnchor,
-        remove_to: staleAnchor,
-        replacement_text: "  enabled: true,",
+        anchor_from: staleAnchor,
+        anchor_to: staleAnchor,
+        replace_with: "  enabled: true,",
       });
       await editTool.execute("insert-identical", {
         path: "config.ts",
-        remove_from: itemsAnchor,
-        remove_to: itemsAnchor,
-        replacement_text: "  items: [],\n  show: true,",
+        anchor_from: itemsAnchor,
+        anchor_to: itemsAnchor,
+        replace_with: "  items: [],\n  show: true,",
       });
 
       const expected = "  enabled: true,\n  items: [],\n  show: true,\n";
@@ -39,9 +39,9 @@ describe("retired hash anchors", () => {
       await expect(
         editTool.execute("reuse-stale", {
           path: "config.ts",
-          remove_from: staleAnchor,
-          remove_to: staleAnchor,
-          replacement_text: "  show: false,",
+          anchor_from: staleAnchor,
+          anchor_to: staleAnchor,
+          replace_with: "  show: false,",
         }),
       ).rejects.toThrow(/E_STALE_ANCHOR|E_STALE_RANGE/);
       expect(await readFile(path, "utf-8")).toBe(expected);
@@ -62,9 +62,9 @@ describe("retired hash anchors", () => {
 
       await editTool.execute("edit", {
         path: "pages.txt",
-        remove_from: staleAnchor,
-        remove_to: staleAnchor,
-        replacement_text: "ONE",
+        anchor_from: staleAnchor,
+        anchor_to: staleAnchor,
+        replace_with: "ONE",
       });
       await readTool.execute("partial", {
         path: "pages.txt",
@@ -114,9 +114,9 @@ describe("retired hash anchors", () => {
 
       await editTool.execute("insert", {
         path: "external.txt",
-        remove_from: enabledAnchor,
-        remove_to: enabledAnchor,
-        replacement_text: "enabled\nshow",
+        anchor_from: enabledAnchor,
+        anchor_to: enabledAnchor,
+        replace_with: "enabled\nshow",
       });
       const expected = "enabled\nshow\nitems\n";
       expect(await readFile(path, "utf-8")).toBe(expected);
@@ -127,9 +127,9 @@ describe("retired hash anchors", () => {
       await expect(
         editTool.execute("stale-after-partial", {
           path: "external.txt",
-          remove_from: staleAnchor,
-          remove_to: staleAnchor,
-          replacement_text: "wrong",
+          anchor_from: staleAnchor,
+          anchor_to: staleAnchor,
+          replace_with: "wrong",
         }),
       ).rejects.toThrow(/E_STALE_ANCHOR|E_STALE_RANGE/);
     });
@@ -149,9 +149,9 @@ describe("retired hash anchors", () => {
 
       await harness.editTool.execute("edit", {
         path: "undo.ts",
-        remove_from: staleAnchor,
-        remove_to: staleAnchor,
-        replacement_text: "  enabled: true,",
+        anchor_from: staleAnchor,
+        anchor_to: staleAnchor,
+        replace_with: "  enabled: true,",
       });
       const undo = harness.getTool("undo_last_edit") as {
         execute: (
@@ -172,16 +172,16 @@ describe("retired hash anchors", () => {
       await expect(
         harness.editTool.execute("stale-after-undo", {
           path: "undo.ts",
-          remove_from: staleAnchor,
-          remove_to: staleAnchor,
-          replacement_text: "  show: false,",
+          anchor_from: staleAnchor,
+          anchor_to: staleAnchor,
+          replace_with: "  show: false,",
         }),
       ).rejects.toThrow(/E_STALE_ANCHOR|E_STALE_RANGE/);
       await harness.editTool.execute("fresh-after-undo", {
         path: "undo.ts",
-        remove_from: restoredAnchor,
-        remove_to: restoredAnchor,
-        replacement_text: "  show: false,",
+        anchor_from: restoredAnchor,
+        anchor_to: restoredAnchor,
+        replace_with: "  show: false,",
       });
       expect(await readFile(path, "utf-8")).toBe("  show: false,\n  items: [],\n");
     });
@@ -201,9 +201,9 @@ describe("retired hash anchors", () => {
 
       await harness.editTool.execute("duplicate", {
         path: "duplicates.txt",
-        remove_from: yAnchor,
-        remove_to: yAnchor,
-        replacement_text: "x",
+        anchor_from: yAnchor,
+        anchor_to: yAnchor,
+        replace_with: "x",
       });
 
       const undo = harness.getTool("undo_last_edit") as {
@@ -250,9 +250,9 @@ describe("retired hash anchors", () => {
 
       await harness.editTool.execute("collide", {
         path: "undo-collision.txt",
-        remove_from: oldAnchor,
-        remove_to: oldAnchor,
-        replacement_text: "new30258",
+        anchor_from: oldAnchor,
+        anchor_to: oldAnchor,
+        replace_with: "new30258",
       });
       let currentOnlyAnchor = "";
       await withWorkspace(cwd, async () => {

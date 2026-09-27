@@ -1,0 +1,25 @@
+# Scaffold divergence record — deliberate drift, not stale drift.
+#
+# Authority: repo maintainers (S3 lane; S2's release-semantics hold for .releaserc.json,
+#   orchestrator ruling 2026-09-26 for .github/pull_request_template.md).
+# Scope: exact repo-relative paths in `path:` stanzas below. Nothing else is covered.
+# Owner: the lane that recorded each stanza (see `since:`).
+# Review trigger: re-evaluate a stanza when the skill template gains the capability the
+#   stanza holds out for (release-owner review for .releaserc.json; CODE_AUTHORS
+#   enforcement truth for pull_request_template.md), or when `--check` reports the path
+#   byte-identical — the record is shrink-only and a dead stanza is itself a finding.
+# Format: `path:` starts a stanza, `reason:`/`since:` are metadata. `#` lines are comments.
+
+path: .releaserc.json
+reason: hold — the template would remove the @semantic-release/release-notes-generator conventionalcommits preset block (the types-to-sections mapping the ledger's section names depend on). Release semantics are not verifiable by any in-lane gate.
+since: S3 (2026-09-26), upholding S2's ruling
+
+path: .github/pull_request_template.md
+reason: hold — re-projection would delete the repo-added line 29 (names WHICH gate reads the Landing: field) and install the template's CODE_AUTHORS block, whose enforcement claim is false here (code_authors has 0 hits across .github/, .githooks/, .config/, scripts/). Clause quoted verbatim below so the call is reversible.
+since: S3 (2026-09-26), per orchestrator ruling (S2 declined first)
+# Verbatim template clause (template lines 45-47, byte-exact):
+# <!-- CODE_AUTHORS: replace with `Co-authored-by: Name <email>` lines for each outside
+#      contributor whose commits this PR carries, or delete this block. The merge step
+#      refuses a body that still contains the raw `CODE_AUTHORS` token. -->
+# Verbatim repo-added line 29 (byte-exact):
+# <!-- Read by the PR run of scripts/changelog-gate.py — the repo's gate, not the global pr-land skill. -->

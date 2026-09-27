@@ -9,7 +9,8 @@
  */
 
 import type { LineEnding } from "./edit-diff.js";
-import { loadHashStore, type UndoRecord } from "./hash-store.js";
+import { loadHashStore, type FileUndoRecord, type UndoRecord } from "./hash-store.js";
+import { snapshotHashFor } from "./snapshot-store/lineage-store.js";
 
 /** Load the last undo row for a path from the active store, if any. */
 async function readUndo(path: string): Promise<UndoRecord | undefined> {
@@ -17,17 +18,25 @@ async function readUndo(path: string): Promise<UndoRecord | undefined> {
   return store.getUndo(path);
 }
 
-/** Persist the undo row for a path to the active store. */
+/** Persist the undo rows (legacy + v7 snapshot pin) for a path to the active store. */
 async function writeUndo(path: string, entry: UndoRecord): Promise<void> {
   const store = await loadHashStore();
-  store.upsertUndo(path, entry);
+  store.writeUndoPair(path, entry, {
+    content: entry.content,
+    bom: entry.bom,
+    ending: entry.ending,
+    hashes: entry.hashes,
+    resultContent: entry.resultContent,
+    snapshotHash: snapshotHashFor(entry.content),
+  });
 }
 
-/** Drop the undo row for a path from the active store. */
-async function removeUndo(path: string): Promise<void> {
+/** Load the v7 undo row for a path from the active store, if any. */
+async function readFileUndo(path: string): Promise<FileUndoRecord | undefined> {
   const store = await loadHashStore();
-  store.deleteUndo(path);
+  return store.getFileUndo(path);
 }
+
 export interface UndoEntry {
   content: string;
   bom: string;
@@ -48,8 +57,10 @@ export async function saveUndo(
   entry: UndoEntry,
 ): Promise<{ persisted: boolean; restore: () => Promise<void> }> {
   let previous: UndoRecord | undefined;
+  let previousFileUndo: FileUndoRecord | undefined;
   try {
     previous = await readUndo(path);
+    previousFileUndo = await readFileUndo(path);
     await writeUndo(path, {
       content: entry.content,
       bom: entry.bom,
@@ -65,8 +76,13 @@ export async function saveUndo(
     persisted: true,
     restore: async () => {
       try {
-        if (previous) await writeUndo(path, previous);
-        else await removeUndo(path);
+        if (previous ?? previousFileUndo) {
+          const store = await loadHashStore();
+          store.writeUndoPair(path, previous, previousFileUndo);
+        } else {
+          const store = await loadHashStore();
+          store.deleteUndoPair(path);
+        }
       } catch (error) {
         console.error("Failed to restore previous undo entry:", error);
       }
@@ -81,7 +97,8 @@ export async function getUndo(path: string): Promise<UndoEntry | undefined> {
     if (!record) return undefined;
     const originalEnding = record.ending;
     if (originalEnding !== "\r\n" && originalEnding !== "\n" && originalEnding !== "\r") {
-      await removeUndo(path);
+      const store = await loadHashStore();
+      store.deleteUndoPair(path);
       return undefined;
     }
     return {
@@ -100,7 +117,8 @@ export async function getUndo(path: string): Promise<UndoEntry | undefined> {
 /** Drop the undo entry for a path (a write or an undone revert clears history). */
 export async function clearUndo(path: string): Promise<void> {
   try {
-    await removeUndo(path);
+    const store = await loadHashStore();
+    store.deleteUndoPair(path);
   } catch (error) {
     console.error("Failed to clear undo entry:", error);
   }

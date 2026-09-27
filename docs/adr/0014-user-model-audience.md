@@ -4,7 +4,8 @@ Date: 2026-09-05 (adapted for dsh-better-edit from pi-better-edit ADR-0014, `dd1
 
 ## Status
 
-accepted (adapted for dsh-better-edit — AnchorPipeline, SessionView, contract.ts, edit-response.ts)
+accepted (adapted for dsh-better-edit — AnchorPipeline, SessionView, contract.ts, edit-response.ts);
+error-header rendering amended by #79 — see the §#79 amendment at the foot.
 
 ## Context
 
@@ -27,3 +28,33 @@ accepted (adapted for dsh-better-edit — AnchorPipeline, SessionView, contract.
 - `CONTEXT.md` Language, `README.md` error table, `src/prompts.ts`/`src/guidance/` wording follow the new names.
 - Tests assert new codes + `[MODEL]`/`[USER]` prefixes; removed-heal tests assert throws; healed-reverse test asserts `[USER]` success.
 - Breaking for any downstream matching old codes (fail-loud by design — stale codes never match silently since matching is substring on the new names).
+
+## Amendment (FU-7, 2026-09-26 — batch envelope field semantics conformed, code coupling retained)
+
+FU-7 conformed the `E_BATCH_ABORT` envelope's fields to upstream
+`b92e0ec:src/mutation-engine/pipeline.ts`: `servedRows` is the union of every failing item's
+rows in item order and `servedBlock` the join of every non-empty per-item block in item order
+(`batchAbortForMany` :579-622, thrown at the aggregate sites :701-707 and :780-786), and
+`details.cause` rides only on a unanimous diagnosis — with the single-failing-item stage
+(`batchAbortFor` :531-560, the fail-fast sites :948/:990) forwarding its one item's cause
+untouched. The `.code` stays `E_BATCH_ABORT` rather than upstream's first-string-code
+forwarding: this ADR's Deferred bullet already keeps the dsh batch family's bare codes, and
+locally the code is inseparable from the `[MODEL] [E_*]` header and formatter dispatch
+(`formatError` is the sole composer, `src/domain-errors.ts`), so a granular code would render
+the wrong body. Upstream's forwarding exists because its wrapper is a plain Error re-tagged by
+`toFailure`; locally `E_BATCH_ABORT` is itself a registry member that routes the typed path, so
+the forwarding has no consumer. Pinned by `test/core/batch-aggregation.test.ts`
+("envelope cause semantics").
+
+## Amendment (#79, 2026-09-27 — error headers address the audience: `[TO <AUDIENCE>]`)
+
+`formatError` (sole composer, `src/domain-errors.ts`) now renders
+`[TO MODEL] [E_*]` — the `TO` preposition marks the addressee, so the first bracket
+cannot be misread as a role label (issue #79); the remedy text names the action.
+The audience axis and bare-code matching of this ADR's Decision are untouched.
+The old-shape strings in the Decision/Consequences bullets and the FU-7 amendment
+above are the historical record as decided and are NOT rewritten — read every
+thrown-error `[MODEL] [E_*]` citation there as `[TO MODEL] [E_*]` post-amendment.
+Warnings (`formatWarning`) and the `[USER] drift:` heading keep their bare
+`[USER]`/`[MODEL]` brackets — out of the approved scope of #79; any change there
+needs its own ruling.

@@ -1,9 +1,10 @@
 import { describe, expect, it, vi, beforeAll } from "vitest";
-import { mkdtemp, mkdir, rm, writeFile } from "fs/promises";
+import { mkdtemp, mkdir, readdir, rm, writeFile } from "fs/promises";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
 import { loadHashStore, loadServedStore, shutdownHashStore } from "../../src/hash-store.js";
+import { DomainError } from "../../src/domain-errors.js";
 import {
   _mergeServedRows,
   loadServed,
@@ -18,6 +19,7 @@ import {
 import { HASH_STORE_VERSION, SERVED_TTL_MS } from "../../src/constants.js";
 import { initHasher, contentChecksum } from "../../src/hashline/hasher.js";
 import { getWritableTempRoot } from "../support/fixtures.js";
+import { saveUndo } from "../../src/undo-edit.js";
 
 let tmpHome: string;
 beforeAll(async () => {
@@ -250,10 +252,10 @@ describe("served state — session wipe keeps snapshots and undo", () => {
       await recordServed("sessionA", "/a.ts", [{ position: 0, hash: "abc" }]);
       await recordServed("sessionA", "/b.ts", [{ position: 1, hash: "def" }]);
       store.upsertSnapshot("/a.ts", contentChecksum("a\n"), 1, ["abc"]);
-      store.upsertUndo("/u.ts", {
+      await saveUndo("/u.ts", {
         content: "old",
         bom: "",
-        ending: "\n",
+        originalEnding: "\n",
         hashes: ["UVW"],
         resultContent: "new",
       });
@@ -337,15 +339,15 @@ describe("served state — corrupt row handling", () => {
 });
 
 describe("served state — schema versioning", () => {
-  it("clears served state alongside snapshots and undo when the stored version differs", async () => {
+  it("preserves served rows, snapshots and undo when the stored version is newer", async () => {
     await withTempHome(async (home) => {
       const store = await loadHashStore();
       await recordServed("sessionA", "/p.ts", [{ position: 0, hash: "XYZ" }]);
       store.upsertSnapshot("/p.ts", contentChecksum("x\n"), 1, ["XYZ"]);
-      store.upsertUndo("/u.ts", {
+      await saveUndo("/u.ts", {
         content: "old",
         bom: "",
-        ending: "\n",
+        originalEnding: "\n",
         hashes: ["UVW"],
         resultContent: "new",
       });
@@ -357,18 +359,34 @@ describe("served state — schema versioning", () => {
       db.prepare("UPDATE meta SET value = '999' WHERE key = 'version'").run();
       db.close();
 
-      expect(await loadServed("sessionA", "/p.ts")).toEqual([]);
-      expect((await loadHashStore()).getSnapshot("/p.ts", "x\n")).toBeUndefined();
-      expect((await loadHashStore()).getUndo("/u.ts")).toBeUndefined();
+      const failure = await loadServed("sessionA", "/p.ts").then(
+        () => null,
+        (error: unknown) => error,
+      );
+      expect(failure).toBeInstanceOf(DomainError);
+      expect((failure as DomainError).code).toBe("E_STORE_NEWER_VERSION");
 
       const check = new DatabaseSync(sqlitePath(home), {
         defensive: false,
       } as any);
-      const row = check.prepare("SELECT value FROM meta WHERE key = 'version'").get() as
+      const version = check.prepare("SELECT value FROM meta WHERE key = 'version'").get() as
         | { value?: string }
         | undefined;
+      expect(version?.value).toBe("999");
+      const servedRow = check
+        .prepare("SELECT hashes FROM served WHERE session_id = ? AND path = ?")
+        .get("sessionA", "/p.ts") as { hashes: string };
+      expect(JSON.parse(servedRow.hashes)).toEqual(["XYZ"]);
+      const snapshots = check.prepare("SELECT COUNT(*) AS n FROM snapshots").get() as {
+        n: number;
+      };
+      expect(snapshots.n).toBe(1);
+      const undos = check.prepare("SELECT COUNT(*) AS n FROM undo").get() as { n: number };
+      expect(undos.n).toBe(1);
       check.close();
-      expect(row?.value).toBe(String(HASH_STORE_VERSION));
+
+      const entries = await readdir(configHome(home));
+      expect(entries.some((name) => name.includes(".corrupt-"))).toBe(false);
     });
   });
 
@@ -389,7 +407,7 @@ describe("served state — schema versioning", () => {
     });
   });
 
-  it("preserves served rows but invalidates rebound sources when adding retired anchors", async () => {
+  it("preserves served rows and rebound sources when adding the retired column", async () => {
     await withTempHome(async (home) => {
       const path = join(home, "rebound.txt");
       const content = "new\nold\n";
@@ -397,10 +415,10 @@ describe("served state — schema versioning", () => {
       const initialStore = await loadHashStore();
       await recordServed("sessionA", path, [{ position: 0, hash: "AAA" }]);
       initialStore.upsertSnapshot(path, contentChecksum(content), 2, ["BBB", "AAA"]);
-      initialStore.upsertUndo(path, {
+      await saveUndo(path, {
         content: "old\nnew\n",
         bom: "",
-        ending: "\n",
+        originalEnding: "\n",
         hashes: ["BBB", "AAA"],
         resultContent: content,
       });
@@ -416,8 +434,16 @@ describe("served state — schema versioning", () => {
       expect(store.getAnchorReservations("sessionA", path).reservedHashes).toEqual(
         new Set(["AAA"]),
       );
-      expect((await loadHashStore()).getSnapshot(path, content)).toBeUndefined();
-      expect((await loadHashStore()).getUndo(path)).toBeUndefined();
+      // The retired-column upgrade is non-destructive (ADR-0017): snapshot and undo
+      // rows survive; only the missing column is backfilled.
+      expect((await loadHashStore()).getSnapshot(path, content)).toEqual(["BBB", "AAA"]);
+      expect((await loadHashStore()).getUndo(path)).toEqual({
+        content: "old\nnew\n",
+        bom: "",
+        ending: "\n",
+        hashes: ["BBB", "AAA"],
+        resultContent: content,
+      });
       store.upsertRetiredAnchors("sessionA", path, JSON.stringify(["BBB"]));
       expect(store.getRetiredAnchors("sessionA", path)).toEqual(new Set(["BBB"]));
     });
@@ -463,17 +489,17 @@ describe("served state — pruneMissing", () => {
       await recordServed("sessionA", "/gone.ts", [{ position: 0, hash: "GON" }]);
       store.upsertSnapshot(existing, contentChecksum("keep\n"), 1, ["KEP"]);
       store.upsertSnapshot("/gone.ts", contentChecksum("gone\n"), 1, ["GON"]);
-      store.upsertUndo(existing, {
+      await saveUndo(existing, {
         content: "old",
         bom: "",
-        ending: "\n",
+        originalEnding: "\n",
         hashes: ["KEP"],
         resultContent: "new",
       });
-      store.upsertUndo("/gone.ts", {
+      await saveUndo("/gone.ts", {
         content: "old",
         bom: "",
-        ending: "\n",
+        originalEnding: "\n",
         hashes: ["GON"],
         resultContent: "new",
       });

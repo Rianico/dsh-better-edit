@@ -32,13 +32,13 @@ describe("valKind", () => {
     expect(() =>
       valKind({ kind: "binary", description: "application/octet-stream" }, "test.bin"),
     ).toThrow(
-      "[E_UNSUPPORTED_FILE] Path is a binary file: test.bin (application/octet-stream). Hashline edit only supports text files.",
+      "[TO MODEL] [E_UNSUPPORTED_FILE] Path is a binary file: test.bin (application/octet-stream). Hashline edit only supports text files; choose a text file and retry.",
     );
   });
 
   it("throws for image file", () => {
     expect(() => valKind({ kind: "image", mimeType: "image/png" }, "test.png")).toThrow(
-      "[E_UNSUPPORTED_FILE] Path is an image file: test.png. Hashline edit only supports text files.",
+      "[TO MODEL] [E_UNSUPPORTED_FILE] Path is an image file: test.png. Hashline edit only supports text files; choose a text file and retry.",
     );
   });
 

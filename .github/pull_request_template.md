@@ -22,6 +22,12 @@ graph LR
   A --> B
 ```
 
+## Landing
+
+Landing: squash <!-- or: Landing: merge — see git-convention §5 -->
+
+<!-- Read by the PR run of scripts/changelog-gate.py — the repo's gate, not the global pr-land skill. -->
+
 ## Checklist
 
 - [ ] Formatter, linter, typecheck, and tests green (exact commands in `CONTRIBUTING.md`)
@@ -30,3 +36,8 @@ graph LR
 - [ ] Docs / `docs/adr/` updated when seams or contracts change
 - [ ] No generated artifacts committed outside `.lsz/tmp`
 - [ ] Linked issue with `Closes #NN` (if applicable)
+
+<!-- Related issues: list each on its own line below (never comma-separated: "Closes #1, #2" fails to close #2).
+Closes #123
+Closes #456
+-->

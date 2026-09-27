@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { sessionKeyFor } from "../../src/workspace-context.js";
+import { execSessionKey, sessionKeyFor } from "../../src/workspace-context.js";
 import { mkdtemp, writeFile, mkdir, rm, symlink, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -85,15 +85,26 @@ describe("coverage-agent-d canonical-path", () => {
 });
 
 describe("coverage-agent-d session-view", () => {
-  it("sessionKeyFor fallback", () => {
-    const a = sessionKeyFor("my-id");
-    expect(a).toBe("my-id");
-    const b = sessionKeyFor("");
-    expect(typeof b).toBe("string");
-    const c = sessionKeyFor(undefined);
-    expect(typeof c).toBe("string");
-    // second call returns same fallback
-    expect(sessionKeyFor(undefined)).toBe(c);
+  it("sessionKeyFor carries the session id and fails loud without one (#165)", () => {
+    expect(sessionKeyFor("my-id")).toBe("my-id");
+    expect(() => sessionKeyFor("")).toThrow(/carries no session/);
+    expect(() => sessionKeyFor(undefined)).toThrow(/carries no session/);
+    // fail-loud is stable: repeated calls keep throwing, no key is minted
+    expect(() => sessionKeyFor(undefined)).toThrow(/carries no session/);
+  });
+  it("execSessionKey propagates the throw for an execution without a session", () => {
+    const execNoSession = {
+      signal: new AbortController().signal,
+      agent: undefined,
+      arguments: {},
+    } as unknown as Parameters<typeof execSessionKey>[0];
+    expect(() => execSessionKey(execNoSession)).toThrow(/carries no session/);
+    const execEmptySession = {
+      signal: new AbortController().signal,
+      agent: { id: "x", session: { id: "", header: { cwd: "/tmp" } } },
+      arguments: {},
+    } as unknown as Parameters<typeof execSessionKey>[0];
+    expect(() => execSessionKey(execEmptySession)).toThrow(/carries no session/);
   });
   it("_mergeServedRows branches", () => {
     const cur: (string | null)[] = ["aaa", "bbb", null];
@@ -105,9 +116,11 @@ describe("coverage-agent-d session-view", () => {
     // clearFrom
     // clearFrom with trailing null pop: ["aaa",null,null] pops to ["aaa"]
     expect(_mergeServedRows(["aaa", "bbb", "ccc"], [], { clearFrom: 1 })).toEqual(["aaa"]);
-    // heal duplicate
+    // duplicate: NOT healed — the old position keeps its hash and the new position
+    // records the same anchor. Verification rejects the ambiguity later
+    // (E_UNSERVED_RANGE "was served at 2 positions") instead of nulling a slot.
     const withDup = _mergeServedRows(["aaa", "bbb"], [{ position: 2, hash: "aaa" }]);
-    expect(withDup[0]).toBeNull();
+    expect(withDup[0]).toBe("aaa");
     expect(withDup[2]).toBe("aaa");
     // invalid position
     expect(() => _mergeServedRows([], [{ position: -1, hash: "aaa" }])).toThrow();

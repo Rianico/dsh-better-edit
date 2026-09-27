@@ -41,10 +41,15 @@ export {
   AnchorMismatchError,
   EditHashEchoError,
   findEditHashEcho,
-  isServedRejection,
   isAnchorMismatch,
   verifyServedRange,
+  verifyRebasedSpan,
   buildRangeEcho,
   fmtServedRows,
 } from "./anchor-pipeline.js";
-export type { ServedRow, ResolvedRange, ServedCode } from "./anchor-pipeline.js";
+export type {
+  ServedRow,
+  ResolvedRange,
+  LeaseSpanSource,
+  LeaseIdentityView,
+} from "./anchor-pipeline.js";

@@ -1,10 +1,9 @@
-import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { mkdtemp, rm, writeFile, mkdir } from "node:fs/promises";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { initHasher } from "../src/hashline/hash-assign.js";
 import { shutdownHashStore } from "../src/hash-store.js";
-import * as SessionView from "../src/session-view.js";
-import { vi } from "vitest";
+import { extractHash, getText, setupIntegrationTest } from "../test/support/fixtures.js";
 
 async function getWritableTempRoot(): Promise<string> {
   const fallback = join(process.cwd(), ".tmp");
@@ -12,7 +11,25 @@ async function getWritableTempRoot(): Promise<string> {
   return fallback;
 }
 
-describe("51 epoch strict/resist", () => {
+const INITIAL = Array.from({ length: 10 }, (_, i) => `line ${i}`).join("\n") + "\n";
+
+/** The exterior shift: a line prepended out of band moves every anchor down one. */
+const SHIFTED = `prepended\n${INITIAL}`;
+
+async function withShiftedFile(
+  run: (args: { dir: string; name: string }) => Promise<void>,
+): Promise<void> {
+  const dir = await mkdtemp(join(await getWritableTempRoot(), "epoch-shift-"));
+  const name = "shift.txt";
+  try {
+    await writeFile(join(dir, name), INITIAL, "utf-8");
+    await run({ dir, name });
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+}
+
+describe("51 exterior shift — identity replaces the position check", () => {
   let tmpHome: string;
   beforeAll(async () => {
     await initHasher();
@@ -26,62 +43,53 @@ describe("51 epoch strict/resist", () => {
     await rm(tmpHome, { recursive: true, force: true });
   });
 
-  it("conservative strict: epoch mismatch triggers strict pos check", async () => {
-    const { localIO } = await import("../src/fs-bridge.js");
-    const { readAndServe } = await import("../src/read-and-serve.js");
-    const { withWorkspace } = await import("../src/workspace-context.js");
-    const io = localIO();
-    const dir = await mkdtemp(join(await getWritableTempRoot(), "epoch-strict-"));
-    const fp = join(dir, "file.txt");
-    const initial = Array.from({ length: 10 }, (_, i) => `line ${i}`).join("\n") + "\n";
-    await writeFile(fp, initial, "utf-8");
-    const sessionKey = "sess-epoch-strict-1";
-    // Serve full file to establish epoch
-    const preview = await readAndServe(io, fp, dir, { sessionKey });
-    expect(preview.text).toContain("line 0");
-    // Capture epochSnapshotId
-    const epochId = await SessionView.loadEpochSnapshotId(sessionKey, preview.absolutePath);
-    expect(typeof epochId).toBe("string");
-    // Exterior shift: prepend line externally (not via edit) to change curSnapshotId
-    const shifted = `prepended\n` + initial;
-    await writeFile(fp, shifted, "utf-8");
-    const { fileSnap } = await import("../src/file-view.js");
-    const curSnap = await fileSnap(preview.absolutePath);
-    expect(curSnap.snapshotId).not.toBe(epochId);
-    // Now attempt edit using old served range that is shifted by 1.
-    // Pick old hashes for lines 5..6 (original). Under resist (epoch==cur) they would still be found; under strict they should require exact pos and fail or be strict.
-    // We verify that the engine now computes strictPos=true when epoch !== cur.
-    // Directly test that strictPos would be true by checking the wiring: runFileEdits should be strict when epoch mismatch.
-    // Instead of full integration, verify that the written logic in engine is conservative strict: epoch !== cur -> strict
-    const strictExpected =
-      epochId !== undefined && curSnap.snapshotId !== undefined && epochId !== curSnap.snapshotId;
-    expect(strictExpected).toBe(true);
-    // Now test that a simple edit with correct positions still works under strict (using fresh read after shift)
-    const preview2 = await readAndServe(io, fp, dir, { sessionKey });
-    // After fresh serve, epoch should update to cur, so next edit should be resist again
-    const epochId2 = await SessionView.loadEpochSnapshotId(sessionKey, preview2.absolutePath);
-    expect(epochId2).toBe(curSnap.snapshotId);
-    await rm(dir, { recursive: true, force: true });
+  it("applies at the rebased coordinate after an exterior insert (benign shift, no re-read)", async () => {
+    await withShiftedFile(async ({ dir, name }) => {
+      const { readTool, editTool } = setupIntegrationTest(dir);
+      const read = await readTool.execute("read", { path: name });
+      const anchor = extractHash(
+        getText(read)
+          .split("\n")
+          .find((line) => line.endsWith("│line 5"))!,
+      );
+
+      await writeFile(join(dir, name), SHIFTED, "utf-8");
+
+      // The served anchor's leased line identity resolves to the rebased coordinate, so the edit
+      // applies there instead of rejecting: the line's bytes are unchanged and only its position
+      // moved, which is exactly what a benign shift is. A look-alike rebind still rejects — see
+      // test/core/deleted-twin-anchor.test.ts.
+      await editTool.execute("shift", {
+        path: name,
+        anchor_from: anchor,
+        anchor_to: anchor,
+        replace_with: "line 5 changed",
+      });
+
+      expect(await readFile(join(dir, name), "utf-8")).toBe(
+        `prepended\n${INITIAL.replace("line 5\n", "line 5 changed\n")}`,
+      );
+    });
   });
 
-  it("resist when epoch == cur (no external change) stays pos-free", async () => {
-    const { localIO } = await import("../src/fs-bridge.js");
-    const { readAndServe } = await import("../src/read-and-serve.js");
-    const { withWorkspace } = await import("../src/workspace-context.js");
-    const io = localIO();
-    const dir = await mkdtemp(join(await getWritableTempRoot(), "epoch-resist-"));
-    const fp = join(dir, "file2.txt");
-    const initial = Array.from({ length: 10 }, (_, i) => `line ${i}`).join("\n") + "\n";
-    await writeFile(fp, initial, "utf-8");
-    const sessionKey = "sess-epoch-resist-1";
-    const preview3 = await readAndServe(io, fp, dir, { sessionKey });
-    const epochId = await SessionView.loadEpochSnapshotId(sessionKey, preview3.absolutePath);
-    const { fileSnap } = await import("../src/file-view.js");
-    const curSnap = await fileSnap(preview3.absolutePath);
-    expect(curSnap.snapshotId).toBe(epochId);
-    const strictExpected =
-      epochId !== undefined && curSnap.snapshotId !== undefined && epochId !== curSnap.snapshotId;
-    expect(strictExpected).toBe(false);
-    await rm(dir, { recursive: true, force: true });
+  it("a full re-read re-syncs and the same edit applies", async () => {
+    await withShiftedFile(async ({ dir, name }) => {
+      await writeFile(join(dir, name), SHIFTED, "utf-8");
+      const { readTool, editTool } = setupIntegrationTest(dir);
+      const read = await readTool.execute("read", { path: name });
+      const anchor = extractHash(
+        getText(read)
+          .split("\n")
+          .find((line) => line.endsWith("│line 5"))!,
+      );
+
+      await editTool.execute("re-read", {
+        path: name,
+        anchor_from: anchor,
+        anchor_to: anchor,
+        replace_with: "line 5 changed",
+      });
+      expect(await readFile(join(dir, name), "utf-8")).toContain("line 5 changed");
+    });
   });
 });

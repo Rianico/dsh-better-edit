@@ -161,6 +161,6 @@ describe("issue #69: ctxFsIO version semantics authorize shadow writes", () => {
     fake.externalWrite(p, Buffer.from("alpha\r\nCHANGED\r\ncharlie\r\n", "utf-8"));
     await expect(
       tool.execute({ command: "str_replace", path: p, old_str: "alpha", new_str: "ALPHA" }, exec),
-    ).rejects.toThrow(/E_BLIND_REPLACE/);
+    ).rejects.toThrow(/E_BLIND_REPLACE.*has not been viewed/);
   });
 });

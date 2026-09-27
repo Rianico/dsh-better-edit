@@ -11,9 +11,49 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Features
+
+* **absorb:** land the upstream v2 line-identity redesign on this branch - seam ports, lease identity, and served-span verification across 177 gated, mutant-proven commits (#81)
+* **errors:** address headers to the addressee - `[TO MODEL]`/`[TO USER]` rendering so a cold reader tells addressee from channel; codes, remedies, and the sole composer unchanged (#81)
+* **read:** enforce test-tree typechecking in the gate - the test config overrides the inherited base exclude, closing the zero-file coverage hole with 146 loaded test files (#81)
+
+* **served:** a rejected edit now answers with the current rows of exactly the region the submitted anchors name (region-matched serve); the payload never re-binds another region, and re-read stays the recovery
+* **store:** v7 content-addressed line identity — lines carry stable ids with lineage, leases key on identity, and materialization/undo resolve through it instead of position
+
 ### Bug Fixes
 
 * 对齐 DSH 0.1.6-alpha.2 并修复本地测试
+* **edit:** a stale served span no longer heals silently onto a look-alike line — verification is exact-position and fail-closed (`E_STALE_RANGE` / `E_UNSERVED_RANGE`), removing the position-misaligned accept path
+* **edit:** a rejected edit records and grants nothing, so the next fresh read cannot turn the rejection into a duplicate anchor
+* **store:** the version-flap guard refuses an out-of-order store write instead of letting it clobber the newer version
+* **store:** corrupt lineage repairs terminate, and store writes land as atomic snapshot+lineage pairs — no half-written families
+* **errors:** the copied-anchor echo is one deny code (`E_SUSPICIOUS_TEXT`) across edit/write with a diagnosis that names the served line; the range family's re-read remedy is now truthful
+* **read:** gate the positionless pseudo-previous reuse on the dense served mirror, so interleaved windowed reads no longer reshuffle anchors of a byte-identical file (#62)
+* **hashline:** write 0-matched HASH│ content through literally — the bare-prefix guard now rejects only a line-start hash that is a real anchor of the file, and #63 deliberately supersedes #24's 0-matched arm (see ADR-0025) (#63)
+
+### Performance Improvements
+
+* **snapshot-store:** an LRU vacuum bounds snapshot retention — global and per-path budgets with lease/undo pins honored; the deferred state is reported, never resolved by evicting a pin
+
+### Code Refactoring
+
+* **errors:** the domain-error registry is the single source — declaration-only codes with no producer are deleted, and deferred upstream producers are gated per code by a producer oracle
+* **served:** the orphaned-serve healing and candidate-span enumeration are gone; lease identity is the span-verification authority
+
+### Documentation
+
+* **docs:** the v2 absorb's decisions are recorded — ADR-0016 through ADR-0025 landed (0025 records #63's deliberate supersession of #24's 0-matched strip arm; 0024's Landing forward-contract section now describes the wired reader), stale code names in older ADRs and the glossary are annotated as historical with their rename chain, the dangling supersession in ADR-0003 is annotated in place, upstream-numbered ADR cites are qualified, and the absorb plan carries the upstream-to-local ADR mapping
+* **docs:** the FU follow-up lane (`absorb/follow-upstream`, base `map/absorb-v2` @ `da4a177`) is recorded — a conformance re-audit of the v2 absorb against upstream `b92e0ec81db0bbcf38849e2cacadb0b5ccb635e5`, not a version-range absorb: `00f8c34..b92e0ec` is scaffold/CI-only and stays unabsorbed by design. What the lane ported/corrected, commit by commit: FU-1 `5fb9141` applied-diff removal capping at `DIFF_REMOVED_CAP`; FU-2 `36d9d48` `sessionKeyFor` fails loud without a session (no minted preview key); FU-3 `edc516d` upstream ADR-0024 interior-`null` acceptance on the leased route with the granular `details.cause` headlines; FU-4 `b65d437` (+`7299bfe` ledger re-measure, `554f874` residual-note corrections) the granular rejection codes `E_UNKNOWN_ANCHOR`/`E_FOREIGN_ANCHOR`/`E_TARGET_LOST`/`E_UNVERIFIED_RANGE` behind the lease-first boundary interception; FU-5 `c6fa426` the two `W_SERVED_*` warning producers, emptying `DEFERRED_PRODUCERS`; FU-6 `e79f9e0` multi-window reads and read-path stats consolidation (`2334352`, superseding ADR-0023's decline); FU-7 `a2b211d` batch envelope cause semantics; FU-8 the spec refresh and the full mutate-ledger sweep (53 cells; one moved set re-anchored, T5M14). Cursor moved to `b92e0ec`; the lane's decisions ride on ADR-0014/0019/0022/0023/0025 amendments, each in its own behavior commit
+
+### Continuous Integration
+
+* **ci:** the changelog ledger is curated, not projected — one gate (`scripts/changelog-gate.py`) checks both CI boundaries (PR run and durable `main` run) with the waiver as the only recorded escape; the amending pre-push hook is retired and the local signal is the read-only `check` probe
+* **ci:** the release job no longer runs Python — the handoff `clear` step and the now-consumer-less `setup-python` pin are deleted, and release notes come from the curated `[Unreleased]` block through the release-changelog plugin
+* **ci:** the PR run reads the `Landing:` declaration — `scripts/changelog-gate.py` validates `--landing` (`squash|merge`) and `changelog-check.yml` forwards the PR-body line; the two deliberate holds live in `.config/scaffold-divergence.txt` as recorded drift, and the typecheck-budget projection is dropped now that its component went opt-in
+
+### Miscellaneous Chores
+
+* **scaffold:** re-project the changelog script and `.gitignore` to the skill's bytes and adopt the `Related issues` footer in the PR template — keeping the `Landing:` declaration and declining the `CODE_AUTHORS` block
 
 ## [0.8.2](https://github.com/Rianico/dsh-better-edit/compare/v0.8.1...v0.8.2) (2026-09-14)
 

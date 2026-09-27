@@ -5,8 +5,8 @@ import { EDIT_DESCRIPTION } from "../../src/prompts.js";
 describe("gemma-4 tool-call bleed hardening (#55)", () => {
   it("keeps EDIT_DESCRIPTION under 800 chars with canonical shape", () => {
     expect(EDIT_DESCRIPTION.length).toBeLessThan(800);
-    expect(EDIT_DESCRIPTION).toContain('{ "path": path, "edits":');
-    expect(EDIT_DESCRIPTION).toContain("[MODEL]");
+    expect(EDIT_DESCRIPTION).toContain('{ "file": file, "edits":');
+    expect(EDIT_DESCRIPTION).toContain("[TO MODEL]");
     expect(EDIT_DESCRIPTION).toContain("[USER]");
   });
 
@@ -44,9 +44,9 @@ describe("gemma-4 tool-call bleed hardening (#55)", () => {
 
   it("normalizes wrapped paths in editRequestFrom", () => {
     const req = editRequestFrom({ path: "<|>a.py<|>", edits: [["a", "b", "c"]] });
-    expect(req?.path).toBe("a.py");
-    expect(editRequestFrom({ path: "a.py", edits: [["a", "b", "c"]] })?.path).toBe("a.py");
-    expect(editRequestFrom({ path: null, edits: [["a", "b", "c"]] })?.path).toBeNull();
+    expect(req?.file).toBe("a.py");
+    expect(editRequestFrom({ path: "a.py", edits: [["a", "b", "c"]] })?.file).toBe("a.py");
+    expect(editRequestFrom({ path: null, edits: [["a", "b", "c"]] })?.file).toBeNull();
   });
 
   it("rejects emptied paths in editRequestFrom", () => {

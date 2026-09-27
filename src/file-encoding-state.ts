@@ -25,6 +25,7 @@ import {
 } from "./encoding.js";
 import type { CandidatePreview } from "./encoding.js";
 import { detectEnding, restoreEndings, toLF, type LineEnding } from "./edit-diff.js";
+import { DomainError, formatError } from "./domain-errors.js";
 
 // ---------------------------------------------------------------------------
 // State — per-targetKey, session-TTL, version-invalidated
@@ -76,11 +77,18 @@ export function invalidateIfStale(targetKey: string, currentVersion: string | un
 // Pure helpers — no IO
 // ---------------------------------------------------------------------------
 
-export function buildTop3ErrorMessage(displayPath: string, candidates: CandidatePreview[]): string {
+export function buildTop3Description(candidates: CandidatePreview[]): string {
   const candStr = candidates
     .map((c) => `${c.encoding}("${c.sample.slice(0, 20).replace(/"/g, "'")}")`)
     .join(", ");
-  return `[MODEL] [E_UNSUPPORTED_FILE] Path is not a readable UTF-8 text file: ${displayPath}. Hashline editing only supports text files. Top-3 guesses: ${candStr}. Try read({encoding: "<encoding>"}) or set DSH_BETTER_EDIT_AUTO_GUESS_ENCODING=true to auto-decode.`;
+  return `not readable UTF-8 text — top guesses: ${candStr}; try read({encoding: "<encoding>"}) or set DSH_BETTER_EDIT_AUTO_GUESS_ENCODING=true to auto-decode`;
+}
+export function buildTop3ErrorMessage(displayPath: string, candidates: CandidatePreview[]): string {
+  return formatError("E_UNSUPPORTED_FILE", {
+    path: displayPath,
+    kind: "binary",
+    description: buildTop3Description(candidates),
+  });
 }
 
 function buildAutoGuessFooterFromCandidates(
@@ -159,7 +167,7 @@ export async function decodeForOpen(
 ): Promise<DecodeForOpenResult> {
   const hint = opts.encodingHint ? normalizeEncoding(opts.encodingHint) : undefined;
   if (opts.encodingHint && !hint) {
-    throw new Error(`[E_BAD_ENCODING] Unknown encoding: ${opts.encodingHint}`);
+    throw new DomainError("E_BAD_PAYLOAD", { message: `Unknown encoding: ${opts.encodingHint}` });
   }
 
   // 1) Explicit hint (Reopen with Encoding) — caller already chose, no autoGuess
@@ -183,7 +191,11 @@ export async function decodeForOpen(
       // already handled; for explicit hint we decode slice with hint.
       decoded = decodeBytes(slice, hint);
       if (decoded === undefined)
-        throw new Error(`[E_DECODE_FAILED] Cannot decode bytes as ${hint}`);
+        throw new DomainError("E_UNSUPPORTED_FILE", {
+          path: opts.displayPath ?? "(unknown path)",
+          kind: "binary",
+          description: `cannot decode bytes as ${hint}`,
+        });
       return {
         text: decoded,
         encoding: hint,
@@ -193,7 +205,12 @@ export async function decodeForOpen(
       };
     }
     decoded = decodeBytes(slice, hint);
-    if (decoded === undefined) throw new Error(`[E_DECODE_FAILED] Cannot decode bytes as ${hint}`);
+    if (decoded === undefined)
+      throw new DomainError("E_UNSUPPORTED_FILE", {
+        path: opts.displayPath ?? "(unknown path)",
+        kind: "binary",
+        description: `cannot decode bytes as ${hint}`,
+      });
     return {
       text: decoded,
       encoding: hint,
@@ -312,7 +329,11 @@ export async function decodeForOpen(
     candidates = top3Candidates(bytes, config.supportedEncodings);
   }
   const display = opts.displayPath ?? "(unknown path)";
-  throw new Error(buildTop3ErrorMessage(display, candidates));
+  throw new DomainError("E_UNSUPPORTED_FILE", {
+    path: display,
+    kind: "binary",
+    description: buildTop3Description(candidates),
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -368,7 +389,8 @@ export function prepareForSave(
 ): { textToWrite: string; newState?: FileEncodingState } {
   if (opts.encodingHint) {
     const norm = normalizeEncoding(opts.encodingHint);
-    if (!norm) throw new Error(`[E_BAD_ENCODING] Unknown encoding: ${opts.encodingHint}`);
+    if (!norm)
+      throw new DomainError("E_BAD_PAYLOAD", { message: `Unknown encoding: ${opts.encodingHint}` });
     const hasBOM = norm === "utf8bom";
     const lineEnding: LineEnding = existingState?.lineEnding ?? detectEnding(content);
     // Caller will write `content` as UTF-8 string; record new state for next read.

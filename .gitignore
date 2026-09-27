@@ -4,6 +4,8 @@ coverage/
 *.log
 .DS_Store
 .tmp/
-.lsz/
 .agents/
 .pi/
+.lsz/*
+!.lsz/config.yaml
+__pycache__/

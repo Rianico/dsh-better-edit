@@ -6,7 +6,6 @@ import {
   verifyServedRange,
   buildRangeEcho,
   fmtServedRows,
-  findNewEdge,
   parseText,
   findEditHashEcho,
 } from "../../src/hashline/anchor-pipeline.js";
@@ -92,7 +91,7 @@ describe("coverage-f: anchor-pipeline fmtMismatch", () => {
         fileHashes: hashes,
         fileLines: ["a", "b", "c"],
       }),
-    ).toThrow(/E_(STALE|UNSERVED)_RANGE/);
+    ).toThrow(/E_UNKNOWN_ANCHOR/);
     const servedUnserved: any = [hashes[0]!, null, hashes[2]!];
     expect(() =>
       verifyServedRange({
@@ -116,7 +115,7 @@ describe("coverage-f: anchor-pipeline fmtMismatch", () => {
         fileHashes: hashes,
         fileLines: ["a", "b", "c"],
       }),
-    ).toThrow(/E_UNSERVED_RANGE/);
+    ).toThrow(/E_UNKNOWN_ANCHOR/);
   });
 });
 
@@ -139,10 +138,7 @@ describe("coverage-f: anchor-pipeline no boundary dups (removed)", () => {
     const r2 = applyEdit(content, edit2, undefined, hashes);
     expect((r2 as any).autoFixes ?? (r2 as any).nes).toBeUndefined();
   });
-  it("covers findNewEdge stub and buildRangeEcho", () => {
-    expect(findNewEdge(["new", "b"], ["b"], false)).toBeUndefined();
-    expect(findNewEdge(["a", "new"], ["a"], true)).toBeUndefined();
-    expect(findNewEdge(["a"], ["a"], false)).toBeUndefined();
+  it("covers buildRangeEcho and fmtServedRows", () => {
     const hashes = lineHashesPure("a\nb\nc\nd");
     const rows = buildRangeEcho(1, 4, hashes);
     expect(rows.length).toBe(4);
@@ -164,7 +160,7 @@ describe("coverage-f: anchor-pipeline no boundary dups (removed)", () => {
   });
   it("covers resEdit unknown fields", () => {
     expect(() =>
-      resEdit({ remove_from: "abc", remove_to: "abc", replacement_text: "x", extra: 1 } as any),
+      resEdit({ anchor_from: "abc", anchor_to: "abc", replace_with: "x", extra: 1 } as any),
     ).toThrow();
   });
   it("covers assertAligned via fmtMismatch", async () => {

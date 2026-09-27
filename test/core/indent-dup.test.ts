@@ -10,10 +10,9 @@ describe("indentation difference — no boundary auto-fix (removed)", () => {
     const hashes = await lineHashes(file, home.testPath);
     const result = applyEdit(
       file,
-      resEdit({ remove_from: hashes[1]!, remove_to: hashes[1]!, replacement_text: "  foo\n  bar" }),
+      resEdit({ anchor_from: hashes[1]!, anchor_to: hashes[1]!, replace_with: "  foo\n  bar" }),
     );
     expect(result.content).toBe("  foo\n  foo\n  bar\n  baz");
-    expect(result.autoFixes ?? []).toHaveLength(0);
   });
 
   it("keeps leading duplication (no auto-fix) when both indentation and content match", async () => {
@@ -21,9 +20,8 @@ describe("indentation difference — no boundary auto-fix (removed)", () => {
     const hashes = await lineHashes(file, home.testPath);
     const result = applyEdit(
       file,
-      resEdit({ remove_from: hashes[1]!, remove_to: hashes[1]!, replacement_text: "  foo\n  new" }),
+      resEdit({ anchor_from: hashes[1]!, anchor_to: hashes[1]!, replace_with: "  foo\n  new" }),
     );
     expect(result.content).toBe("  foo\n  foo\n  new\n  baz");
-    expect(result.autoFixes ?? []).toHaveLength(0);
   });
 });

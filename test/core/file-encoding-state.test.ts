@@ -51,19 +51,19 @@ describe("file-encoding-state — deterministic admission (pure, no filesystem)"
     expect(res.text).toBe("你好");
   });
 
-  it("unknown hint throws E_BAD_ENCODING", async () => {
+  it("unknown hint throws E_BAD_PAYLOAD for an unknown encoding", async () => {
     const bytes = Buffer.from("hi");
     await expect(decodeForOpen(bytes, cfgOff, { encodingHint: "not-an-enc" })).rejects.toThrow(
-      /E_BAD_ENCODING/,
+      /E_BAD_PAYLOAD.*Unknown encoding/,
     );
   });
 
   it("E_UNSUPPORTED_FILE + Top-3 always pushed when autoGuess off and not UTF-8", async () => {
     const gbkBytes = iconv.encode("你好世界你好", "gbk");
     await expect(decodeForOpen(gbkBytes, cfgOff, { displayPath: "/abs/gbk.txt" })).rejects.toThrow(
-      /E_UNSUPPORTED_FILE.*Top-3 guesses/,
+      /E_UNSUPPORTED_FILE.*top guesses/,
     );
-    await expect(decodeForOpen(gbkBytes, cfgOff)).rejects.toThrow(/Top-3 guesses/);
+    await expect(decodeForOpen(gbkBytes, cfgOff)).rejects.toThrow(/top guesses/);
   });
 
   it("autoGuess on: decodes GBK and returns footer + candidates", async () => {
@@ -110,11 +110,12 @@ describe("file-encoding-state — deterministic admission (pure, no filesystem)"
       { encoding: "gbk", sample: "你好世界", score: 12 },
       { encoding: "big5", sample: "xxx", score: 3 },
     ]);
-    expect(msg).toMatch(/Top-3 guesses: gbk/);
-    expect(msg).toMatch(/Try read\({encoding/);
+    expect(msg).toMatch(/top guesses: gbk/);
+    expect(msg).toMatch(/try read\({encoding/);
+    expect(msg).toMatch(/^\[TO MODEL\] \[E_UNSUPPORTED_FILE\]/);
   });
 
-  it("E_DECODE_FAILED when hint bytes cannot be decoded", async () => {
+  it("E_UNSUPPORTED_FILE when hint bytes cannot be decoded", async () => {
     // empty hint with bytes that are not decodeable as requested? iconv-lite decodes most, so use utf8 hint on gbk bytes that are valid utf8? Instead test via direct hint failure: use bytes that are not valid for that encoding? For now check that hint path throws on bad bytes when we force undefined decode
     // We simulate by passing empty bytes with hint — should still decode (empty is valid)
     const empty = new Uint8Array([]);

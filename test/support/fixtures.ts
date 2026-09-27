@@ -176,7 +176,7 @@ export function makeExec(
 /** pi-hashline-compatible wrapper: execute(id, params, signal, onUpdate, ctx) → { content } */
 function wrapTool(
   tool: { execute: (args: unknown, exec: ToolRunContext) => Promise<unknown> },
-  makeExecFor: (args: unknown) => unknown,
+  makeExecFor: (args: unknown) => ToolExecution,
 ): {
   execute(
     _callId: string,
@@ -192,7 +192,11 @@ function wrapTool(
 } {
   return {
     async execute(_callId, params) {
-      const result = (await tool.execute(params, makeExecFor(params))) as unknown;
+      // Partial fake: session/signal/arguments only — the tools under test never touch deferContext/concludeTurn.
+      const result = (await tool.execute(
+        params,
+        makeExecFor(params) as unknown as ToolRunContext,
+      )) as unknown;
       if (typeof result === "string") return { content: [{ type: "text", text: result }] };
       if (result && typeof result === "object" && "text" in (result as Record<string, unknown>)) {
         const r = result as { text: string; warning?: string };
@@ -230,11 +234,11 @@ export function setupIntegrationTest(cwd: string, io: FileIO = localIO()) {
         if (rec && "edits" in rec) {
           return (base as any).execute(_callId, params);
         }
-        // old shape {path, remove_from,...} → {path, edits:[[h,h,t]]}
-        if (rec && typeof rec.remove_from === "string") {
+        // old shape {file, anchor_from,...} → {file, edits:[[h,h,t]]}
+        if (rec && typeof rec.anchor_from === "string") {
           const converted = {
-            path: (rec.path ?? (rec as any).file_path ?? null) as string | null,
-            edits: [[rec.remove_from, rec.remove_to, rec.replacement_text]],
+            file: (rec.file ?? rec.path ?? (rec as any).file_path ?? null) as string | null,
+            edits: [[rec.anchor_from, rec.anchor_to, rec.replace_with]],
           };
           return (base as any).execute(_callId, converted);
         }
@@ -251,9 +255,9 @@ export function setupIntegrationTest(cwd: string, io: FileIO = localIO()) {
           edits?: Array<{
             path?: string;
             file_path?: string;
-            remove_from: string;
-            remove_to: string;
-            replacement_text: string;
+            anchor_from: string;
+            anchor_to: string;
+            replace_with: string;
           }>;
         };
         const edits = rec.edits ?? [];
@@ -268,7 +272,7 @@ export function setupIntegrationTest(cwd: string, io: FileIO = localIO()) {
             );
         }
         const tuples = edits.map(
-          (e) => [e.remove_from, e.remove_to, e.replacement_text] as [string, string, string],
+          (e) => [e.anchor_from, e.anchor_to, e.replace_with] as [string, string, string],
         );
         const text = await editTool.execute(
           { path, edits: tuples } as unknown as never,
@@ -287,9 +291,11 @@ export function setupIntegrationTest(cwd: string, io: FileIO = localIO()) {
     sessionKey,
     makeExecFor,
     ctx: { cwd } as unknown,
-    getTool: (name: string) => (tools as Record<string, unknown>)[name],
+    getTool: (name: string): ReturnType<typeof wrapTool> =>
+      (tools as Record<string, ReturnType<typeof wrapTool>>)[name],
     readTool: tools.read,
     editTool: tools.edit,
+    undoTool: tools.undo_last_edit,
   };
 }
 

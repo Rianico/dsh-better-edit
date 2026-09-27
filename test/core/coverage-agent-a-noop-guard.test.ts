@@ -52,9 +52,9 @@ describe("noop-guard coverage", () => {
   it("runNoopPolicySync proceed when count 1", () => {
     const input: any = {
       absolutePath: "/a.txt",
-      removeFrom: "Abc",
-      removeTo: "Xyz",
-      replacementText: "hi",
+      anchorFrom: "Abc",
+      anchorTo: "Xyz",
+      replaceWith: "hi",
       ref: "Abc → Xyz",
       batch: false,
       range: { startLine: 1, endLine: 2 },
@@ -68,9 +68,9 @@ describe("noop-guard coverage", () => {
   it("runNoopPolicySync warn at count 2 (single)", () => {
     const input: any = {
       absolutePath: "/a.txt",
-      removeFrom: "Abc",
-      removeTo: "Xyz",
-      replacementText: "hi",
+      anchorFrom: "Abc",
+      anchorTo: "Xyz",
+      replaceWith: "hi",
       ref: "Abc → Xyz",
       batch: false,
       range: { startLine: 1, endLine: 2 },
@@ -88,9 +88,9 @@ describe("noop-guard coverage", () => {
   it("runNoopPolicySync warn at count 2 (batch)", () => {
     const input: any = {
       absolutePath: "/a.txt",
-      removeFrom: "Abc",
-      removeTo: "Xyz",
-      replacementText: "hi",
+      anchorFrom: "Abc",
+      anchorTo: "Xyz",
+      replaceWith: "hi",
       ref: "file.txt:1",
       batch: true,
       range: { startLine: 1, endLine: 2 },
@@ -106,9 +106,9 @@ describe("noop-guard coverage", () => {
   it("runNoopPolicySync reject at threshold (3) single", () => {
     const input: any = {
       absolutePath: "/a.txt",
-      removeFrom: "Abc",
-      removeTo: "Xyz",
-      replacementText: "hi",
+      anchorFrom: "Abc",
+      anchorTo: "Xyz",
+      replaceWith: "hi",
       ref: "Abc → Xyz",
       batch: false,
       range: { startLine: 1, endLine: 2 },
@@ -125,9 +125,9 @@ describe("noop-guard coverage", () => {
   it("runNoopPolicySync reject at threshold batch", () => {
     const input: any = {
       absolutePath: "/a.txt",
-      removeFrom: "Abc",
-      removeTo: "Xyz",
-      replacementText: "hi",
+      anchorFrom: "Abc",
+      anchorTo: "Xyz",
+      replaceWith: "hi",
       ref: "file.txt:1",
       batch: true,
       range: { startLine: 1, endLine: 2 },
@@ -145,9 +145,9 @@ describe("noop-guard coverage", () => {
     const path = "/tmp/async-noop-" + Math.random();
     const input: any = {
       absolutePath: path,
-      removeFrom: "Aaa",
-      removeTo: "Bbb",
-      replacementText: "replacement",
+      anchorFrom: "Aaa",
+      anchorTo: "Bbb",
+      replaceWith: "replacement",
       ref: "Aaa → Bbb",
       batch: false,
       range: { startLine: 1, endLine: 1 },

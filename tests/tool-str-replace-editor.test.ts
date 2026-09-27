@@ -105,7 +105,7 @@ describe("str_replace_editor shadow tool (TDD red)", () => {
       ...localIO(),
       readText: async () => {
         throw new Error(
-          `[MODEL] [E_UNSUPPORTED_FILE] Path is not a readable UTF-8 text file: x. Top-3 guesses: gbk("a"), big5("b"), shift_jis("c"). Try read({encoding: "<encoding>"})`,
+          `[TO MODEL] [E_UNSUPPORTED_FILE] Path is not a readable UTF-8 text file: x. Top-3 guesses: gbk("a"), big5("b"), shift_jis("c"). Try read({encoding: "<encoding>"})`,
         );
       },
     } as unknown as ReturnType<typeof localIO>;
@@ -125,7 +125,7 @@ describe("str_replace_editor shadow tool (TDD red)", () => {
         { command: "str_replace", path: p, old_str: "beta", new_str: "BETA" },
         fakeExec(dir),
       ),
-    ).rejects.toThrow(/E_BLIND_REPLACE/);
+    ).rejects.toThrow(/E_BLIND_REPLACE.*has not been viewed/);
     expect(await readFile(p, "utf-8")).toBe("alpha\nbeta\n");
   });
 
@@ -135,7 +135,7 @@ describe("str_replace_editor shadow tool (TDD red)", () => {
     const tool = buildStrReplaceEditorTool(localIO(), noSandbox());
     await expect(
       tool.execute({ command: "insert", path: p, insert_line: 1, new_str: "x" }, fakeExec(dir)),
-    ).rejects.toThrow(/E_BLIND_REPLACE/);
+    ).rejects.toThrow(/E_BLIND_REPLACE.*has not been viewed/);
   });
 
   it("old_str must match exactly once", async () => {

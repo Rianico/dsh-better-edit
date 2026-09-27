@@ -142,3 +142,35 @@ describe("genDiff — property: column alignment", () => {
     }
   });
 });
+
+describe("genDiff — applied removal cap (ADR-0024/D3)", () => {
+  const oldLines = Array.from({ length: 20 }, (_, i) => `line ${i + 1}`);
+  const oldContent = [...oldLines, "KEEP"].join("\n");
+  const oldHashes = Array.from({ length: 20 }, (_, i) => `H${i + 1}`);
+
+  it("renders head + exact-count marker + tail for a large deletion, keeping tail coordinates", () => {
+    const { diff } = genDiff(oldContent, "KEEP", 0, undefined, oldHashes);
+    const lines = diff.split("\n");
+    expect(lines).toHaveLength(5);
+    expect(lines[0]).toBe("-H1│line 1");
+    expect(lines[1]).toBe("-H2│line 2");
+    expect(lines[2]).toBe(" - ... [16 lines omitted] ...");
+    expect(lines[3]).toBe("-H19│line 19");
+    expect(lines[4]).toBe("-H20│line 20");
+  });
+
+  it("leaves a deletion at the cap uncapped", () => {
+    const content = Array.from({ length: 6 }, (_, i) => `line ${i + 1}`).join("\n");
+    const { diff } = genDiff(content, "", 0);
+    expect(diff.split("\n")).toHaveLength(6);
+    expect(diff).not.toContain("omitted");
+  });
+
+  it("caps at one row past the threshold", () => {
+    const content = Array.from({ length: 7 }, (_, i) => `line ${i + 1}`).join("\n");
+    const { diff } = genDiff(content, "", 0);
+    const lines = diff.split("\n");
+    expect(lines).toHaveLength(5);
+    expect(lines[2]).toBe(" - ... [3 lines omitted] ...");
+  });
+});

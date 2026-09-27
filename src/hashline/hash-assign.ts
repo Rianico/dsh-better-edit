@@ -15,6 +15,7 @@
  */
 import xxhash from "xxhash-wasm";
 import { splitLines } from "../utils.js";
+import { DomainError } from "../domain-errors.js";
 
 // --- hasher (private to this seam) ---
 export type Hasher = {
@@ -61,18 +62,18 @@ export const HASH_SEP = "│";
 export const HASH_SPACE = ALPH.length ** HASH_LEN;
 // MAX_HASH_LINES is the anchor-space size (62³), not a line-count limit.
 // File line-count limits use maxLines (e.g. 200k) and report E_LARGE_FILE;
-// anchor-space exhaustion reports E_ANCHOR_SPACE_EXHAUSTED — see nextZeroBit.
+// anchor-space exhaustion reports E_LARGE_FILE with limitKind "hash-space" — see nextZeroBit.
 export const MAX_HASH_LINES = HASH_SPACE;
 export const HASH_PROBE_STRIDE = ALPH.length ** 2 + ALPH.length + 1;
 
-export class AnchorSpaceExhaustedError extends Error {
-  readonly code = "E_ANCHOR_SPACE_EXHAUSTED";
+export class AnchorSpaceExhaustedError extends DomainError<"E_LARGE_FILE"> {
   readonly retiredCount: number;
   readonly servedCount: number;
-  constructor(retiredCount: number, servedCount: number, reservedCount: number) {
-    super(
-      `[MODEL] [E_ANCHOR_SPACE_EXHAUSTED] Anchor space exhausted (retired ${retiredCount} + served ${servedCount} = ${reservedCount} of ${HASH_SPACE}); promotion will clear retired — re-read recommended, stale-anchor checks degraded until next full read.`,
-    );
+  // F10.3: reserved count removed — the registry payload carries the limit,
+  // not the probe state.
+  constructor(retiredCount: number, servedCount: number) {
+    // Channel rule: hard capacity refusal the model must route around → MODEL via the registry.
+    super("E_LARGE_FILE", { limitKind: "hash-space", limit: HASH_SPACE });
     this.name = "AnchorSpaceExhaustedError";
     this.retiredCount = retiredCount;
     this.servedCount = servedCount;
@@ -97,16 +98,6 @@ export function hashAt(idx: number): string {
   return hash;
 }
 
-const hashToCanon = new Map<string, string>();
-
-export function rememberHashCanon(hash: string, canonText: string): void {
-  if (!hashToCanon.has(hash)) hashToCanon.set(hash, canonText);
-}
-
-export function getCanonForHash(hash: string): string | undefined {
-  return hashToCanon.get(hash);
-}
-
 export const HL_PREFIX_PLUS_RE = new RegExp(`^\\+${HASH_CLASS}│`);
 export const HL_PREFIX_MINUS_RE = new RegExp(`^-(?:${HASH_CLASS}│| {${ANCHOR_LEN}}│)`);
 export const HL_BARE_PREFIX_RE = new RegExp(`^\\s*(${HASH_CLASS})│`);
@@ -117,6 +108,10 @@ const CANON_RE = /[ \t\r\n]+/g;
 
 export function canon(line: string): string {
   return line.replace(CANON_RE, "");
+}
+/** Single definition of served_leases.canon_hash / line_lineage.canon_hash (CP2). */
+export function canonDigest(line: string): string {
+  return String(xxh32(canon(line)));
 }
 
 function getCanon(cache: Map<string, string>, line: string): string {
@@ -142,7 +137,7 @@ function nextZeroBit(bits: Uint32Array, start: number): number {
     if (idx >= totalBits) idx -= totalBits;
   }
   throw new Error(
-    `[MODEL] [E_ANCHOR_SPACE_EXHAUSTED] Anchor space exhausted — probing failed over ${HASH_SPACE} slots (reserved full).`,
+    `Anchor space exhausted — probing failed over ${HASH_SPACE} slots (reserved full).`,
   );
 }
 function assignHash(used: Uint32Array, baseIdx: number, hint: { value: number }): string {
@@ -175,15 +170,14 @@ export function lineHashesPure(
       const baseIdx = (xxh32(c) >>> 14) % HASH_SPACE;
       const h = assignHash(used, baseIdx, hint);
       hashes[i] = h;
-      rememberHashCanon(h, c);
     }
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e);
-    if (msg.includes("E_ANCHOR_SPACE_EXHAUSTED") || msg.includes("Cannot allocate")) {
+    if (e instanceof AnchorSpaceExhaustedError) throw e;
+    if (msg.includes("probing failed over") || msg.includes("Cannot allocate")) {
       const rc = retiredCount ?? reservedHashes.size;
       const sc = servedCount ?? 0;
-      const reserved = reservedHashes.size;
-      throw new AnchorSpaceExhaustedError(rc, sc, reserved);
+      throw new AnchorSpaceExhaustedError(rc, sc);
     }
     throw e;
   }
@@ -284,7 +278,6 @@ export function mapStableHashes(
     const newIdx = candidates.splice(pos, 1)[0]!;
     newHashes[newIdx] = entry.hash;
     markUsed(entry.hash);
-    rememberHashCanon(entry.hash, getCanon(canonCache, oldLines[entry.index]!));
   }
   try {
     for (let i = 0; i < newLines.length; i++) {
@@ -293,14 +286,14 @@ export function mapStableHashes(
       const baseIdx = (xxh32(c) >>> 14) % HASH_SPACE;
       const h = assignHash(used, baseIdx, hint);
       newHashes[i] = h;
-      rememberHashCanon(h, c);
     }
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e);
-    if (msg.includes("E_ANCHOR_SPACE_EXHAUSTED")) {
+    if (e instanceof AnchorSpaceExhaustedError) throw e;
+    if (msg.includes("probing failed over") || msg.includes("Cannot allocate")) {
       const rc = retiredCount ?? reservedHashes.size;
       const sc = servedCount ?? 0;
-      throw new AnchorSpaceExhaustedError(rc, sc, reservedHashes.size);
+      throw new AnchorSpaceExhaustedError(rc, sc);
     }
     throw e;
   }

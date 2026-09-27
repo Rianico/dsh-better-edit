@@ -1,3 +1,5 @@
+import { DomainError } from "./domain-errors.js";
+
 export function isRec(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -30,9 +32,9 @@ export function rejectUnknownFields(
   const unknown = Object.keys(obj).filter((key) => !allowed.has(key));
   if (unknown.length > 0) {
     const suffix = hint ? ` ${hint}` : "";
-    throw new Error(
-      `[MODEL] [E_BAD_PAYLOAD] ${label} contains unknown or unsupported fields: ${unknown.join(", ")}.${suffix}`,
-    );
+    throw new DomainError("E_BAD_PAYLOAD", {
+      message: `${label} contains unknown or unsupported fields: ${unknown.join(", ")}.${suffix}`,
+    });
   }
 }
 
@@ -52,6 +54,7 @@ export function abortIf(signal?: AbortSignal): void {
 }
 
 export function errCode(error: unknown): string | undefined {
+  if (error instanceof DomainError) return error.code;
   if (error instanceof Error) {
     return (error as NodeJS.ErrnoException).code;
   }
@@ -87,21 +90,15 @@ export function clipLine(line: string, maxLen = 200): string {
   return flat.length > maxLen ? `${flat.slice(0, maxLen)}...` : flat;
 }
 
-/** Machine-readable error-code carrier — bare `E_*` code alongside the human message. */
-export class CodedError extends Error {
-  readonly code: string;
-  constructor(code: string, message: string) {
-    super(message);
-    this.name = "CodedError";
-    this.code = code;
-  }
-}
-
 const CODED_RE = /\[(E_[A-Z_]+)\]/;
 
-/** Structured bare-code read for any tool error: carrier first, `[E_*]` message convention as fallback. */
+/**
+ * Structured bare-code read for any tool error: DomainError carrier first,
+ * then the `[E_*]` message convention as a legacy fallback
+ * registry members route the typed path; the regex is last resort).
+ */
 export function codeOf(error: unknown): string | undefined {
-  if (error instanceof CodedError) return error.code;
+  if (error instanceof DomainError) return error.code;
   if (error instanceof Error) {
     const m = error.message.match(CODED_RE);
     if (m) return m[1]!;

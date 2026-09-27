@@ -97,12 +97,12 @@ describe("edit-sequence engine — end-to-end through the tool builders", () => 
 
       const res = await batchTool(harness).execute("batch_edit", {
         edits: [
-          { path: "t.txt", remove_from: one.hash, remove_to: one.hash, replacement_text: "ONE" },
+          { path: "t.txt", anchor_from: one.hash, anchor_to: one.hash, replace_with: "ONE" },
           {
             path: "t.txt",
-            remove_from: three.hash,
-            remove_to: three.hash,
-            replacement_text: "THREE",
+            anchor_from: three.hash,
+            anchor_to: three.hash,
+            replace_with: "THREE",
           },
         ],
       });
@@ -123,8 +123,8 @@ describe("edit-sequence engine — end-to-end through the tool builders", () => 
       await expect(
         batchTool(harness).execute("batch_edit", {
           edits: [
-            { path: "t.txt", remove_from: one.hash, remove_to: one.hash, replacement_text: "ONE" },
-            { path: "t.txt", remove_from: "zzz", remove_to: "zzz", replacement_text: "NOPE" },
+            { path: "t.txt", anchor_from: one.hash, anchor_to: one.hash, replace_with: "ONE" },
+            { path: "t.txt", anchor_from: "zzz", anchor_to: "zzz", replace_with: "NOPE" },
           ],
         }),
       ).rejects.toThrow(/E_BATCH_ABORT/);
@@ -141,9 +141,9 @@ describe("edit-sequence engine — end-to-end through the tool builders", () => 
 
       await harness.editTool.execute("edit", {
         path: "t.txt",
-        remove_from: one.hash,
-        remove_to: one.hash,
-        replacement_text: "ONE",
+        anchor_from: one.hash,
+        anchor_to: one.hash,
+        replace_with: "ONE",
       });
       expect(await readFile(path, "utf-8")).toBe("ONE\nline two\nline three\n");
 
@@ -162,9 +162,9 @@ describe("edit-sequence engine — end-to-end through the tool builders", () => 
 
       await harness.editTool.execute("edit", {
         path: "t.txt",
-        remove_from: one.hash,
-        remove_to: one.hash,
-        replacement_text: "line ONE",
+        anchor_from: one.hash,
+        anchor_to: one.hash,
+        replace_with: "line ONE",
       });
       expect(await readFile(path)).toEqual(Buffer.from("\uFEFFline ONE\r\nline two\r\n", "utf-8"));
 
@@ -185,12 +185,12 @@ describe("edit-sequence engine — end-to-end through the tool builders", () => 
 
       await batchTool(harness).execute("batch_edit", {
         edits: [
-          { path: "t.txt", remove_from: one.hash, remove_to: one.hash, replacement_text: "ONE" },
+          { path: "t.txt", anchor_from: one.hash, anchor_to: one.hash, replace_with: "ONE" },
           {
             path: "t.txt",
-            remove_from: three.hash,
-            remove_to: three.hash,
-            replacement_text: "THREE",
+            anchor_from: three.hash,
+            anchor_to: three.hash,
+            replace_with: "THREE",
           },
         ],
       });
@@ -209,9 +209,9 @@ describe("edit-sequence engine — end-to-end through the tool builders", () => 
       const one = served.find((r) => r.content === "line one")!;
       const edit = {
         path: "t.txt",
-        remove_from: one.hash,
-        remove_to: one.hash,
-        replacement_text: "line one",
+        anchor_from: one.hash,
+        anchor_to: one.hash,
+        replace_with: "line one",
       };
 
       const first = await batchTool(harness).execute("batch_edit", { edits: [edit] });

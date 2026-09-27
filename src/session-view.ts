@@ -14,8 +14,9 @@
  * hash-store persistence delegation (ServedPersistence).
  *
  * Ownership: This file OWNS the served-merge invariant
- * (_mergeServedRows with orphan healing per ADR-0008), the
- * position-reconstruction math, and the drift computation. Deleting
+ * (_mergeServedRows — exact-write: a hash written at a new position leaves the
+ * old slot intact, and a duplicate is rejected at verification rather than
+ * healed), the position-reconstruction math, and the drift computation. Deleting
  * it would scatter the served+drift invariant across 4 files — it
  * concentrates (deep).
  *
@@ -30,10 +31,12 @@ import {
   type AnchorReservations,
   type ServedPersistence,
   type RetiredEntry,
+  type InternalHashStore,
 } from "./hash-store.js";
 import { SERVED_ECHO_CAP } from "./constants.js";
 import type { ServedRow, ResolvedRange } from "./hashline/anchor-pipeline.js";
 import { fmtServedRows } from "./hashline/anchor-pipeline.js";
+import { splitLines } from "./utils.js";
 
 // --- hash-store re-export (persistence note) ---
 export { loadHashStore, loadServedStore, shutdownHashStore, withStore } from "./hash-store.js";
@@ -45,9 +48,11 @@ export type ServedEntry = { position: number; hash: string | null };
 /**
  * Merge served rows into a copy of the stored array. This single helper owns
  * the served-merge invariant shared by recordServed and recordServedTruncated.
- * Eagerly heals orphaned serves: if the same hash is written at a new position
- * the old position is nulled (O(n) scan, no extra I/O). This prevents a
- * partial re-serve from leaving a stale duplicate behind (ADR-0008).
+ *
+ * Exact-write rule (ADR-0018, superseding ADR-0004): a hash written at a new position
+ * leaves the old position INTACT — the old slot is not nulled and no look-alike is
+ * rebound. A duplicate is detected at verification time (`verifyServedRange`) and
+ * rejects as `E_UNSERVED_RANGE` instead of being healed here.
  */
 export function _mergeServedRows(
   current: (string | null)[],
@@ -61,17 +66,6 @@ export function _mergeServedRows(
   if (options?.clearFrom !== undefined) {
     for (let i = options.clearFrom; i < updated.length; i++) updated[i] = null;
   }
-  // Build index of existing hashes and heal duplicates already in the array
-  const index = new Map<string, number>();
-  for (let i = 0; i < updated.length; i++) {
-    const h = updated[i];
-    if (h === null) continue;
-    const prev = index.get(h);
-    if (prev !== undefined) {
-      updated[prev] = null;
-    }
-    index.set(h, i);
-  }
   for (const entry of rows) {
     if (!Number.isInteger(entry.position) || entry.position < 0) {
       throw new TypeError(`Invalid served position: ${entry.position}`);
@@ -80,21 +74,6 @@ export function _mergeServedRows(
       throw new TypeError(`Invalid served hash: ${String(entry.hash)}`);
     }
     while (updated.length <= entry.position) updated.push(null);
-    if (entry.hash !== null) {
-      const existing = index.get(entry.hash);
-      if (existing !== undefined && existing !== entry.position) {
-        updated[existing] = null;
-        index.delete(entry.hash);
-      }
-      const oldAtPos = updated[entry.position];
-      if (oldAtPos !== null && oldAtPos !== entry.hash) {
-        index.delete(oldAtPos);
-      }
-      index.set(entry.hash, entry.position);
-    } else {
-      const oldAtPos = updated[entry.position];
-      if (oldAtPos !== null) index.delete(oldAtPos);
-    }
     updated[entry.position] = entry.hash;
   }
   while (updated.length > 0 && updated[updated.length - 1] === null) updated.pop();
@@ -123,13 +102,6 @@ export async function loadServedCanons(
   return store.getServedCanons(sessionKey, path);
 }
 
-export async function loadEpochSnapshotId(
-  sessionKey: string,
-  path: string,
-): Promise<string | undefined> {
-  const store = await loadServedStore();
-  return store.getEpochSnapshotId(sessionKey, path);
-}
 export async function loadRetiredAnchors(sessionKey: string, path: string): Promise<Set<string>> {
   const store = await loadServedStore();
   return store.getRetiredAnchors(sessionKey, path);
@@ -262,17 +234,61 @@ export async function retireAnchors(
 export interface FullReadContext {
   hashes: readonly string[];
   canons?: readonly (string | null)[];
-  snapshotId?: string;
+  /**
+   * Full content the hashes were computed from. When present (with `hashes`),
+   * recordServed also materializes-or-adopts the serve snapshot and grants
+   * leases for `rows` as-is through the store's single transaction.
+   */
+  content?: string;
 }
 
+/** Serve-snapshot context for lease granting: content parallel to `hashes`. */
+export interface ServeSnapshot {
+  content: string;
+  hashes: readonly string[];
+}
+
+/**
+ * Funnel for lease granting: materialize-or-adopt the serve snapshot and grant
+ * leases for the served rows as-is. Caller-owned transaction: this must run
+ * INSIDE the `withStore` unit that wrote the `served` row it derives from, so a
+ * lease fault rolls the pair back instead of splitting it.
+ * Fail closed: no content/hashes (or a length mismatch) grants nothing and
+ * throws nothing — the served-state write in the same unit still commits.
+ */
+function grantServeLeases(
+  store: ServedPersistence,
+  sessionKey: string,
+  path: string,
+  rows: readonly ServedEntry[],
+  hashes: readonly string[] | undefined,
+  content: string | undefined,
+): void {
+  if (content === undefined || hashes === undefined) return;
+  if (splitLines(content).length !== hashes.length) return;
+  // SAFETY: loadServedStore returns the makeDomainStore object, which implements
+  // InternalHashStore; ServedPersistence is its narrowed public view.
+  const internal = store as unknown as InternalHashStore;
+  internal.commitSnapshot({ path, content, hashes: [...hashes], leases: { sessionKey, rows } });
+}
+
+/**
+ * Record a serve — the `served` row merge and the lease grant derived from it — as ONE unit, and
+ * report whether it landed.
+ *
+ * `false` means the write rolled back and no lease was granted, so the caller must not advertise
+ * the rows' anchors as usable: that is a partial failure of the caller's operation, not a failed
+ * operation. The best-effort contract is unchanged — this never throws.
+ */
 export async function recordServed(
   sessionKey: string,
   path: string,
   rows: ServedEntry[],
   lineCount?: number,
   full?: FullReadContext,
-): Promise<void> {
-  if (rows.length === 0) return;
+): Promise<boolean> {
+  // Nothing to record, so nothing can fail: vacuously landed.
+  if (rows.length === 0) return true;
   try {
     const store = await loadServedStore();
     const isFullRead =
@@ -293,7 +309,6 @@ export async function recordServed(
         store.clearRetiredAnchors(sessionKey, path);
         store.clearCards(sessionKey, path);
         if (full?.canons) store.upsertServedCanons(sessionKey, path, JSON.stringify(full.canons));
-        if (full?.snapshotId) store.upsertEpochSnapshotId(sessionKey, path, full.snapshotId);
       } else {
         // For partial reads, update canons for the served rows via hash-to-canon map (robust for partial views)
         if (full?.canons && full.hashes) {
@@ -317,12 +332,25 @@ export async function recordServed(
         }
         sweepAndRetire(store, sessionKey, path, current, updated, rows);
       }
+      // Pair #6: the lease grant and the `served` row it derives from are ONE unit.
+      grantServeLeases(store, sessionKey, path, rows, full?.hashes, full?.content);
     });
+    return true;
   } catch (error) {
     console.error("Failed to record served rows:", error);
+    return false;
   }
 }
 
+/**
+ * Record a truncated serve — the `served` row merge and the lease grant derived from it — as ONE
+ * unit, and report whether it landed.
+ *
+ * `false` means the write rolled back and no lease was granted, so the caller must not advertise
+ * the rows' anchors as usable: that is a partial failure of the caller's operation, not a failed
+ * operation. The best-effort contract is unchanged — this never throws; the callers decide what
+ * to advertise.
+ */
 export async function recordServedTruncated(
   sessionKey: string,
   path: string,
@@ -330,8 +358,10 @@ export async function recordServedTruncated(
   lineCount: number,
   clearFrom = 0,
   fullCanons?: readonly (string | null)[],
-): Promise<void> {
-  if (rows.length === 0) return;
+  serveSnapshot?: ServeSnapshot,
+): Promise<boolean> {
+  // Nothing to record, so nothing can fail: vacuously landed.
+  if (rows.length === 0) return true;
   try {
     const store = await loadServedStore();
     withStore(() => {
@@ -361,9 +391,20 @@ export async function recordServedTruncated(
         store.upsertServedCanons(sessionKey, path, JSON.stringify(updatedCanons));
       }
       sweepAndRetire(store, sessionKey, path, current, updated, rows);
+      // Pair #6: the lease grant and the `served` row it derives from are ONE unit.
+      grantServeLeases(
+        store,
+        sessionKey,
+        path,
+        rows,
+        serveSnapshot?.hashes,
+        serveSnapshot?.content,
+      );
     });
+    return true;
   } catch (error) {
     console.error("Failed to record truncated served rows:", error);
+    return false;
   }
 }
 

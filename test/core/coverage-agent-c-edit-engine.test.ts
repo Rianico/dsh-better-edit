@@ -70,9 +70,9 @@ describe("coverage: edit-engine resolveMissingPath", () => {
   it("returns undefined when path present", async () => {
     expect(await resolveMissingPath({ path: "a.txt" } as any)).toBeUndefined();
   });
-  it("returns undefined when missing remove_from/to types", async () => {
+  it("returns undefined when missing anchor_from/to types", async () => {
     expect(
-      await resolveMissingPath({ path: null, remove_from: 123 as any, remove_to: "abc" } as any),
+      await resolveMissingPath({ path: null, anchor_from: 123 as any, anchor_to: "abc" } as any),
     ).toBeUndefined();
     expect(await resolveMissingPath({ path: null } as any)).toBeUndefined();
   });
@@ -80,8 +80,8 @@ describe("coverage: edit-engine resolveMissingPath", () => {
     expect(
       await resolveMissingPath({
         path: null,
-        remove_from: "not-a-hash!!!",
-        remove_to: "also-bad",
+        anchor_from: "not-a-hash!!!",
+        anchor_to: "also-bad",
       } as any),
     ).toBeUndefined();
   });
@@ -92,7 +92,7 @@ describe("coverage: edit-engine resolveMissingPath", () => {
     // need valid hashes (3-char alphanumeric)
     const hashes = lineHashesPure("a\nb\nc");
     await expect(
-      resolveMissingPath({ path: null, remove_from: hashes[0]!, remove_to: hashes[1]! } as any),
+      resolveMissingPath({ path: null, anchor_from: hashes[0]!, anchor_to: hashes[1]! } as any),
     ).resolves.toBeUndefined();
     spy.mockRestore();
   });
@@ -103,8 +103,8 @@ describe("coverage: edit-engine resolveMissingPath", () => {
     const hashes = lineHashesPure("a\nb");
     const res = await resolveMissingPath({
       path: null,
-      remove_from: hashes[0]!,
-      remove_to: hashes[1]!,
+      anchor_from: hashes[0]!,
+      anchor_to: hashes[1]!,
     } as any);
     expect(res?.path).toBe("/tmp/file.txt");
     expect(res?.warning).toMatch(/Autocorrected/);
@@ -114,7 +114,7 @@ describe("coverage: edit-engine resolveMissingPath", () => {
     const spy = vi.spyOn(hashStore, "findSnapshotPathsByHashes").mockResolvedValue(["a", "b"]);
     const hashes = lineHashesPure("a\nb");
     await expect(
-      resolveMissingPath({ path: null, remove_from: hashes[0]!, remove_to: hashes[1]! } as any),
+      resolveMissingPath({ path: null, anchor_from: hashes[0]!, anchor_to: hashes[1]! } as any),
     ).rejects.toThrow(/multiple known files/);
     spy.mockRestore();
   });
@@ -124,8 +124,8 @@ describe("coverage: edit-engine resolveMissingPath", () => {
     expect(
       await resolveMissingPath({
         path: null,
-        remove_from: hashes[0]!,
-        remove_to: hashes[1]!,
+        anchor_from: hashes[0]!,
+        anchor_to: hashes[1]!,
       } as any),
     ).toBeUndefined();
     spy.mockRestore();
@@ -146,9 +146,9 @@ describe("coverage: edit-engine applyOne", () => {
         content,
         hashes,
         served: [hashes[0]!, hashes[1]!, hashes[2]!],
-        removeFrom: hashes[0]!,
-        removeTo: hashes[0]!,
-        replacementText: "A",
+        anchorFrom: hashes[0]!,
+        anchorTo: hashes[0]!,
+        replaceWith: "A",
         absolutePath: "/tmp/a.txt",
         displayPath: "a.txt",
         warnings: [],
@@ -172,9 +172,9 @@ describe("coverage: edit-engine applyOne", () => {
         content,
         hashes,
         served: hashes as any,
-        removeFrom: "bad hash with spaces",
-        removeTo: "also bad",
-        replacementText: "x",
+        anchorFrom: "bad hash with spaces",
+        anchorTo: "also bad",
+        replaceWith: "x",
         absolutePath: "/tmp/a.txt",
         displayPath: "a.txt",
         warnings: [],
@@ -198,9 +198,9 @@ describe("coverage: edit-engine applyOne", () => {
         content,
         hashes,
         served: hashes as any,
-        removeFrom: "zzz",
-        removeTo: "zzz",
-        replacementText: "x",
+        anchorFrom: "zzz",
+        anchorTo: "zzz",
+        replaceWith: "x",
         absolutePath: "/tmp/a.txt",
         displayPath: "a.txt",
         warnings: [],
@@ -211,7 +211,7 @@ describe("coverage: edit-engine applyOne", () => {
         throw err as any;
       },
     ).catch(() => {});
-    expect(String(rejected)).toMatch(/E_STALE_ANCHOR|E_BAD_ANCHOR|AnchorMismatch/);
+    expect(String(rejected)).toMatch(/E_STALE_ANCHOR|E_MALFORMED_ANCHOR|AnchorMismatch/);
   });
 
   it("noop detection keeps original hashes", async () => {
@@ -222,9 +222,9 @@ describe("coverage: edit-engine applyOne", () => {
         content,
         hashes,
         served: hashes as any,
-        removeFrom: hashes[0]!,
-        removeTo: hashes[0]!,
-        replacementText: "a",
+        anchorFrom: hashes[0]!,
+        anchorTo: hashes[0]!,
+        replaceWith: "a",
         absolutePath: "/tmp/a.txt",
         displayPath: "a.txt",
         warnings: [],
@@ -240,114 +240,76 @@ describe("coverage: edit-engine applyOne", () => {
 });
 
 describe("coverage: edit-engine enforceNoopLoop", () => {
-  const hashes = ["h1", "h2", "h3"];
-  it("single-edit: throws at threshold", async () => {
-    const { NOOP_LOOP_THRESHOLD } = await import("../../src/constants.js");
-    await expect(
-      enforceNoopLoop({
-        absolutePath: "/tmp/a.txt",
-        removeFrom: "aaa",
-        removeTo: "aaa",
-        replacementText: "x",
-        displayPath: "a.txt",
-        count: NOOP_LOOP_THRESHOLD,
-        sessionKey: "test",
-        originalHashes: hashes,
-        originalNormalized: "a\nb\nc",
-        range: { startLine: 1, endLine: 1, startHash: "h1", endHash: "h1", delta: 0 },
-      }),
-    ).rejects.toThrow(/E_NOOP_LOOP/);
-  });
-  it("single-edit: notice at count 2", async () => {
-    const notice = await enforceNoopLoop({
-      absolutePath: "/tmp/a.txt",
-      removeFrom: "aaa",
-      removeTo: "aaa",
-      replacementText: "x",
-      displayPath: "a.txt",
-      count: 2,
-      sessionKey: "test",
-      originalHashes: hashes,
-      originalNormalized: "a\nb\nc",
-      range: { startLine: 1, endLine: 1, startHash: "h1", endHash: "h1", delta: 0 },
-    });
-    expect(notice).toMatch(/Notice/);
-  });
-  it("single-edit: undefined when count 1", async () => {
-    const notice = await enforceNoopLoop({
-      absolutePath: "/tmp/a.txt",
-      removeFrom: "aaa",
-      removeTo: "aaa",
-      replacementText: "x",
-      displayPath: "a.txt",
-      count: 1,
-      sessionKey: "test",
-      originalHashes: hashes,
-      originalNormalized: "a\nb\nc",
-      range: { startLine: 1, endLine: 1, startHash: "h1", endHash: "h1", delta: 0 },
-    });
-    expect(notice).toBeUndefined();
-  });
   it("batch: throws at threshold and notice at 2", async () => {
     const { NOOP_LOOP_THRESHOLD } = await import("../../src/constants.js");
     await expect(
       enforceNoopLoop({
-        absolutePath: "/tmp/a.txt",
-        removeFrom: "aaa",
-        removeTo: "aaa",
-        replacementText: "x",
+        anchorFrom: "aaa",
+        anchorTo: "aaa",
         displayPath: "a.txt",
         index: 0,
         count: NOOP_LOOP_THRESHOLD,
-        sessionKey: "test",
-        originalHashes: hashes,
         originalNormalized: "a\nb\nc",
         echoRows: [{ position: 0, hash: "h1" }],
       }),
     ).rejects.toThrow(/E_NOOP_LOOP/);
 
     const notice = await enforceNoopLoop({
-      absolutePath: "/tmp/a.txt",
-      removeFrom: "aaa",
-      removeTo: "aaa",
-      replacementText: "x",
+      anchorFrom: "aaa",
+      anchorTo: "aaa",
       displayPath: "a.txt",
       index: 0,
       count: 2,
-      sessionKey: "test",
-      originalHashes: hashes,
       originalNormalized: "a\nb\nc",
     });
     expect(notice).toMatch(/Notice/);
 
     const none = await enforceNoopLoop({
-      absolutePath: "/tmp/a.txt",
-      removeFrom: "aaa",
-      removeTo: "aaa",
-      replacementText: "x",
+      anchorFrom: "aaa",
+      anchorTo: "aaa",
       displayPath: "a.txt",
       index: 0,
       count: 1,
-      sessionKey: "test",
-      originalHashes: hashes,
       originalNormalized: "a\nb\nc",
     });
     expect(none).toBeUndefined();
+  });
+
+  // F5 pin: the registry owns the single `Current on-disk range:` heading —
+  // the engine passes raw rows, so the heading renders exactly once.
+  it("batch reject renders the on-disk heading exactly once", async () => {
+    const { NOOP_LOOP_THRESHOLD } = await import("../../src/constants.js");
+    let caught: Error | undefined;
+    try {
+      await enforceNoopLoop({
+        anchorFrom: "aaa",
+        anchorTo: "aaa",
+        displayPath: "a.txt",
+        index: 0,
+        count: NOOP_LOOP_THRESHOLD,
+        originalNormalized: "a\nb\nc",
+        echoRows: [{ position: 0, hash: "h1" }],
+      });
+    } catch (error) {
+      caught = error as Error;
+    }
+    expect(caught).toBeDefined();
+    expect(caught!.message).toBe(
+      "[TO MODEL] [E_NOOP_LOOP] edits[0] (a.txt): identical edit (aaa → aaa) submitted 3×, no changes each time. " +
+        "Range already contains this text; resend will reject the batch.\nCurrent on-disk range:\nh1│a",
+    );
+    expect(caught!.message.match(/Current on-disk range:/g)).toHaveLength(1);
   });
 
   it("batch without echoRows still throws", async () => {
     const { NOOP_LOOP_THRESHOLD } = await import("../../src/constants.js");
     await expect(
       enforceNoopLoop({
-        absolutePath: "/tmp/a.txt",
-        removeFrom: "aaa",
-        removeTo: "aaa",
-        replacementText: "x",
+        anchorFrom: "aaa",
+        anchorTo: "aaa",
         displayPath: "a.txt",
         index: 1,
         count: NOOP_LOOP_THRESHOLD,
-        sessionKey: "test",
-        originalHashes: hashes,
         originalNormalized: "a\nb\nc",
       }),
     ).rejects.toThrow(/E_NOOP_LOOP/);
@@ -390,6 +352,7 @@ describe("coverage: edit-engine persistUndoAndWrite", () => {
         sandbox,
         sandboxPolicy: undefined,
         undoUnavailableMessage: (p) => `[E_UNDO_UNAVAILABLE] ${p}`,
+        restoreUnwrittenUndos: false,
       }),
     ).rejects.toThrow(/E_UNDO_UNAVAILABLE/);
     saveSpy.mockRestore();
@@ -436,6 +399,7 @@ describe("coverage: edit-engine persistUndoAndWrite", () => {
         sandbox,
         sandboxPolicy: undefined,
         undoUnavailableMessage: (p) => `undo ${p}`,
+        restoreUnwrittenUndos: false,
       }),
     ).rejects.toThrow(/disk full/);
     // first file was written then restored via second writeText call for restore + restore undo
@@ -467,6 +431,7 @@ describe("coverage: edit-engine persistUndoAndWrite", () => {
         sandboxPolicy: undefined,
         signal: undefined,
         undoUnavailableMessage: () => "x",
+        restoreUnwrittenUndos: false,
       }),
     ).resolves.toBeUndefined();
     expect(io.writeText).toHaveBeenCalledTimes(1);

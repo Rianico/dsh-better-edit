@@ -9,7 +9,7 @@
  */
 
 import { abortIf } from "./utils.js";
-import { readView, fileSnap } from "./file-view.js";
+import { hasRequestedWindows, readView } from "./file-view.js";
 import { canon } from "./hashline/hash-assign.js";
 import { splitLines } from "./utils.js";
 import { getAutoGuessFooter } from "./fs-bridge.js";
@@ -20,15 +20,24 @@ import {
   loadRetiredAnchors,
   loadServed,
   loadServedCanons,
-  loadEpochSnapshotId,
 } from "./session-view.js";
 import { loadServedStore } from "./hash-store.js";
 import type { FileIO } from "./fs-bridge.js";
+import type { ReadWindow } from "./file-view.js";
 import type { ServedRow } from "./hashline/anchor-pipeline.js";
 
 /** Appended when the file had non-UTF-8 bytes; editing rewrites it as UTF-8. */
 export const UTF8_REWRITE_NOTE =
   "[Non-UTF-8 bytes shown as U+FFFD; editing rewrites the file as UTF-8.]";
+
+/**
+ * Appended when the read's serve write did not land: the rows are shown, but their anchors are not
+ * usable for editing. Goes in `text`, not `warning` — `tool-read` renders both, but the write hook
+ * (`src/write-hook.ts`) renders `text` only, and both consumers must see the downgrade.
+ */
+const SERVE_NOT_RECORDED_NOTE =
+  "WARNING: the rows above were NOT recorded as served — their `HASH│` anchors are NOT " +
+  "usable for editing. Re-read the file to re-sync before editing.";
 
 export interface ReadAndServeOptions {
   encoding?: string;
@@ -38,6 +47,11 @@ export interface ReadAndServeOptions {
   /** Pagination for the rendered preview (undefined = from the start). */
   offset?: number;
   limit?: number;
+  /**
+   * FU-6 (port of pi-better-edit@2334352): disjoint ranges served in one call; wins over
+   * offset/limit when non-empty, `[]` falls back to the plain (full-read) contract.
+   */
+  windows?: ReadWindow[];
 }
 
 export interface ReadAndServeResult {
@@ -73,10 +87,16 @@ export async function readAndServe(
   let retiredHashes = await loadRetiredAnchors(sessionKey, absolutePath);
   const servedForNorm = await loadServed(sessionKey, absolutePath);
   const servedCanons = await loadServedCanons(sessionKey, absolutePath);
-  const epochSnapshotId = await loadEpochSnapshotId(sessionKey, absolutePath);
-  // Build previous for stable reuse (S): served filtered + canons reconstruction
+  // Build previous for stable reuse (S): served filtered + canons reconstruction.
+  // #62 alignment gate: the reconstructed arrays carry the SERVED index as the line
+  // position, which equals the real line number only when the mirror is dense — the
+  // `row.position === index` half of the `isFullRead` predicate (session-view.ts).
+  // With holes (a partial mirror), `mapStableHashes` would match compressed indices
+  // against whole-file positions and reshuffle anchors of an UNCHANGED file; pass
+  // `previous = undefined` instead and take the content-addressed snapshot path
+  // (hash.ts cache), which is deterministic for unchanged content.
   let previous: { content: string; hashes: string[]; removedHashes?: Set<string> } | undefined;
-  if (servedForNorm.some((h) => h !== null)) {
+  if (servedForNorm.every((h) => h !== null)) {
     const filteredHashes: string[] = [];
     const filteredCanons: string[] = [];
     for (let i = 0; i < servedForNorm.length; i++) {
@@ -108,6 +128,7 @@ export async function readAndServe(
       encoding: options.encoding,
       offset: options.offset,
       limit: options.limit,
+      windows: options.windows,
       signal,
       reservedHashes: reservations.reservedHashes,
       retiredHashes: reservations.retiredHashes,
@@ -116,7 +137,7 @@ export async function readAndServe(
   } catch (e: unknown) {
     if (
       e instanceof AnchorSpaceExhaustedError ||
-      (e instanceof Error && e.message.includes("E_ANCHOR_SPACE_EXHAUSTED"))
+      (e instanceof Error && e.message.includes("probing failed over"))
     ) {
       const retiredCount = retiredHashes.size;
       const servedCount = servedForNorm.filter((h): h is string => h !== null).length;
@@ -127,9 +148,15 @@ export async function readAndServe(
         store.clearRetiredAnchors(sessionKey, absolutePath);
         try {
           store.clearCards(sessionKey, absolutePath);
-        } catch {}
-      } catch {}
-      promotionWarning = `[E_ANCHOR_SPACE_EXHAUSTED] Anchor space exhausted (retired ${retiredCount} + served ${servedCount} = ${reservedCount} of ${HASH_SPACE}); promotion cleared retired — re-read recommended, stale-anchor checks degraded until next full read.`;
+        } catch {
+          // Best-effort: card state is a cache; the promotion retry below proceeds without it.
+        }
+      } catch {
+        // Best-effort: a store fault here must not fail the read — the retry proceeds on the
+        // in-memory reservation state (ADR-0020 R2, promotion/wipe arm).
+      }
+      // Soft promotion notice: plain non-header text (no [E_] code, no audience).
+      promotionWarning = `Anchor space exhausted (retired ${retiredCount} + served ${servedCount} = ${reservedCount} of ${HASH_SPACE}); promotion cleared retired — re-read recommended, stale-anchor checks degraded until next full read.`;
       // Retry ignoring retired (served only) — also drop removedHashes from previous
       retiredHashes = new Set<string>();
       reservedHashes = new Set<string>([...servedForNorm.filter((h): h is string => h !== null)]);
@@ -139,6 +166,7 @@ export async function readAndServe(
         encoding: options.encoding,
         offset: options.offset,
         limit: options.limit,
+        windows: options.windows,
         signal,
         reservedHashes: reservations.reservedHashes,
         retiredHashes: reservations.retiredHashes,
@@ -148,30 +176,36 @@ export async function readAndServe(
       throw e;
     }
   }
+  let servedLanded = true;
   if (view.served.length > 0) {
     const canons = splitLines(view.normalized).map((l) => canon(l));
     const canonServed = canons.map((canonText) => canonText as string | null);
-    // For full read, compute snapshotId
-    let snapshotId: string | undefined;
-    try {
-      snapshotId = (await fileSnap(view.absolutePath)).snapshotId;
-    } catch {}
     // Pad or trim canons to served length? For now use canons for full file
     const fullCanons: (string | null)[] = [];
     for (let i = 0; i < view.hashes.length; i++) {
       fullCanons.push(canons[i] ?? null);
     }
-    await recordServed(sessionKey, view.absolutePath, view.served, view.hashes.length, {
-      hashes: view.hashes,
-      canons: fullCanons,
-      snapshotId,
-    });
+    servedLanded = await recordServed(
+      sessionKey,
+      view.absolutePath,
+      view.served,
+      view.hashes.length,
+      {
+        hashes: view.hashes,
+        canons: fullCanons,
+        content: view.normalized,
+      },
+    );
   }
   // #69: epoch lifecycle belongs to full reads — a partial (paged or
   // truncated) read merges window rows only and must not clear the
-  // drift-reported marks; only a full read resets them.
+  // drift-reported marks; only a full read resets them. The `undefined`/`[]` →
+  // no-windows rule is owned by file-view's `hasRequestedWindows`.
   const isFullRead =
-    options.offset === undefined && options.limit === undefined && !view.truncation?.truncated;
+    options.offset === undefined &&
+    options.limit === undefined &&
+    !hasRequestedWindows(options.windows) &&
+    !view.truncation?.truncated;
   if (isFullRead) await clearDriftReported(sessionKey, view.absolutePath);
   const autoFooter =
     getAutoGuessFooter(view.absolutePath) ??
@@ -184,7 +218,11 @@ export async function readAndServe(
       ? `${promotionWarning}\n${autoWarning}`
       : promotionWarning
     : autoWarning;
-  const text = view.hadUtf8DecodeErrors ? `${view.text}\n\n${UTF8_REWRITE_NOTE}` : view.text;
+  const baseText = view.hadUtf8DecodeErrors ? `${view.text}\n\n${UTF8_REWRITE_NOTE}` : view.text;
+  // The serve write is a second unit: a fault there must not fail the read, but it does decide
+  // whether the anchors above are usable — so the claim is downgraded in the one channel both
+  // consumers render.
+  const text = servedLanded ? baseText : `${baseText}\n\n${SERVE_NOT_RECORDED_NOTE}`;
   return {
     text,
     served: view.served,

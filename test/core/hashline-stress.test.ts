@@ -182,7 +182,9 @@ describe("hash collision stress tests", () => {
   it("throws a clear error when hash space is exhausted", () => {
     const line = "x";
     const content = Array.from({ length: HASH_SPACE + 1 }, () => line).join("\n");
-    expect(() => lineHashesPure(content)).toThrow("E_ANCHOR_SPACE_EXHAUSTED");
+    expect(() => lineHashesPure(content)).toThrow(
+      "[TO MODEL] [E_LARGE_FILE] Cannot allocate a unique hash anchor",
+    );
   }, 300_000);
 });
 

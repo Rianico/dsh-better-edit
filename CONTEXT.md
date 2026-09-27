@@ -19,7 +19,7 @@ The separation of responsibilities: the tool owns verification of what the model
 _Avoid_: —
 
 **anchor philosophy**:
-The project's core contract: per-line anchors are content-derived with ASCII whitespace (`[ \t\r\n]`) stripped, stable for unchanged lines and across whitespace-only formatting, and position-independent; an anchor that cannot be resolved is rejected, never fuzzy-matched or silently relocated. Byte-level detection of non-whitespace changes is unchanged — token-level edits still rotate the anchor (ADR-0005).
+The project's core contract: per-line anchors are content-derived with ASCII whitespace (`[ \t\r\n]`) stripped, stable for unchanged lines and across whitespace-only formatting, and position-independent; an anchor that cannot be resolved is rejected, never fuzzy-matched or silently relocated. Byte-level detection of non-whitespace changes is unchanged — token-level edits still rotate the anchor (ADR-0002).
 
 **anchor staleness**:
 An anchor (one line, `remove_from` or `remove_to`) that no longer resolves against the current file because the line's content changed since it was served (`hash`/`canon`/`retired` miss). The model must re-`read` for fresh anchors.
@@ -44,7 +44,7 @@ The model-facing word for the `served span` — the span between `remove_from` a
 _Avoid_: range (use `served range` for verified span, `range` for current file run)
 
 **served-range staleness**:
-The condition where the `served range` (span between anchors) cannot be reconciled with served state: interior `served span` vs `current span` mismatch (`hash`/`canon`/`retired`/`len`). Reported as `[E_STALE_RANGE]` (changed) or `[E_UNSERVED_RANGE]` (never-served, `details.unservedKind` `boundary`|`interior`). Both do `reject-and-serve`.
+The condition where the `served range` (span between anchors) cannot be reconciled with served state: interior `served span` vs `current span` mismatch (`hash`/`canon`/`retired`/`len`). Reported as `[E_STALE_RANGE]` (changed) or `[E_UNSERVED_RANGE]` (never-served, `details.unservedKind` `boundary`|`interior`). Both do `reject-and-serve`; when the region is unidentifiable the rejection is a `target-lost rejection`.
 _Avoid_: range staleness (use `served range` for span)
 
 **never-served**:
@@ -89,8 +89,12 @@ A file mutation that bypasses `encoding governance` — the built-in `write`/`ed
 _Avoid_: native edit path
 
 **reject-and-serve**:
-The staleness policy: reject the edit and return the current range as fresh `HASH│content` rows, which themselves count as serves, so the retry needs no read.
-_Avoid_: reject-then-reread (the retry must not require a read)
+The staleness policy: reject the edit and return the current content of the region the submitted anchors identify as `HASH|content` rows — a _region-matched_ serve. A serve refreshes the model's inputs for that region and never substitutes another region for those anchors; the echoed rows are the current file's anchors, not serves (`recordEchoServes` was deleted by T3f), so a retry with them rejects at the same site and a read is the recovery. "Region-matched" is the upstream referent's name (`pi-better-edit` ADR-0018) for "the window the submitted anchors identify".
+_Avoid_: reject-then-reread (the retry must not require a read), context serve (no such operation exists), region (use `served span` / `served range`)
+
+**target-lost rejection**:
+A rejection whose region cannot be identified: the submitted anchors no longer name a live span (both bounds stale, a survivor that shifted, or a window that collapses or misses the file). Its payload carries **no rows** and no `Current range` heading; the headline names the previously served position and instructs a read, so no served coordinate the model never targeted becomes committable. Realized locally as an `[E_STALE_RANGE]` payload with an empty `servedRows` (`src/fs-bridge.ts`, F7) — the local disjointness signal is the row count, not the code.
+_Avoid_: context serve (dropped: no such operation exists), unverified range (unported upstream code)
 
 **drift**:
 The divergence between the served state and the current file: lines the model was shown whose content has changed on disk since they were served. Detected by comparing served hashes against current hashes.
@@ -101,10 +105,10 @@ The informational section appended to a replace result (applied or noop, not und
 _Avoid_: warning (the operation succeeded; it is information, not a warning)
 
 **model-facing signal**:
-A model-visible signal the tool must include in `content` for correctness (e.g. `anchor staleness`, `served-range staleness`, `E_STALE_*`/`E_UNSERVED_*`, `E_SERVED_ECHO`). The model needs it to retry correctly.
+A model-visible signal the tool must include in `content` for correctness (e.g. `anchor staleness`, `served-range staleness`, `E_STALE_*`/`E_UNSERVED_*`, `E_SUSPICIOUS_TEXT`). The model needs it to retry correctly.
 
 **user-facing signal**:
-A model-visible signal informative for the human only, emitted in `details`/`warnings` and rendered collapsed in TUI (e.g. drift notice, Batch drift note). Not in model content.
+A model-visible signal informative for the human only, emitted in `details`/`warnings` and rendered collapsed in TUI (e.g. drift notice; the former `Batch drift note` was retired — see ADR-0006's Amendment). Not in model content.
 
 **orphaned serve**:
 An entry in served state whose hash no longer matches the current file at that position — the mirror retained a hash that the file has moved or removed elsewhere. Contrast with never-served. An orphan is drift, but at a single position rather than a range.
@@ -170,9 +174,9 @@ _Avoid_: patch language, array shorthand
 A candidate line that begins with the exact `HASH│` anchor served for the same session, canonical path, and line — tool output mistaken for file content. For `write` the check is absolute line `i` vs `served[i]`; for `edit` it is range-relative line `k` vs `served[startLine + k]` (AA: E1). Detected before dispatch/write, file stays byte-identical. Not a generic `^[A-Za-z0-9]{3}│` strip.
 _Avoid_: hash echo (without served qualification), anchor echo
 
-**E_SERVED_ECHO**:
-Refusal that `content` (for `write`) or `replacement_text` (for `edit`) copied a `served hash echo` — `[E_SERVED_ECHO] Refused write to ${path}: line ${n} begins with the exact ${hash}│ anchor served for this session, path, and line` or `Refused edit to ${path}: replacement line ${k} begins with the exact ${hash}│ anchor served for this session, path, and range-relative line`. Remove the copied anchors and retry. Nothing was written. Deny, not strip — fail-loud, compensable.
-_Avoid_: E_HASH_ECHO (ambiguous)
+**E_SUSPICIOUS_TEXT**:
+Refusal that `content` (for `write`) or `replacement_text` (for `edit`) copied a `served hash echo` — rendered by `suspiciousFormat` (`src/domain-errors.ts`): names the refused line (for `edit`, the replacement-line index `k`, matched range-relatively at AA: E1), the echoed `${hash}│` anchor and its absolute `servedLine`, plus "HASH│ anchors are tool output, not file content". Producers: `servedHashEchoDenial` (`src/write-hook.ts`, pre-dispatch; content line == `servedLine`) and `EditHashEchoError` (`src/hashline/anchor-pipeline.ts`). The edit arm carries the escape: omit the copied anchors from `replace_with` and retry with the same anchors, or declare intent with `mode: "literal"` (raw bytes applied verbatim, a `W_LITERAL_BYPASS` warning) — the write arm promises no literal retry (`F2`: the built-in `write` tool takes no mode flag). "Nothing was written." renders only when a resubmission tally (`count`) is supplied; no tool producer holds one. Deny, not strip — fail-loud, compensable.
+_Avoid_: E_HASH_ECHO (ambiguous); E_WRITE_HASH_ECHO / E_EDIT_HASH_ECHO (the per-tool split, merged by ADR-0014); E_SERVED_ECHO (the merged name, renamed by the domain-errors registry — see ADR-0005's Amendment)
 
 **boundary duplicate (historical, removed by ADR-0007):**
 Auto-spliced `replacement_text` edge when it equaled an adjacent file line — `trailingDups`/`leadingDups` (byte `===`, 1-line) and `firstNewAfterDups`/`lastNewBeforeDups` (`canon()` + `sectionIsUnique`). Removed — tool is now pure `range = [remove_from, remove_to]` by hash, `replacement = exact replacement_text`; a duplicate stays as a loud duplicate the model fixes next turn (see ADR-0007).

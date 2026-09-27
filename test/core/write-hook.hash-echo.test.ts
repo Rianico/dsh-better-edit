@@ -85,7 +85,7 @@ describe("write hash-echo guard", () => {
       );
 
       expect(decision).toMatchObject({ kind: "deny" });
-      expect((decision as { reason?: string }).reason).toContain("[E_SERVED_ECHO]");
+      expect((decision as { reason?: string }).reason).toContain("[E_SUSPICIOUS_TEXT]");
       expect(next).not.toHaveBeenCalled();
       expect(await readFile(path)).toEqual(beforeBytes);
 

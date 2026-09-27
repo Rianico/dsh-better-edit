@@ -20,6 +20,7 @@ import { workspaceCwd } from "./workspace-context.js";
 import { errCode, splitLines } from "./utils.js";
 import { HASH_STORE_BUSY_TIMEOUT, SERVED_TTL_MS } from "./constants.js";
 import type { HashStore } from "./hash-store.js";
+import { reportVacuum } from "./snapshot-store/index.js";
 
 // ---- throttling state (owned here) ----
 let lastPruneMsByStore = new Map<string, number>();
@@ -215,7 +216,7 @@ export async function runCentralJanitorIfDue(): Promise<void> {
 // Called from hash-store openStore after db is ready
 export async function onStoreOpen(
   storePath: string,
-  stmts: { servedPruneOlderThan: (ts: number) => void; undoPruneOlderThan: (ts: number) => void },
+  stmts: { servedPruneOlderThan: (ts: number) => void },
   store: HashStore,
 ): Promise<void> {
   handleGitPollution(storePath);
@@ -231,7 +232,9 @@ export async function onStoreOpen(
   try {
     const cfg = loadConfig();
     if (cfg.undo_ttl_s !== -1) {
-      stmts.undoPruneOlderThan(Date.now() - cfg.undo_ttl_s * 1000);
+      // Pair-atomic: route through the store face (both tables, one txn) — the
+      // half-pair statement must not stay reachable from the janitor (P1).
+      store.pruneUndoOlderThan(Date.now() - cfg.undo_ttl_s * 1000);
     }
   } catch (error) {
     console.warn(
@@ -249,6 +252,17 @@ export async function onStoreOpen(
   } catch (error) {
     console.warn(
       `dsh-better-edit: pruneMissing throttling check failed: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+
+  // Snapshot vacuum — the deterministic boundary (spec §3.6.1): on this store the open path is
+  // the only place that can reclaim a store that crashed over budget. This trigger owns the
+  // report (the single report owner is `reportVacuum`; the sweep never writes to the console).
+  try {
+    reportVacuum(store.vacuumSnapshots(), `store open ${storePath}`);
+  } catch (error) {
+    console.warn(
+      `dsh-better-edit: snapshot vacuum failed at store open for ${storePath}: ${error instanceof Error ? error.message : String(error)}`,
     );
   }
 }

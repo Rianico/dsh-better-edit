@@ -1,4 +1,5 @@
 import { mkdtemp, rm } from "fs/promises";
+import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -49,6 +50,9 @@ vi.mock("node:sqlite", () => ({
             if (!state.persistentBusy) state.busyOnce = null;
             throw err;
           }
+          // node:sqlite run() always returns this shape; the lineage path reads
+          // lastInsertRowid, so the mock must not return undefined.
+          return { changes: 1, lastInsertRowid: 1 };
         },
       };
     }
@@ -69,6 +73,9 @@ vi.mock("fs/promises", async (importOriginal) => {
 let tmpHome: string;
 
 beforeAll(async () => {
+  // `.tmp/` is gitignored and nothing else guarantees it exists in a clean tree; the async
+  // `fs/promises` module is mocked in this file (no-op `mkdir`), so create the root synchronously.
+  mkdirSync(join(process.cwd(), ".tmp"), { recursive: true });
   tmpHome = await mkdtemp(join(process.cwd(), ".tmp", "hash-store-open-errors-"));
   vi.stubEnv("HOME", tmpHome);
   vi.stubEnv("DSH_HOME", join(tmpHome, ".dsh"));
@@ -145,6 +152,38 @@ describe("hash store open error handling", () => {
       store.upsertSnapshot("/p.ts", "checksum", 1, ["AAA"]);
     }).toThrow(/locked/);
     expect(state.runCalls - callsBefore).toBe(4);
+  });
+
+  it("retries a transient busy error inside a lineage statement", async () => {
+    const { loadHashStore, shutdownHashStore } = await import("../../src/hash-store");
+    shutdownHashStore();
+    const internal = (await loadHashStore()) as unknown as {
+      commitSnapshot(input: { path: string; content: string; hashes: string[] }): void;
+    };
+    // First .run inside commitSnapshot is the counter upsert; without the per-statement
+    // withBusyRetry the busy error would abort the whole unit instead of retrying.
+    state.busyOnce = busyError("database is locked");
+    expect(() => {
+      internal.commitSnapshot({ path: "/lin.ts", content: "a\n", hashes: ["AAA"] });
+    }).not.toThrow();
+    expect(state.runCalls).toBeGreaterThan(1);
+  });
+  it("never classifies a newer-version refusal as corruption", async () => {
+    const { isCorruptionError } = await import("../../src/hash-store");
+    const { DomainError } = await import("../../src/domain-errors");
+    const refusal = new DomainError("E_STORE_NEWER_VERSION", {
+      path: "/store/hash-store.sqlite",
+      storedVersion: 999,
+      supportedVersion: 6,
+    });
+    expect(isCorruptionError(refusal)).toBe(false);
+    // The guard is message-independent: even a DomainError whose rendered text
+    // matches the corruption regex must never route to quarantine.
+    const lookalike = new DomainError("E_UNKNOWN", {
+      errorName: "Error",
+      message: "database disk image is malformed",
+    });
+    expect(isCorruptionError(lookalike)).toBe(false);
   });
 });
 

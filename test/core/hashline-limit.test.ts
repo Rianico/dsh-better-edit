@@ -24,7 +24,9 @@ describe("hashline limits", () => {
 
   it("throws a clear E_LARGE_FILE error above the limit", () => {
     const content = Array.from({ length: MAX_HASH_LINES + 1 }, () => "x").join("\n");
-    expect(() => lineHashesPure(content)).toThrow("E_ANCHOR_SPACE_EXHAUSTED");
+    expect(() => lineHashesPure(content)).toThrow(
+      "[TO MODEL] [E_LARGE_FILE] Cannot allocate a unique hash anchor",
+    );
   }, 300_000);
 
   it("preserves unique hashes at the boundary through the store path", async () => {

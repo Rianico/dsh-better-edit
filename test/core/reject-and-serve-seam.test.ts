@@ -1,42 +1,11 @@
-import { describe, expect, it, vi, beforeAll } from "vitest";
-import { mkdtemp, rm } from "fs/promises";
-import { join } from "node:path";
-import { recordEchoServes, ServedRejectionError } from "../../src/hashline/served.js";
+import { describe, expect, it, beforeAll } from "vitest";
+import { ServedRejectionError } from "../../src/hashline/served.js";
 import { finalizeToolResult } from "../../src/edit-response.js";
 import { applyEdit, lineHashesPure, type HEdit } from "../../src/hashline/index.js";
-import { loadServed } from "../../src/session-view.js";
-import { shutdownHashStore } from "../../src/hash-store.js";
 import { initHasher } from "../../src/hashline/hasher.js";
-import { getWritableTempRoot } from "../support/fixtures.js";
 
 beforeAll(async () => {
   await initHasher();
-});
-
-describe("recordEchoServes — serve-record policy", () => {
-  it("records echo serves when the policy is live", async () => {
-    await withTempHome(async () => {
-      const path = "/a.ts";
-      await recordEchoServes(
-        "sessionA",
-        path,
-        [
-          { position: 0, hash: "h00" },
-          { position: 1, hash: "X01" },
-        ],
-        "live",
-      );
-      expect(await loadServed("sessionA", path)).toEqual(["h00", "X01"]);
-    });
-  });
-
-  it("records nothing when the policy is preview", async () => {
-    await withTempHome(async () => {
-      const path = "/a.ts";
-      await recordEchoServes("sessionA", path, [{ position: 0, hash: "h00" }], "preview");
-      expect(await loadServed("sessionA", path)).toEqual([]);
-    });
-  });
 });
 
 describe("applyEdit — stale range beats would-empty", () => {
@@ -121,18 +90,3 @@ describe("applyEdit — resolved range geometry", () => {
     expect(deleted.range.delta).toBe(-1);
   });
 });
-
-let tmpHome: string;
-async function withTempHome(run: () => Promise<void>): Promise<void> {
-  tmpHome = await mkdtemp(join(await getWritableTempRoot(), "pi-hashline-reject-and-serve-test-"));
-  vi.stubEnv("HOME", tmpHome);
-  vi.stubEnv("DSH_HOME", join(tmpHome, ".dsh"));
-  vi.stubEnv("XDG_CONFIG_HOME", "");
-  try {
-    await run();
-  } finally {
-    shutdownHashStore();
-    vi.unstubAllEnvs();
-    await rm(tmpHome, { recursive: true, force: true });
-  }
-}

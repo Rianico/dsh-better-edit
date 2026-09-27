@@ -149,10 +149,10 @@ describe("undo-store", () => {
 describe("undo-store — raw entries", () => {
   it("round-trips an undo entry", async () => {
     const store = await loadHashStore();
-    store.upsertUndo("/a.ts", {
+    await saveUndo("/a.ts", {
       content: "old",
       bom: "\uFEFF",
-      ending: "\r\n",
+      originalEnding: "\r\n",
       hashes: ["abc", "def"],
       resultContent: "new",
     });
@@ -173,17 +173,17 @@ describe("undo-store — raw entries", () => {
 
   it("overwrites the previous entry for the same path", async () => {
     const store = await loadHashStore();
-    store.upsertUndo("/a.ts", {
+    await saveUndo("/a.ts", {
       content: "first",
       bom: "",
-      ending: "\n",
+      originalEnding: "\n",
       hashes: ["aB3"],
       resultContent: "first!",
     });
-    store.upsertUndo("/a.ts", {
+    await saveUndo("/a.ts", {
       content: "second",
       bom: "",
-      ending: "\r",
+      originalEnding: "\r",
       hashes: ["bC4"],
       resultContent: "second!",
     });
@@ -195,23 +195,23 @@ describe("undo-store — raw entries", () => {
 
   it("deletes an undo entry", async () => {
     const store = await loadHashStore();
-    store.upsertUndo("/a.ts", {
+    await saveUndo("/a.ts", {
       content: "old",
       bom: "",
-      ending: "\n",
+      originalEnding: "\n",
       hashes: ["xY7"],
       resultContent: "new",
     });
-    store.deleteUndo("/a.ts");
+    await clearUndo("/a.ts");
     expect(store.getUndo("/a.ts")).toBeUndefined();
   });
 
   it("treats a row with unparseable hashes as a miss", async () => {
     const store = await loadHashStore();
-    store.upsertUndo("/a.ts", {
+    await saveUndo("/a.ts", {
       content: "old",
       bom: "",
-      ending: "\n",
+      originalEnding: "\n",
       hashes: ["xY7"],
       resultContent: "new",
     });
@@ -225,16 +225,20 @@ describe("undo-store — raw entries", () => {
     const remaining = check
       .prepare("SELECT COUNT(*) AS n FROM undo WHERE path = ?")
       .get("/a.ts") as { n: number };
+    const v7rows = check
+      .prepare("SELECT COUNT(*) AS n FROM file_undo WHERE path = ?")
+      .get("/a.ts") as { n: number };
     check.close();
     expect(remaining.n).toBe(0);
+    expect(v7rows.n).toBe(0);
   });
 
   it("treats a row with malformed hash strings as a miss", async () => {
     const store = await loadHashStore();
-    store.upsertUndo("/a.ts", {
+    await saveUndo("/a.ts", {
       content: "old",
       bom: "",
-      ending: "\n",
+      originalEnding: "\n",
       hashes: ["xY7"],
       resultContent: "new",
     });
@@ -248,7 +252,11 @@ describe("undo-store — raw entries", () => {
     const remaining = check
       .prepare("SELECT COUNT(*) AS n FROM undo WHERE path = ?")
       .get("/a.ts") as { n: number };
+    const v7rows = check
+      .prepare("SELECT COUNT(*) AS n FROM file_undo WHERE path = ?")
+      .get("/a.ts") as { n: number };
     check.close();
     expect(remaining.n).toBe(0);
+    expect(v7rows.n).toBe(0);
   });
 });

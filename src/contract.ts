@@ -2,35 +2,46 @@
  * One module owns the request shapes for the hashline tools — edit,
  * read, undo_last_edit — plus their validation. Field sets are
  * declared once here; every tool validates through these asserts, and the
- * [E_BAD_PAYLOAD] vocabulary is shared instead of re-implemented per tool.
+ * E_BAD_PAYLOAD vocabulary is shared instead of re-implemented per tool.
  *
- * Contract now mirrors upstream ADR-0007: {path: string|null, edits: [[remove_from,remove_to,replacement_text],...]} tuple payload
- * (plus object-form {remove_from, remove_to, replacement_text} per #64), single-file, atomic. batch_edit is removed.
+ * Contract mirrors upstream ADR-0015: {file: string|null, edits: [{anchor_from, anchor_to, replace_with},...]} named-object payload
+ * (plus legacy tuple items and legacy key spellings folded pre-validation), single-file, atomic. batch_edit is removed.
  * @module dsh-better-edit/contract
  */
 
 import { EDITS_MAX_ITEMS } from "./constants.js";
-import { isRec, normalizeFilePath, rejectUnknownFields, CodedError } from "./utils.js";
+import type { ReadWindow } from "./file-view.js";
+import { isRec, normalizeFilePath, rejectUnknownFields } from "./utils.js";
+import { DomainError } from "./domain-errors.js";
 
 // ---- request shapes --------------------------------------------------------
 
+export type EditMode = "general" | "literal";
+
 export type EditItem = {
-  remove_from: string;
-  remove_to: string;
-  replacement_text: string;
+  anchor_from: string;
+  anchor_to: string;
+  replace_with: string;
 };
 
 export type EditRequest = {
-  path: string | null;
+  file: string | null;
   edits: EditItem[];
+  /**
+   * "general" (default) refuses bytes reproducing served rows;
+   * "literal" declares them as intended file content (W_LITERAL_BYPASS).
+   */
+  mode?: EditMode;
 };
 
-// legacy single-edit shape retained for mutation.ts internal API
+// legacy single-edit shape retained for mutation.ts internal API (renamed with the payload)
 export interface EditParams {
-  path: string;
-  remove_from: string;
-  remove_to: string;
-  replacement_text: string;
+  file: string;
+  anchor_from: string;
+  anchor_to: string;
+  replace_with: string;
+  /** Legacy single-edit path: literal bypasses the served-echo guard. */
+  mode?: EditMode;
 }
 
 export interface ReadParams {
@@ -38,21 +49,15 @@ export interface ReadParams {
   offset?: number;
   limit?: number;
   encoding?: string;
+  /**
+   * Multi-window read — disjoint line ranges served in one call. Shape and count
+   * (max MAX_READ_WINDOWS) are validated in file-view's normWindows.
+   */
+  windows?: ReadWindow[];
 }
 
 export interface UndoParams {
   path: string;
-}
-
-// legacy batch types removed — kept as type alias for test shims (never used at runtime)
-export interface BatchItemParams {
-  path?: string;
-  remove_from: string;
-  remove_to: string;
-  replacement_text: string;
-}
-export interface BatchEditParams {
-  edits: BatchItemParams[];
 }
 
 // ---- normalized marker -----------------------------------------------------
@@ -69,61 +74,82 @@ export function isNormalizedEdit(input: unknown): input is NormalizedEditRequest
 
 export function itemFromTuple(value: unknown): EditItem | undefined {
   if (!Array.isArray(value) || value.length !== 3) return undefined;
-  const [remove_from, remove_to, replacement_text] = value as unknown[];
+  const [anchor_from, anchor_to, replace_with] = value as unknown[];
   if (
-    typeof remove_from !== "string" ||
-    typeof remove_to !== "string" ||
-    typeof replacement_text !== "string"
+    typeof anchor_from !== "string" ||
+    typeof anchor_to !== "string" ||
+    typeof replace_with !== "string"
   )
     return undefined;
-  return { remove_from, remove_to, replacement_text };
+  return { anchor_from, anchor_to, replace_with };
 }
 
 /**
- * Accept both the tuple form (["a", "b", "c"]) and the object form
- * ({ remove_from, remove_to, replacement_text }) per edits entry (#64).
- * Missing/mistyped fields and unknown fields still return undefined so the
- * caller rejects with E_BAD_PAYLOAD.
+ * Accept the named-object form ({ anchor_from, anchor_to, replace_with }),
+ * the legacy tuple form ([a, b, t]), and the legacy-key form
+ * (legacy spelling) per edits entry — all fold
+ * to the named triple. Mixed old/new keys, extra keys, and 2-/4-position
+ * tuples still return undefined so the caller rejects with E_BAD_PAYLOAD.
  */
 export function itemFromEntry(value: unknown): EditItem | undefined {
   if (Array.isArray(value)) return itemFromTuple(value);
   if (isRec(value)) {
     const rec = value as Record<string, unknown>;
-    const { remove_from, remove_to, replacement_text } = rec;
-    if (
-      typeof remove_from !== "string" ||
-      typeof remove_to !== "string" ||
-      typeof replacement_text !== "string"
-    )
+    const keys = new Set(Object.keys(rec));
+    const useLegacy =
+      keys.size === LEGACY_ITEM_KS.size && [...LEGACY_ITEM_KS].every((k) => keys.has(k));
+    const useNamed = keys.size === ITEM_KS.size && [...ITEM_KS].every((k) => keys.has(k));
+    if (!useNamed && !useLegacy) return undefined;
+    const from = useNamed ? rec.anchor_from : rec.remove_from;
+    const to = useNamed ? rec.anchor_to : rec.remove_to;
+    const text = useNamed ? rec.replace_with : rec.replacement_text;
+    if (typeof from !== "string" || typeof to !== "string" || typeof text !== "string")
       return undefined;
-    if (Object.keys(rec).some((k) => !EDIT_ITEM_KS.has(k))) return undefined;
-    return { remove_from, remove_to, replacement_text };
+    return { anchor_from: from, anchor_to: to, replace_with: text };
   }
   return undefined;
 }
 
+const ROOT_INPUT_KS = new Set([
+  "file",
+  "file_path",
+  "path",
+  "edits",
+  "mode",
+  "sandbox_permissions",
+  "justification",
+]);
+
 export function editRequestFrom(input: unknown): NormalizedEditRequest | undefined {
-  if (!isRec(input) || !("path" in input) || !("edits" in input)) return undefined;
+  if (!isRec(input)) return undefined;
   const rec = input as Record<string, unknown>;
-  // handle file_path alias before checking
-  if (typeof rec.path !== "string" && typeof rec.file_path === "string") {
-    // alias will be normalized by normalizeFilePath before editRequestFrom in normReq path,
-    // but handle here for direct calls
+  for (const key of Object.keys(rec)) {
+    if (!ROOT_INPUT_KS.has(key)) return undefined;
   }
-  const { path, edits } = rec as { path?: unknown; edits?: unknown };
-  // Gemma-4 tool-call bleed (#55): the model may wrap the path in <|>, │, |,
-  // quotes, or backticks after seeing │ separators. Strip wrappers iteratively.
-  let effectivePath = path;
-  if (typeof effectivePath === "string") {
-    const sanitized = sanitizePath(effectivePath);
+  const { file, file_path, path, edits, mode } = rec as {
+    file?: unknown;
+    file_path?: unknown;
+    path?: unknown;
+    edits?: unknown;
+    mode?: unknown;
+  };
+  // file preferred; legacy path/file_path fold (sanitized). null stays null:
+  // the undocumented anchor-inference seam (resolveNullPath) still resolves it.
+  let effectiveFile: unknown;
+  if (file !== undefined) effectiveFile = file;
+  else if (path !== undefined) effectiveFile = path;
+  else if (file_path !== undefined) effectiveFile = file_path;
+  else return undefined;
+  let effectivePath: string | null;
+  if (typeof effectiveFile === "string") {
+    const sanitized = sanitizePath(effectiveFile);
     if (sanitized === null) return undefined;
     effectivePath = sanitized;
-  }
-  if (
-    effectivePath !== null &&
-    (typeof effectivePath !== "string" || (effectivePath as string).length === 0)
-  )
+  } else if (effectiveFile === null) {
+    effectivePath = null;
+  } else {
     return undefined;
+  }
   if (!Array.isArray(edits) || edits.length === 0) return undefined;
   const items: EditItem[] = [];
   for (const item of edits) {
@@ -131,7 +157,12 @@ export function editRequestFrom(input: unknown): NormalizedEditRequest | undefin
     if (!normalized) return undefined;
     items.push(normalized);
   }
-  return { path: effectivePath as string | null, edits: items };
+  let effectiveMode: EditMode = "general";
+  if (mode !== undefined) {
+    if (mode !== "general" && mode !== "literal") return undefined;
+    effectiveMode = mode;
+  }
+  return { file: effectivePath, edits: items, mode: effectiveMode };
 }
 
 /**
@@ -179,14 +210,13 @@ export function sanitizePath(value: unknown): string | null {
   return cleaned.length > 0 ? cleaned : null;
 }
 
-export const EDIT_TUPLE_HINT =
+export const EDIT_PAYLOAD_HINT =
   "Edit must be called with exactly one payload. Use the canonical payload " +
-  '{"path": path, "edits": [[remove_from, remove_to, replacement_text], ...]}: ' +
-  "path is a non-empty string (or null to infer from anchors), each item is " +
-  "either a fixed 3-position array [remove_from, remove_to, replacement_text] " +
-  "or an object {remove_from, remove_to, replacement_text} (mixed batches allowed) " +
-  "of two inclusive bare-3-char anchors and the full " +
-  "replacement (an empty string deletes the range).";
+  '{"file": file, "edits": [{ "anchor_from": anchor_from, "anchor_to": anchor_to, "replace_with": replace_with }, ...], "mode"?: "general" | "literal"}: ' +
+  '"file" is the text file to edit (a non-empty string, never a directory); each item names ' +
+  "two inclusive bare-3-char anchors and the full replacement " +
+  '(an empty string deletes the range); optional "mode" is "general" (default, reproduced served rows are refused) or "literal" (declared literal content). ' +
+  "Legacy tuple items and legacy key spellings still fold; do not mix old and new key spellings.";
 
 function describeReceived(input: unknown): string {
   if (input === undefined) return "Received no arguments.";
@@ -199,9 +229,10 @@ function describeReceived(input: unknown): string {
 
 // ---- filed sets (declared once) ---------------------------------------------
 
-const EDIT_KS = new Set(["path", "edits", "sandbox_permissions", "justification"]);
-const READ_KS = new Set(["path", "offset", "limit", "encoding"]);
-const EDIT_ITEM_KS = new Set(["remove_from", "remove_to", "replacement_text"]);
+const EDIT_KS = new Set(["file", "edits", "mode", "sandbox_permissions", "justification"]);
+const READ_KS = new Set(["path", "offset", "limit", "encoding", "windows"]);
+const ITEM_KS = new Set(["anchor_from", "anchor_to", "replace_with"]);
+const LEGACY_ITEM_KS = new Set(["remove_from", "remove_to", "replacement_text"]);
 
 // ---- normalization -----------------------------------------------------------
 
@@ -220,7 +251,11 @@ export function normalizeRequest(input: unknown): unknown {
   }
   const valid = editRequestFrom(record);
   if (!valid) return record;
-  const normalized: Record<string, unknown> = { path: valid.path, edits: valid.edits };
+  const normalized: Record<string, unknown> = {
+    file: valid.file,
+    edits: valid.edits,
+    mode: valid.mode,
+  };
   // preserve non-standard fields like sandbox_permissions/justification for later reject check? but we strip to valid fields and re-add them?
   for (const k of ["sandbox_permissions", "justification"]) {
     if (k in record) (normalized as Record<string, unknown>)[k] = record[k];
@@ -235,113 +270,102 @@ export const normReq = normalizeRequest;
 export function prepareEditArguments(args: unknown): Record<string, unknown> {
   const valid = editRequestFrom(args as unknown);
   if (valid) {
-    return { path: valid.path, edits: (args as Record<string, unknown>).edits };
+    // F10.1: preserve mode like normalizeRequest — the two normalizers agree.
+    // prepareEditArguments returns schema-ready folded objects (named triple).
+    return { file: valid.file, edits: valid.edits, mode: valid.mode };
   }
-  throw new CodedError(
-    "E_BAD_PAYLOAD",
-    `[MODEL] [E_BAD_PAYLOAD] ${EDIT_TUPLE_HINT} ${describeReceived(args)}`,
-  );
+  throw new DomainError("E_BAD_PAYLOAD", {
+    message: `${EDIT_PAYLOAD_HINT} ${describeReceived(args)}`,
+  });
 }
 
 // ---- assertions ---------------------------------------------------------------
 
 export function assertEditRequest(request: unknown): asserts request is NormalizedEditRequest {
   if (!isNormalizedEdit(request)) {
-    throw new CodedError(
-      "E_BAD_PAYLOAD",
-      "[MODEL] [E_BAD_PAYLOAD] Edit request must be exactly { path, edits: [[remove_from, remove_to, replacement_text], ...] } or { path, edits: [{remove_from, remove_to, replacement_text}, ...] } (mixed batches allowed).",
-    );
+    throw new DomainError("E_BAD_PAYLOAD", {
+      message:
+        'Edit request must be exactly { file, edits: [{ anchor_from, anchor_to, replace_with }, ...], mode?: "general" | "literal" }. ' +
+        EDIT_PAYLOAD_HINT,
+    });
   }
   rejectUnknownFields(request as Record<string, unknown>, EDIT_KS, "Edit request");
   const req = request as NormalizedEditRequest;
-  if (req.path !== null && (typeof req.path !== "string" || req.path.length === 0)) {
-    throw new CodedError(
-      "E_BAD_PAYLOAD",
-      "[MODEL] [E_BAD_PAYLOAD] Edit request path must be a non-empty string or null.",
-    );
+  if (req.file !== null && (typeof req.file !== "string" || req.file.length === 0)) {
+    throw new DomainError("E_BAD_PAYLOAD", {
+      message: "Edit request file must be a non-empty string or null.",
+    });
+  }
+  if (req.mode !== undefined && req.mode !== "general" && req.mode !== "literal") {
+    throw new DomainError("E_BAD_PAYLOAD", {
+      message:
+        'Edit request "mode" must be "general" or "literal" (absent means "general"). Reproduced served rows are refused unless mode is "literal".',
+    });
   }
   if (!Array.isArray(req.edits) || req.edits.length === 0) {
-    throw new CodedError(
-      "E_BAD_PAYLOAD",
-      '[MODEL] [E_BAD_PAYLOAD] Edit request requires a non-empty "edits" array.',
-    );
+    throw new DomainError("E_BAD_PAYLOAD", {
+      message: 'Edit request requires a non-empty "edits" array.',
+    });
   }
   if (req.edits.length > EDITS_MAX_ITEMS) {
-    throw new CodedError(
-      "E_BAD_PAYLOAD",
-      `[MODEL] [E_BAD_PAYLOAD] edit accepts at most ${EDITS_MAX_ITEMS} edits; got ${req.edits.length}. Split the batch.`,
-    );
+    throw new DomainError("E_BAD_PAYLOAD", {
+      message: `edit accepts at most ${EDITS_MAX_ITEMS} edits; got ${req.edits.length}. Split the batch.`,
+    });
   }
   for (let index = 0; index < req.edits.length; index++) {
     const item = req.edits[index]!;
     if (
-      typeof item.remove_from !== "string" ||
-      typeof item.remove_to !== "string" ||
-      typeof item.replacement_text !== "string"
+      typeof item.anchor_from !== "string" ||
+      typeof item.anchor_to !== "string" ||
+      typeof item.replace_with !== "string"
     ) {
-      throw new CodedError(
-        "E_BAD_PAYLOAD",
-        `[MODEL] [E_BAD_PAYLOAD] Edit request edits[${index}] must be a three-position array [remove_from, remove_to, replacement_text] or an object {remove_from, remove_to, replacement_text}.`,
-      );
+      throw new DomainError("E_BAD_PAYLOAD", {
+        message: `Edit request edits[${index}] must be { anchor_from, anchor_to, replace_with }: two bare 3-char anchors and the replacement text.`,
+      });
     }
   }
 }
 
-// legacy — now always fails with new shape message (batch_edit removed)
-export function assertBatchEditRequest(_request: unknown): asserts _request is BatchEditParams {
-  throw new CodedError(
-    "E_BAD_PAYLOAD",
-    "[MODEL] [E_BAD_PAYLOAD] batch_edit has been removed. Use edit with { path, edits: [[remove_from, remove_to, replacement_text], ...] }.",
-  );
-}
-
 export function assertReadRequest(request: unknown): asserts request is ReadParams {
   if (!isRec(request))
-    throw new CodedError(
-      "E_BAD_PAYLOAD",
-      "[MODEL] [E_BAD_PAYLOAD] Read request must be an object.",
-    );
+    throw new DomainError("E_BAD_PAYLOAD", { message: "Read request must be an object." });
   rejectUnknownFields(request, READ_KS, "Read request");
   if (typeof request.path !== "string" || request.path.length === 0) {
-    throw new CodedError(
-      "E_BAD_PAYLOAD",
-      '[MODEL] [E_BAD_PAYLOAD] Read request requires a non-empty "path" string.',
-    );
+    throw new DomainError("E_BAD_PAYLOAD", {
+      message: 'Read request requires a non-empty "path" string.',
+    });
   }
 }
 
 export function assertUndoRequest(request: unknown): asserts request is UndoParams {
   if (!isRec(request))
-    throw new CodedError(
-      "E_BAD_PAYLOAD",
-      "[MODEL] [E_BAD_PAYLOAD] undo_last_edit request must be an object.",
-    );
+    throw new DomainError("E_BAD_PAYLOAD", {
+      message: "undo_last_edit request must be an object.",
+    });
   normalizeFilePath(request);
   if (typeof request.path !== "string" || request.path.length === 0) {
-    throw new CodedError(
-      "E_BAD_PAYLOAD",
-      '[MODEL] [E_BAD_PAYLOAD] undo_last_edit request requires a non-empty "path" string.',
-    );
+    throw new DomainError("E_BAD_PAYLOAD", {
+      message: 'undo_last_edit request requires a non-empty "path" string.',
+    });
   }
 }
 
 // ---- shared JSON Schema literals (co-located with field sets) ---------------
 
-export const replacementTextSchema = {
+export const replaceWithSchema = {
   type: "string",
-  description: 'Complete replacement for the range; use "" to delete',
+  description: 'Bare file content for the range; use "" to delete',
 } as const;
 
-export const removeFromSchema = {
+export const anchorFromSchema = {
   type: "string",
-  description: "First line to remove (inclusive)",
+  description: "Bare 3-char hash anchor of the first range line (inclusive)",
 } as const;
 
-export const removeToSchema = {
+export const anchorToSchema = {
   type: "string",
-  description: "Last line to remove (inclusive)",
+  description: "Bare 3-char hash anchor of the last range line (inclusive)",
 } as const;
-
 export const pathSchema = {
   type: "string",
   description: "File path; null infers it from anchors",
@@ -356,22 +380,22 @@ export const editPathSchema = {
 
 export const editTupleSchema = {
   type: "array",
-  prefixItems: [removeFromSchema, removeToSchema, replacementTextSchema],
+  prefixItems: [anchorFromSchema, anchorToSchema, replaceWithSchema],
   minItems: 3,
   maxItems: 3,
-  description: "[remove_from, remove_to, replacement_text]",
+  description: "[anchor_from, anchor_to, replace_with] (legacy tuple form)",
 } as const;
 
 export const editObjectSchema = {
   type: "object",
   additionalProperties: false,
-  required: ["remove_from", "remove_to", "replacement_text"] as const,
+  required: ["anchor_from", "anchor_to", "replace_with"] as const,
   properties: {
-    remove_from: removeFromSchema,
-    remove_to: removeToSchema,
-    replacement_text: replacementTextSchema,
+    anchor_from: anchorFromSchema,
+    anchor_to: anchorToSchema,
+    replace_with: replaceWithSchema,
   },
-  description: "{remove_from, remove_to, replacement_text}",
+  description: "{anchor_from, anchor_to, replace_with}",
 } as const;
 
 export const editItemSchema = {
@@ -382,13 +406,13 @@ export const editItemSchema = {
 export const editToolSchema = {
   type: "object",
   additionalProperties: false,
-  required: ["path", "edits"] as const,
+  required: ["file", "edits"] as const,
   properties: {
-    path: editPathSchema,
+    file: editPathSchema,
     edits: {
       type: "array",
       description:
-        "Ordered list of edit entries — each entry is either a tuple [remove_from, remove_to, replacement_text] or an object {remove_from, remove_to, replacement_text} (mixed batches allowed)",
+        "Ordered list of edit entries — each entry is a named object {anchor_from, anchor_to, replace_with} (legacy tuples still fold pre-validation)",
       minItems: 1,
       maxItems: EDITS_MAX_ITEMS,
       items: editItemSchema,

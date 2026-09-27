@@ -9,9 +9,10 @@ import type { Context } from "@deepseek-ai/cordis";
 import { defineTool } from "@deepseek-ai/dsh-tools";
 import { toLF, stripBOM, genDiff, restoreEndings } from "./edit-diff.js";
 import { cntDiff, splitLines, codeOf } from "./utils.js";
+import { DomainError, formatError } from "./domain-errors.js";
 import { assertUndoRequest } from "./contract.js";
 import { normalizeRequest as normReq } from "./contract.js";
-import { upsertSnapshotFor } from "./hash-store.js";
+import { loadHashStore, withStore } from "./hash-store.js";
 import { canon, contentChecksum } from "./hashline/hash-assign.js";
 import { lineHashes } from "./hashline/hash.js";
 import { changedRange } from "./hashline/anchor-pipeline.js";
@@ -75,13 +76,13 @@ export function buildUndoTool(io: FileIO, sandbox: FsSandboxController) {
           const message = error instanceof Error ? error.message : String(error);
           if (codeOf(error) === "E_NOT_FOUND") {
             await clearUndo(absolutePath);
-            return `[E_UNDO_STALE] cannot undo on ${path}: file no longer exists.`;
+            return formatError("E_UNDO_STALE", { path, reason: "deleted" });
           }
           throw error;
         }
         if (currentRaw !== undo.bom + restoreEndings(undo.resultContent, undo.originalEnding)) {
           await clearUndo(absolutePath);
-          return `[E_UNDO_STALE] cannot undo on ${path}: file modified after edit — undo would overwrite changes.`;
+          return formatError("E_UNDO_STALE", { path, reason: "modified" });
         }
 
         const { text: currentStripped } = stripBOM(currentRaw);
@@ -150,18 +151,28 @@ export function buildUndoTool(io: FileIO, sandbox: FsSandboxController) {
           throw sandbox.mapError(error, sandboxPolicy);
         }
 
+        // The file is reverted; the store pair must move as ONE unit: the snapshot/lineage
+        // adopt (`upsertSnapshot`) and the undo-pair clear (`deleteUndoPair`) are both-or-neither.
+        // `withStore` routes both calls through the store's single re-entrant transaction owner
+        // (the store was just loaded for this workspace, so `currentStore()` is that same handle).
+        // Fail loud: a cleared pair over an un-adopted snapshot is a desync no later read/edit can see.
+        const store = await loadHashStore();
         try {
-          await upsertSnapshotFor(
-            absolutePath,
-            contentChecksum(undo.content),
-            splitLines(undo.content).length,
-            restoredHashes,
-          );
+          withStore(() => {
+            store.upsertSnapshot(
+              absolutePath,
+              contentChecksum(undo.content),
+              splitLines(undo.content).length,
+              restoredHashes,
+              undo.content,
+            );
+            store.deleteUndoPair(absolutePath);
+          });
         } catch (error) {
-          console.error("Failed to restore hash store snapshot after undo:", error);
+          // Not a swallow: the raw cause is logged for diagnosis, then the tool fails loud.
+          console.error("Failed to record the undo restore in the hash store:", error);
+          throw new DomainError("E_UNDO_NOT_RECORDED", { path });
         }
-
-        await clearUndo(absolutePath);
 
         const parts: string[] = [`Undone last edit on ${path}.`];
         if (linesAddedByEdit > 0 || linesRemovedByEdit > 0) {
@@ -169,20 +180,27 @@ export function buildUndoTool(io: FileIO, sandbox: FsSandboxController) {
             `Removed ${linesAddedByEdit} line(s) that were added and restored ${linesRemovedByEdit} line(s) that were removed.`,
           );
         }
-        parts.push(
-          "File reverted to previous state. The post-edit diff rows carry the restored file\u2019s fresh anchors for follow-up edits.",
-        );
-
+        // The serve write is a SECOND unit, deliberately outside the committed pair: a fault
+        // here must not roll the revert back. But it decides whether the anchors below are
+        // usable, so the claim is made only when the serve landed.
+        let serveLanded = true;
         if (undoDenseRows.length > 0) {
-          await recordServedTruncated(
+          serveLanded = await recordServedTruncated(
             sessionKey,
             absolutePath,
             undoDenseRows,
             splitLines(undo.content).length,
             restoredRange?.firstChangedLine ?? undoDiffResult.firstChangedLine ?? 0,
             splitLines(undo.content).map((l) => canon(l)),
+            { content: undo.content, hashes: restoredHashes },
           );
         }
+
+        parts.push(
+          serveLanded
+            ? "File reverted to previous state. The post-edit diff rows carry the restored file\u2019s fresh anchors for follow-up edits."
+            : "File reverted to previous state. WARNING: the restored file\u2019s fresh anchors were NOT recorded as served — the diff rows below are NOT usable anchors and no edit can be based on them. Re-read the file before editing it.",
+        );
 
         return [parts.join("\n"), "", "Diff of the revert:", "", undoDiff].join("\n");
       });
