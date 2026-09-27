@@ -13,6 +13,10 @@ All notable changes to this project will be documented in this file.
 
 ### Features
 
+* **absorb:** land the upstream v2 line-identity redesign on this branch - seam ports, lease identity, and served-span verification across 177 gated, mutant-proven commits (#81)
+* **errors:** address headers to the addressee - `[TO MODEL]`/`[TO USER]` rendering so a cold reader tells addressee from channel; codes, remedies, and the sole composer unchanged (#81)
+* **read:** enforce test-tree typechecking in the gate - the test config overrides the inherited base exclude, closing the zero-file coverage hole with 146 loaded test files (#81)
+
 * **served:** a rejected edit now answers with the current rows of exactly the region the submitted anchors name (region-matched serve); the payload never re-binds another region, and re-read stays the recovery
 * **store:** v7 content-addressed line identity — lines carry stable ids with lineage, leases key on identity, and materialization/undo resolve through it instead of position
 
