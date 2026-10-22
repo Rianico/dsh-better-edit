@@ -1,12 +1,5 @@
 # Legacy unattributed baseline
-# The 1.0.0 release promoted the previous bridge entries into their version section, so
-# this file was re-seeded for the dsh 0.2.1-rc.2 lane (issue #82). The four entries below
-# are this lane's own and carry no PR number yet; fabricating one would dangle. The
-# landing PR attributes them with its number and re-runs
-# `python3 scripts/changelog-gate.py ledger --update-baseline` to shrink this file.
-# Non-comment lines are gate-written identity bytes (never retyped); comments are skipped
-# by read_baseline.
-**deps:** upgrade the `@deepseek-ai/dsh-*` dev baseline to `0.2.1-rc.2` and `@deepseek-ai/cordis` to `4.0.5`
-**docs:** state and document dsh `0.2.0+` support in both READMEs, and sync the plugin-authoring skill for `0.2.1-rc.2` - `agent/created`, the 1000-band section orders, the `workingDirectory` seam, the shipped preset ids, and `sandboxPermissionsDescription`
-**dsh:** follow the session's live working directory instead of the immutable creation header - a `working_directory` change now retargets relative-path resolution and the per-workspace store (the 0.2.1 `workingDirectory` service; the header stays as the pre-0.2.1 fallback)
-**guidance:** derive each tool section's default order from the harness's canonical slot (`systemPrompt.getSectionOrder` for `TOOL_READ`/`TOOL_EDIT`, with a `1100`/`1300`/`1310` fallback) and seed the shipped `ptc` preset in place of the retired `code`
+# Empty since the dsh 0.2.1-rc.2 lane: the landing PR (#83) attributes these
+# entries itself, so no bridge is needed. Comment lines are skipped by
+# read_baseline; every non-comment line would be the exact bytes of
+# entry_identity (gate:82-90), written by the gate via --update-baseline.
