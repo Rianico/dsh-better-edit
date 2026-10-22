@@ -16,6 +16,7 @@
  */
 
 import { AsyncLocalStorage } from "node:async_hooks";
+import type { Session } from "@deepseek-ai/dsh-session";
 import type { ToolExecution } from "@deepseek-ai/dsh-tools";
 
 // --- AsyncLocalStorage for cwd propagation ---
@@ -41,8 +42,40 @@ export function sessionKeyFor(sessionId?: string): string {
   );
 }
 
+/**
+ * The dsh 0.2.1+ `workingDirectory` service (`@deepseek-ai/dsh-working-directory`),
+ * read structurally because a composition may predate the service — there the
+ * session header is still the only directory.
+ */
+interface WorkingDirectoryLike {
+  /** The Session's committed effective directory; a total read, no filesystem I/O. */
+  get(session: Session): string;
+}
+
+/** The live working directory, when the agent's scope can see the service. */
+function workingDirectoryFor(agent: ToolExecution["agent"]): WorkingDirectoryLike | undefined {
+  const ctx: { get?: (name: string) => unknown } | undefined = agent?.ctx;
+  if (typeof ctx?.get !== "function") return undefined;
+  return ctx.get("workingDirectory") as WorkingDirectoryLike | undefined;
+}
+
+/**
+ * The directory this call operates in.
+ *
+ * Since dsh 0.2.1 the session header keeps only the directory the session was
+ * CREATED in — the `working_directory` tool may have moved the session since —
+ * so the effective directory is read from the `workingDirectory` service, whose
+ * synchronous `get(session)` returns the committed value. A composition without
+ * that service falls back to the header, where the directory lived before the
+ * service existed.
+ */
 export function execCwd(exec: ToolExecution): string {
-  return exec.agent?.session.header.cwd ?? process.cwd();
+  const session = exec.agent?.session;
+  const workingDirectory = workingDirectoryFor(exec.agent);
+  if (session !== undefined && workingDirectory !== undefined) {
+    return workingDirectory.get(session);
+  }
+  return session?.header.cwd ?? process.cwd();
 }
 
 export function execSessionKey(exec: ToolExecution): string {
