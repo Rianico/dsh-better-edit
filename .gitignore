@@ -10,3 +10,4 @@ tmp/
 .lsz/*
 !.lsz/config.yaml
 __pycache__/
+dist/

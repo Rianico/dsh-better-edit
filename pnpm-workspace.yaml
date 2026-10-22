@@ -1,5 +1,8 @@
+# pnpm 12 blocks dependency build scripts by default. esbuild (a vite dep) needs
+# its postinstall to install the matching native binary; allow exactly this one.
 allowBuilds:
   esbuild: true
+
 minimumReleaseAgeExclude:
   - "@deepseek-ai/dsh-agent@0.2.1-rc.2"
   - "@deepseek-ai/dsh-brand@0.2.1-rc.2"
@@ -20,3 +23,14 @@ minimumReleaseAgeExclude:
   - "@deepseek-ai/dsh-user-approval@0.2.1-rc.2"
   - "@deepseek-ai/dsh-util-crypto@0.2.1-rc.2"
   - "@deepseek-ai/dsh-util-values@0.2.1-rc.2"
+
+auditConfig:
+  # GHSA-vfj7-8cjw-p6xm: braces <=3.0.3 (via semantic-release > micromatch) has
+  # no patched release at the time of writing, and every scaffolded repo
+  # inherits it, so the audit gate would be red on day one. This suppresses
+  # exactly that advisory; every other high-severity advisory still fails
+  # `pnpm run audit`.
+  # Removal condition: drop this entry once a patched braces ships or the
+  # advisory clears.
+  ignoreGhsas:
+    - GHSA-vfj7-8cjw-p6xm

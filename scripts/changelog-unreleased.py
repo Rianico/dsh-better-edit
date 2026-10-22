@@ -6,12 +6,10 @@
 """Manage ## [Unreleased] section in CHANGELOG.md.
 
 - update: generate notes from commits since last tag, place under Unreleased
-- clear:  remove Unreleased section before semantic-release takes over
 - check:  read-only drift check — exit 0 when in sync, 1 when `update` would rewrite (never writes)
 
 Usage:
   python scripts/changelog-unreleased.py update [--changelog CHANGELOG.md]
-  python scripts/changelog-unreleased.py clear [--changelog CHANGELOG.md]
   python scripts/changelog-unreleased.py check [--changelog CHANGELOG.md]
 """
 
@@ -384,30 +382,10 @@ def check_changelog(changelog: Path) -> tuple[bool, str]:
     return False, diff or f"{changelog}: drift"
 
 
-def clear_changelog(changelog: Path) -> bool:
-    if not changelog.exists():
-        return False
-    content = changelog.read_text(encoding="utf-8")
-    if UNRELEASED_HEADING not in content:
-        return False
-    before, rest = content.split(UNRELEASED_HEADING, 1)
-    m = VERSION_HEADING_RE.search(rest)
-    after = rest[m.start() :] if m else ""
-    # Keep the heading: @semantic-release/changelog anchors its insertion point on it, and
-    # prepends the new version above the file title (and stranded the title at the end) when it
-    # is missing - which is exactly what the v2.0.0 release did.
-    new_content = before.rstrip() + "\n\n" + UNRELEASED_HEADING + "\n\n" + after.lstrip()
-    new_content = re.sub(r"\n{3,}", "\n\n", new_content).strip() + "\n"
-    if new_content == content:
-        return False
-    _ = changelog.write_text(new_content, encoding="utf-8")
-    return True
-
-
 def main() -> int:
     parser = argparse.ArgumentParser(description="Manage Unreleased section in CHANGELOG.md")
     _ = parser.add_argument(
-        "command", choices=["update", "clear", "check"], help="update, clear, or check Unreleased"
+        "command", choices=["update", "check"], help="update or check Unreleased"
     )
     _ = parser.add_argument("--changelog", default="CHANGELOG.md", help="path to CHANGELOG.md")
     args = parser.parse_args()
@@ -416,10 +394,6 @@ def main() -> int:
     if args.command == "update":
         changed = update_changelog(changelog)
         print("updated" if changed else "no change")
-        return 0
-    if args.command == "clear":
-        changed = clear_changelog(changelog)
-        print("cleared" if changed else "no change")
         return 0
 
     # check — read-only; exit 1 so a gate can fail loud on drift without mutating the tree

@@ -62,7 +62,9 @@
     "format": "oxfmt --check .",
     "format:check": "oxfmt --check .",
     "test:coverage": "vitest run --coverage",
-    "format:fix": "oxfmt ."
+    "format:fix": "oxfmt .",
+    "audit": "pnpm audit --audit-level high --registry https://registry.npmjs.org/",
+    "verify": "pnpm run lint && pnpm run format && pnpm run typecheck && pnpm run test:coverage"
   },
   "dependencies": {
     "diff": "^8.0.2",
@@ -95,7 +97,7 @@
     "semantic-release": "^25.0.9",
     "tsx": ">=4",
     "typescript": ">=7",
-    "vite": ">=8",
+    "vite": "^8.3.5",
     "vitest": "^4.1.8"
   },
   "optionalDependencies": {

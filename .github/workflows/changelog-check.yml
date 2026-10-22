@@ -2,6 +2,7 @@ name: Changelog Check
 on:
   pull_request:
     branches: [main]
+    types: [opened, synchronize, reopened, ready_for_review]
   push:
     branches: [main]
 permissions:
@@ -12,6 +13,7 @@ concurrency:
 jobs:
   check:
     runs-on: ubuntu-latest
+    if: github.event_name == 'push' || github.event.pull_request.draft == false
     permissions:
       contents: read
       pull-requests: write
@@ -34,6 +36,7 @@ jobs:
         env:
           PR_NUMBER: ${{ github.event.pull_request.number }}
           PR_BODY: ${{ github.event.pull_request.body }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
         run: |
           set -o pipefail
           if [ -z "$PR_NUMBER" ]; then
@@ -54,6 +57,9 @@ jobs:
           if [ -n "$landing" ]; then
             echo "landing: $landing"
             args+=(--landing "$landing")
+          fi
+          if [ -n "$PR_TITLE" ]; then
+            args+=(--squash-title "$PR_TITLE")
           fi
           python scripts/changelog-gate.py ledger "${args[@]}"
       - name: Comment on failure

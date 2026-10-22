@@ -16,8 +16,8 @@ jobs:
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0  # zizmor: ignore[cache-poisoning]
         with: { node-version: 26, cache: pnpm }
       - run: pnpm install
-      - run: pnpm audit --audit-level high
-      - run: pnpm run lint && pnpm run format && pnpm run typecheck && pnpm run test:coverage
+      - run: pnpm run audit
+      - run: pnpm run verify
   release:
     needs: verify
     runs-on: ubuntu-latest
@@ -33,6 +33,11 @@ jobs:
         with: { run_install: false }
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0  # zizmor: ignore[cache-poisoning]
         with: { node-version: 26, cache: pnpm }
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with: { python-version: "3.14" }
+      - name: Retire the migration baselines
+        run: |
+          python scripts/changelog-gate.py ledger --update-baseline
       - run: pnpm install
       - run: pnpm exec semantic-release
         env:

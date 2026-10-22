@@ -9,8 +9,12 @@
  * - `generateNotes` returns the curated block, so the release notes are what a human wrote.
  * - `prepare` promotes it to `## [version] - date` and re-opens an empty `## [Unreleased]` above.
  *
- * `generateNotes` runs before `prepare` in the pipeline, so the notes are read while the block is
- * still unreleased.
+ * `generateNotes` is called twice: once in the generateNotes phase (while the block is still
+ * unreleased), and again by semantic-release v25's `prepare` pipeline, which regenerates notes
+ * after any `prepare` plugin that changes `gitHead` — `@semantic-release/git` commits the
+ * CHANGELOG back, so the regeneration fires after this plugin's own `prepare` has already
+ * promoted the block to the dated heading. The first result is cached so the curated ledger
+ * survives the second call instead of returning the now-empty `[Unreleased]` block.
  *
  * An empty block is not an error. A landing can carry no entry — a direct push to `main`, say — and
  * blocking a release on a bookkeeping gap is worse than releasing without user-facing text, so the
@@ -43,9 +47,16 @@ function changelogPath(pluginConfig, context) {
   return join(context.cwd ?? process.cwd(), pluginConfig.changelogFile ?? "CHANGELOG.md");
 }
 
+/** The curated notes captured while `[Unreleased]` was still populated, held across regeneration. */
+let cachedNotes = null;
+
 export async function generateNotes(pluginConfig, context) {
+  if (cachedNotes !== null) {
+    return cachedNotes;
+  }
   const { body } = split(await readFile(changelogPath(pluginConfig, context), "utf8"));
-  return body || EMPTY_NOTES;
+  cachedNotes = body || EMPTY_NOTES;
+  return cachedNotes;
 }
 
 export async function prepare(pluginConfig, context) {
