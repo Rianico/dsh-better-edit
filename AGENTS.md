@@ -10,6 +10,16 @@ Prefer issues + pull requests. See `CONTRIBUTING.md` for Conventional Commits (c
 
 TypeScript: pnpm v12 + .nvmrc (24) + TS v7 + Vite v8, verify via oxlint/oxfmt/tsc/vitest; see package.json
 
+DeepSeek Harness: dev baseline `@deepseek-ai/dsh-*@0.2.1-rc.2` + `@deepseek-ai/cordis@4.0.5` (issue #82).
+No peer range and no runtime probing — compatibility rides the plugin surface plus optional-service
+fallbacks (`workingDirectory` for the live cwd, `agentPresets` for preset ids, `systemPrompt.getSectionOrder`
+for prompt-section order); a composition without one keeps its pre-0.2.1 behaviour. The
+`dsh-plugin-guidelines` skill is the API reference and is pinned to the same version — bump both together.
+Runtime-verified on `0.2.1-rc.2` with a throwaway profile (`dsh plugin add <tgz>` + boot): the shipped
+presets seed, and the agent assembly (`assembleContextFor(agent)`) resolves the hashline
+`read`/`edit`/`undo_last_edit` tools and their guidance. Probe with `{ agent, scope: agent }` —
+`assemble({ agent })` alone shows the global view and will look like your shadow failed.
+
 ## Upstream sync — absorbing pi-better-edit
 
 Upstream: <https://github.com/Rianico/pi-better-edit> — local checkout `../pi-better-edit` if present; add remote when needed: `git remote add upstream https://github.com/Rianico/pi-better-edit.git`.

@@ -109,11 +109,14 @@ No config. Next session runs with hashline tools. Verify:
 dsh --profile <name> --dump-config   # shows "# == dsh-better-edit" layer
 ```
 
-| Requirement |                                          |
-| ----------- | ---------------------------------------- |
-| Node        | `^22.19.0 \|\| >=24.0.0`                 |
-| Profile     | `dsh` profile (`dsh plugin` creates one) |
-| Backends    | sandboxed / remote `ctx.fs`              |
+| Requirement |                                                                                   |
+| ----------- | --------------------------------------------------------------------------------- |
+| Node        | `^22.19.0 \|\| >=24.0.0`                                                          |
+| Profile     | `dsh` profile (`dsh plugin` creates one)                                          |
+| Backends    | sandboxed / remote `ctx.fs`                                                       |
+| dsh         | `0.2.1-rc.2` (verified end-to-end; `0.1.6-alpha.2` was the last pre-0.2 baseline) |
+
+**dsh 0.2.0+ is supported.** Registration uses `agent/created`, path resolution follows the session's live working directory (`workingDirectory`, with the session header as the pre-0.2.1 fallback), and tool-guidance order comes from `systemPrompt.getSectionOrder`. There is no peer range and no runtime version probing: compatibility comes from that stable surface plus optional-service fallbacks, so a composition that omits `workingDirectory` or `agentPresets` keeps working.
 
 ### See it work
 
@@ -175,7 +178,7 @@ storeMaxTotalBytes: 524288000 # 500 MB LRU
 
 Env overrides yaml (`DSH_BETTER_EDIT_STORE_DIR`, `DSH_BETTER_EDIT_AUTO_GITIGNORE`).
 
-**Guidance per preset** — `tool:read` / `tool:edit` / `tool:undo_last_edit` are plain markdown per preset at `$DSH_HOME/plugins/dsh-better-edit/<preset>/<section>.md` (orders `130/131/133`). Delete or empty a file → default re-seeds at next boot; keep a `---` fence to blank on purpose.
+**Guidance per preset** — `tool:read` / `tool:edit` / `tool:undo_last_edit` are plain markdown per preset at `$DSH_HOME/plugins/dsh-better-edit/<preset>/<section>.md`. The default order is the harness's own tool slot (`systemPrompt.getSectionOrder`: `1100` read, `1300` edit, `1310` undo), so a band change upstream moves the sections with it; front-matter pins a custom order. The seeded roster is the shipped presets — `standard`, `ptc`, `minimal`, `cordis`. Delete or empty a file → default re-seeds at next boot; keep a `---` fence to blank on purpose.
 
 ## Why Hashline
 
@@ -306,12 +309,12 @@ Saved **313 (31%)**. Reproduce: upstream `npm run benchmark`. See [`pi-better-ed
 
 ## Roadmap
 
-**Current `0.7.0`:** pos-free `resist`/`strict` + retired anchor/canons/epoch, per-session `(session,path)` store, `1222` tests, `9/9` harness.
+**Current `1.0.0`:** the v2 line-identity architecture, per-session `(session,path)` store, `1648` tests, dsh `0.2.1-rc.2`.
 
 <details><summary>Next</summary>
 
 - Keep `benchmark/run.mjs` in sync with `ADR-0013` (reads/retries/tokens per session)
-- Re-check wiring vs next `dsh` (pinned `0.1.0-rc.6`)
+- Re-check wiring vs next `dsh` (pinned `0.2.1-rc.2`)
 - `README.zh.md` parity
 
 </details>

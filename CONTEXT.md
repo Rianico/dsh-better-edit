@@ -182,6 +182,16 @@ _Avoid_: E_HASH_ECHO (ambiguous); E_WRITE_HASH_ECHO / E_EDIT_HASH_ECHO (the per-
 Auto-spliced `replacement_text` edge when it equaled an adjacent file line — `trailingDups`/`leadingDups` (byte `===`, 1-line) and `firstNewAfterDups`/`lastNewBeforeDups` (`canon()` + `sectionIsUnique`). Removed — tool is now pure `range = [remove_from, remove_to]` by hash, `replacement = exact replacement_text`; a duplicate stays as a loud duplicate the model fixes next turn (see ADR-0007).
 _Avoid_: boundaryDups
 
+### Workspace
+
+**Working directory**:
+The directory a tool call operates in: the session's committed live directory from the `workingDirectory` service (moved by the `working_directory` tool), falling back to the immutable session header's `cwd` when the composition predates the service. It keys relative-path resolution and the per-workspace store.
+_Avoid_: cwd (ambiguous: header vs live), project root
+
+**Session header directory**:
+The directory the session was CREATED in, kept immutable in the session header (`exec.agent.session.header.cwd`). Not the operation target once a session has moved — read the working directory instead.
+_Avoid_: workspace (the workspace follows the live directory, not the header)
+
 ### Guidance
 
 **Prompt section**:
@@ -198,11 +208,13 @@ A `<preset>/<section>.md` plain-markdown file in the plugin's shared home that o
 _Avoid_: preset ("the preset file" is the composition row, not this override file), custom prompt
 
 **Order**:
-The numeric ordering of a prompt section within the assembled system prompt. Overridable alongside guidance.
+The numeric ordering of a prompt section within the assembled system prompt. A section without an explicit `order` takes the harness's canonical slot for its tool (`systemPrompt.getSectionOrder('TOOL_READ'|'TOOL_EDIT')`), falling back to `1100`/`1300`/`1310` when the registry predates that API. Overridable alongside guidance; equal orders sort by name.
+
+_Prefer_: harness slot (for the canonical value)
 
 **Preset**:
-A per-session agent composition from the dsh roster (`agent.cordis.yml` plus metadata, system- or user-authored). The unit guidance overrides are keyed by; the plugin reads the agent's preset id at `agent/created` via `agentPresets.composedPreset`.
-
+A per-session agent composition declared by a `@deepseek-ai/dsh-agent-preset` row (an id plus child plugin rows) and served by `agentPresets`. The unit guidance overrides are keyed by; the plugin reads the agent's preset id at `agent/created` via `agentPresets.composedPreset`. Shipped ids: `standard`, `ptc`, `minimal`, `cordis`.
+_Avoid_: `agent.cordis.yml` (the pre-0.2 roster file), mode (the UI label)
 **Reset**:
-Restoring the compiled default guidance and order for an override file. Triggered by emptying an override file without a front-matter fence, deleting it, or deleting its whole `<preset>/` directory: the plugin renders the compiled default at session-start and re-seeds at next boot — shipped presets always re-seed; a deleted custom-preset override stays absent (absence is no override).
+Restoring the compiled default guidance and order for an override file. Triggered by emptying an override file without a front-matter fence, deleting it, or deleting its whole `<preset>/` directory: the plugin renders the compiled default at agent creation and re-seeds at next boot — shipped presets always re-seed; a deleted custom-preset override stays absent (absence is no override).
 _Avoid_: restore, regenerate, "recover the default prompt"

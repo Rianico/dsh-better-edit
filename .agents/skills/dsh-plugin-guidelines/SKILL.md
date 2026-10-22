@@ -12,12 +12,12 @@ whole surface: the **two planes** (where your code runs) and **own layer wins**
 checkable against the running deployment: if a tool fails to appear, fails to
 shadow, or breaks the next built-in tool, one of these rules was missed.
 
-**Pinned to dsh `0.1.0-rc.6`.** The harness is in developer preview and its
+**Pinned to dsh `0.2.1-rc.2`.** The harness is in developer preview and its
 docs promise compatibility-breaking changes. Every rule cites the mechanism
 it derives from — the registry's scope layering, the `fs/*` event gate, the
 bundle patch semantics. When a rule stops matching your installed dsh, the
 mechanism is where it broke: read the package that owns it (`dsh-tools`,
-`dsh-fs`, `dsh-agent-presets`, `dsh-system-prompt`) rather than the rule.
+`dsh-fs`, `dsh-agent-preset-registry`, `dsh-system-prompt`) rather than the rule.
 
 The tutorials own the copy-paste shapes: `docs/cookbook/adding-a-tool.md` for a
 tool, `docs/cookbook/adding-a-package.md` for a bundle,
@@ -34,12 +34,14 @@ A plugin row runs on one of two planes, and the plane decides what it can do:
 - **Agent plane** — per-session compositions (the **presets**), mounted once
   under a standing scope; every session that names a preset joins it by scope
   parentage. The model-facing tools (`edit`, `read`, `write`, `bash`, …) live
-  HERE, not on the host.
+  HERE, not on the host. A preset is a `@deepseek-ai/dsh-agent-preset` row (an
+  id plus child plugin rows) served by the `agentPresets` service; the shipped
+  ids are `standard`, `ptc`, `minimal`, `cordis`.
 
 Consequence: a bundle patch **cannot add rows to a preset**, and a host-plane
 registration of a tool name that a preset already registers does not replace
 it — the preset's nearer layer wins. To change what the model sees, either
-patch the preset's composition (user-authored preset, `dsh-agent-presets`) or
+patch the preset's composition (a user-authored `@deepseek-ai/dsh-agent-preset` row) or
 shadow per-agent (below).
 
 ## Own layer wins
@@ -68,27 +70,31 @@ Assembly merges every layer's sections, then concatenates them in ascending
 `order` — one number, nothing else. The `order` gotchas the tutorials' examples
 never confess:
 
-- **The bands are convention, not enforcement.** `-100` harness identity, `0`
-  persona, `100–199` tool guidance. A section at any order sorts exactly where
-  the number sits; nothing validates the band. Plugin tool guidance in the
-  100–199 band interleaves with the built-ins, whose occupancy is current for
-  rc.6: 100 read, 103 glob, 105 bash/pwsh, 106 jobs, 110 web_search, 114 goal,
-  115 cordis/workflow, 116 ralph — pick gap numbers or a clean upper band, and
-  verify the occupancy against the installed `dsh-tool-*` packages before
-  choosing.
-- **Equal `order` values tie-break by registration order** — a load artifact,
-  nondeterministic across loads. Distinct names at one order do NOT throw
-  (duplicate names do, per above); only non-finite orders throw too. A tie with
-  a built-in is the "breaks system prompt consistency" report: the same prompt
-  assembles in different order on machines with different load orders. `dsh-better-edit`
-  ships its own tool-guidance defaults at 130–133 for exactly this reason — above the
-  built-in band, so a same-order tie with a built-in cannot occur out of the box.
+- **The bands are convention, not enforcement.** `-1000` harness identity, `0`
+  persona prefix, `500` plan policy, `600` team policy, `800` PTC-only, `900`
+  file reference, `1000–3100` tool guidance, `5000` SDK, `9900` structured
+  output — a section at any order sorts exactly where the number sits; nothing
+  validates the band. Do not hard-code a band number: ask the registry with
+  `ctx.systemPrompt.getSectionOrder('TOOL_READ')`, which returns the installed
+  build's slot for a named tool section (`TOOL_BASH` 1000, `TOOL_READ` 1100,
+  `TOOL_WRITE` 1200, `TOOL_EDIT` 1300, `TOOL_GLOB` 1400, `TOOL_GREP` 1500, … in
+  `0.2.1`; `TOOL_CORDIS` existed through `0.1.7` and is gone). The *order* band
+  itself has already moved once (the `0.1.0-rc.6` band was `100–199`) — a
+  pinned literal is how a plugin silently slides ahead of the built-ins.
+- **Equal `order` values tie-break by section name** — deterministic, but a
+  same-order pair silently reorders guidance relative to its tool. Distinct
+  names at one order do NOT throw (duplicate names do, per above); only
+  non-finite orders throw too. `dsh-better-edit` derives its tool-guidance
+  default from `getSectionOrder` (`TOOL_READ` / `TOOL_EDIT`, with a static
+  `1100`/`1300`/`1310` fallback for registries that predate the API) instead of
+  pinning a band literal.
 
 Consequence of own layer wins: a preset row can neither reorder nor override a
 plugin's agent-layer sections — its same-named sections are shadowed, its
-different-named ones only tie. A plugin that needs configurable text or order
-must read its own row `config` (it reaches `apply(ctx, config)`) or its own
-files; it cannot be patched from outside.
+different-named ones only share an order (sorted by name, never by load order).
+A plugin that needs configurable text or order must read its own row `config`
+(it reaches `apply(ctx, config)`) or its own files; it cannot be patched from
+outside.
 
 ### Shadowing a built-in (the pattern)
 
@@ -98,28 +104,42 @@ on disposal:
 
 ```ts
 const installed = new WeakSet<Agent>()
-ctx.on('agent/session-start', ({ agent }) => {
+ctx.on('agent/created', ({ agent }) => {
   if (installed.has(agent)) return
   installed.add(agent)
   agent.ctx.effect(() => {
     const disposers: Array<() => void> = []
     disposers.push(agent.ctx.tools.register(defineTool({ ... })))   // own layer → shadows preset's
-    disposers.push(agent.ctx.systemPrompt.section({ name: 'tool:edit', order: 102, text }))
+    disposers.push(agent.ctx.systemPrompt.section({ name: 'tool:edit', order: agent.ctx.systemPrompt.getSectionOrder('TOOL_EDIT'), text }))
     return () => { for (const dispose of disposers) dispose() }
   })
 })
 ```
 
-`agent/session-start` is the first startup-driving extension point, so the
-shadow is installed before the first request. A subagent is an agent too and
-fires its own `session-start`; the child's own layer shadows whatever it
-inherited. `agent.ctx` is agent-local, auto-unwound, and rejects registration
-after disposal — do not hoist the registration to the plain context.
+`agent/created` is the first startup-driving extension point after the agent
+exists, so the shadow is installed before the first request. A subagent is an
+agent too and fires its own `agent/created`; the child's own layer shadows
+whatever it inherited. `agent.ctx` is agent-local, auto-unwound, and rejects
+registration after disposal — do not hoist the registration to the plain
+context.
+
+**Probe with the agent's scope, not just the agent.** `systemPrompt.assemble({
+agent })` resolves the GLOBAL view — it will show the built-in `read`/`edit`
+even when your agent-layer shadow is correct. The real assembly carries the
+agent as the scope key: `systemPrompt.assemble(assembleContextFor(agent))`
+(`@deepseek-ai/dsh-agent`) returns `{ agent, scope: agent }`. Likewise
+`tools.get(name, agent)` and `tools.schemas(agent)` take that same key. On dsh
+`0.2.1-rc.2` an `agent/created` registration is visible only through that
+scope-aware view.
+**Render the section only while the tool is visible.** The built-ins pass a
+function instead of a string — `text: ({ scope }) => ctx.tools.get('read', scope)
+? … : ''` — so a restricted-away tool never advertises itself. A static string
+renders even when a policy has hidden the tool.
 
 **Declare `inject` for every service the install touches.** Cordis refuses
 property access to an undeclared service — `cannot get property "fs" without
 inject` — and the failure is silent from the model's side: the install throws
-at session-start, your tools never register, and the session quietly runs the
+at agent creation, your tools never register, and the session quietly runs the
 built-ins. List `tools`, `systemPrompt`, and `fs` (and anything else the
 per-agent work uses) in the plugin's `inject` export.
 
@@ -179,7 +199,8 @@ policy) succeeds. A mutating tool MUST:
 
 1. **Resolve the per-call policy with the session** before mutating —
    `sandboxPolicy.resolve({ session: exec.agent.session })` — so the session
-   cwd is the workspace root. This is what lets `workspace-write` edits land
+   live cwd is the workspace root (the policy service reads the session's
+   `workingDirectory` projection). This is what lets `workspace-write` edits land
    inside the session workspace. (Reuse the built-in's
    `FsSandboxController` shape — `@deepseek-ai/dsh-tool-fs` — or mirror it
    with `@deepseek-ai/dsh-sandbox`.)
@@ -192,7 +213,11 @@ policy) succeeds. A mutating tool MUST:
    is the floor, `danger-full-access` the ceiling). A tool that silently
    drops them turns a retryable denial into a hard `E_BAD_SHAPE` rejection.
    Honor the fields in your own arg validation (allow them through, pass them
-   to the resolver).
+   to the resolver). Take the model-facing `sandbox_permissions` description
+   from `sandboxPermissionsDescription('operation' | 'command')` so the wording
+   matches the built-ins; the approval request may carry an additive
+   `displayReason` (`{ en, [locale] }`) for a localized prompt while `reason`
+   stays the audited text.
 4. **Map `FS_SANDBOX_DENIED`** onto the shared `[sandbox: file access denied
    under <mode> mode]` marker plus the same-turn escalation hint, so the model
    sees the same vocabulary bash and the built-in fs tools use.
@@ -208,9 +233,13 @@ exact disposer.
   yourself (an open root is how an alias like `file_path`→`path` survives
   validation).
 - **`execute(args, exec)`** — `exec.signal` is the required cancellation;
-  `exec.agent?.session.header.cwd` is the session workspace (never
-  `process.cwd()`); `exec.agent?.session.id` keys per-session state. Non-agent
-  callers (tests, previews) have neither — fall back gracefully.
+  `exec.agent.session.header.cwd` is the directory the session was CREATED in —
+  not the live one: since `0.2.1` the `working_directory` tool can move a
+  session, and the effective directory lives on the `workingDirectory` service
+  (`ctx.workingDirectory.get(session)` is a synchronous committed read;
+  `ensure(agent)` validates and may recover). `exec.agent?.session.id` keys
+  per-session state. Non-agent callers (tests, previews) have neither — fall
+  back gracefully, and keep the header only as the pre-`0.2.1` fallback.
 - **Return one canonical JSON value** declared by `output.schema`; `output.render`
   converts it to the model-facing content blocks. `presentCall`/`presentResult`
   are pure functions of args (+ result) for UI cards — no I/O, no session
@@ -269,7 +298,7 @@ bundle list; `dsh plugin --profile <name> add <pkg>@<range>` reverts it.
 3. **`--dump-config` does NOT boot agents.** It shows the host-plane rows
 only — it will not run `apply()` side effects, register prompt sections, or
 materialize files. Confirming the row is loaded is necessary but not
-sufficient for verifying behaviour that happens at `agent/session-start` or
+sufficient for verifying behaviour that happens at `agent/created` or
 boot.
 4. Boot the app and observe the real effects: template files the plugin
 materializes into `$DSH_HOME/plugins/<pkg>/` on `apply()`, then per-

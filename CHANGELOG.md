@@ -11,6 +11,19 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Bug Fixes
+
+* **dsh:** follow the session's live working directory instead of the immutable creation header - a `working_directory` change now retargets relative-path resolution and the per-workspace store (the 0.2.1 `workingDirectory` service; the header stays as the pre-0.2.1 fallback)
+* **guidance:** derive each tool section's default order from the harness's canonical slot (`systemPrompt.getSectionOrder` for `TOOL_READ`/`TOOL_EDIT`, with a `1100`/`1300`/`1310` fallback) and seed the shipped `ptc` preset in place of the retired `code`
+
+### Documentation
+
+* **docs:** state and document dsh `0.2.0+` support in both READMEs, and sync the plugin-authoring skill for `0.2.1-rc.2` - `agent/created`, the 1000-band section orders, the `workingDirectory` seam, the shipped preset ids, and `sandboxPermissionsDescription`
+
+### Miscellaneous Chores
+
+* **deps:** upgrade the `@deepseek-ai/dsh-*` dev baseline to `0.2.1-rc.2` and `@deepseek-ai/cordis` to `4.0.5`
+
 ## [1.0.0] - 2026-09-27
 
 ### Features

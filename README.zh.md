@@ -79,11 +79,14 @@ npx @deepseek-ai/dsh plugin --profile web add /path/to/dsh-better-edit   # 从�
 dsh --profile <name> --dump-config   # 会显示 "# == dsh-better-edit" 层
 ```
 
-| 要求    |                                                                |
-| ------- | -------------------------------------------------------------- |
-| Node    | `^22.19.0 \|\| >=24.0.0`（dsh 的要求；存储使用 `node:sqlite`） |
-| Profile | 一个 dsh profile（首次使用 `dsh plugin` 时初始化）             |
-| 后端    | 支持沙箱/远程文件系统（写入经 `ctx.fs`）                       |
+| 要求    |                                                                       |
+| ------- | --------------------------------------------------------------------- |
+| Node    | `^22.19.0 \|\| >=24.0.0`（dsh 的要求；存储使用 `node:sqlite`）        |
+| Profile | 一个 dsh profile（首次使用 `dsh plugin` 时初始化）                    |
+| 后端    | 支持沙箱/远程文件系统（写入经 `ctx.fs`）                              |
+| dsh     | `0.2.1-rc.2`（已端到端验证；`0.1.6-alpha.2` 是上一个 0.2 之前的基线） |
+
+**支持 dsh 0.2.0 及以上。** 注册走 `agent/created`，路径解析跟随会话的**实时**工作目录（`workingDirectory`，0.2.1 之前回退到 session header），工具指引的 order 取自 `systemPrompt.getSectionOrder`。没有 peer 版本范围，也不做运行时版本探测：兼容性来自这层稳定接口加可选服务回退——缺少 `workingDirectory` 或 `agentPresets` 的组合同样可用。
 
 `read` 返回的每一行都带有哈希前缀——哈希*就是*这一行的地址：
 
@@ -144,7 +147,7 @@ DSH_BETTER_EDIT_STORE_DIR=central|workspace|/abs
 DSH_BETTER_EDIT_AUTO_GITIGNORE=true|false  # 大小写不敏感
 ```
 
-旧的 `<workspace>/.dsh_better_edit/` 在首次以 central 打开时一次性拷贝；`runtime/<name>-<hash8>/` 可通过 `ls` 查看，带 `.wsPath` 旁路文件。生命周期详见 `docs/specs/issue-24-store-tenancy.md`（janitor `mtime>storeMaxAgeS` 后 LRU、WAL checkpoint、`undo` TTL）。
+旧的 `<workspace>/.dsh_better_edit/` 在首次以 central 打开时一次性拷贝；`runtime/<name>-<hash8>/` 可通过 `ls` 查看，带 `.wsPath` 旁路文件。工作区身份跟随会话的**实时**工作目录（`working_directory` 工具），而不是会话创建时的目录。生命周期详见 `docs/specs/issue-24-store-tenancy.md`（janitor `mtime>storeMaxAgeS` 后 LRU、WAL checkpoint、`undo` TTL）。
 
 #### 按 preset 的指引
 
@@ -158,11 +161,11 @@ $DSH_HOME/plugins/dsh-better-edit/<preset>/<section>.md
 
 | 文件                | 提示词片段            | 默认 order |
 | ------------------- | --------------------- | ---------- |
-| `read.md`           | `tool:read`           | 130        |
-| `edit.md`           | `tool:edit`           | 131        |
-| `undo_last_edit.md` | `tool:undo_last_edit` | 133        |
+| `read.md`           | `tool:read`           | 1100       |
+| `edit.md`           | `tool:edit`           | 1300       |
+| `undo_last_edit.md` | `tool:undo_last_edit` | 1310       |
 
-首次启动时插件会为三个随附 preset——`standard/`、`code/`、`minimal/`、`cordis/`——各自写入编译内置的可编辑指引文件（含 `order` front-matter）。详见[配置详情](#按-preset-配置指引)的重置/恢复。完整规范：`docs/specs/issue-24-store-tenancy.md` 与指引文档。
+首次启动时插件会为四个随附 preset——`standard/`、`ptc/`、`minimal/`、`cordis/`——各自写入编译内置的可编辑指引文件（含 `order` front-matter）。默认 order 取自 harness 自己的工具槽位（`systemPrompt.getSectionOrder`），上游调整 band 时会自动跟随；front-matter 可自行钉死。详见[配置详情](#按-preset-配置指引)的重置/恢复。完整规范：`docs/specs/issue-24-store-tenancy.md` 与指引文档。
 
 ##### 重置 / 恢复默认
 
@@ -177,7 +180,7 @@ $DSH_HOME/plugins/dsh-better-edit/<preset>/<section>.md
 
 - **为什么要连栅栏一起删**：只要文件里还有 `---` 栅栏，哪怕是空的、什么内容也没有，插件都当成“你有意留空”，不会去动它。所以“故意留空”就保留栅栏；“恢复默认”就把栅栏和内容一起清掉。
 - **栅栏写错了会怎样**：少了一个 `---`、`order` 不是数字、出现了不认识的键——只要栅栏格式不对，插件会直接忽略这个文件：仍然渲染默认指引，并在日志里提示是哪个文件、哪里写错了。你写的正文会原样留在磁盘上，方便改好后再用。
-- **自带 preset 与自定义 preset**：插件自带的四个 preset（`standard`、`code`、`minimal`、`cordis`）会在下一次启动时自动补全空白文件；自定义 preset 里删除的覆盖文件不会自动出现（删了就当“没有这个文件”）。删掉某一整个 preset 目录，下次启动时插件会重新生成里面的四个文件（仅限自带 preset）。
+- **自带 preset 与自定义 preset**：插件自带的四个 preset（`standard`、`ptc`、`minimal`、`cordis`）会在下一次启动时自动补全空白文件；自定义 preset 里删除的覆盖文件不会自动出现（删了就当“没有这个文件”）。删掉某一整个 preset 目录，下次启动时插件会重新生成里面的三个片段文件（仅限自带 preset）。
 - **恢复的是“当前版本”的默认**：插件升级后，重置得到的是新版本带的新默认内容，不是旧版本留下的。
 
 文件的重新生成只发生在插件启动时，绝不影响进行中的会话。
@@ -354,14 +357,14 @@ npm publish --registry https://registry.npmjs.org   # 版本未打 tag 前会被
 
 ## 路线图
 
-**当前状态（0.1.7）：** 615 个测试、按工作区存储、参与沙箱策略、served-tail 截断修复、可复现基准测试、中英双语 README、已发布 npm。
+**当前状态（1.0.0）：** v2 行身份架构、按会话 `(session,path)` 存储、1648 个测试、中英双语 README、dsh `0.2.1-rc.2`。
 
 <details><summary>下一步</summary>
 
 - **缩小或证明与 @oh-my-pi/hashline 的差距**（参考：[`../oh-my-pi.md`](../oh-my-pi.md)）。这个兄弟补丁语言负载更轻——基准测试中相对 `str_replace` 省 42%/53%，而我们省 31%，因为它裸文本式的补丁文档跳过了我们每次调用都要付的 JSON 外壳——还提供了我们不支持的四种能力：语法块操作（`PUT N*:`）、寄存器 + `REM`/`MV`、一次变更一个多 hunk 文档、可插拔文件系统。代价在正确性一侧：它的行号未经验证（当前标签下的错行号会静默落盘）、每次编辑都要重新编号、过期标签触发尽力而为的三方合并而非校验、语法也抬高了模型的技能门槛。逐项决定是拒绝还是采纳——负载差距本身不足以成为切换格式的理由。
-- 在 dsh 会话中实测 0.1.7（served-tail 修复之后）。
+- 在 dsh 会话中实测 1.0.0（0.2.1-rc.2 运行时）。
 - 把 served-tail 截断修复回馈给 pi-hashline-edit-lsz / 上游（他们的 `upsertServed` 同样从不截断）。
-- 对照下一个 dsh 版本重新核对插件接线（当前固定在 `0.1.0-rc.6`；dsh 处于开发者预览阶段，承诺会有破坏性变更）。
+- 对照下一个 dsh 版本重新核对插件接线（当前固定在 `0.2.1-rc.2`；dsh 处于开发者预览阶段，承诺会有破坏性变更）。
 
 </details>
 
