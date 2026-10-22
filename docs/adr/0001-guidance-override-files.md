@@ -34,3 +34,11 @@ Reset semantics:
 - Read-once is preserved: resolution stays pure and read-only — it renders defaults, it never writes — and the physical re-seed happens only at boot.
 
 **Reversal of the prose-fallback rationale.** The original spec (#8) recorded that a malformed fence degrades the whole file to prose so the mistake stays visible in the rendered section. That rationale is reversed: a malformed fence now fast-fails — the file is ignored with a warning naming file and reason, never rendered as prose, and left untouched on disk for repair. The mistake stays visible in the boot-time warning instead of the rendered section.
+
+## Amendment — dsh 0.2.1: tool-band order, shipped roster, and the event name (issue #82)
+
+The decision stands; three of its historical details moved with the harness:
+
+- **Three sections, not four.** `tool:read`, `tool:edit`, `tool:undo_last_edit` — the fourth (`tool:batch_edit`) was retired with the merged payload contract (ADR-0003). Files are read once per agent at `agent/created` (the old `agent/session-start` event no longer exists).
+- **Default order follows the harness band.** A section without a front-matter `order` now takes the harness's own slot for that tool — `systemPrompt.getSectionOrder('TOOL_READ'|'TOOL_EDIT')` (1100/1300 in 0.2.1) — with `1100`/`1300`/`1310` as the static fallback for a registry that predates the API. The old `130`/`131`/`133` literals belonged to the `0.1.0-rc.6` band (`100–199`) and sorted the guidance ahead of the entire 1000-band tool guidance after dsh moved the band (by `0.1.5-rc.2`). Explicit front-matter still wins, and a seeded file keeps the order it was written with until it is reset.
+- **Shipped presets are `standard`, `ptc`, `minimal`, `cordis`** — declared as `@deepseek-ai/dsh-agent-preset` rows, not `agent.cordis.yml`. `code` is gone (its role is `ptc`), so the seed roster and README list follow the ids the harness actually ships.

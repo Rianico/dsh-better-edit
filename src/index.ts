@@ -10,7 +10,7 @@
  * place; scoped pre/post listeners reject copied same-line served anchors
  * before dispatch and append a fresh hashline preview after successful writes.
  *
- * The four `tool:*` guidance sections resolve per agent preset from override
+ * The three `tool:*` guidance sections resolve per agent preset from override
  * files in the shared home (see `src/guidance.ts`); deployments without the
  * `agentPresets` service keep the compiled defaults unchanged.
  * @module dsh-better-edit
@@ -31,6 +31,7 @@ import {
   composeSections,
   ensurePresetGuidance,
   GUIDANCE_SECTIONS,
+  type GuidanceSection,
   type SectionOverride,
 } from "./guidance.js";
 import { configDir } from "./store/index.js";
@@ -62,18 +63,41 @@ interface AgentTools {
 interface AgentPresetsService {
   composedPreset(agentCtx: Context): string | undefined;
 }
+/**
+ * The harness's canonical slot for a guidance section, when the installed
+ * `systemPrompt` registry exposes one (`getSectionOrder`, dsh 0.1.5+). Sections
+ * without a canonical slot — `undo_last_edit` is plugin-owned — keep their
+ * compiled default. A registry that predates the API keeps every default.
+ */
+function sectionOrderFor(rootCtx: Context): (section: GuidanceSection) => number {
+  const systemPrompt = rootCtx.systemPrompt as {
+    getSectionOrder?: (name: string) => number;
+  };
+  const getSectionOrder = systemPrompt.getSectionOrder;
+  if (typeof getSectionOrder !== "function") return (section) => section.defaultOrder;
+  return (section) => {
+    if (section.orderName === undefined) return section.defaultOrder;
+    try {
+      return getSectionOrder.call(systemPrompt, section.orderName);
+    } catch {
+      // A registry that does not know the name keeps the compiled default.
+      return section.defaultOrder;
+    }
+  };
+}
 
-/** The four sections as compiled, byte-identical to the pre-guidance install. */
-function compiledDefaultSections(): SectionOverride[] {
+/** The three sections as compiled, byte-identical to the pre-guidance install. */
+function compiledDefaultSections(rootCtx: Context): SectionOverride[] {
+  const orderFor = sectionOrderFor(rootCtx);
   return GUIDANCE_SECTIONS.map((section) => ({
     name: section.name,
-    order: section.defaultOrder,
+    order: orderFor(section),
     text: section.renderDefault(),
   }));
 }
 
 /**
- * Resolve the four guidance sections for one agent. Without the `agentPresets`
+ * Resolve the three guidance sections for one agent. Without the `agentPresets`
  * service the fast path returns the compiled defaults untouched. With it, the
  * agent's preset id drives `composeSections` against the shared home; any
  * resolution failure degrades to compiled defaults so a bad override file can
@@ -81,10 +105,10 @@ function compiledDefaultSections(): SectionOverride[] {
  */
 async function resolveAgentSections(rootCtx: Context, agent: Agent): Promise<SectionOverride[]> {
   const agentPresets = rootCtx.get("agentPresets") as AgentPresetsService | undefined;
-  if (!agentPresets) return compiledDefaultSections();
+  if (!agentPresets) return compiledDefaultSections(rootCtx);
   try {
     const presetId = agentPresets.composedPreset(agent.ctx);
-    const sections = await composeSections(presetId, configDir());
+    const sections = await composeSections(presetId, configDir(), sectionOrderFor(rootCtx));
     // Warn once per agent install (this runs once per agent, under the
     // WeakSet guard) about any malformed override we had to ignore.
     for (const section of sections) {
@@ -99,7 +123,7 @@ async function resolveAgentSections(rootCtx: Context, agent: Agent): Promise<Sec
     rootCtx.logger.warn(
       `dsh-better-edit: guidance resolution failed for agent ${agent.id}, using compiled defaults: ${error instanceof Error ? error.message : String(error)}`,
     );
-    return compiledDefaultSections();
+    return compiledDefaultSections(rootCtx);
   }
 }
 
@@ -107,8 +131,9 @@ function installAgentTools(rootCtx: Context, agent: Agent): void {
   agent.ctx.effect(async () => {
     // `fs` is host-plane: use the plugin's own context (covered by
     // inject) rather than the agent's scoped one, whose fiber chain does
-    // not declare it. Session cwd still reaches the bridge per call via
-    // exec.agent.session.header.cwd.
+    // not declare it. The session's live directory still reaches the bridge
+    // per call via `execCwd` (the `workingDirectory` service, falling back to
+    // `exec.agent.session.header.cwd`).
     const io = ctxFsIO(rootCtx.fs as FileSystem, rootCtx);
     const disposers: Array<() => void> = [];
     const sandbox = new FsSandboxController(rootCtx);
@@ -139,7 +164,8 @@ function installAgentTools(rootCtx: Context, agent: Agent): void {
     );
     // Shadow the preset's built-in tool guidance with the hashline
     // contract. Same section names on the agent's own layer win over the
-    // preset's; text and order come from the per-preset resolution.
+    // preset's; text and order come from the per-preset resolution, with the
+    // harness's canonical tool slot as the default order.
     const sections = await resolveAgentSections(rootCtx, agent);
     for (const section of sections) {
       disposers.push(agent.ctx.systemPrompt.section(section));

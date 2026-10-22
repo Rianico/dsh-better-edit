@@ -11,7 +11,7 @@ import { isBlankOverride } from "./parse.js";
 import { GUIDANCE_SECTIONS, type GuidanceSection } from "./resolve.js";
 
 /** The presets shipped by the harness, each seeded with editable guidance. */
-export const DEFAULT_PRESETS: readonly string[] = ["standard", "code", "minimal", "cordis"];
+export const DEFAULT_PRESETS: readonly string[] = ["standard", "ptc", "minimal", "cordis"];
 
 /**
  * The root README: the per-preset customization convention users see in the
@@ -20,7 +20,7 @@ export const DEFAULT_PRESETS: readonly string[] = ["standard", "code", "minimal"
 export const GUIDANCE_HOME_README = `# dsh-better-edit guidance
 
 Each agent preset has its own guidance directory here: \`<preset>/<section>.md\`.
-On first boot the plugin seeds the shipped presets (\`standard\`, \`code\`,
+On first boot the plugin seeds the shipped presets (\`standard\`, \`ptc\`,
 \`minimal\`, \`cordis\`) with the compiled defaults; existing files are never
 overwritten, so your edits survive.
 
@@ -34,13 +34,13 @@ Each file is one tool section:
 
 Edit the \`<section>.md\` file for the preset and section you want to change —
 the file body IS the text the model reads for that section. Files are read once
-per agent at session-start, so edits apply to new sessions.
+per agent when it is created (\`agent/created\`), so edits apply to new sessions.
 
 An optional YAML front-matter fence places the section at a custom position in
 the assembled system prompt:
 
     ---
-    order: 150
+    order: 1100
     ---
 
     <section text>
@@ -59,7 +59,7 @@ seeded directory, copy a seeded one to its name.
 export const GUIDANCE_HOME_README_ZH = `# dsh-better-edit 指引
 
 每个 agent preset 在这里都有自己的指引目录：\`<preset>/<section>.md\`。首次启动时
-插件会为随附的 preset（\`standard\`、\`code\`、\`minimal\`、\`cordis\`）写入编译内置的
+插件会为随附的 preset（\`standard\`、\`ptc\`、\`minimal\`、\`cordis\`）写入编译内置的
 默认内容；已有文件绝不被覆盖，因此你的编辑会保留。
 
 每个文件对应一个工具片段：
@@ -71,12 +71,12 @@ export const GUIDANCE_HOME_README_ZH = `# dsh-better-edit 指引
 ## 自定义
 
 编辑你想修改的 preset 与片段的 \`<section>.md\` 文件即可——文件正文就是该片段呈
-现给模型的文本。文件在 agent 的 session-start 时读取一次，因此修改只影响新会话。
+现给模型的文本。文件在 agent 创建时（\`agent/created\`）读取一次，因此修改只影响新会话。
 
 可以用可选的 YAML front-matter 栅栏把片段放到组装后系统提示中的自定义位置：
 
     ---
-    order: 150
+    order: 1100
     ---
 
     <片段文本>

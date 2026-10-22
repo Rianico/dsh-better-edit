@@ -52,7 +52,7 @@ describe("guidance sections", () => {
       "edit.md",
       "undo_last_edit.md",
     ]);
-    expect(GUIDANCE_SECTIONS.map((s) => s.defaultOrder)).toEqual([130, 131, 133]);
+    expect(GUIDANCE_SECTIONS.map((s) => s.defaultOrder)).toEqual([1100, 1300, 1310]);
   });
 
   it("default render matches today's inline section text", () => {
@@ -185,11 +185,11 @@ describe("resolveSection", () => {
   it("falls back to the compiled default when no override exists", async () => {
     await withHome(async (home) => {
       const resolved = await resolveSection("tool:edit", {
-        presetId: "code",
+        presetId: "standard",
         homeDir: home,
       });
       expect(resolved).toEqual({
-        order: 131,
+        order: 1300,
         text: renderSectionDefault("tool:edit"),
       });
     });
@@ -197,12 +197,12 @@ describe("resolveSection", () => {
 
   it("reads the preset file when one exists", async () => {
     await withHome(async (home) => {
-      await writeSection(home, "code", "edit.md", "preset edit text");
+      await writeSection(home, "standard", "edit.md", "preset edit text");
       const resolved = await resolveSection("tool:edit", {
-        presetId: "code",
+        presetId: "standard",
         homeDir: home,
       });
-      expect(resolved).toEqual({ order: 131, text: "preset edit text" });
+      expect(resolved).toEqual({ order: 1300, text: "preset edit text" });
     });
   });
 
@@ -219,13 +219,13 @@ describe("resolveSection", () => {
 
   it("ignores preset files when presetId is undefined", async () => {
     await withHome(async (home) => {
-      await writeSection(home, "code", "edit.md", "preset edit text");
+      await writeSection(home, "standard", "edit.md", "preset edit text");
       const resolved = await resolveSection("tool:edit", {
         presetId: undefined,
         homeDir: home,
       });
       expect(resolved).toEqual({
-        order: 131,
+        order: 1300,
         text: renderSectionDefault("tool:edit"),
       });
     });
@@ -238,7 +238,7 @@ describe("resolveSection", () => {
         homeDir: home,
       });
       expect(resolved).toEqual({
-        order: 131,
+        order: 1300,
         text: renderSectionDefault("tool:edit"),
       });
     });
@@ -251,7 +251,7 @@ describe("resolveSection", () => {
         homeDir: home,
       });
       expect(resolved).toEqual({
-        order: 130,
+        order: 1100,
         text: renderSectionDefault("tool:read"),
       });
     });
@@ -260,20 +260,20 @@ describe("resolveSection", () => {
   it("throws on an unknown section name", async () => {
     await withHome(async (home) => {
       await expect(
-        resolveSection("tool:nope", { presetId: "code", homeDir: home }),
+        resolveSection("tool:nope", { presetId: "standard", homeDir: home }),
       ).rejects.toThrow("unknown guidance section");
     });
   });
 
   it("treats a blank override file as absent and uses the compiled default", async () => {
     await withHome(async (home) => {
-      await writeSection(home, "code", "edit.md", "");
+      await writeSection(home, "standard", "edit.md", "");
       const resolved = await resolveSection("tool:edit", {
-        presetId: "code",
+        presetId: "standard",
         homeDir: home,
       });
       expect(resolved).toEqual({
-        order: 131,
+        order: 1300,
         text: renderSectionDefault("tool:edit"),
       });
     });
@@ -281,13 +281,13 @@ describe("resolveSection", () => {
 
   it("treats a whitespace-only override file as absent and uses the compiled default", async () => {
     await withHome(async (home) => {
-      await writeSection(home, "code", "edit.md", "   \n\t  \n");
+      await writeSection(home, "standard", "edit.md", "   \n\t  \n");
       const resolved = await resolveSection("tool:edit", {
-        presetId: "code",
+        presetId: "standard",
         homeDir: home,
       });
       expect(resolved).toEqual({
-        order: 131,
+        order: 1300,
         text: renderSectionDefault("tool:edit"),
       });
     });
@@ -295,14 +295,14 @@ describe("resolveSection", () => {
 
   it("resolves a malformed override file to the compiled default and reports the file + reason", async () => {
     await withHome(async (home) => {
-      const file = join(home, "code", "edit.md");
-      await writeSection(home, "code", "edit.md", "---\norder: abc\n---\nmalformed body");
+      const file = join(home, "standard", "edit.md");
+      await writeSection(home, "standard", "edit.md", "---\norder: abc\n---\nmalformed body");
       const resolved = await resolveSection("tool:edit", {
-        presetId: "code",
+        presetId: "standard",
         homeDir: home,
       });
       expect(resolved).toEqual({
-        order: 131,
+        order: 1300,
         text: renderSectionDefault("tool:edit"),
         malformed: { file, reason: "non-integer order 'abc'" },
       });
@@ -311,9 +311,9 @@ describe("resolveSection", () => {
 
   it("malformed never renders the file's text", async () => {
     await withHome(async (home) => {
-      await writeSection(home, "code", "edit.md", "---\norder: abc\n---\nNEVER-SHOW");
+      await writeSection(home, "standard", "edit.md", "---\norder: abc\n---\nNEVER-SHOW");
       const resolved = await resolveSection("tool:edit", {
-        presetId: "code",
+        presetId: "standard",
         homeDir: home,
       });
       expect(resolved.text).toBe(renderSectionDefault("tool:edit"));
@@ -323,10 +323,10 @@ describe("resolveSection", () => {
 
   it("a missing-closing-fence override is malformed and falls back to the compiled default", async () => {
     await withHome(async (home) => {
-      const file = join(home, "code", "edit.md");
-      await writeSection(home, "code", "edit.md", "---\norder: 150\nbody then");
+      const file = join(home, "standard", "edit.md");
+      await writeSection(home, "standard", "edit.md", "---\norder: 150\nbody then");
       const resolved = await resolveSection("tool:edit", {
-        presetId: "code",
+        presetId: "standard",
         homeDir: home,
       });
       expect(resolved.malformed).toEqual({
@@ -339,12 +339,12 @@ describe("resolveSection", () => {
 
   it("a non-blank file wins over the compiled default", async () => {
     await withHome(async (home) => {
-      await writeSection(home, "code", "edit.md", "   \nactual guidance\n");
+      await writeSection(home, "standard", "edit.md", "   \nactual guidance\n");
       const resolved = await resolveSection("tool:edit", {
-        presetId: "code",
+        presetId: "standard",
         homeDir: home,
       });
-      expect(resolved).toEqual({ order: 131, text: "   \nactual guidance\n" });
+      expect(resolved).toEqual({ order: 1300, text: "   \nactual guidance\n" });
     });
   });
 
@@ -366,7 +366,7 @@ describe("resolveSection", () => {
         presetId: "minimal",
         homeDir: home,
       });
-      expect(resolved).toEqual({ order: 131, text: "" });
+      expect(resolved).toEqual({ order: 1300, text: "" });
     });
   });
 });
@@ -380,15 +380,15 @@ describe("composeSections", () => {
         "tool:edit",
         "tool:undo_last_edit",
       ]);
-      expect(sections.map((s) => s.order)).toEqual([130, 131, 133]);
+      expect(sections.map((s) => s.order)).toEqual([1100, 1300, 1310]);
       expect(sections.map((s) => s.text)).toEqual(GUIDANCE_SECTIONS.map((s) => s.renderDefault()));
     });
   });
 
   it("overrides only the sections that have preset files", async () => {
     await withHome(async (home) => {
-      await writeSection(home, "code", "edit.md", "---\norder: 210\n---\ncode edits");
-      const sections = await composeSections("code", home);
+      await writeSection(home, "standard", "edit.md", "---\norder: 210\n---\ncode edits");
+      const sections = await composeSections("standard", home);
       expect(sections.find((s) => s.name === "tool:edit")).toEqual({
         name: "tool:edit",
         order: 210,
@@ -397,7 +397,7 @@ describe("composeSections", () => {
       // Unoverridden sections keep their compiled defaults.
       expect(sections.find((s) => s.name === "tool:read")).toEqual({
         name: "tool:read",
-        order: 130,
+        order: 1100,
         text: renderSectionDefault("tool:read"),
       });
     });
@@ -428,7 +428,7 @@ describe("ensurePresetGuidance", () => {
   it("never rewrites existing files - a user-edited preset file survives repeated calls", async () => {
     await withHome(async (home) => {
       await ensurePresetGuidance(home);
-      const editFile = join(home, "code", "edit.md");
+      const editFile = join(home, "standard", "edit.md");
       const custom = "---\norder: 150\n---\nMy custom edit guidance, kept verbatim.";
       await writeFile(editFile, custom, "utf-8");
       await ensurePresetGuidance(home);
@@ -438,13 +438,15 @@ describe("ensurePresetGuidance", () => {
 
   it("fills in only the files that are missing", async () => {
     await withHome(async (home) => {
-      await mkdir(join(home, "code"), { recursive: true });
-      await writeFile(join(home, "code", "edit.md"), "custom edit guidance", "utf-8");
+      await mkdir(join(home, "standard"), { recursive: true });
+      await writeFile(join(home, "standard", "edit.md"), "custom edit guidance", "utf-8");
       await ensurePresetGuidance(home);
-      expect(await readFile(join(home, "code", "edit.md"), "utf-8")).toBe("custom edit guidance");
+      expect(await readFile(join(home, "standard", "edit.md"), "utf-8")).toBe(
+        "custom edit guidance",
+      );
       for (const section of GUIDANCE_SECTIONS) {
         if (section.file === "edit.md") continue;
-        expect(await readFile(join(home, "code", section.file), "utf-8")).toBe(
+        expect(await readFile(join(home, "standard", section.file), "utf-8")).toBe(
           `---\norder: ${section.defaultOrder}\n---\n\n${section.renderDefault()}`,
         );
       }
@@ -457,12 +459,12 @@ describe("ensurePresetGuidance", () => {
     await withHome(async (home) => {
       await ensurePresetGuidance(home);
       await writeFile(
-        join(home, "code", "edit.md"),
+        join(home, "standard", "edit.md"),
         "---\norder: 151\n---\ncustom code edit guidance",
         "utf-8",
       );
       const resolved = await resolveSection("tool:edit", {
-        presetId: "code",
+        presetId: "standard",
         homeDir: home,
       });
       expect(resolved).toEqual({
@@ -471,11 +473,11 @@ describe("ensurePresetGuidance", () => {
       });
       // An unedited seeded section still equals the compiled default.
       const read = await resolveSection("tool:read", {
-        presetId: "code",
+        presetId: "standard",
         homeDir: home,
       });
       expect(read).toEqual({
-        order: 130,
+        order: 1100,
         text: renderSectionDefault("tool:read"),
       });
     });
@@ -484,11 +486,11 @@ describe("ensurePresetGuidance", () => {
   it("re-seeds a blank section file in a shipped preset with the compiled default", async () => {
     await withHome(async (home) => {
       await ensurePresetGuidance(home);
-      const editFile = join(home, "code", "edit.md");
+      const editFile = join(home, "standard", "edit.md");
       await writeFile(editFile, "", "utf-8");
       await ensurePresetGuidance(home);
       expect(await readFile(editFile, "utf-8")).toBe(
-        `---\norder: 131\n---\n\n${renderSectionDefault("tool:edit")}`,
+        `---\norder: 1300\n---\n\n${renderSectionDefault("tool:edit")}`,
       );
     });
   });
@@ -500,7 +502,7 @@ describe("ensurePresetGuidance", () => {
       await writeFile(ghostRead, "  \n\t \n", "utf-8");
       await ensurePresetGuidance(home);
       expect(await readFile(ghostRead, "utf-8")).toBe(
-        `---\norder: 130\n---\n\n${renderSectionDefault("tool:read")}`,
+        `---\norder: 1100\n---\n\n${renderSectionDefault("tool:read")}`,
       );
     });
   });
@@ -508,7 +510,7 @@ describe("ensurePresetGuidance", () => {
   it("leaves a malformed override file byte-identical", async () => {
     await withHome(async (home) => {
       await ensurePresetGuidance(home);
-      const editFile = join(home, "code", "edit.md");
+      const editFile = join(home, "standard", "edit.md");
       const malformed = "---\norder: abc\n---\nsalvageable body";
       await writeFile(editFile, malformed, "utf-8");
       await ensurePresetGuidance(home);
@@ -519,7 +521,7 @@ describe("ensurePresetGuidance", () => {
   it("leaves a non-blank override file byte-identical", async () => {
     await withHome(async (home) => {
       await ensurePresetGuidance(home);
-      const editFile = join(home, "code", "edit.md");
+      const editFile = join(home, "standard", "edit.md");
       const custom = "plain prose guidance";
       await writeFile(editFile, custom, "utf-8");
       await ensurePresetGuidance(home);
@@ -538,7 +540,7 @@ describe("ensurePresetGuidance", () => {
   it("lets a deliberate-blank (valid-fence) file survive boot untouched", async () => {
     await withHome(async (home) => {
       await ensurePresetGuidance(home);
-      const editFile = join(home, "code", "edit.md");
+      const editFile = join(home, "standard", "edit.md");
       const deliberate = "---\norder: 150\n---\n";
       await writeFile(editFile, deliberate, "utf-8");
       await ensurePresetGuidance(home);
@@ -549,7 +551,7 @@ describe("ensurePresetGuidance", () => {
   it("lets a deliberate keyless-blank (valid-fence) file survive boot untouched", async () => {
     await withHome(async (home) => {
       await ensurePresetGuidance(home);
-      const editFile = join(home, "code", "edit.md");
+      const editFile = join(home, "standard", "edit.md");
       const deliberate = "---\n---\n";
       await writeFile(editFile, deliberate, "utf-8");
       await ensurePresetGuidance(home);
@@ -567,6 +569,53 @@ describe("ensurePresetGuidance", () => {
           `---\norder: ${section.defaultOrder}\n---\n\n${section.renderDefault()}`,
         );
       }
+    });
+  });
+});
+
+describe("composeSections — harness slot resolution", () => {
+  it("defaults an unoverridden section to the harness's live slot", async () => {
+    await withHome(async (home) => {
+      const slots: Record<string, number> = { "tool:read": 1201, "tool:edit": 1401 };
+      const sections = await composeSections(
+        undefined,
+        home,
+        (section) => slots[section.name] ?? section.defaultOrder,
+      );
+      expect(sections.map((s) => s.order)).toEqual([1201, 1401, 1310]);
+    });
+  });
+
+  it("lets an override file's explicit order win over the harness slot", async () => {
+    await withHome(async (home) => {
+      await writeSection(home, "standard", "edit.md", "---\norder: 77\n---\npreset edit text");
+      const sections = await composeSections("standard", home, () => 1401);
+      expect(sections.find((s) => s.name === "tool:edit")).toEqual({
+        name: "tool:edit",
+        order: 77,
+        text: "preset edit text",
+      });
+      // A keyless fence keeps the harness slot, not the compiled fallback.
+      await writeSection(home, "minimal", "edit.md", "---\n---\nkeyless guidance");
+      const keyless = await composeSections("minimal", home, () => 1401);
+      expect(keyless.find((s) => s.name === "tool:edit")).toEqual({
+        name: "tool:edit",
+        order: 1401,
+        text: "keyless guidance",
+      });
+    });
+  });
+
+  it("a malformed override falls back to the harness slot", async () => {
+    await withHome(async (home) => {
+      await writeSection(home, "standard", "edit.md", "---\norder: abc\n---\nNEVER-SHOW");
+      const sections = await composeSections("standard", home, () => 1401);
+      expect(sections.find((s) => s.name === "tool:edit")).toEqual({
+        name: "tool:edit",
+        order: 1401,
+        text: renderSectionDefault("tool:edit"),
+        malformed: { file: join(home, "standard", "edit.md"), reason: "non-integer order 'abc'" },
+      });
     });
   });
 });

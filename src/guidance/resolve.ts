@@ -14,7 +14,7 @@ import { isBlankOverride, parseSectionFile } from "./parse.js";
 
 /**
  * Render one tool's guidance as its intro line, a blank line, then bullets.
- * Uniform across the four sections: no tool-schema description is duplicated
+ * Uniform across the three sections: no tool-schema description is duplicated
  * (that already reaches the model through the tool catalog).
  */
 function guidanceText(g: ToolGuidance): string {
@@ -31,8 +31,18 @@ export interface GuidanceSection {
   name: string;
   /** Override file name inside a preset directory, e.g. `edit.md`. */
   file: string;
-  /** Order used when the override file carries no front-matter `order`. */
+  /**
+   * Order used when neither the override file nor the harness names one — the
+   * fallback for a registry that predates `systemPrompt.getSectionOrder`.
+   * Mirrors dsh 0.2.1's `SECTION_ORDERS` tool band.
+   */
   defaultOrder: number;
+  /**
+   * The `systemPrompt.getSectionOrder` name of the tool slot this section
+   * shadows (e.g. `TOOL_READ`), so the live band wins over `defaultOrder`.
+   * Absent for plugin-owned sections with no harness slot.
+   */
+  orderName?: "TOOL_READ" | "TOOL_EDIT";
   /** The compiled default text, byte-identical to today's inline rendering. */
   renderDefault(): string;
 }
@@ -42,19 +52,22 @@ export const GUIDANCE_SECTIONS: readonly GuidanceSection[] = [
   {
     name: "tool:read",
     file: "read.md",
-    defaultOrder: 130,
+    defaultOrder: 1100,
+    orderName: "TOOL_READ",
     renderDefault: () => guidanceText(READ_GUIDANCE),
   },
   {
     name: "tool:edit",
     file: "edit.md",
-    defaultOrder: 131,
+    defaultOrder: 1300,
+    orderName: "TOOL_EDIT",
     renderDefault: () => guidanceText(EDIT_GUIDANCE),
   },
   {
     name: "tool:undo_last_edit",
     file: "undo_last_edit.md",
-    defaultOrder: 133,
+    // Immediately after the edit slot it annotates; there is no TOOL_UNDO name.
+    defaultOrder: 1310,
     renderDefault: () => guidanceText(UNDO_GUIDANCE),
   },
 ];
@@ -74,6 +87,8 @@ export interface ResolveGuidanceOptions {
   presetId?: string;
   /** Plugin shared home directory (`$DSH_HOME/plugins/dsh-better-edit`). */
   homeDir: string;
+  /** Live harness slot for a section, when the registry exposes one. */
+  defaultOrder?: (section: GuidanceSection) => number;
 }
 
 function overrideCandidates(file: string, options: ResolveGuidanceOptions): string[] {
@@ -104,6 +119,7 @@ export async function resolveSection(
 ): Promise<GuidanceResolution> {
   const section = SECTION_BY_NAME.get(name);
   if (!section) throw new Error(`unknown guidance section: ${name}`);
+  const defaultOrder = options.defaultOrder?.(section) ?? section.defaultOrder;
   for (const candidate of overrideCandidates(section.file, options)) {
     const content = await readFile(candidate, "utf-8").catch((error: unknown) => {
       if (errCode(error) === "ENOENT") return undefined;
@@ -115,7 +131,7 @@ export async function resolveSection(
       // A broken override must never reach the model. Resolve to the
       // compiled default and report the file + parse reason to the caller.
       return {
-        order: section.defaultOrder,
+        order: defaultOrder,
         text: section.renderDefault(),
         malformed: {
           file: candidate,
@@ -126,9 +142,9 @@ export async function resolveSection(
     // Blank (no fence, whitespace-only) means "use the default": advance the
     // fallback chain rather than render an empty section.
     if (isBlankOverride(content)) continue;
-    return { order: parsed.order ?? section.defaultOrder, text: parsed.text };
+    return { order: parsed.order ?? defaultOrder, text: parsed.text };
   }
-  return { order: section.defaultOrder, text: section.renderDefault() };
+  return { order: defaultOrder, text: section.renderDefault() };
 }
 
 /** The resolved configuration of one section, ready for the systemPrompt registry. */
@@ -147,12 +163,14 @@ export interface SectionOverride {
 export async function composeSections(
   presetId: string | undefined,
   homeDir: string,
+  defaultOrder?: (section: GuidanceSection) => number,
 ): Promise<SectionOverride[]> {
   return Promise.all(
     GUIDANCE_SECTIONS.map(async (section) => {
       const resolved = await resolveSection(section.name, {
         presetId,
         homeDir,
+        ...(defaultOrder === undefined ? {} : { defaultOrder }),
       });
       return {
         name: section.name,
