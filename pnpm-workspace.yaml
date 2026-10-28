@@ -24,6 +24,12 @@ minimumReleaseAgeExclude:
   - "@deepseek-ai/dsh-util-crypto@0.2.1-rc.2"
   - "@deepseek-ai/dsh-util-values@0.2.1-rc.2"
 
+overrides:
+  # GHSA-mrhx-c7xc-m3w5: zod <4.6.6 (pinned 4.4.3 via @deepseek-ai/dsh-llm@0.2.1-rc.2)
+  # has a patched release; force the fixed line until upstream re-pins.
+  # Removal condition: drop once dsh pins zod >=4.6.6.
+  "zod@<4.6.6": "4.6.7"
+
 auditConfig:
   # GHSA-vfj7-8cjw-p6xm: braces <=3.0.3 (via semantic-release > micromatch) has
   # no patched release at the time of writing, and every scaffolded repo
