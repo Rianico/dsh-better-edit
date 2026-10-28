@@ -19,9 +19,9 @@ Issue [#31](https://github.com/Rianico/dsh-better-edit/issues/31) — freed `3-c
 
 Production evidence: 1050 edits / 145 sessions, 901 `Successfully edited` hide rebind-successes; `old_string` fails loud+lossless in same situation. The whole-span variant (`S@3 reborn @3` after `other|cards` swap) shows strict `from==pos` also fails when `same pos+same canon` but different span.
 
-Project contract (`CONTEXT.md:anchor philosophy`) is `position-independent` — exterior `insert @0` before `served 1..5` must not abort `edit 10..12`. Strict `pos` breaks it. Whitespace-insensitive (`ADR-0002`), orphan healing (`ADR-0004`) already rely on content-matching candidates, not pos.
+Project contract (`GLOSSARY.md:anchor philosophy`) is `position-independent` — exterior `insert @0` before `served 1..5` must not abort `edit 10..12`. Strict `pos` breaks it. Whitespace-insensitive (`ADR-0002`), orphan healing (`ADR-0004`) already rely on content-matching candidates, not pos.
 
-See `CONTEXT.md` glossary (`serve`, `served state`, `position-independent`, `reject-and-serve`, `orphaned serve`) for terminology.
+See `GLOSSARY.md` glossary (`serve`, `served state`, `position-independent`, `reject-and-serve`, `orphaned serve`) for terminology.
 
 ## Decision
 
@@ -96,7 +96,7 @@ Makes `shift==rebind` loud only when `changed` overlaps target, not when exterio
 > and H1 (`SR@790`) — the retry is rejected byte-identically at the same site and a
 > re-read applies. The historical note is scoped to `3f4aca6`; the guard that keeps the
 > four arms from coming back is `test/arch/range-family-signal.test.ts`.
-> We keep `pos-free` by default because line non-overlap ≈ semantic non-overlap for hash-anchored edits; strict would make every exterior `insert @0` abort `B`'s unrelated range, violating `CONTEXT.md:anchor philosophy` and `ADR-0004` healing. Concurrency fallback is automatic, no `supportConcurrency` flag — exterior drift stays `resist`, only overlapping concurrent goes `strict`.
+> We keep `pos-free` by default because line non-overlap ≈ semantic non-overlap for hash-anchored edits; strict would make every exterior `insert @0` abort `B`'s unrelated range, violating `GLOSSARY.md:anchor philosophy` and `ADR-0004` healing. Concurrency fallback is automatic, no `supportConcurrency` flag — exterior drift stays `resist`, only overlapping concurrent goes `strict`.
 
 ## Considered Options
 

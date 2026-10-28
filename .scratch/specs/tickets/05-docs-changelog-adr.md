@@ -11,7 +11,7 @@ The user-facing documentation: a "Configuring guidance per preset" section in RE
 - [ ] README.md and README.zh.md document the override flow with a concrete example.
 - [ ] CHANGELOG.md gains an entry describing the feature.
 - [ ] `docs/adr/0001-*.md` records the decision and the scope-layering reason preset rows can't work.
-- [ ] CONTEXT.md is consistent with the final vocabulary (guidance, section, order, preset).
+- [ ] GLOSSARY.md is consistent with the final vocabulary (guidance, section, order, preset).
 
 ## Blocked by
 

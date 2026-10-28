@@ -10,7 +10,7 @@ accepted
 
 `AnchorPipeline` (`src/hashline/anchor-pipeline.ts`) auto-spliced `replacement_text` when its edge equaled an adjacent file line. Four helpers formed the seam: `trailingDups`/`leadingDups` (byte `===` vs `fileLines[endLine+k]` / `fileLines[startLine-2-k]`, 1-line threshold) and `firstNewAfterDups`/`lastNewBeforeDups` (`canon()` + `sectionIsUnique` gate on the first genuinely new line). Origin `ec472e1`/`1d71c29` was copy-paste slip of a diff block; the invariant was `swapReversed → stripBare → stripDiff → valEdit → boundaryDups splice → valEdit → verifyServed → resToSpan`.
 
-Downstream `dsh-better-edit#38` proved the 1-line byte trap breaks the `model–tool boundary` (`CONTEXT.md`): `a\nb` over `a` (`Wot..Wot "a\nb"`) → `2` not `3` lines (`a\nb\nb\n`); `case A` C++ switch (`lA0..AU6`) → `9` not `10` lines, outermost `}` lost, every later line mis-nested. `firstNewAfter`/`lastNewBefore` share the same surprise — `canon` equality still rewrites intent. Models now reliably pass correct `remove_from`/`remove_to` hashes; a loud duplicate is reversible (next edit deletes it), silent loss is not.
+Downstream `dsh-better-edit#38` proved the 1-line byte trap breaks the `model–tool boundary` (`GLOSSARY.md`): `a\nb` over `a` (`Wot..Wot "a\nb"`) → `2` not `3` lines (`a\nb\nb\n`); `case A` C++ switch (`lA0..AU6`) → `9` not `10` lines, outermost `}` lost, every later line mis-nested. `firstNewAfter`/`lastNewBefore` share the same surprise — `canon` equality still rewrites intent. Models now reliably pass correct `remove_from`/`remove_to` hashes; a loud duplicate is reversible (next edit deletes it), silent loss is not.
 
 ## Decision
 
@@ -33,7 +33,7 @@ swapReversed → stripBare → stripDiff → valEdit → verifyServed → resToS
 ## Consequences
 
 - `src/hashline/anchor-pipeline.ts` — invariant trimmed, imports `firstNonEmptyIndex`/`lastNonEmptyIndex` removed, `HashAssign.canon` import kept for `verifyServed` only.
-- `CONTEXT.md` — `boundary duplicate` marked `historical, removed by ADR-0007`; `model–tool boundary` sharpened (tool never rewrites `replacement_text`).
+- `GLOSSARY.md` — `boundary duplicate` marked `historical, removed by ADR-0007`; `model–tool boundary` sharpened (tool never rewrites `replacement_text`).
 - Tests — `hashline-apply-internals`, `hashline-fuzz-autofix` drop run-semantics; expectations become `no dedup` (`a\nb` → `3`). No new `E_BOUNDARY_DUP` code.
 - Prompt stays `replacement_text is bare content without HASH│`; no guidance change.
 - Breaking: one major bump (`feat(hashline)!`); downstream forks re-adding the seam must own the surprise.

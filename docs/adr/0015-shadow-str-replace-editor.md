@@ -2,7 +2,7 @@
 
 Date: 2026-09-08
 Status: accepted
-Related: ADR-0012 (VS Code encoding model), CONTEXT.md `File Encoding`
+Related: ADR-0012 (VS Code encoding model), GLOSSARY.md `File Encoding`
 (`encoding governance`, `governed edit path`, `ungoverned edit path`)
 
 ## Context

@@ -10,7 +10,7 @@ superseded (producers landed; deferral recorded at `b65d437` closed).
 See §Amendment (FU-4) and §Amendment (FU-5) at the end.
 Related: `src/hashline/anchor-pipeline.ts` (`verifyServedRange`, `buildRangeEcho`,
 `fmtMismatchWithServes`), `src/domain-errors.ts` (`E_STALE_RANGE`, `E_UNSERVED_RANGE`
-formatters), `src/fs-bridge.ts` (the F7 version-guard arm), `CONTEXT.md`
+formatters), `src/fs-bridge.ts` (the F7 version-guard arm), `GLOSSARY.md`
 (`reject-and-serve`, `target-lost rejection`), `test/arch/rejection-payload-region.test.ts`
 (new), `test/arch/range-family-signal.test.ts`, `test/core/range-family-retry-truth.test.ts`,
 upstream referent `pi-better-edit@00f8c34` ADR-0018 `region-scoped-rejection-serves`
@@ -58,7 +58,7 @@ about which positions the arm happened to choose.
    - **rows present** ⇒ the region is identifiable and the rows are its current anchors; the
      envelope renders the `Current range:` heading and the rows, and offers **no** retry
      affordance beyond them;
-   - **rows absent** ⇒ the region is unidentifiable (`CONTEXT.md` → `target-lost rejection`);
+   - **rows absent** ⇒ the region is unidentifiable (`GLOSSARY.md` → `target-lost rejection`);
      the envelope renders the headline alone, which names the previously served position and
      instructs a read, and no `Current range` heading of either form appears.
 3. **No write-only field survives.** The `reread?: boolean` flag and the
@@ -103,7 +103,7 @@ does not re-open the boundary rule.
 | `[E_TARGET_LOST]` — grounding void, no rows, read instruction in the headline              | `[E_STALE_RANGE]` with `servedRows: []` + `servedBlock: ""`, headline carries the read instruction                  | the single local site: `src/fs-bridge.ts` F7 version-guard arm                                                  |
 | `assertLivePayload` matrix + 5 planted violations (+ 3 more added upstream later)          | `assertRegionPayload` + planted violations, local arms                                                              | `test/arch/rejection-payload-region.test.ts`                                                                    |
 | code-based disjointness                                                                    | row-count-based disjointness                                                                                        | Decision §2, §3 above                                                                                           |
-| `CONTEXT.md`: narrow `reject-and-serve`; add `target-lost rejection`; drop `context serve` | done in `CONTEXT.md` — the **authoritative home** for those terms; this ADR cites them and does not restate them    | `CONTEXT.md` glossary                                                                                           |
+| `GLOSSARY.md`: narrow `reject-and-serve`; add `target-lost rejection`; drop `context serve` | done in `GLOSSARY.md` — the **authoritative home** for those terms; this ADR cites them and does not restate them    | `GLOSSARY.md` glossary                                                                                           |
 
 ## Declared limit (R12)
 
@@ -158,7 +158,7 @@ needed).` string is gone, so no message can promise a read-free retry the served
 - `E_STALE_RANGE` now carries two _shapes_ under one code: row-carrying (region identifiable) and
   row-less (target-lost). The verdict is machine-readable from `servedRows.length`; the
   informational prose is not.
-- `CONTEXT.md` gains `target-lost rejection`, narrows `reject-and-serve` to region-matched serves,
+- `GLOSSARY.md` gains `target-lost rejection`, narrows `reject-and-serve` to region-matched serves,
   and drops the never-implemented `context serve`.
 - The two deferred `W_*` warnings keep their deferral, with the **owner** moved from a lane letter
   to the producer seam (`src/hashline/served-guard.ts`) and `holds()` replaced by a predicate over an

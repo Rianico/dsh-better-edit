@@ -61,7 +61,11 @@ The five canonical triage labels: `needs-triage`, `needs-info`, `ready-for-agent
 
 ### Domain docs
 
-Single-context — one `CONTEXT.md` plus `docs/adr/` at the repo root. See `docs/agents/domain.md`.
+Single-context — one `GLOSSARY.md` plus `docs/adr/` at the repo root. Config snapshot: `docs/agents/env.yaml`. See `docs/agents/domain.md`.
+
+### Toolchain
+
+Detected CLI tools and their fallbacks: `docs/agents/toolchain.md`.
 
 ### Contribution
 

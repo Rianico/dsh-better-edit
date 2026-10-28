@@ -6,7 +6,7 @@
 
 Keep the extension **position-free for single-thread** (serial `read → edit*` per `sessionKey`) to reduce round trips, while guaranteeing correctness under concurrency by **fallback to `pos + tombstone + canon`**. The whole-span variant `S@3 reborn @3` after `other|cards` swap shows `pos` alone is insufficient; `tombstone` per epoch is load-bearing.
 
-Project contracts from `CONTEXT.md` preserved: `anchor philosophy` (position-independent, ASCII-whitespace strip `ADR-0002`), `model–tool boundary`, `reject-and-serve`, `served state` mirror, `orphaned serve` healing (`ADR-0004`).
+Project contracts from `GLOSSARY.md` preserved: `anchor philosophy` (position-independent, ASCII-whitespace strip `ADR-0002`), `model–tool boundary`, `reject-and-serve`, `served state` mirror, `orphaned serve` healing (`ADR-0004`).
 
 ## 2. Clean Architecture — Layers & Dependency Rule
 

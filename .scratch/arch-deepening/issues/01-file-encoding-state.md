@@ -1,6 +1,6 @@
 # 01 — Deepen file encoding state seam
 
-**What to build:** One module owns the `file encoding state` round-trip (`{encoding, hasBOM, lineEnding}` per CONTEXT.md) so a non-UTF-8 file is handled end-to-end through a single seam — deterministic `BOM → strict UTF-8 → autoGuessEncoding + Top-3 always pushed` admission, canonical encoding enum, and `encodeForSave` inversion on write, with `read({encoding})`/`write({encoding})` manual overrides routing through the same interface. `fs-bridge` becomes a thin IO adapter and `file-view` consumes decoded text.
+**What to build:** One module owns the `file encoding state` round-trip (`{encoding, hasBOM, lineEnding}` per GLOSSARY.md) so a non-UTF-8 file is handled end-to-end through a single seam — deterministic `BOM → strict UTF-8 → autoGuessEncoding + Top-3 always pushed` admission, canonical encoding enum, and `encodeForSave` inversion on write, with `read({encoding})`/`write({encoding})` manual overrides routing through the same interface. `fs-bridge` becomes a thin IO adapter and `file-view` consumes decoded text.
 
 **Blocked by:** None — can start immediately
 

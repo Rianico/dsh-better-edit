@@ -11,7 +11,7 @@ Rewrite the four sections' default guidance text following the writing-for-agent
 - [ ] The four guidance texts are simplified per writing-for-agents; each section's prose is visibly tighter with the essential contract (hash anchors, staleness rejection, all-or-nothing batch) preserved.
 - [ ] `*_GUIDELINES` → `*_GUIDANCE` rename lands across `src/prompts.ts`, `src/index.ts`, and the guidance module; no stale references.
 - [ ] Model-facing error codes and tool behavior are untouched (this is text-only).
-- [ ] Nothing pins the old text (verified: no test/benchmark asserts section text) — suite stays green; CONTEXT.md glossary stays consistent.
+- [ ] Nothing pins the old text (verified: no test/benchmark asserts section text) — suite stays green; GLOSSARY.md glossary stays consistent.
 - [ ] The materialized `_default/` files (see the template ticket) match the new text.
 
 ## Blocked by

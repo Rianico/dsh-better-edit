@@ -31,7 +31,7 @@ A user recovers the compiled default guidance for a section/preset by **emptying
   - _Broken fence_ = the file is ignored (default renders), a warning is logged with file + reason, and the file is left untouched for repair.
   - Note shipped vs custom (custom-preset deletes stay absent) and that reset restores the current bundle defaults.
 - [ ] `CHANGELOG.md` gains an entry describing the feature (reset/restore defaults; fast-fail on malformed fences).
-- [ ] `CONTEXT.md` glossary is consistent with the final vocabulary (`Override file`, `Reset` already added during the design — verify nothing else needs updating: `guidance`, `guidance override`, `reset`).
+- [ ] `GLOSSARY.md` glossary is consistent with the final vocabulary (`Override file`, `Reset` already added during the design — verify nothing else needs updating: `guidance`, `guidance override`, `reset`).
 - [ ] Markdown renders cleanly (no broken fences/lists in the added Markdown code blocks).
 
 ## Blocked by
