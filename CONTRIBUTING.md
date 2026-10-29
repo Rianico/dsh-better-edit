@@ -11,6 +11,18 @@
 
 `CHANGELOG.md` `## [Unreleased]` gated by `scripts/changelog-gate.py` in `changelog-check.yml` (a PR run reads the `Landing:` declaration from the PR body; the `main` run is the durable one); `release.yml` runs `scripts/changelog-unreleased.py clear` then `semantic-release` owns versioned sections. Do not hand-edit versioned sections. Commit a sync as a hidden type (e.g. `chore: sync changelog unreleased section`) so it mints no ledger entry. Hidden types `style|chore|refactor|test|build|ci` only appear when `!`/`BREAKING CHANGE`. Local read-only probe: `python3 scripts/changelog-unreleased.py check` (exit-only, never amends) — the pre-push guard is retired, so a stale `## [Unreleased]` is no longer auto-amended; curation replaced projection.
 
+## Release
+
+Cut a release from `main` with the release workflow; five phases run in order, and each exits `0` before the next starts.
+
+1. Check — working tree clean, on `main`, conventional commits.
+2. Verify — `pnpm run verify` passes; it is the same gate CI runs.
+3. Preview — a dry run prints the next version and its release notes.
+4. Dispatch — run the release workflow and wait for it to succeed.
+5. Confirm — the tag is reachable from `main` and `CHANGELOG.md` has the versioned section.
+
+The ledger decides the bump. A user-facing feature needs a `feat` title; a breaking entry needs `!` in the title. A `fix` title licenses a patch and cannot publish a `### Features` entry.
+
 ## Reporting Issues
 
 Pick the template that matches your intent — see `.github/ISSUE_TEMPLATE/` (blank issues disabled, `config.yml` links #38):
@@ -34,10 +46,12 @@ Prefer topic branch → PR → squash merge. Keep one concern per PR; link the i
 
 ### Description
 
-PR body is auto-populated from `.github/pull_request_template.md` (GitHub PR template). Keep the four headings — delete `Architecture` when no structural change:
+PR body is auto-populated from `.github/pull_request_template.md` (canonical gh-router template — keep byte-identical via `skills/gh-router/scripts/install-template.sh --target . --force`; drift is reported by `--check`). Keep the contract headings — delete `Root Cause` for non-`fix` titles:
 
-- **Summary** — 2-3 sentences on _why_, not what line changed. Include `**Impact**: X files (Y +, Z -) · **Risk**: Low | Medium | High` (Low = docs/tests only; Medium = isolated feature/fix; High = cross-module contract, migration, or `BREAKING CHANGE`).
-- **What Changed** — grouped by system/feature (`hashline`, `anchors`, `session`, `payload`, `docs`, `ci`), not by file list. Flag migrations / API / `ADR-0007` payload `{path, edits:[[h,h,t]]}` / `CANON_VERSION` touches.
-- **Architecture** — Mermaid `graph LR` / `sequenceDiagram` before → after only for structural seams, layering, or data-flow changes.
-- **Checklist** — derived from change categories; start from the template checklist and add items as needed (e.g., benchmarks for perf, absorption notes for upstream sync).
+- **Summary** — lead with the visual that carries the change; brief supporting text on intent and user-visible effect, not a line-by-line narration.
+- **Root Cause** — fix-only: one line naming why the bug happened. The squash gate requires it for `fix` titles.
+- **Blast Radius & Safety** — `Door:` one-way/two-way first, then downstream consumers, breaking changes, data/state invariants, rollback/containment.
+- **Evidence** — verbatim before/after commands + outputs; link the CI run.
+- **Checklist** — start from the template checklist and add items as needed (e.g., benchmarks for perf, absorption notes for upstream sync).
+- Include a `Landing: squash` line (or `merge`) — read by the PR run of `scripts/changelog-gate.py`; the squash gate strips it from the commit message.
   CI (`changelog-check.yml`, `verify`) must be green before requesting review.

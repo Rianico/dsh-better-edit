@@ -14,12 +14,6 @@ path: .releaserc.json
 reason: hold — the template would remove the @semantic-release/release-notes-generator conventionalcommits preset block (the types-to-sections mapping the ledger's section names depend on). Release semantics are not verifiable by any in-lane gate.
 since: S3 (2026-09-26), upholding S2's ruling
 
-path: .github/pull_request_template.md
-reason: hold — re-projection would delete the repo-added line 29 (names WHICH gate reads the Landing: field) and install the template's CODE_AUTHORS block, whose enforcement claim is false here (code_authors has 0 hits across .github/, .githooks/, .config/, scripts/). Clause quoted verbatim below so the call is reversible.
-since: S3 (2026-09-26), per orchestrator ruling (S2 declined first)
-# Verbatim template clause (template lines 45-47, byte-exact):
-# <!-- CODE_AUTHORS: replace with `Co-authored-by: Name <email>` lines for each outside
-#      contributor whose commits this PR carries, or delete this block. The merge step
-#      refuses a body that still contains the raw `CODE_AUTHORS` token. -->
-# Verbatim repo-added line 29 (byte-exact):
-# <!-- Read by the PR run of scripts/changelog-gate.py — the repo's gate, not the global pr-land skill. -->
+path: pnpm-workspace.yaml
+reason: hold — the template would strip minimumReleaseAgeExclude (dsh 0.2.1-rc.2 prereleases) + the zod@<4.6.6 → 4.6.7 override (GHSA-mrhx-c7xc-m3w5 via dsh-llm). Still required while package.json pins dsh 0.2.1-rc.2. Removal condition: drop once dsh pins zod >=4.6.6 on a stable line.
+since: chore/scaffold-update (2026-10-28)
