@@ -24,7 +24,6 @@ import { FsSandboxController } from "../../src/sandbox.js";
  * deliberately, never casually: the coupling is the consequence.
  */
 
-
 function paramsOf(confining: boolean): JsonSchemaNode {
   // An unconfined backend advertises no escalation fields; a confining one adds
   // sandbox_permissions + justification (the closed retry vocabulary).
@@ -107,12 +106,10 @@ describe("edit payload wire shape", () => {
       validateJsonSchemaValue(params, { file: "sample.ts", edits: [["aB3", "cD4", "new"]] }),
     ).toEqual([]);
     // Schema admission is shape-only: tuple arity is the fold's gate, not the wire schema's.
-    expect(
-      validateJsonSchemaValue(params, { file: "sample.ts", edits: [["aB3", "cD4"]] }),
-    ).toEqual([]);
-    expect(
-      editRequestFrom({ file: "sample.ts", edits: [["aB3", "cD4"]] }),
-    ).toBeUndefined();
+    expect(validateJsonSchemaValue(params, { file: "sample.ts", edits: [["aB3", "cD4"]] })).toEqual(
+      [],
+    );
+    expect(editRequestFrom({ file: "sample.ts", edits: [["aB3", "cD4"]] })).toBeUndefined();
   });
 
   it("never declares a third-party adapter alias", () => {
