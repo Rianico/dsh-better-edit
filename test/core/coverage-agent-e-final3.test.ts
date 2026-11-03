@@ -1,12 +1,11 @@
 import { describe, it, expect } from "vitest";
 
 describe("coverage-agent-e final3", () => {
-  it("utils cntDiff", async () => {
+  it("utils visLines", async () => {
     const m: any = await import("../../src/utils.js");
-    expect(m.cntDiff("", "+")).toBe(0);
-    expect(m.cntDiff("+++ header\n+line1\n-line2\n", "+")).toBe(1);
-    expect(m.cntDiff("+++ header\n+line1\n", "-")).toBe(0);
-    expect(m.cntDiff("+a\n++a\n+++a\n", "+")).toBe(2);
+    expect(m.visLines("")).toEqual([]);
+    expect(m.visLines("a\nb\n")).toEqual(["a", "b"]);
+    expect(m.visLines("a\nb")).toEqual(["a", "b"]);
   });
 
   it("store-lifecycle handleGitPollution", async () => {

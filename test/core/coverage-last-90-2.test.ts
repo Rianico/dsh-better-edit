@@ -18,9 +18,9 @@ describe("coverage-last-90-2", () => {
   });
 
   it("covers utils", async () => {
-    const { cntDiff, errCode, splitLines } = await import("../../src/utils.js");
-    expect(cntDiff("", "+")).toBe(0);
-    expect(cntDiff("a\n", "+")).toBe(0);
+    const { visLines, errCode, splitLines } = await import("../../src/utils.js");
+    expect(visLines("")).toEqual([]);
+    expect(visLines("a\n")).toEqual(["a"]);
     expect(errCode(new Error("x"))).toBeUndefined();
     expect(splitLines("a\nb\nc")).toEqual(["a", "b", "c"]);
   });

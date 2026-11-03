@@ -38,17 +38,6 @@ export function rejectUnknownFields(
   }
 }
 
-export function cntDiff(diff: string, marker: "+" | "-"): number {
-  if (!diff) return 0;
-  let count = 0;
-  for (const line of diff.split("\n")) {
-    if (line.startsWith(marker) && !line.startsWith(`${marker}${marker}${marker}`)) {
-      count += 1;
-    }
-  }
-  return count;
-}
-
 export function abortIf(signal?: AbortSignal): void {
   if (signal?.aborted) throw new Error("Operation aborted");
 }

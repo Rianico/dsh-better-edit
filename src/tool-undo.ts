@@ -8,7 +8,7 @@
 import type { Context } from "@deepseek-ai/cordis";
 import { defineTool } from "@deepseek-ai/dsh-tools";
 import { toLF, stripBOM, genDiff, restoreEndings } from "./edit-diff.js";
-import { cntDiff, splitLines, codeOf } from "./utils.js";
+import { visLines, splitLines, codeOf } from "./utils.js";
 import { DomainError, formatError } from "./domain-errors.js";
 import { assertUndoRequest } from "./contract.js";
 import { normalizeRequest as normReq } from "./contract.js";
@@ -116,9 +116,24 @@ export function buildUndoTool(io: FileIO, sandbox: FsSandboxController) {
           blockedRestoreHashes,
           reservations.retiredHashes,
         );
-        const diffResult = genDiff(undo.content, currentNormalized, 0, undefined, undo.hashes);
-        const linesAddedByEdit = cntDiff(diffResult.diff, "+");
-        const linesRemovedByEdit = cntDiff(diffResult.diff, "-");
+        // WHY: #96 (pi-better-edit@665a05d, upstream #173) — the summary counts come from the
+        // WHY: source line multisets, never from the rendered projection: a deleted run past
+        // WHY: DIFF_REMOVED_CAP collapses behind a marker row at context 0, so counting `-` rows
+        // WHY: underreported the restored lines. A line the edit added is one present in the
+        // WHY: current file beyond its occurrence count in `undo.content`; a removed line is the
+        // WHY: converse. Collapsed and expanded projections therefore report identical counts.
+        const remainingUndoCounts = new Map<string, number>();
+        for (const line of visLines(undo.content)) {
+          remainingUndoCounts.set(line, (remainingUndoCounts.get(line) ?? 0) + 1);
+        }
+        let linesAddedByEdit = 0;
+        for (const line of visLines(currentNormalized)) {
+          const remaining = remainingUndoCounts.get(line) ?? 0;
+          if (remaining > 0) remainingUndoCounts.set(line, remaining - 1);
+          else linesAddedByEdit++;
+        }
+        let linesRemovedByEdit = 0;
+        for (const remaining of remainingUndoCounts.values()) linesRemovedByEdit += remaining;
         const undoDiffResult = genDiff(
           currentNormalized,
           undo.content,

@@ -26,8 +26,8 @@ describe("coverage-agent-e final4", () => {
 
   it("covers utils and encoding", async () => {
     const u: any = await import("../../src/utils.js");
-    expect(u.cntDiff("a\nb\n", "+")).toBeDefined();
-    expect(u.cntDiff("a\nb\n", "-")).toBeDefined();
+    expect(u.visLines("a\nb\n")).toEqual(["a", "b"]);
+    expect(u.visLines("a\nb")).toEqual(["a", "b"]);
     const e: any = await import("../../src/encoding.js");
     expect(e.normalizeEncoding("utf8")).toBe("utf8");
     expect(e.isSupportedEncoding("gbk")).toBe(true);
