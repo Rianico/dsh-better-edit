@@ -12,8 +12,8 @@ import { describe, expect, it } from "vitest";
  * tombstone/blocked-hash member, and downstream reaches that same end state by deleting the dead
  * `"tombstone"` RangeCause member rather than renaming it.
  *
- * This is the refutable half of the ADR: re-introducing either word fails here, and the ADR must be
- * amended deliberately instead.
+ * This is the refutable half of the ADR: the banned words are pinned out, and the surviving
+ * `retirement` cause is pinned in, so a wholesale rename to a third name cannot pass silently.
  */
 
 const SRC_ROOT = join(import.meta.dirname, "..", "..", "src");
@@ -43,6 +43,16 @@ async function offenders(pattern: RegExp): Promise<string[]> {
   return found;
 }
 
+/** The declared `RangeCause` union source, sliced out of `domain-errors.ts`. */
+async function rangeCauseUnion(): Promise<string> {
+  const source = await readFile(join(SRC_ROOT, "domain-errors.ts"), "utf8");
+  const start = source.indexOf("export type RangeCause =");
+  if (start === -1) throw new Error("RangeCause declaration not found in src/domain-errors.ts");
+  const end = source.indexOf(";", start);
+  if (end === -1) throw new Error("RangeCause declaration is unterminated");
+  return source.slice(start, end);
+}
+
 describe("blocked-hash vocabulary (ADR-0028)", () => {
   it("keeps the legacy `tombstone` term out of src/", async () => {
     expect(await offenders(LEGACY_TERM)).toEqual([]);
@@ -50,5 +60,11 @@ describe("blocked-hash vocabulary (ADR-0028)", () => {
 
   it("keeps upstream's `blockedHashes` name out of src/", async () => {
     expect(await offenders(UPSTREAM_TERM)).toEqual([]);
+  });
+
+  it("keeps the freed-hash cause named `retirement`", async () => {
+    // The two bans above only exclude names; without this positive half a wholesale rename to a
+    // third name (or a silent drop of the member) would pass.
+    expect(await rangeCauseUnion()).toMatch(/^\s*\| "retirement"$/m);
   });
 });

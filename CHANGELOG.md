@@ -14,6 +14,8 @@ All notable changes to this project will be documented in this file.
 ### Bug Fixes
 
 * **edit-undo:** derive undo-summary counts from the source line multisets, not the rendered rows, so a collapsed deletion reports the same restored-line count as an expanded one — port of `pi-better-edit@665a05d` (#96)
+* **drift:** key drift-notice episodes on the drifted line's rebased position, so a duplicated anchor no longer silences a distinct line and a lease rotation no longer re-notices one (#98)
+* **mutation:** retire an edit's and an undo's freed anchors after the write, and commit the undo's retirement with its restore transaction — a failed write no longer leaves live anchors marked dead (#98)
 
 ### Code Refactoring
 
