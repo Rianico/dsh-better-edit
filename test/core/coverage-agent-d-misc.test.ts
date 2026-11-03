@@ -10,6 +10,7 @@ import {
   servedPositionsOf,
   currentPositionOfDrifted,
   computeDrift,
+  driftEpisodeKey,
   DRIFT_NOTICE_HEADING,
 } from "../../src/session-view.js";
 import {
@@ -178,7 +179,8 @@ describe("coverage-agent-d session-view", () => {
       resultHashes: ["aaa"],
       resultLines: ["a"],
       range: { startHash: "aaa", endHash: "aaa", startLine: 1, endLine: 1, delta: 0 } as any,
-      reported: new Set(["bbb"]),
+      // Episode identity is the rebased position (#98, CAND-9): bbb rebases to position 1.
+      reported: new Set([driftEpisodeKey(1)]),
     });
     expect(r?.allAlreadyReported).toBe(true);
     expect(r?.text).toContain("already reported");

@@ -34,7 +34,7 @@ import { canon } from "./hashline/hash-assign.js";
 import { fileSnap } from "./file-reader.js";
 import type { LineEnding } from "./edit-diff.js";
 import { toCwd } from "./paths.js";
-import { recordServedTruncated, scanDrift } from "./session-view.js";
+import { recordServedTruncated, retireAnchors, scanDrift } from "./session-view.js";
 import { abortIf, splitLines } from "./utils.js";
 import { runFileEdits, resolveMissingPath } from "./mutation/engine.js";
 import type { FileEditResult, PreparedItem } from "./mutation/engine.js";
@@ -258,6 +258,20 @@ export async function execute(opts: {
     return true;
   };
 
+  // WHY (#98, port of upstream CAND-3): the apply phase reports the anchors its edits freed, and
+  // this is where they are retired — after the write transaction landed. Retiring them inside the
+  // apply phase let a failed write leave a file's live anchors marked dead.
+  //
+  // Residual window (deliberately kept: fail-safe, do NOT "fix" by re-merging phases): if this
+  // retire call throws after the write landed, the freed anchors stay live for one session — the
+  // next use of one rejects loud (stale/probed hash) and the user re-reads. That is strictly safer
+  // than a retire that commits for a write which never happened; re-merging the phases reintroduces
+  // the torn state this ticket removed.
+  const retireFreedAnchors = async (): Promise<void> => {
+    if (fileResult.newlyRetired.length === 0) return;
+    await retireAnchors(sessionKey, fileResult.absolutePath, fileResult.newlyRetired);
+  };
+
   const isSingleCall = items.length === 1 && fileResult.appliedCount + fileResult.noopCount === 1;
 
   if (isSingleCall) {
@@ -286,6 +300,7 @@ export async function execute(opts: {
       undoUnavailableMessage: (displayPath) =>
         formatError("E_UNDO_UNAVAILABLE", { path: displayPath }),
     });
+    await retireFreedAnchors();
     const built = buildBatchResult([toSection()]);
     const serveLanded = await recordIfNeeded(built);
     return withServeNotice(built.content[0]!.text, serveLanded);
@@ -314,6 +329,7 @@ export async function execute(opts: {
       undoUnavailableMessage: (displayPath) =>
         formatError("E_UNDO_UNAVAILABLE", { path: displayPath, batch: true }),
     });
+    await retireFreedAnchors();
   }
 
   const built = buildBatchResult([toSection()]);

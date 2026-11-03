@@ -8,16 +8,20 @@
 import type { Context } from "@deepseek-ai/cordis";
 import { defineTool } from "@deepseek-ai/dsh-tools";
 import { toLF, stripBOM, genDiff, restoreEndings } from "./edit-diff.js";
-import { cntDiff, splitLines, codeOf } from "./utils.js";
+import { visLines, splitLines, codeOf } from "./utils.js";
 import { DomainError, formatError } from "./domain-errors.js";
 import { assertUndoRequest } from "./contract.js";
 import { normalizeRequest as normReq } from "./contract.js";
-import { loadHashStore, withStore } from "./hash-store.js";
+import { loadHashStore, withStore, type InternalHashStore } from "./hash-store.js";
 import { canon, contentChecksum } from "./hashline/hash-assign.js";
 import { lineHashes } from "./hashline/hash.js";
 import { changedRange } from "./hashline/anchor-pipeline.js";
 import { getUndo, clearUndo } from "./undo-edit.js";
-import { loadAnchorReservations, recordServedTruncated, retireAnchors } from "./session-view.js";
+import {
+  loadAnchorReservations,
+  recordServedTruncated,
+  retireAnchorsInStore,
+} from "./session-view.js";
 import { UNDO_DESCRIPTION } from "./prompts.js";
 import type { FileIO } from "./fs-bridge.js";
 import { execCwd, execSessionKey } from "./workspace-context.js";
@@ -73,7 +77,6 @@ export function buildUndoTool(io: FileIO, sandbox: FsSandboxController) {
         try {
           currentRaw = await io.readText(absolutePath, signal);
         } catch (error) {
-          const message = error instanceof Error ? error.message : String(error);
           if (codeOf(error) === "E_NOT_FOUND") {
             await clearUndo(absolutePath);
             return formatError("E_UNDO_STALE", { path, reason: "deleted" });
@@ -116,9 +119,24 @@ export function buildUndoTool(io: FileIO, sandbox: FsSandboxController) {
           blockedRestoreHashes,
           reservations.retiredHashes,
         );
-        const diffResult = genDiff(undo.content, currentNormalized, 0, undefined, undo.hashes);
-        const linesAddedByEdit = cntDiff(diffResult.diff, "+");
-        const linesRemovedByEdit = cntDiff(diffResult.diff, "-");
+        // WHY: #96 (pi-better-edit@665a05d, upstream #173) — the summary counts come from the
+        // WHY: source line multisets, never from the rendered projection: a deleted run past
+        // WHY: DIFF_REMOVED_CAP collapses behind a marker row at context 0, so counting `-` rows
+        // WHY: underreported the restored lines. A line the edit added is one present in the
+        // WHY: current file beyond its occurrence count in `undo.content`; a removed line is the
+        // WHY: converse. Collapsed and expanded projections therefore report identical counts.
+        const remainingUndoCounts = new Map<string, number>();
+        for (const line of visLines(undo.content)) {
+          remainingUndoCounts.set(line, (remainingUndoCounts.get(line) ?? 0) + 1);
+        }
+        let linesAddedByEdit = 0;
+        for (const line of visLines(currentNormalized)) {
+          const remaining = remainingUndoCounts.get(line) ?? 0;
+          if (remaining > 0) remainingUndoCounts.set(line, remaining - 1);
+          else linesAddedByEdit++;
+        }
+        let linesRemovedByEdit = 0;
+        for (const remaining of remainingUndoCounts.values()) linesRemovedByEdit += remaining;
         const undoDiffResult = genDiff(
           currentNormalized,
           undo.content,
@@ -133,11 +151,10 @@ export function buildUndoTool(io: FileIO, sandbox: FsSandboxController) {
         }
         const restoredRange = changedRange(currentNormalized, undo.content);
         const restoredSet = new Set(restoredHashes);
-        await retireAnchors(
-          sessionKey,
-          absolutePath,
-          currentHashes.filter((hash) => !restoredSet.has(hash)),
-        );
+        // WHY (#98, port of upstream CAND-3): retirement waits for the write. Committing it
+        // before `writeText` let a failed revert leave anchors retired for a file that still
+        // holds them — a torn store state with no later read likely to notice.
+        const retiredByUndo = currentHashes.filter((hash) => !restoredSet.has(hash));
 
         try {
           await io.writeText(
@@ -151,12 +168,17 @@ export function buildUndoTool(io: FileIO, sandbox: FsSandboxController) {
           throw sandbox.mapError(error, sandboxPolicy);
         }
 
-        // The file is reverted; the store pair must move as ONE unit: the snapshot/lineage
-        // adopt (`upsertSnapshot`) and the undo-pair clear (`deleteUndoPair`) are both-or-neither.
-        // `withStore` routes both calls through the store's single re-entrant transaction owner
-        // (the store was just loaded for this workspace, so `currentStore()` is that same handle).
-        // Fail loud: a cleared pair over an un-adopted snapshot is a desync no later read/edit can see.
-        const store = await loadHashStore();
+        // The file is reverted; the store state must move as ONE unit: the snapshot/lineage adopt
+        // (`upsertSnapshot`), the retirement of the anchors the revert freed, and the undo-pair
+        // clear (`deleteUndoPair`) are all-or-nothing. `withStore` routes every call through the
+        // store's single re-entrant transaction owner (the store was just loaded for this
+        // workspace, so `currentStore()` is that same handle). Fail loud: a cleared pair over an
+        // un-adopted snapshot, or a revert without its retirement, is a desync no later read or
+        // edit can see.
+        // SAFETY: loadHashStore returns the InternalHashStore
+        // (HashStore & ServedPersistence & LineageStore); its public return type is narrowed, and
+        // this unit needs the served face for the retirement that commits with the adopt.
+        const store = (await loadHashStore()) as InternalHashStore;
         try {
           withStore(() => {
             store.upsertSnapshot(
@@ -166,6 +188,7 @@ export function buildUndoTool(io: FileIO, sandbox: FsSandboxController) {
               restoredHashes,
               undo.content,
             );
+            retireAnchorsInStore(store, sessionKey, absolutePath, retiredByUndo);
             store.deleteUndoPair(absolutePath);
           });
         } catch (error) {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { computeDrift } from "../../src/session-view.js";
+import { computeDrift, driftEpisodeKey } from "../../src/session-view.js";
 
 describe("computeDrift", () => {
   it("returns undefined when nothing drifted outside the range", () => {
@@ -133,7 +133,7 @@ describe("computeDrift", () => {
         endHash: "h00",
         delta: 0,
       },
-      reported: new Set(["h03"]),
+      reported: new Set([driftEpisodeKey(3)]),
     });
     expect(result).toBeDefined();
     expect(result!.allAlreadyReported).toBe(true);
@@ -154,7 +154,7 @@ describe("computeDrift", () => {
         endHash: "h01",
         delta: 0,
       },
-      reported: new Set(["h03"]),
+      reported: new Set([driftEpisodeKey(3)]),
     });
     expect(result).toBeDefined();
     expect(result!.allAlreadyReported).toBe(false);
@@ -400,5 +400,84 @@ describe("computeDrift rotated survivors (#68 canon deficit)", () => {
     expect(result).toBeDefined();
     // h00 is inside the edited range (skipped); h01+h02 truly lost.
     expect(result!.total).toBe(2);
+  });
+});
+
+describe("drift-notice episode identity (#98, upstream CAND-9)", () => {
+  // The reported set must key on the drifted line's rebased position, not its anchor STRING:
+  // an anchor is a spelling, not an identity. A reported entry for one line may not silence
+  // a distinct line that happens to share the anchor.
+  it("does not collapse distinct duplicate-hash drifted lines into one reported episode", () => {
+    // Two distinct served positions share the anchor "dup" (ambiguous hash). Both lines
+    // drifted to different content. `reported` holds one entry for the shared anchor: under
+    // the string key BOTH lines are "already reported" and their current content is never
+    // shown. Under the position key a raw anchor string reports nothing.
+    const result = computeDrift({
+      served: ["h00", "dup", "dup", "h03"],
+      resultHashes: ["h00", "P01", "P02", "h03"],
+      resultLines: ["a", "first-new", "second-new", "d"],
+      range: {
+        startLine: 1,
+        endLine: 1,
+        startHash: "h00",
+        endHash: "h00",
+        delta: 0,
+      },
+      reported: new Set(["dup"]),
+    });
+    expect(result).toBeDefined();
+    expect(result!.total).toBe(2);
+    expect(result!.allAlreadyReported).toBe(false);
+    // Two duplicate lines share one position key: a single marker reports the shared episode,
+    // and the fixed behavior is that the episode is NOT collapsed to a bare pointer.
+    expect(result!.rows.filter((r) => r.drifted).map((r) => r.hash)).toEqual(["P01"]);
+    expect(result!.rows.map((r) => r.hash)).toContain("P02");
+  });
+
+  it("re-notices nothing when each drifted line's own episode key is reported", () => {
+    const first = computeDrift({
+      served: ["h00", "o01", "h02", "h03"],
+      resultHashes: ["h00", "n01", "h02", "h03"],
+      resultLines: ["a", "new-one", "c", "d"],
+      range: {
+        startLine: 1,
+        endLine: 1,
+        startHash: "h00",
+        endHash: "h00",
+        delta: 0,
+      },
+      reported: new Set(),
+    });
+    expect(first).toBeDefined();
+    const drifted = first!.rows.filter((r) => r.drifted);
+    expect(drifted).toHaveLength(1);
+    // The episode advances exactly as scanDrift does: mark what the notice showed.
+    const reported = new Set(drifted.map((r) => driftEpisodeKey(r.position)));
+    // Lease rotation renames the re-served mirror anchor "n01" -> "r01" without a fresh read,
+    // and the line's content changes again. Under the string key the marked "n01" no longer
+    // matches the mirror's rotated "r01" and the line spuriously re-notices; the position key
+    // is rotation-stable.
+    const second = computeDrift({
+      served: ["h00", "r01", "h02", "h03"],
+      resultHashes: ["h00", "x02", "h02", "h03"],
+      resultLines: ["a", "rotated-new", "c", "d"],
+      range: {
+        startLine: 1,
+        endLine: 1,
+        startHash: "h00",
+        endHash: "h00",
+        delta: 0,
+      },
+      reported,
+    });
+    expect(second).toBeDefined();
+    expect(second!.allAlreadyReported).toBe(true);
+  });
+
+  it("keeps the episode key injective over reachable positions", () => {
+    expect(driftEpisodeKey(0)).toBe("AAA");
+    expect(driftEpisodeKey(1)).toBe("AAB");
+    expect(driftEpisodeKey(-1)).toBe("");
+    expect(driftEpisodeKey(1.5)).toBe("");
   });
 });

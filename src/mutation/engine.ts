@@ -18,13 +18,7 @@ import type { LineEnding } from "../edit-diff.js";
 import { loadConfig } from "../store-config.js";
 import { canon } from "../hashline/hash-assign.js";
 import { normFromText } from "../file-reader.js";
-import {
-  scanDrift,
-  loadServed,
-  loadServedCanons,
-  loadRetiredAnchors,
-  retireAnchors,
-} from "../session-view.js";
+import { scanDrift, loadServed, loadServedCanons, loadRetiredAnchors } from "../session-view.js";
 import {
   applyEdit,
   resEdit,
@@ -149,6 +143,11 @@ export interface FileEditResult {
   totalAddedLines: number;
   totalRemovedLines: number;
   driftNotice: string | undefined;
+  /**
+   * Anchors this edit freed, to be retired by the caller AFTER the write lands (upstream
+   * CAND-3, #98). This phase only reports them; it must never commit them.
+   */
+  newlyRetired: string[];
   range: ResolvedRange;
 }
 
@@ -1021,7 +1020,9 @@ export async function runFileEdits(
           ),
       );
     }
-    await retireAnchors(opts.sessionKey, absolutePath, newlyRetired);
+    // WHY (#98, port of upstream CAND-3): retirement is returned to the caller and committed
+    // AFTER the write. Doing it here — inside the read-only apply phase — let a failed write
+    // leave anchors retired for a file that still holds them.
   }
 
   if (hadUtf8DecodeErrors) {
@@ -1069,6 +1070,7 @@ export async function runFileEdits(
     totalAddedLines,
     totalRemovedLines,
     driftNotice,
+    newlyRetired: [...newlyRetired],
     range: {
       startLine: unionStartLine,
       endLine: unionEndLine,

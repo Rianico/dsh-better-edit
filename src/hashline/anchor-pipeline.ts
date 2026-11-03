@@ -925,7 +925,8 @@ export function verifyServedRange(args: {
       : "";
   const echo = fmtServedRows(echoRows, fileLines) + tail;
 
-  // Tombstone check for boundaries (whole-span S@3==S@3)
+  // Retired-anchor check for boundaries (whole-span S@3==S@3) — the freed-hash concept, named
+  // `retired` here since ADR-0013 (ADR-0028 records the vocabulary ruling).
   // If hash was freed in this epoch, any reuse is stale even at same pos+same canon.
   // Early reject checks canon change to avoid false positive on same line re-read.
   if (retiredSet.has(startHash) || retiredSet.has(endHash)) {
@@ -1091,7 +1092,7 @@ export function verifyServedRange(args: {
       }
     }
   }
-  // Tombstone interior check (whole-span) — gated on canon inequality (fail-closed only for different canon)
+  // Retired-anchor interior check (whole-span) — gated on canon inequality (fail-closed only for different canon)
   for (let k = 0; k < servedLen; k++) {
     const h = fileHashes[startLine - 1 + k];
     if (h && retiredSet.has(h)) {

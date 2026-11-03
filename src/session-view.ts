@@ -23,7 +23,7 @@
  * @module dsh-better-edit/session-view
  */
 
-import { HASH_RE, canon } from "./hashline/hash-assign.js";
+import { ALPH, HASH_LEN, HASH_SPACE, HASH_RE, canon } from "./hashline/hash-assign.js";
 import {
   loadHashStore,
   loadServedStore,
@@ -216,6 +216,24 @@ function sweepAndRetire(
   }
 }
 
+/**
+ * Caller-owned transaction: append retired anchors for the session inside the caller's unit.
+ *
+ * WHY (#98, port of upstream CAND-3): the edit path and the undo path must commit their
+ * retirement together with the rest of the post-write store state, so a torn state (retired
+ * anchors without the revert, or a revert without its retirement) is unreachable. Callers pass
+ * the store they already hold inside `withStore`; `retireAnchors` below is the self-committing
+ * wrapper for callers with no surrounding unit.
+ */
+export function retireAnchorsInStore(
+  store: ServedPersistence,
+  sessionKey: string,
+  path: string,
+  hashes: Iterable<string>,
+): void {
+  addRetiredAnchors(store, sessionKey, path, hashes);
+}
+
 /** Keep freed anchors dead for this session until it has seen the whole file again. */
 export async function retireAnchors(
   sessionKey: string,
@@ -226,7 +244,7 @@ export async function retireAnchors(
   if (additions.length === 0) return;
   const store = await loadServedStore();
   withStore(() => {
-    addRetiredAnchors(store, sessionKey, path, additions);
+    retireAnchorsInStore(store, sessionKey, path, additions);
   });
 }
 
@@ -501,6 +519,32 @@ export function currentPositionOfDrifted(
 
 export const DRIFT_NOTICE_HEADING = "[USER] drift:";
 
+/**
+ * WHY (#98, upstream CAND-9): the drift-notice episode identity is the drifted line's rebased
+ * position in the CURRENT file — not its anchor string. An anchor is a spelling, not an
+ * identity: one reported entry for a hash shared by two distinct lines silenced both
+ * (duplicate-hash collapse), and a lease rotation renamed the mirror anchor of an
+ * already-reported line, spuriously re-noticing it. The session's reported-set keeps storing
+ * strings (schema unchanged); this 3-char base-62 encoding of the position is the KEY VALUE.
+ * Positions are bounded by `HASH_SPACE` (= |ALPH|^HASH_LEN, files larger cannot be hashed), so
+ * the encoding is injective over every reachable position. Injection is over POSITIONS, not over
+ * lines: two ambiguous duplicate-hash lines can rebase onto one position and therefore share one
+ * episode key, so one marker reports both (fail-open: content is still served, and it is strictly
+ * better than the old hash-only key, which silenced every line sharing the anchor). An out-of-file position (never
+ * shown, never marked) keys on "" — not a valid stored entry, always "not yet reported",
+ * matching the legacy behavior for unshown drift.
+ */
+export function driftEpisodeKey(position: number): string {
+  if (!Number.isInteger(position) || position < 0 || position >= HASH_SPACE) return "";
+  let idx = position;
+  let out = "";
+  for (let j = 0; j < HASH_LEN; j++) {
+    out = ALPH[idx % ALPH.length]! + out;
+    idx = Math.floor(idx / ALPH.length);
+  }
+  return out;
+}
+
 export interface DriftRow extends ServedRow {
   content: string;
   drifted: boolean;
@@ -612,7 +656,6 @@ export function computeDrift(input: ComputeDriftInput): DriftNoticeResult | unde
     if (resultHashSet.has(servedHash)) continue;
     if (isRotatedSurvivor(p)) continue;
     total++;
-    if (!reported.has(servedHash)) anyNotReported = true;
     const currentPos = currentPositionOfDrifted(
       served,
       currentPosOfHash,
@@ -620,6 +663,10 @@ export function computeDrift(input: ComputeDriftInput): DriftNoticeResult | unde
       p,
       range.delta,
     );
+    // WHY (#98, upstream CAND-9): key the episode on the rebased position, never the anchor
+    // spelling — a shared anchor must not silence a distinct line, and a rotation must not
+    // re-notice one.
+    if (!reported.has(driftEpisodeKey(currentPos))) anyNotReported = true;
     if (currentPos >= 0 && currentPos < resultHashes.length && currentPos < resultLines.length) {
       driftedPositions.push(currentPos);
     } else {
@@ -680,10 +727,12 @@ export async function scanDrift(input: {
     result.rows.map((row) => ({ position: row.position, hash: row.hash })),
     input.resultLines.length,
   );
+  // WHY (#98, upstream CAND-9): the episode key is the drifted row's rebased position, not its
+  // anchor hash (see `driftEpisodeKey`). The handle keeps its string[] storage contract.
   await markDriftReported(
     input.sessionKey,
     input.path,
-    result.rows.filter((row) => row.drifted).map((row) => row.hash),
+    result.rows.filter((row) => row.drifted).map((row) => driftEpisodeKey(row.position)),
   );
   return result.text;
 }

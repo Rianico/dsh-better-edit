@@ -1,12 +1,11 @@
 import { describe, it, expect } from "vitest";
-import { cntDiff } from "../../src/utils.js";
+import { splitLines } from "../../src/utils.js";
 
 describe("coverage-last-90", () => {
-  it("cntDiff empty", () => {
-    expect(cntDiff("", "+")).toBe(0);
-    expect(cntDiff("hello", "+")).toBe(0);
-    expect(cntDiff("+a\n", "+")).toBe(1);
-    expect(cntDiff("+++a\n", "+")).toBe(0);
+  it("splitLines", () => {
+    expect(splitLines("")).toEqual([""]);
+    expect(splitLines("a\nb\n")).toEqual(["a", "b"]);
+    expect(splitLines("a\nb")).toEqual(["a", "b"]);
   });
 
   it("encoding normalize", async () => {
