@@ -13,23 +13,23 @@ All notable changes to this project will be documented in this file.
 
 ### Bug Fixes
 
-* **edit-undo:** derive undo-summary counts from the source line multisets, not the rendered rows, so a collapsed deletion reports the same restored-line count as an expanded one — port of `pi-better-edit@665a05d` (#96)
-* **drift:** key drift-notice episodes on the drifted line's rebased position, so a duplicated anchor no longer silences a distinct line and a lease rotation no longer re-notices one (#98)
-* **mutation:** retire an edit's and an undo's freed anchors after the write, and commit the undo's retirement with its restore transaction — a failed write no longer leaves live anchors marked dead (#98)
+* **edit-undo:** derive undo-summary counts from the source line multisets, not the rendered rows, so a collapsed deletion reports the same restored-line count as an expanded one — port of `pi-better-edit@665a05d` (#96) (#103)
+* **drift:** key drift-notice episodes on the drifted line's rebased position, so a duplicated anchor no longer silences a distinct line and a lease rotation no longer re-notices one (#98) (#103)
+* **mutation:** retire an edit's and an undo's freed anchors after the write, and commit the undo's retirement with its restore transaction — a failed write no longer leaves live anchors marked dead (#98) (#103)
 
 ### Code Refactoring
 
-* **errors:** retire the dead `tombstone` range cause and speak one vocabulary for the freed-hash concept — the rename to upstream's name is declined in ADR-0028 (#97)
+* **errors:** retire the dead `tombstone` range cause and speak one vocabulary for the freed-hash concept — the rename to upstream's name is declined in ADR-0028 (#97) (#103)
 
 ### Tests
 
-* **edit:** pin the `{file, edits}` wire shape against third-party shape adapters, and pin duplicate-line occurrence counting in the undo summary (#100)
-* **arch:** pin the install surface (one built entry through `main`/`exports`, the tarball shipping the declared bundle patch, fail-loud `prepare`/`prepublishOnly`) and fault-inject the undo restore transaction so its all-or-nothing claim rests on a test (#101)
+* **edit:** pin the `{file, edits}` wire shape against third-party shape adapters, and pin duplicate-line occurrence counting in the undo summary (#100) (#103)
+* **arch:** pin the install surface (one built entry through `main`/`exports`, the tarball shipping the declared bundle patch, fail-loud `prepare`/`prepublishOnly`) and fault-inject the undo restore transaction so its all-or-nothing claim rests on a test (#101) (#103)
 
 ### Documentation
 
-* **absorb:** close the `0925f1a`..`0b1934c` range — all 19 upstream commits carry a disposition (five tickets ported or adapted: #96, #97, #98, #100, #101; three declined: #97's rename half, #100's typebox peer, #101's bundle; #102 confirms the release-ledger defect is absent), and eleven docs/deps/pi-lens/release/merge commits are deliberately not absorbed. No downstream version bump rides the absorb; the cursor moves to `0b1934c` (#102)
-* **release:** confirm upstream's ledger-clearing defect cannot occur here — the gate has no `clear` subcommand and the promotion plugin empties `[Unreleased]` after promoting it (#102)
+* **absorb:** close the `0925f1a`..`0b1934c` range — all 19 upstream commits carry a disposition (five tickets ported or adapted: #96, #97, #98, #100, #101; three declined: #97's rename half, #100's typebox peer, #101's bundle; #102 confirms the release-ledger defect is absent), and eleven docs/deps/pi-lens/release/merge commits are deliberately not absorbed. No downstream version bump rides the absorb; the cursor moves to `0b1934c` (#102) (#103)
+* **release:** confirm upstream's ledger-clearing defect cannot occur here — the gate has no `clear` subcommand and the promotion plugin empties `[Unreleased]` after promoting it (#102) (#103)
 
 ## [1.2.0] - 2026-10-29
 
