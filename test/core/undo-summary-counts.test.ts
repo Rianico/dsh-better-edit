@@ -71,4 +71,35 @@ describe("undo_last_edit summary counts (#96)", () => {
       },
     );
   });
+  // P3 rider from the T1 review: occurrence counts, not set membership. A set-based count would
+  // collapse a duplicated line and report 0 restored (deletion) or 0 added (duplicate addition).
+  it("counts occurrences, not distinct lines, when the edited run has duplicates", async () => {
+    const DUPLICATES = "alpha\nbeta\nbeta\ngamma\n";
+
+    // Delete one of the two identical `beta` lines: one occurrence is restored.
+    await undoAfterEdit(
+      "undo_counts_dupdelete.txt",
+      DUPLICATES,
+      (rows) => [[extractHash(rows[1]!), extractHash(rows[1]!), ""]],
+      (text, restored) => {
+        expect(restored).toBe(DUPLICATES);
+        expect(text).toContain(
+          "Removed 0 line(s) that were added and restored 1 line(s) that were removed.",
+        );
+      },
+    );
+
+    // Replace `gamma` with a third `beta`: one occurrence is added and one removed.
+    await undoAfterEdit(
+      "undo_counts_dupadd.txt",
+      DUPLICATES,
+      (rows) => [[extractHash(rows[3]!), extractHash(rows[3]!), "beta"]],
+      (text, restored) => {
+        expect(restored).toBe(DUPLICATES);
+        expect(text).toContain(
+          "Removed 1 line(s) that were added and restored 1 line(s) that were removed.",
+        );
+      },
+    );
+  });
 });
