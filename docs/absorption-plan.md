@@ -172,16 +172,18 @@ future lane must dispatch them explicitly.
 
 ## Sync 2026-11-04 — post-`0925f1a` opportunistic ports (lane `a245`): undo counts, wire shape, blocked-hash vocabulary
 
-**Basis:** upstream `pi-better-edit@665a05d` (undo-summary counts), `5dacf56` + `6b9faa6` (edit wire-shape pin; typebox peer), `8ad9a51` + `3e1f6dc` (tombstone → blockedHashes rename; blocked-hash library-seam retirement) — every commit is beyond the cursor `0925f1a` and was ported one commit at a time. This lane is NOT a range absorb: the cursor stays at `0925f1a`, and `0925f1a..665a05d` is not claimed wholesale.
+**Basis:** upstream `pi-better-edit@0925f1a19555adbd7c1974af94d397154511451d` (v2.3.0) → `0b1934ccd39dbabcb97ea9957e84b08d730391e7` (`chore(release): 2.5.0`, 2026-10-02) — 19 commits, triaged one commit at a time on lane `a245`; every commit in the range carries a disposition below. The lane closes the cursor at `0b1934c`; nothing beyond it is claimed (`0b1934c..050d142`, the checkout's later `main`, is 102 commits of unabsorbed backlog).
 
-| Ticket | PR   | Upstream referent    | Verdict                                                                                                                                                                                                                                                                                                                  |
-| ------ | ---- | -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| T1     | #96  | `665a05d`            | PORTED — undo-summary counts derive from the source line multisets instead of the rendered rows (`src/tool-undo.ts`; `cntDiff` deleted)                                                                                                                                                                                  |
-| T5     | #100 | `5dacf56`, `6b9faa6` | PORTED — the payload wire-shape pin (`test/tools/edit-wire-shape.test.ts`); `6b9faa6` DECLINED — no typebox consumption anywhere downstream (recorded in `AGENTS.md`)                                                                                                                                                    |
-| T2     | #97  | `8ad9a51`, `3e1f6dc` | Declined the tombstone → blockedHashes rename and PORTED the dead-member retirement (downstream says `retired` since ADR-0013); declined `3e1f6dc`'s mirror-seam deletion because the non-leased route is live — [ADR-0028](adr/0028-blocked-hashes-vocabulary.md)                                                       |
-| T3     | #98  | `a7bc3de`            | ADAPT — CAND-9 drift episode keys and CAND-3's post-write retirement ordering on both paths. Seven of the commit's 55 files landed (the two source seams, `session-view.ts`, the two suites, and the CHANGELOG bullet); the other 48 are declined as upstream-internal or structurally divergent (per-CAND ruling below) |
+| Ticket | PR   | Upstream referent    | Verdict                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| ------ | ---- | -------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| T1     | #96  | `665a05d`            | PORTED — undo-summary counts derive from the source line multisets instead of the rendered rows (`src/tool-undo.ts`; `cntDiff` deleted)                                                                                                                                                                                                                                                                                                       |
+| T5     | #100 | `5dacf56`, `6b9faa6` | PORTED — the payload wire-shape pin (`test/tools/edit-wire-shape.test.ts`); `6b9faa6` DECLINED — no typebox consumption anywhere downstream (recorded in `AGENTS.md`)                                                                                                                                                                                                                                                                         |
+| T2     | #97  | `8ad9a51`, `3e1f6dc` | Declined the tombstone → blockedHashes rename and PORTED the dead-member retirement (downstream says `retired` since ADR-0013); declined `3e1f6dc`'s mirror-seam deletion because the non-leased route is live — [ADR-0028](adr/0028-blocked-hashes-vocabulary.md)                                                                                                                                                                            |
+| T3     | #98  | `a7bc3de`            | ADAPT — CAND-9 drift episode keys and CAND-3's post-write retirement ordering on both paths. Seven of the commit's 55 files landed: `src/drift.ts`, `src/edit-undo.ts`, `src/mutation-engine/engine.ts`, `src/served-session/session.ts`, `test/core/drift.test.ts`, `test/integration/post-write-commit-atomicity.test.ts`, `CHANGELOG.md`; the other 48 are declined as upstream-internal or structurally divergent (per-CAND ruling below) |
 
 | T6 | #101 | `b0a3e30` | DECLINED — the prebuilt esbuild bundle is a pi-extension contract (`main` → `dist/index.js`, `prepare` bundles, `pi.extensions`); a dsh plugin's entry is the tsc-built `lib/` plus `cordis.patch.yml`, so there is no per-session TS transpilation to avoid. Only the manifest half applies and lands as `test/arch/install-surface.test.ts` (see below) |
+| T7 | #102 | `a0691f5` | DECLINED — the ledger-clearing defect has no downstream carrier: `scripts/changelog-unreleased.py` has no `clear` subcommand, `release.yml` never clears `[Unreleased]`, and the promotion plugin owns emptying it after promotion (see §T7) |
+| T4 | #99 | (none) | **PARKED — gated on the D1 ruling, neither declined nor implemented.** ADR-0021's predicate already fires at the old cursor (see §T4) |
 
 ### T3 — `a7bc3de` review track: per-CAND ruling
 
@@ -221,3 +223,37 @@ in full; only the manifest invariants both surfaces depend on are pinned:
 | `CHANGELOG.md`                               | DECLINED — no downstream user-visible change rides a decline                                                                                                                                                                                            |
 | `docs/adr/0027-prebuilt-bundle…`             | DECLINED — upstream ADR; downstream 0027 is the a230 lane's projection record, and this decline needs no ADR                                                                                                                                            |
 | `test/arch/extension-entry-resolves.test.ts` | ADAPTED — the applicable half lands as `test/arch/install-surface.test.ts`: one built entry through `main` and `exports`, the tarball shipping `lib` + the declared `dsh.bundle.patch`, and `prepare`/`prepublishOnly` unable to swallow a failed build |
+
+### T7 — `a0691f5` release ledger: decline (defect absent downstream)
+
+Upstream's defect: `release.yml` ran `scripts/changelog-unreleased.py clear` **before**
+semantic-release, so `scripts/release-changelog.mjs` promoted an already-empty `[Unreleased]` and
+releases 2.3.0/2.4.0 shipped with empty bodies. The fix deleted the workflow step, deleted the
+`clear` subcommand, and synced the script with the harness scaffold (ADR-0017 upstream).
+
+Every carrier of that defect is absent here:
+
+| Carrier          | Upstream (pre-fix)                                              | Downstream                                                                                                                                                                                                        |
+| ---------------- | --------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Release workflow | `.github/workflows/release.yml` step `Clear Unreleased section` | `.github/workflows/release.yml:40` runs `changelog-gate.py ledger --update-baseline` only (retires migration baselines; never touches `[Unreleased]`), then `:42` `pnpm exec semantic-release`                    |
+| Ledger script    | `scripts/changelog-unreleased.py` carried a `clear` subcommand  | `scripts/changelog-unreleased.py:388` — `choices=["update", "check"]`; no `clear` exists to re-wire                                                                                                               |
+| Promotion        | Promotion plugin emptied an already-cleared section             | `.releaserc.json` wires `./scripts/release-changelog.mjs`, whose header (`:2`–`:17`) states it promotes the curated ledger and re-opens an empty `## [Unreleased]` **after** promotion, surviving the second call |
+| Restoration      | `CHANGELOG.md` bodies restored from parents                     | No empty release bodies to restore — downstream `## [1.2.0]` and earlier carry their curated entries                                                                                                              |
+| Contributor note | `CONTRIBUTING.md` warning                                       | `CONTRIBUTING.md` already documents the curated-ledger flow; the gate at both CI boundaries (ADR-0024) fails loud instead of clearing                                                                             |
+
+The decline is structural: the downstream gate is read-only by construction (`ledger` / `ticket`
+phases plus a baseline file), so there is no mutation verb for a release path to call. No port, no
+ADR — a pure decline.
+
+### T4 (#99) — PARKED, gated on the D1 ruling
+
+T4 is **not declined and not implemented**. It waits on the D1 ruling recorded in
+[ADR-0021](adr/0021-lru-snapshot-vacuum.md) §Residuals: whether the served-guard true-LRU tracker
+(upstream `595692f`, `SERVED_REFUSAL_MAX_ENTRIES = 256`) is absorbed to bound the still-unbounded
+`src/noop-guard.ts` tracker.
+
+Fact for the ruling, from this lane: ADR-0021's own predicate trigger —
+`git merge-base --is-ancestor 595692f <absorbed-checkpoint>` — **already returns true at the old
+cursor `0925f1a`** (and remains true at `0b1934c`), so the residual is ripe and the gate is a
+ruling, not a missing predicate. Until that ruling lands, T4 stays parked; resuming it means
+absorbing the tracker on the HashAssign/SessionView seam and bounding `noopLoopTracker`.

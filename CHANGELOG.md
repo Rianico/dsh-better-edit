@@ -26,6 +26,11 @@ All notable changes to this project will be documented in this file.
 * **edit:** pin the `{file, edits}` wire shape against third-party shape adapters, and pin duplicate-line occurrence counting in the undo summary (#100)
 * **arch:** pin the install surface (one built entry through `main`/`exports`, the tarball shipping the declared bundle patch, fail-loud `prepare`/`prepublishOnly`) and fault-inject the undo restore transaction so its all-or-nothing claim rests on a test (#101)
 
+### Documentation
+
+* **absorb:** close the `0925f1a`..`0b1934c` range — all 19 upstream commits carry a disposition (six tickets ported or adapted: #96, #97, #98, #100, #101; three declined: #97's rename half, #100's typebox peer, #101's bundle; #102 confirms the release-ledger defect is absent), and eleven docs/deps/pi-lens/release/merge commits are deliberately not absorbed. No downstream version bump rides the absorb; the cursor moves to `0b1934c` (#102)
+* **release:** confirm upstream's ledger-clearing defect cannot occur here — the gate has no `clear` subcommand and the promotion plugin empties `[Unreleased]` after promoting it (#102)
+
 ## [1.2.0] - 2026-10-29
 
 ### Features
