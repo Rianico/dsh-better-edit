@@ -241,8 +241,9 @@ Every carrier of that defect is absent here:
 | Restoration      | `CHANGELOG.md` bodies restored from parents                     | No empty release bodies to restore — downstream `## [1.2.0]` and earlier carry their curated entries                                                                                                              |
 | Contributor note | `CONTRIBUTING.md` warning                                       | `CONTRIBUTING.md` already documents the curated-ledger flow; the gate at both CI boundaries (ADR-0024) fails loud instead of clearing                                                                             |
 
-The decline is structural: the downstream gate is read-only by construction (`ledger` / `ticket`
-phases plus a baseline file), so there is no mutation verb for a release path to call. No port, no
+The decline is structural: the downstream gate is read-only toward CHANGELOG by construction (`ledger` /
+`ticket` phases; only `--update-baseline` writes the baseline file, at `scripts/changelog-gate.py:472`),
+so there is no verb a release path could misuse to clear the ledger. No port, no
 ADR — a pure decline.
 
 ### T4 (#99) — PARKED, gated on the D1 ruling
