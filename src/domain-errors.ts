@@ -70,7 +70,6 @@ export interface ServedRow {
 /** WHY: user-facing diagnosis carried as `details.cause` on range-family rejections. */
 export type RangeCause =
   | "retirement"
-  | "tombstone"
   | "never-served"
   | "served-range staleness"
   | "anchor staleness"
