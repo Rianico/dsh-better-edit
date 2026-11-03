@@ -24,6 +24,7 @@ All notable changes to this project will be documented in this file.
 ### Tests
 
 * **edit:** pin the `{file, edits}` wire shape against third-party shape adapters, and pin duplicate-line occurrence counting in the undo summary (#100)
+* **arch:** pin the install surface (one built entry through `main`/`exports`, the tarball shipping the declared bundle patch, fail-loud `prepare`/`prepublishOnly`) and fault-inject the undo restore transaction so its all-or-nothing claim rests on a test (#101)
 
 ## [1.2.0] - 2026-10-29
 

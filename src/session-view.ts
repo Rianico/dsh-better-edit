@@ -527,7 +527,10 @@ export const DRIFT_NOTICE_HEADING = "[USER] drift:";
  * already-reported line, spuriously re-noticing it. The session's reported-set keeps storing
  * strings (schema unchanged); this 3-char base-62 encoding of the position is the KEY VALUE.
  * Positions are bounded by `HASH_SPACE` (= |ALPH|^HASH_LEN, files larger cannot be hashed), so
- * the encoding is injective over every reachable position. An out-of-file position (never
+ * the encoding is injective over every reachable position. Injection is over POSITIONS, not over
+ * lines: two ambiguous duplicate-hash lines can rebase onto one position and therefore share one
+ * episode key, so one marker reports both (fail-open: content is still served, and it is strictly
+ * better than the old hash-only key, which silenced every line sharing the anchor). An out-of-file position (never
  * shown, never marked) keys on "" — not a valid stored entry, always "not yet reported",
  * matching the legacy behavior for unshown drift.
  */

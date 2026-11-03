@@ -3,6 +3,7 @@ import { beforeAll, describe, expect, it } from "vitest";
 import { initHasher } from "../../src/hashline/hasher.js";
 import { getUndo } from "../../src/undo-edit.js";
 import { loadAnchorReservations } from "../../src/session-view.js";
+import { loadHashStore } from "../../src/hash-store.js";
 import { withWorkspace } from "../../src/workspace-context.js";
 import type { FileIO } from "../../src/fs-bridge.js";
 import { localIO } from "../../src/fs-bridge.js";
@@ -130,6 +131,53 @@ describe("undo commit ordering and atomicity (#98, upstream CAND-3)", () => {
         loadAnchorReservations("test-session", path),
       );
       expect(afterUndo.retiredHashes.size).toBeGreaterThan(retiredBefore.size);
+    });
+  });
+
+  it("a store fault inside the restore unit rolls the whole triple back", async () => {
+    // The failure is injected in the LAST statement of the unit (`deleteUndoPair`), so the
+    // snapshot adopt and the retirement have already executed when it throws: only one
+    // transaction can take all three back together.
+    await withTempFile("cand3_undo_store_fault.txt", ORIGINAL, async ({ cwd, path }) => {
+      const harness = setupIntegrationTest(cwd);
+      const read = await harness.readTool.execute("r1", { path: "cand3_undo_store_fault.txt" });
+      const bravo = extractHash(rowsOf(read)[1]!);
+      await harness.editTool.execute("e1", {
+        path: "cand3_undo_store_fault.txt",
+        anchor_from: bravo,
+        anchor_to: bravo,
+        replace_with: "bravo edited",
+      });
+
+      const before = await withWorkspace(cwd, () => loadAnchorReservations("test-session", path));
+      const retiredBefore = new Set(before.retiredHashes);
+
+      const store = await withWorkspace(cwd, () => loadHashStore());
+      const originalDelete = store.deleteUndoPair.bind(store);
+      let faulted = false;
+      store.deleteUndoPair = (undoPath: string): void => {
+        if (!faulted) {
+          faulted = true;
+          throw new Error("induced store fault");
+        }
+        originalDelete(undoPath);
+      };
+
+      try {
+        await expect(
+          harness.undoTool.execute("u1", { path: "cand3_undo_store_fault.txt" }),
+        ).rejects.toThrow(/E_UNDO_NOT_RECORDED/);
+
+        // The revert's write landed first...
+        expect(await readFile(path, "utf8")).toBe(ORIGINAL);
+        const after = await withWorkspace(cwd, () => loadAnchorReservations("test-session", path));
+        // ...but the retirement that ran before the fault is rolled back with the adopt, and the
+        // undo pair is still there (all three or none).
+        expect([...after.retiredHashes].sort()).toEqual([...retiredBefore].sort());
+        expect(await withWorkspace(cwd, () => getUndo(path))).toBeDefined();
+      } finally {
+        store.deleteUndoPair = originalDelete;
+      }
     });
   });
 });
