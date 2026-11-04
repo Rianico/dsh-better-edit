@@ -183,7 +183,7 @@ future lane must dispatch them explicitly.
 
 | T6 | #101 | `b0a3e30` | DECLINED — the prebuilt esbuild bundle is a pi-extension contract (`main` → `dist/index.js`, `prepare` bundles, `pi.extensions`); a dsh plugin's entry is the tsc-built `lib/` plus `cordis.patch.yml`, so there is no per-session TS transpilation to avoid. Only the manifest half applies and lands as `test/arch/install-surface.test.ts` (see below) |
 | T7 | #102 | `a0691f5` | DECLINED — the ledger-clearing defect has no downstream carrier: `scripts/changelog-unreleased.py` has no `clear` subcommand, `release.yml` never clears `[Unreleased]`, and the promotion plugin owns emptying it after promotion (see §T7) |
-| T4 | #99 | (none) | **PARKED — gated on the D1 ruling, neither declined nor implemented.** ADR-0021's predicate already fires at the old cursor (see §T4) |
+| T4 | #99 | (none) | **DECLINED by operator ruling 2026-11-04** — pi-lens is a pi extension, so cooperative bridges are out of scope for this dsh plugin; the external-mutation-healing track (#53) stands (see §T4) |
 
 ### T3 — `a7bc3de` review track: per-CAND ruling
 
@@ -246,15 +246,8 @@ The decline is structural: the downstream gate is read-only toward CHANGELOG by 
 so there is no verb a release path could misuse to clear the ledger. No port, no
 ADR — a pure decline.
 
-### T4 (#99) — PARKED, gated on the D1 ruling
+### T4 (#99) — DECLINED by operator ruling 2026-11-04
 
-T4 is **not declined and not implemented**. It waits on the D1 ruling recorded in
-[ADR-0021](adr/0021-lru-snapshot-vacuum.md) §Residuals: whether the served-guard true-LRU tracker
-(upstream `595692f`, `SERVED_REFUSAL_MAX_ENTRIES = 256`) is absorbed to bound the still-unbounded
-`src/noop-guard.ts` tracker.
+The pi-lens read + mutation bridges (upstream `b21b89f`, `eb5ed39`) are **not absorbed**: pi-lens is a pi extension, and cooperative bridges are out of scope for this dsh plugin. The external-mutation-healing track (#53) stands — every non-hashline write remains hostile drift to detect, fail loud on, or heal around — and the roadmap (#1) keeps that direction. The lane's triage recommendation (decline full port; read-only export only if cheap) is superseded by the ruling: no bridge code of either kind lands.
 
-Fact for the ruling, from this lane: ADR-0021's own predicate trigger —
-`git merge-base --is-ancestor 595692f <absorbed-checkpoint>` — **already returns true at the old
-cursor `0925f1a`** (and remains true at `0b1934c`), so the residual is ripe and the gate is a
-ruling, not a missing predicate. Until that ruling lands, T4 stays parked; resuming it means
-absorbing the tracker on the HashAssign/SessionView seam and bounding `noopLoopTracker`.
+Separate open item, preserved here because this section previously mixed the two D1 labels: ADR-0021 §Residuals D1 — the served-guard true-LRU tracker (upstream `595692f`, `SERVED_REFUSAL_MAX_ENTRIES = 256`) — is still unported. Its predicate trigger (`git merge-base --is-ancestor 595692f <absorbed-checkpoint>`) already returns true at `0b1934c`, so the residual is ripe; resuming it means absorbing the tracker on the HashAssign/SessionView seam and bounding `noopLoopTracker`. That residual is owned by ADR-0021, not by #99, and stays open.
