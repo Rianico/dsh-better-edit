@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { computeDrift, driftEpisodeKey } from "../../src/session-view.js";
+import {
+  computeDrift,
+  driftEpisodeKey,
+  driftReported,
+  markDriftReported,
+} from "../../src/session-view.js";
+import { loadServedStore, withStore } from "../../src/hash-store.js";
+import { setupTestHome } from "../support/fixtures.js";
 
 describe("computeDrift", () => {
   it("returns undefined when nothing drifted outside the range", () => {
@@ -481,26 +488,53 @@ describe("drift-notice episode identity (#98, upstream CAND-9)", () => {
     expect(driftEpisodeKey(1.5)).toBe("");
   });
 
-  it("never lets a legacy bare-hash entry suppress a position-keyed episode", () => {
-    // A stale pre-upgrade reported entry is a bare anchor string. "AAA" is exactly what the
-    // pre-namespace position key for position 0 encoded to, so under the old key it silenced the
-    // episode below. The namespaced key must not match it.
-    const result = computeDrift({
-      served: ["h00", "h01", "h02"],
-      resultHashes: ["X00", "h01", "h02"],
-      resultLines: ["changed", "b", "c"],
-      range: {
-        startLine: 3,
-        endLine: 3,
-        startHash: "h02",
-        endHash: "h02",
-        delta: 0,
-      },
-      reported: new Set(["AAA"]),
-    });
-    expect(result).toBeDefined();
-    expect(result!.total).toBe(1);
-    expect(result!.allAlreadyReported).toBe(false);
-    expect(result!.text).toContain("drift:");
+  it("round-trips a legacy bare-hash entry through the store without suppressing or faking an episode", async () => {
+    const { cleanup } = await setupTestHome();
+    try {
+      const sessionKey = "sessionA";
+      const path = "/drift.ts";
+      // A stale pre-upgrade reported entry is a bare anchor string. "AAA" is exactly what the
+      // pre-namespace position key for position 0 encoded to, so under the old key it silenced the
+      // episode below. Seed it raw so the reader — not the writer — owns the round-trip.
+      const store = await loadServedStore();
+      withStore(() => store.upsertServedReported(sessionKey, path, JSON.stringify(["AAA"])));
+
+      // The legacy entry survives verbatim: the reader neither drops it nor rewrites it into the
+      // namespaced "#AAA", which would leak through as a false report for position 0.
+      const reported = await driftReported(sessionKey, path);
+      expect(reported).toEqual(new Set(["AAA"]));
+
+      const input = {
+        served: ["h00", "h01", "h02"],
+        resultHashes: ["X00", "h01", "h02"],
+        resultLines: ["changed", "b", "c"],
+        range: {
+          startLine: 3,
+          endLine: 3,
+          startHash: "h02",
+          endHash: "h02",
+          delta: 0,
+        },
+      };
+      const result = computeDrift({ ...input, reported });
+      expect(result).toBeDefined();
+      expect(result!.total).toBe(1);
+      expect(result!.allAlreadyReported).toBe(false);
+      expect(result!.text).toContain("drift:");
+
+      // Marking the episode writes a namespaced key; a fresh read must now suppress it. Before the
+      // reader accepted namespaced keys this round-trip lost "#AAA" and re-noticed forever.
+      await markDriftReported(
+        sessionKey,
+        path,
+        result!.rows.filter((row) => row.drifted).map((row) => driftEpisodeKey(row.position)),
+      );
+      const reportedAfter = await driftReported(sessionKey, path);
+      expect(reportedAfter).toEqual(new Set(["AAA", "#AAA"]));
+      const second = computeDrift({ ...input, reported: reportedAfter });
+      expect(second!.allAlreadyReported).toBe(true);
+    } finally {
+      await cleanup();
+    }
   });
 });

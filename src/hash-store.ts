@@ -23,7 +23,7 @@ import { hashStorePath } from "./store-tenancy.js";
 import { onStoreOpen, setStoresGetter } from "./store-lifecycle.js";
 import { workspaceCwd } from "./workspace-context.js";
 import { errCode, splitLines } from "./utils.js";
-import { initHasher, HASH_RE } from "./hashline/hash-assign.js";
+import { initHasher, HASH_CLASS, HASH_RE } from "./hashline/hash-assign.js";
 import { HASH_STORE_VERSION, HASH_STORE_BUSY_TIMEOUT, SERVED_TTL_MS } from "./constants.js";
 import { DomainError } from "./domain-errors.js";
 import {
@@ -743,6 +743,16 @@ function buildStore(db: DatabaseSync, storePath: string): { db: DatabaseSync; st
   return { db, stmts };
 }
 
+/**
+ * Namespace for drift-episode keys in a served-reported set. The set historically stored bare
+ * anchor hashes (`HASH_RE`); a position-encoded episode key shares the hash alphabet, so it
+ * carries a prefix outside ALPH to keep the two domains disjoint. `driftEpisodeKey`
+ * (session-view) is the sole encoder; the reader below accepts both grammars so a namespaced
+ * mark survives the store round-trip instead of being dropped on load.
+ */
+export const DRIFT_EPISODE_PREFIX = "#";
+export const DRIFT_EPISODE_RE = new RegExp(`^${DRIFT_EPISODE_PREFIX}${HASH_CLASS}$`);
+
 /** Wire the domain methods over the prepared statements. */
 function makeDomainStore(
   stmts: Prepared,
@@ -995,7 +1005,12 @@ function makeDomainStore(
       try {
         const parsed = JSON.parse(raw) as unknown;
         if (!Array.isArray(parsed)) return new Set();
-        return new Set(parsed.filter((h): h is string => typeof h === "string" && HASH_RE.test(h)));
+        return new Set(
+          parsed.filter(
+            (h): h is string =>
+              typeof h === "string" && (HASH_RE.test(h) || DRIFT_EPISODE_RE.test(h)),
+          ),
+        );
       } catch (error) {
         return new Set();
       }

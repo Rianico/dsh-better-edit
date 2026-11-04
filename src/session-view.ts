@@ -23,11 +23,13 @@
  * @module dsh-better-edit/session-view
  */
 
-import { ALPH, HASH_CLASS, HASH_LEN, HASH_SPACE, HASH_RE, canon } from "./hashline/hash-assign.js";
+import { ALPH, HASH_LEN, HASH_SPACE, HASH_RE, canon } from "./hashline/hash-assign.js";
 import {
   loadHashStore,
   loadServedStore,
   withStore,
+  DRIFT_EPISODE_PREFIX,
+  DRIFT_EPISODE_RE,
   type AnchorReservations,
   type ServedPersistence,
   type RetiredEntry,
@@ -435,15 +437,6 @@ export async function driftReported(sessionKey: string, path: string): Promise<S
     return new Set();
   }
 }
-
-/**
- * Namespace prefix for drift-episode keys. The reported set historically stored bare anchor hashes
- * (3 chars from ALPH); a position-encoded key sharing that space let a stale pre-upgrade hash
- * suppress a fresh episode. Keys carry a prefix outside ALPH so the two domains cannot collide;
- * legacy bare-hash entries stay in the set but never match a position episode.
- */
-const DRIFT_EPISODE_PREFIX = "#";
-const DRIFT_EPISODE_RE = new RegExp(`^${DRIFT_EPISODE_PREFIX}${HASH_CLASS}$`);
 
 export async function markDriftReported(
   sessionKey: string,
