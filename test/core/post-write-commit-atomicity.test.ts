@@ -1,8 +1,8 @@
 import { readFile } from "node:fs/promises";
-import { beforeAll, describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it, vi } from "vitest";
 import { initHasher } from "../../src/hashline/hasher.js";
 import { getUndo } from "../../src/undo-edit.js";
-import { loadAnchorReservations } from "../../src/session-view.js";
+import { loadAnchorReservations, loadServedStore } from "../../src/session-view.js";
 import { loadHashStore } from "../../src/hash-store.js";
 import { withWorkspace } from "../../src/workspace-context.js";
 import type { FileIO } from "../../src/fs-bridge.js";
@@ -84,6 +84,44 @@ describe("edit commit ordering (#98, upstream CAND-3)", () => {
       expect(await readFile(path, "utf8")).toBe(EDITED);
       const after = await withWorkspace(cwd, () => loadAnchorReservations("test-session", path));
       expect(after.retiredHashes.has(bravo)).toBe(true);
+    });
+  });
+
+  it("a retire fault after the landed write warns and continues instead of throwing", async () => {
+    await withTempFile("cand3_retire_fault.txt", ORIGINAL, async ({ cwd, path }) => {
+      const harness = setupIntegrationTest(cwd);
+      const read = await harness.readTool.execute("r1", { path: "cand3_retire_fault.txt" });
+      const bravo = extractHash(rowsOf(read)[1]!);
+
+      // A store fault in the post-write retire must not convert the applied edit into a thrown
+      // error. The patch also faults the serve sweep, so the edit stands with both notices.
+      const store = await withWorkspace(cwd, () => loadServedStore());
+      const originalUpsert = store.upsertRetiredAnchors.bind(store);
+      store.upsertRetiredAnchors = (): void => {
+        throw new Error("induced retire fault");
+      };
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+      try {
+        const result = await harness.editTool.execute("e1", {
+          path: "cand3_retire_fault.txt",
+          anchor_from: bravo,
+          anchor_to: bravo,
+          replace_with: "bravo edited",
+        });
+
+        expect(await readFile(path, "utf8")).toBe(EDITED);
+        const text = getText(result);
+        expect(text).toContain("could not be retired for this session");
+        expect(text).toContain("induced retire fault");
+        expect(warn).toHaveBeenCalled();
+        // Retirement did not land, so the freed anchor stays live and self-heals on next use.
+        const after = await withWorkspace(cwd, () => loadAnchorReservations("test-session", path));
+        expect(after.retiredHashes.has(bravo)).toBe(false);
+      } finally {
+        store.upsertRetiredAnchors = originalUpsert;
+        warn.mockRestore();
+      }
     });
   });
 });

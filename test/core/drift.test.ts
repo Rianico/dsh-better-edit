@@ -475,9 +475,32 @@ describe("drift-notice episode identity (#98, upstream CAND-9)", () => {
   });
 
   it("keeps the episode key injective over reachable positions", () => {
-    expect(driftEpisodeKey(0)).toBe("AAA");
-    expect(driftEpisodeKey(1)).toBe("AAB");
+    expect(driftEpisodeKey(0)).toBe("#AAA");
+    expect(driftEpisodeKey(1)).toBe("#AAB");
     expect(driftEpisodeKey(-1)).toBe("");
     expect(driftEpisodeKey(1.5)).toBe("");
+  });
+
+  it("never lets a legacy bare-hash entry suppress a position-keyed episode", () => {
+    // A stale pre-upgrade reported entry is a bare anchor string. "AAA" is exactly what the
+    // pre-namespace position key for position 0 encoded to, so under the old key it silenced the
+    // episode below. The namespaced key must not match it.
+    const result = computeDrift({
+      served: ["h00", "h01", "h02"],
+      resultHashes: ["X00", "h01", "h02"],
+      resultLines: ["changed", "b", "c"],
+      range: {
+        startLine: 3,
+        endLine: 3,
+        startHash: "h02",
+        endHash: "h02",
+        delta: 0,
+      },
+      reported: new Set(["AAA"]),
+    });
+    expect(result).toBeDefined();
+    expect(result!.total).toBe(1);
+    expect(result!.allAlreadyReported).toBe(false);
+    expect(result!.text).toContain("drift:");
   });
 });
