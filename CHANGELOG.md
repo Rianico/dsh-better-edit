@@ -11,6 +11,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.2.1] - 2026-11-04
+
 ### Bug Fixes
 
 * **edit-undo:** derive undo-summary counts from the source line multisets, not the rendered rows, so a collapsed deletion reports the same restored-line count as an expanded one — port of `pi-better-edit@665a05d` (#96) (#103)
