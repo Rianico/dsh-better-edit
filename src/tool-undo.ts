@@ -13,12 +13,18 @@ import { DomainError, formatError } from "./domain-errors.js";
 import { assertUndoRequest } from "./contract.js";
 import { normalizeRequest as normReq } from "./contract.js";
 import { loadHashStore, withStore, type InternalHashStore } from "./hash-store.js";
-import { canon, contentChecksum } from "./hashline/hash-assign.js";
+import {
+  AnchorSpaceExhaustedError,
+  HASH_SPACE,
+  canon,
+  contentChecksum,
+} from "./hashline/hash-assign.js";
 import { lineHashes } from "./hashline/hash.js";
 import { changedRange } from "./hashline/anchor-pipeline.js";
 import { getUndo, clearUndo } from "./undo-edit.js";
 import {
   loadAnchorReservations,
+  loadServedStore,
   recordServedTruncated,
   retireAnchorsInStore,
 } from "./session-view.js";
@@ -27,6 +33,37 @@ import type { FileIO } from "./fs-bridge.js";
 import { execCwd, execSessionKey } from "./workspace-context.js";
 import type { FsSandboxController, FsEscalationArgs } from "./sandbox.js";
 import { withWorkspace } from "./workspace-context.js";
+
+function isAnchorSpaceExhausted(e: unknown): boolean {
+  return (
+    e instanceof AnchorSpaceExhaustedError ||
+    (e instanceof Error && e.message.includes("probing failed over"))
+  );
+}
+
+/**
+ * Anchor-space exhaustion guard mirrored from the edit path (`retryLineHashesWithPromotion` in
+ * src/mutation/engine.ts): clear this (session, path)'s retired anchors once to promote hash space
+ * and retry; a retry that still exhausts is a typed hard capacity refusal, never a raw probe error.
+ */
+async function hashWithAnchorSpacePromotion(
+  fn: () => Promise<string[]>,
+  onPromote: () => Promise<void> | void,
+): Promise<string[]> {
+  try {
+    return await fn();
+  } catch (error) {
+    if (!isAnchorSpaceExhausted(error)) throw error;
+    await onPromote();
+    try {
+      return await fn();
+    } catch (retryError) {
+      if (isAnchorSpaceExhausted(retryError))
+        throw new DomainError("E_LARGE_FILE", { limitKind: "hash-space", limit: HASH_SPACE });
+      throw retryError;
+    }
+  }
+}
 
 /**
  * Register the `undo_last_edit` tool on the calling agent's scope.
@@ -92,32 +129,61 @@ export function buildUndoTool(io: FileIO, sandbox: FsSandboxController) {
         const currentNormalized = toLF(currentStripped);
         // Per-session reservations: retired/ served are per (session, path) per ADR-0013; file snapshots stay global last-writer-wins
         const reservations = await loadAnchorReservations(sessionKey, absolutePath);
-        const currentHashes = await lineHashes(
-          currentNormalized,
-          absolutePath,
-          undefined,
-          undefined,
-          false,
-          reservations.reservedHashes,
-          reservations.retiredHashes,
+        // Anchor-space promotion mirrors the edit path (src/mutation/engine.ts): on exhaustion,
+        // clear this (session, path)'s retired anchors to free hash space and retry once; a retry
+        // that still exhausts is a hard capacity refusal (E_LARGE_FILE hash-space). The in-memory
+        // reservation sets track the cleared store so the restore rehash below sees them too.
+        let reservedHashes = new Set(reservations.reservedHashes);
+        let retiredHashes = new Set(reservations.retiredHashes);
+        const promoteRetiredForAnchorSpace = async (): Promise<void> => {
+          try {
+            const store = await loadServedStore();
+            store.clearRetiredAnchors(sessionKey, absolutePath);
+            try {
+              store.clearCards(sessionKey, absolutePath);
+            } catch {
+              // Best-effort: card state is a cache; the retry proceeds without it.
+            }
+          } catch {
+            // Best-effort: a store fault here must not fail the undo — the retry proceeds on the
+            // in-memory reservation state (ADR-0020 R2, promotion/wipe arm).
+          }
+          const served = new Set([...reservedHashes].filter((h) => !retiredHashes.has(h)));
+          retiredHashes = new Set();
+          reservedHashes = served;
+        };
+        const currentHashes = await hashWithAnchorSpacePromotion(
+          () =>
+            lineHashes(
+              currentNormalized,
+              absolutePath,
+              undefined,
+              undefined,
+              false,
+              reservedHashes,
+              retiredHashes,
+            ),
+          promoteRetiredForAnchorSpace,
         );
         const retiredOriginalHashes = new Set(
-          undo.hashes.filter((hash) => reservations.retiredHashes.has(hash)),
+          undo.hashes.filter((hash) => retiredHashes.has(hash)),
         );
-        const blockedRestoreHashes = new Set(reservations.reservedHashes);
-        for (const hash of currentHashes) blockedRestoreHashes.add(hash);
-        const restoredHashes = await lineHashes(
-          undo.content,
-          absolutePath,
-          {
-            content: undo.content,
-            hashes: undo.hashes,
-            removedHashes: retiredOriginalHashes,
-          },
-          undefined,
-          false,
-          blockedRestoreHashes,
-          reservations.retiredHashes,
+        const restoredHashes = await hashWithAnchorSpacePromotion(
+          () =>
+            lineHashes(
+              undo.content,
+              absolutePath,
+              {
+                content: undo.content,
+                hashes: undo.hashes,
+                removedHashes: retiredOriginalHashes,
+              },
+              undefined,
+              false,
+              new Set([...reservedHashes, ...currentHashes]),
+              retiredHashes,
+            ),
+          promoteRetiredForAnchorSpace,
         );
         // WHY: #96 (pi-better-edit@665a05d, upstream #173) — the summary counts come from the
         // WHY: source line multisets, never from the rendered projection: a deleted run past

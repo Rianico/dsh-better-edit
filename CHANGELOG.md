@@ -16,6 +16,9 @@ All notable changes to this project will be documented in this file.
 * **edit-undo:** derive undo-summary counts from the source line multisets, not the rendered rows, so a collapsed deletion reports the same restored-line count as an expanded one — port of `pi-better-edit@665a05d` (#96) (#103)
 * **drift:** key drift-notice episodes on the drifted line's rebased position, so a duplicated anchor no longer silences a distinct line and a lease rotation no longer re-notices one (#98) (#103)
 * **mutation:** retire an edit's and an undo's freed anchors after the write, and commit the undo's retirement with its restore transaction — a failed write no longer leaves live anchors marked dead (#98) (#103)
+* **drift:** namespace drift-episode keys outside the anchor alphabet, so a stale pre-upgrade hash can never suppress a fresh drift notice; the store reader accepts both grammars (#105)
+* **mutation:** keep a landed edit landed when post-write retirement faults — warn and continue instead of throwing for bytes already on disk (#105)
+* **edit-undo:** map anchor-space exhaustion on the undo rehash to the typed `E_LARGE_FILE` refusal with promotion retry, mirroring the edit path (#105)
 
 ### Code Refactoring
 

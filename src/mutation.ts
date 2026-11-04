@@ -269,7 +269,20 @@ export async function execute(opts: {
   // the torn state this ticket removed.
   const retireFreedAnchors = async (): Promise<void> => {
     if (fileResult.newlyRetired.length === 0) return;
-    await retireAnchors(sessionKey, fileResult.absolutePath, fileResult.newlyRetired);
+    try {
+      await retireAnchors(sessionKey, fileResult.absolutePath, fileResult.newlyRetired);
+    } catch (error) {
+      // WHY (R1 review, #98): retirement is best-effort AFTER the landed write — a store fault here
+      // must never turn an applied edit into a thrown error. The freed anchors stay live for this
+      // session; the next use of one rejects loud (stale/probed hash) and the user re-reads.
+      const detail = error instanceof Error ? error.message : String(error);
+      console.warn("Failed to retire freed anchors after the edit landed:", error);
+      fileResult.warnings.push(
+        "WARNING: the edit applied and stands \u2014 nothing was rolled back \u2014 but the anchors it " +
+          `freed could not be retired for this session (${detail}). The next use of a freed anchor ` +
+          "will reject as stale; re-read the file to refresh.",
+      );
+    }
   };
 
   const isSingleCall = items.length === 1 && fileResult.appliedCount + fileResult.noopCount === 1;

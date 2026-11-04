@@ -28,6 +28,8 @@ import {
   loadHashStore,
   loadServedStore,
   withStore,
+  DRIFT_EPISODE_PREFIX,
+  DRIFT_EPISODE_RE,
   type AnchorReservations,
   type ServedPersistence,
   type RetiredEntry,
@@ -442,7 +444,7 @@ export async function markDriftReported(
   hashes: string[],
 ): Promise<void> {
   try {
-    const valid = hashes.filter((hash) => HASH_RE.test(hash));
+    const valid = hashes.filter((hash) => HASH_RE.test(hash) || DRIFT_EPISODE_RE.test(hash));
     if (valid.length === 0) return;
     const store = await loadServedStore();
     withStore(() => {
@@ -525,7 +527,9 @@ export const DRIFT_NOTICE_HEADING = "[USER] drift:";
  * identity: one reported entry for a hash shared by two distinct lines silenced both
  * (duplicate-hash collapse), and a lease rotation renamed the mirror anchor of an
  * already-reported line, spuriously re-noticing it. The session's reported-set keeps storing
- * strings (schema unchanged); this 3-char base-62 encoding of the position is the KEY VALUE.
+ * strings (schema unchanged); this base-62 encoding of the position, carrying the
+ * `DRIFT_EPISODE_PREFIX` namespace so it can never equal a legacy bare-hash entry, is the KEY
+ * VALUE.
  * Positions are bounded by `HASH_SPACE` (= |ALPH|^HASH_LEN, files larger cannot be hashed), so
  * the encoding is injective over every reachable position. Injection is over POSITIONS, not over
  * lines: two ambiguous duplicate-hash lines can rebase onto one position and therefore share one
@@ -542,7 +546,7 @@ export function driftEpisodeKey(position: number): string {
     out = ALPH[idx % ALPH.length]! + out;
     idx = Math.floor(idx / ALPH.length);
   }
-  return out;
+  return DRIFT_EPISODE_PREFIX + out;
 }
 
 export interface DriftRow extends ServedRow {
