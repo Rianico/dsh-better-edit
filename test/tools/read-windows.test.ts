@@ -269,6 +269,34 @@ describe("fmtReadPreview — windows", () => {
     expect(result.served.map((row) => row.position)).toEqual([0]);
   });
 
+  it("does not let a past-EOF window break a merged run", async () => {
+    const result = await fmtReadPreview(
+      TWENTY,
+      {
+        windows: [
+          { offset: 1, limit: 2 },
+          { offset: 99, limit: 1 },
+          { offset: 3, limit: 4 },
+        ],
+      },
+      undefined,
+      home.testPath,
+    );
+    // WHY: a past-EOF window contributes no interval, so it is not a barrier between the runs
+    // WHY: around it — 1-2 and 3-4 stay one coalesced run even with the message in between.
+    expect(result.text.match(/^=== Lines /gm)).toHaveLength(1);
+    const header = "=== Lines 1-6 of 20 ===";
+    const message = "Offset 99 is beyond end of file (20 lines total)";
+    expect(result.text).toContain(header);
+    expect(result.text).toContain(message);
+    // The message keeps its own caller slot (order 1), after the merged run (order 0).
+    expect(result.text.indexOf(header)).toBeLessThan(result.text.indexOf("│line 6"));
+    expect(result.text.indexOf("│line 6")).toBeLessThan(result.text.indexOf(message));
+    expect(result.text).not.toContain("=== Lines 99");
+    expect(rowsOf(result.text)).toEqual(TWENTY_LINES.slice(0, 6));
+    expect(result.served.map((row) => row.position)).toEqual([0, 1, 2, 3, 4, 5]);
+  });
+
   it("spends one shared budget across every window", async () => {
     const result = await fmtReadPreview(
       TWELVE,

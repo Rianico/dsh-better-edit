@@ -5,7 +5,8 @@ Related: [ADR-0023](0023-multi-window-read-declined.md) — the decline record f
 superseded by its own §FU-6 amendment, which ported the feature. That amendment covers the port, not
 the projection contract, so this record is filed separately rather than as a second amendment there.
 [ADR-0027](0027-single-projection-collapse-contract.md) — `projection` / `source of truth`
-vocabulary reused below.
+vocabulary reused below. Here `projection` means the read preview's rendered text, not ADR-0027's
+diff projection or its counted-span collapse contract.
 Downstream records: `src/file-view.ts` (`buildWindowedPreview`, `mergeWindowRuns`),
 `src/tool-read.ts` (`windows` description), `test/tools/read-windows.test.ts` (the pins).
 
