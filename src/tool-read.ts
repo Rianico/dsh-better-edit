@@ -47,7 +47,7 @@ export function buildReadTool(io: FileIO) {
       // file-view's normWindows and stated in the description to stay discoverable.
       windows: {
         type: "array",
-        description: `Optional array of up to ${MAX_READ_WINDOWS} line windows to read in a single turn; every window's rows are served, so anchors from all of them are usable in one edit`,
+        description: `Optional array of up to ${MAX_READ_WINDOWS} line windows to read in a single turn; every window's rows are served, so anchors from all of them are usable in one edit; overlapping windows merge into the union of their line ranges (one section per merged run), while disjoint windows keep a section each`,
         items: {
           type: "object",
           additionalProperties: false,

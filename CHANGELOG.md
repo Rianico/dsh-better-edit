@@ -11,6 +11,10 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Bug Fixes
+
+* **read:** merge overlapping windows into their union (#106)
+
 ## [1.2.1] - 2026-11-04
 
 ### Bug Fixes

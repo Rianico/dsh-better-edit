@@ -34,6 +34,16 @@ const home = useTestHome();
 /** Twelve addressable lines, so two windows can sit far apart without touching. */
 const TWELVE = Array.from({ length: 12 }, (_, index) => `line ${index + 1}`).join("\n") + "\n";
 
+function lines(count: number): string {
+  return Array.from({ length: count }, (_, index) => `line ${index + 1}`).join("\n") + "\n";
+}
+
+/** Twenty lines, so two windows can overlap and their union still ends inside the file. */
+const TWENTY_LINES = Array.from({ length: 20 }, (_, index) => `line ${index + 1}`);
+const TWENTY = lines(TWENTY_LINES.length);
+/** Two hundred lines: past the 2000-line budget only when duplicates render (16 x 200 = 3200). */
+const TWO_HUNDRED = lines(200);
+
 function rowsOf(text: string): string[] {
   return text
     .split("\n")
@@ -65,23 +75,156 @@ describe("fmtReadPreview — windows", () => {
     expect(result.served.map((row) => row.position)).toEqual([0, 1, 9, 10]);
   });
 
-  it("collapses overlapping windows to one served row per line", async () => {
+  it("renders an overlapping pair once, over its union", async () => {
     const result = await fmtReadPreview(
-      TWELVE,
+      TWENTY,
       {
         windows: [
-          { offset: 1, limit: 3 },
-          { offset: 2, limit: 3 },
+          { offset: 1, limit: 10 },
+          { offset: 5, limit: 11 },
         ],
       },
       undefined,
       home.testPath,
     );
-    expect(result.text).toContain("=== Lines 1-3 of 12 ===");
-    expect(result.text).toContain("=== Lines 2-4 of 12 ===");
-    const positions = result.served.map((row) => row.position);
-    expect(positions).toEqual([0, 1, 2, 3]);
-    expect(new Set(positions).size).toBe(positions.length);
+    expect(result.text.match(/^=== Lines /gm)).toHaveLength(1);
+    expect(result.text).toContain("=== Lines 1-15 of 20 ===");
+    expect(rowsOf(result.text)).toEqual(TWENTY_LINES.slice(0, 15));
+    expect(result.served.map((row) => row.position)).toEqual([...Array(15).keys()]);
+    // WHY: one run means one record per line, so the row the model sees and the row served agree.
+    expect(anchorsByLine(result.text).get("line 5")).toBe(result.served[4]!.hash);
+  });
+
+  it("merges an interior window into the containing section", async () => {
+    const result = await fmtReadPreview(
+      TWENTY,
+      {
+        windows: [
+          { offset: 3, limit: 4 },
+          { offset: 1, limit: 10 },
+        ],
+      },
+      undefined,
+      home.testPath,
+    );
+    // WHY: the union is the answer, not whichever window came first.
+    expect(result.text.match(/^=== Lines /gm)).toHaveLength(1);
+    expect(result.text).toContain("=== Lines 1-10 of 20 ===");
+    expect(rowsOf(result.text)).toEqual(TWENTY_LINES.slice(0, 10));
+    expect(result.served.map((row) => row.position)).toEqual([...Array(10).keys()]);
+  });
+
+  it("renders an identical duplicate window once", async () => {
+    const result = await fmtReadPreview(
+      TWENTY,
+      {
+        windows: [
+          { offset: 1, limit: 3 },
+          { offset: 1, limit: 3 },
+        ],
+      },
+      undefined,
+      home.testPath,
+    );
+    expect(result.text.match(/^=== Lines /gm)).toHaveLength(1);
+    expect(result.text).toContain("=== Lines 1-3 of 20 ===");
+    expect(rowsOf(result.text)).toEqual(["line 1", "line 2", "line 3"]);
+    expect(result.served.map((row) => row.position)).toEqual([0, 1, 2]);
+  });
+
+  it("collapses sixteen identical windows to one section and charges the budget once", async () => {
+    const windows = Array.from({ length: MAX_READ_WINDOWS }, () => ({ offset: 1, limit: 200 }));
+    const result = await fmtReadPreview(TWO_HUNDRED, { windows }, undefined, home.testPath);
+    expect(result.text.match(/^=== Lines /gm)).toHaveLength(1);
+    expect(result.text).toContain("=== Lines 1-200 of 200 ===");
+    expect(rowsOf(result.text)).toHaveLength(200);
+    expect(result.served).toHaveLength(200);
+    // WHY: duplicated bytes are never rendered, so they never debit the shared budget.
+    expect(result.truncation).toBeUndefined();
+  });
+
+  it("keeps served positions aligned when an interior window merges away", async () => {
+    const result = await fmtReadPreview(
+      TWENTY,
+      {
+        windows: [
+          { offset: 5, limit: 2 },
+          { offset: 1, limit: 10 },
+        ],
+      },
+      undefined,
+      home.testPath,
+    );
+    expect(result.text).toContain("=== Lines 1-10 of 20 ===");
+    // WHY: a merged run stays contiguous, so the builders' `startLine - 1 + index` still holds.
+    expect(rowsOf(result.text)).toEqual(TWENTY_LINES.slice(0, 10));
+    expect(result.served.map((row) => row.position)).toEqual([...Array(10).keys()]);
+  });
+
+  it("coalesces touching windows into one section", async () => {
+    const result = await fmtReadPreview(
+      TWENTY,
+      {
+        windows: [
+          { offset: 1, limit: 2 },
+          { offset: 3, limit: 4 },
+        ],
+      },
+      undefined,
+      home.testPath,
+    );
+    // WHY: no gap exists between 1-2 and 3-4, so two headers would be pure noise.
+    expect(result.text.match(/^=== Lines /gm)).toHaveLength(1);
+    expect(result.text).toContain("=== Lines 1-6 of 20 ===");
+    expect(rowsOf(result.text)).toEqual(TWENTY_LINES.slice(0, 6));
+  });
+
+  it("keeps disjoint windows as separate sections in caller order", async () => {
+    const forward = await fmtReadPreview(
+      TWENTY,
+      {
+        windows: [
+          { offset: 1, limit: 3 },
+          { offset: 10, limit: 11 },
+        ],
+      },
+      undefined,
+      home.testPath,
+    );
+    expect(forward.text.match(/^=== Lines /gm)).toHaveLength(2);
+    expect(forward.text.indexOf("=== Lines 1-3 of 20 ===")).toBeLessThan(
+      forward.text.indexOf("=== Lines 10-20 of 20 ==="),
+    );
+    expect(rowsOf(forward.text)).toEqual([
+      ...TWENTY_LINES.slice(0, 3),
+      ...TWENTY_LINES.slice(9, 20),
+    ]);
+
+    const reversed = await fmtReadPreview(
+      TWENTY,
+      {
+        windows: [
+          { offset: 10, limit: 11 },
+          { offset: 1, limit: 3 },
+        ],
+      },
+      undefined,
+      home.testPath,
+    );
+    // WHY: the order is part of the request, so sections follow it — `served` does not.
+    expect(reversed.text.match(/^=== Lines /gm)).toHaveLength(2);
+    expect(reversed.text.indexOf("=== Lines 10-20 of 20 ===")).toBeLessThan(
+      reversed.text.indexOf("=== Lines 1-3 of 20 ==="),
+    );
+    expect(rowsOf(reversed.text)).toEqual([
+      ...TWENTY_LINES.slice(9, 20),
+      ...TWENTY_LINES.slice(0, 3),
+    ]);
+    const sortedPositions = [...Array(20).keys()].filter(
+      (position) => position < 3 || position > 8,
+    );
+    expect(forward.served.map((row) => row.position)).toEqual(sortedPositions);
+    expect(reversed.served.map((row) => row.position)).toEqual(sortedPositions);
   });
 
   it("keeps the file-scoped continuation hint out of window sections", async () => {
@@ -140,7 +283,7 @@ describe("fmtReadPreview — windows", () => {
       400,
       3,
     );
-    expect(result.text).toContain("[Read budget exhausted; this window is not shown.");
+    expect(result.text).toContain("[Read budget exhausted; this section is not shown.");
     expect(result.served.map((row) => row.position)).toEqual([0, 1, 2]);
     // WHY: the budget really did cut a requested window away, so the tool owes truncated: true.
     expect(result.truncation?.truncated).toBe(true);
@@ -251,6 +394,33 @@ describe("read tool — windows", () => {
     });
   });
 
+  it("re-renders and re-serves the same window across two calls", async () => {
+    await withTempFile("reread.ts", TWELVE, async ({ cwd }) => {
+      const { readTool, editTool } = setupIntegrationTest(cwd);
+      const first = await readTool.execute("r1", {
+        path: "reread.ts",
+        windows: [{ offset: 1, limit: 3 }],
+      });
+      const second = await readTool.execute("r2", {
+        path: "reread.ts",
+        windows: [{ offset: 1, limit: 3 }],
+      });
+      // WHY: re-reading is how anchors refresh, so a read tool must never withhold served rows
+      // WHY: because an earlier call already served the same range.
+      expect(rowsOf(getText(first))).toEqual(["line 1", "line 2", "line 3"]);
+      expect(rowsOf(getText(second))).toEqual(["line 1", "line 2", "line 3"]);
+      const byLine = anchorsByLine(getText(second));
+      const edited = await editTool.execute("e1", {
+        path: "reread.ts",
+        anchor_from: byLine.get("line 1")!,
+        anchor_to: byLine.get("line 2")!,
+        replace_with: "X",
+      });
+      // The second call's anchors resolve, so it really did re-serve (and re-lease) its rows.
+      expect(getText(edited)).toContain("Successfully edited");
+    });
+  });
+
   it("leases a line shared by two windows once", async () => {
     await withTempFile("overlap.ts", TWELVE, async ({ cwd, path }) => {
       const { readTool, editTool } = setupIntegrationTest(cwd);
@@ -261,7 +431,7 @@ describe("read tool — windows", () => {
           { offset: 2, limit: 3 },
         ],
       });
-      expect(getText(readResult)).toContain("=== Lines 1-3 of 12 ===");
+      expect(getText(readResult)).toContain("=== Lines 1-4 of 12 ===");
       const byLine = anchorsByLine(getText(readResult));
       // Lines 2-3 appear in both windows; their anchors must resolve against the lease granted once.
       const edited = await editTool.execute("e1", {
