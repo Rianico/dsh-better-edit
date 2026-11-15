@@ -11,6 +11,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.2.2] - 2026-11-15
+
 ### Bug Fixes
 
 * **edit-diagnostics:** count and name distinct anchors in a stale/ambiguous rejection instead of repeated bounds, so one anchor submitted as both bounds reports one stale anchor rather than two — port of `pi-better-edit@3b22008` (#107) (#113)
