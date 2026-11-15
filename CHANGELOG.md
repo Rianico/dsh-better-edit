@@ -13,7 +13,7 @@ All notable changes to this project will be documented in this file.
 
 ### Bug Fixes
 
-* **read:** merge overlapping windows into their union, so every line requested by overlapping windows renders and is served once per call (#113)
+* **read:** merge overlapping windows into their union, so every line requested by overlapping windows renders and is served once per call
 
 ## [1.2.1] - 2026-11-04
 
