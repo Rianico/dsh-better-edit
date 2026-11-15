@@ -250,4 +250,15 @@ ADR — a pure decline.
 
 The pi-lens read + mutation bridges (upstream `b21b89f`, `eb5ed39`) are **not absorbed**: pi-lens is a pi extension, and cooperative bridges are out of scope for this dsh plugin. The external-mutation-healing track (#53) stands — every non-hashline write remains hostile drift to detect, fail loud on, or heal around — and the roadmap (#1) keeps that direction. The lane's triage recommendation (decline full port; read-only export only if cheap) is superseded by the ruling: no bridge code of either kind lands.
 
+### Missed line inside the absorbed range — `3b22008`
+
+`3b22008` (upstream `feat(errors): unify the error and warning contract`) is an ancestor of the
+absorbed checkpoint `00f8c34`, but the v2 absorb missed one of its lines: the stale/ambiguous
+rejection dedupe. One invariant, half applied — a rejection counts and names distinct anchors,
+never bounds.
+
+| Upstream referent                                                                                                | Verdict                                                                                                                                                                                                                                                  |
+| ---------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `3b22008` — `src/hashline/resolve.ts`: `notFound`/`ambiguous` deduped by `ref.hash` before the headline and note | PORTED (#107) — `src/hashline/anchor-pipeline.ts` `fmtMismatchWithServes`; one `WHY` comment states the invariant, and the headline/pluralisation, `refList`, `numericAnchorNote` input and both context-block loops consume the deduped lists unchanged |
+
 Separate open item, preserved here because this section previously mixed the two D1 labels: ADR-0021 §Residuals D1 — the served-guard true-LRU tracker (upstream `595692f`, `SERVED_REFUSAL_MAX_ENTRIES = 256`) — is still unported. Its predicate trigger (`git merge-base --is-ancestor 595692f <absorbed-checkpoint>`) already returns true at `0b1934c`, so the residual is ripe; resuming it means absorbing the tracker on the HashAssign/SessionView seam and bounding `noopLoopTracker`. That residual is owned by ADR-0021, not by #99, and stays open.
