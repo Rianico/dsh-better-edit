@@ -11,6 +11,10 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Bug Fixes
+
+* **hashline:** stop naming unverified anchors in `E_MALFORMED_ANCHOR` hints — a multi-line paste is refused by shape with the block redacted to `<n>-line block`, and `diagRef`'s `wUp`/`AU6` defaults are gone (#108)
+
 ## [1.2.1] - 2026-11-04
 
 ### Bug Fixes
