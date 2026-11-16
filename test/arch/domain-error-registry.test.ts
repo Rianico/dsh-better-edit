@@ -85,11 +85,11 @@ function findRawHeaders(file: string, text: string): string[] {
  * `undeclared producers: E_X`. That message must name the declared limits, so a
  * false RED is diagnosable instead of inviting a weaker guard.
  */
-export const UNDECLARED_PRODUCER_POINTER =
+const UNDECLARED_PRODUCER_POINTER =
   "if a real producer exists, see DECLARED LIMITS in test/support/arch-scan.ts (regex literals; .mjs; variable-held)";
 
 /** The exact message the totality guard renders — used by the guard and by C19. */
-export function undeclaredProducerMessage(missing: readonly string[]): string {
+function undeclaredProducerMessage(missing: readonly string[]): string {
   return `undeclared producers: ${missing.join(", ")} — ${UNDECLARED_PRODUCER_POINTER}`;
 }
 
@@ -542,16 +542,14 @@ describe("arch: domain-error registry", () => {
     expect(header).toContain("FAILURE MODE: LOUD");
   });
 
-  it("audience: applied-tier warnings are USER, lease-shape warnings are MODEL", () => {
-    for (const code of [
-      "W_REVERSED_ANCHORS",
-      "W_UNICODE_LITERAL",
-      "W_LITERAL_BYPASS",
-      "W_NOOP",
-    ] as const) {
+  // #116: the audience names who must act. `W_NOOP` carries "Resend will reject" —
+  // a prediction the model must act on — so it routes MODEL with the lease-shape
+  // warnings. The passive applied notices stay USER.
+  it("audience: model-actionable warnings are MODEL, passive applied notices USER", () => {
+    for (const code of ["W_REVERSED_ANCHORS", "W_UNICODE_LITERAL", "W_LITERAL_BYPASS"] as const) {
       expect(WARNING_REGISTRY[code].audience).toBe("USER");
     }
-    for (const code of ["W_NEVER_SERVED_SHAPE", "W_SERVED_PREFIX_MISMATCH"] as const) {
+    for (const code of ["W_NOOP", "W_NEVER_SERVED_SHAPE", "W_SERVED_PREFIX_MISMATCH"] as const) {
       expect(WARNING_REGISTRY[code].audience).toBe("MODEL");
     }
   });

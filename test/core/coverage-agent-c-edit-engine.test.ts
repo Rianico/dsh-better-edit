@@ -262,7 +262,8 @@ describe("coverage: edit-engine enforceNoopLoop", () => {
       count: 2,
       originalNormalized: "a\nb\nc",
     });
-    expect(notice).toMatch(/Notice/);
+    expect(notice).toMatch(/^\[MODEL\] \[W_NOOP\] Notice:/);
+    expect(notice).toMatch(/Resend will reject the batch\./);
 
     const none = await enforceNoopLoop({
       anchorFrom: "aaa",

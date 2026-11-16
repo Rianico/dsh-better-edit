@@ -58,3 +58,29 @@ thrown-error `[MODEL] [E_*]` citation there as `[TO MODEL] [E_*]` post-amendment
 Warnings (`formatWarning`) and the `[USER] drift:` heading keep their bare
 `[USER]`/`[MODEL]` brackets — out of the approved scope of #79; any change there
 needs its own ruling.
+
+## Amendment (#116, 2026-11-16 — audience names the actor; `W_NOOP` routed `MODEL`)
+
+`W_NOOP` carried "Resend will reject" while routed `USER`, so the party that would
+resend never acted on it and the next resend tripped `E_NOOP_LOOP` (issue #116).
+The Decision bullet above — "warnings/driftNotice in `details` carry `[USER]`" —
+described the drift channel, not a routing rule, and was already untrue for the
+lease-shape warnings (`W_NEVER_SERVED_SHAPE`, `W_SERVED_PREFIX_MISMATCH`, both
+`MODEL`). Warnings ride `content` (`finalizeResult` appends `warnBlock`) as well as
+`details`, so a registry-rendered warning must name the actor its text addresses;
+headerless notice strings appended outside the registry are a separate follow-up.
+
+- **The rule:** audience names who must act, not the channel the text rides.
+  Applied-tier warnings are `USER` when they only report a completed action
+  (`W_REVERSED_ANCHORS`, `W_UNICODE_LITERAL`, `W_LITERAL_BYPASS`), and `MODEL`
+  when the surfaced text carries a retry directive or a rejection prediction the model
+  must act on — for the lease-shape warnings the producer appends the remedy, for
+  `W_NOOP` the formatter supplies the prediction. `W_NOOP` is `MODEL` under this
+  rule; the noop-guard's "channel rule" comment is retired.
+- **Header shape unchanged:** warnings keep the bare `[MODEL]`/`[USER]` bracket
+  per the #79 amendment; `[TO MODEL]` stays errors-only.
+- **The guard:** `test/arch/warning-audience.test.ts` renders every registry
+  warning from a payload fixture keyed by the code union (a new warning fails
+  `tsc` without one) and refuses a `USER`-routed warning whose text matches the
+  model-directed vocabulary; a planted retired `W_NOOP` line proves the predicate
+  fires.

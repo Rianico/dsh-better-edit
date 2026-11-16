@@ -106,10 +106,10 @@ The informational section appended to a replace result (applied or noop, not und
 _Avoid_: warning (the operation succeeded; it is information, not a warning)
 
 **model-facing signal**:
-A model-visible signal the tool must include in `content` for correctness (e.g. `anchor staleness`, `served-range staleness`, `E_STALE_*`/`E_UNSERVED_*`, `E_SUSPICIOUS_TEXT`). The model needs it to retry correctly.
+A model-visible signal the tool must include in `content` for correctness, rendered with a `[MODEL]` header (e.g. `anchor staleness`, `served-range staleness`, `E_STALE_*`/`E_UNSERVED_*`, `E_SUSPICIOUS_TEXT`; `W_NOOP`'s retry-stopping prediction). The model needs it to retry correctly.
 
 **user-facing signal**:
-A model-visible signal informative for the human only, emitted in `details`/`warnings` and rendered collapsed in TUI (e.g. drift notice; the former `Batch drift note` was retired — see ADR-0006's Amendment). Not in model content.
+A model-visible signal informative for the human only, rendered with a `[USER]` header and carried in `details` (e.g. drift notice; the former `Batch drift note` was retired — see ADR-0006's Amendment). It can ride `content` too — the header, not the channel, tells the model it is not its to act on. Contrast model-facing signal.
 
 **orphaned serve**:
 An entry in served state whose hash no longer matches the current file at that position — the mirror retained a hash that the file has moved or removed elsewhere. Contrast with never-served. An orphan is drift, but at a single position rather than a range.
