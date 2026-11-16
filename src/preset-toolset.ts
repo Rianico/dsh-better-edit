@@ -82,13 +82,21 @@ export interface PresetProbeHost {
 /** Opaque scope key, handed back to the registry unchanged (dsh `ScopeKey`). */
 type ToolScopeKey = object;
 
-/** Minimal view of the optional `agentPresets` service (dsh-agent-presets). */
+/**
+ * Minimal view of the optional `agentPresets` service (dsh-agent-presets).
+ *
+ * Both scope reads are ASYNCHRONOUS on every supported host — `acquireScope`
+ * returns `Promise<{ key } & AsyncDisposable>` on
+ * `dsh-agent-preset-registry@0.2.1-rc.2` / `0.2.2-rc.1`, and `standingKeyFor`
+ * returns `Promise<ScopeKey>` on `dsh-agent-presets@0.1.5-rc.3`. The unions keep
+ * a synchronous stub acceptable, but every value is awaited before use.
+ */
 interface PresetScopeService {
   composedPreset(agentCtx: Context): string | undefined;
   /** 0.2.x shape: a disposable lease whose `key` addresses the preset's layer. */
-  acquireScope?(id?: string): PresetScopeLease | undefined;
+  acquireScope?(id?: string): PresetScopeLease | Promise<PresetScopeLease | undefined> | undefined;
   /** Pre-0.2.1 shape: the standing scope key itself, no lease to release. */
-  standingKeyFor?(id?: string): ToolScopeKey | undefined;
+  standingKeyFor?(id?: string): ToolScopeKey | Promise<ToolScopeKey | undefined> | undefined;
 }
 
 /** The `acquireScope` lease; only its key and its release hook are read here. */
@@ -118,9 +126,10 @@ function warn(host: PresetProbeHost, message: string): void {
 
 /**
  * Resolve the toolset for one agent from its composed preset. Every failure —
- * a missing service, an unreadable preset, or a throwing registry — falls back
- * to {@link UNCONDITIONAL_TOOLSET} (and warns), never to a smaller set: the gate
- * may only ever remove a tool it has positively seen the preset decline.
+ * a missing service, an unreadable preset, a rejected scope read, or a throwing
+ * registry — falls back to {@link UNCONDITIONAL_TOOLSET} (and warns), never to a
+ * smaller set: the gate may only ever remove a tool it has positively seen the
+ * preset decline.
  */
 export async function resolveToolset(
   host: PresetProbeHost,
@@ -157,13 +166,16 @@ async function probePreset(
   try {
     return toolsetFor((name) => tools.get(name, scope.key) !== undefined);
   } finally {
+    // Exactly one release, and only for a lease whose key was usable.
     await scope.release();
   }
 }
 
 /**
  * Feature-detect the scope read: `acquireScope` (0.2.x, leased) first, then
- * `standingKeyFor` (older, unleased). Neither means a pre-gate host.
+ * `standingKeyFor` (older, unleased). Neither means a pre-gate host. Both are
+ * awaited — on every supported host they resolve a promise, and reading `.key`
+ * off an unresolved promise would silently degrade the gate to the full set.
  */
 async function readPresetScope(
   presets: PresetScopeService,
@@ -171,14 +183,16 @@ async function readPresetScope(
   host: PresetProbeHost,
 ): Promise<PresetScope | undefined> {
   if (typeof presets.acquireScope === "function") {
-    const lease = presets.acquireScope(presetId);
+    const lease = await presets.acquireScope(presetId);
+    // A lease without a key is unusable: fall through (and release nothing,
+    // since no probe ever ran under it).
     if (lease !== undefined && lease.key !== undefined) {
       const key = lease.key;
       return { key, release: () => disposeLease(lease, host) };
     }
   }
   if (typeof presets.standingKeyFor === "function") {
-    const key = presets.standingKeyFor(presetId);
+    const key = await presets.standingKeyFor(presetId);
     if (key !== undefined) return { key, release: async () => {} };
   }
   return undefined;

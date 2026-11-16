@@ -16,7 +16,15 @@ function flushMicrotasks(): Promise<void> {
   return new Promise((resolve) => queueMicrotask(() => queueMicrotask(resolve)));
 }
 
-type HostMode = "service" | "preset-free" | "preset" | "legacy" | "no-scope-api";
+type HostMode =
+  | "service"
+  | "preset-free"
+  | "preset"
+  | "legacy"
+  | "no-scope-api"
+  | "keyless-lease"
+  | "rejects"
+  | "sync";
 
 interface PresetFixture {
   id: string;
@@ -64,8 +72,10 @@ function createHost(options: {
   const toolsSvc = {
     get(name: string, scope?: unknown) {
       if (options.toolsGetThrows) throw new Error("registry exploded");
+      // Only the preset's own key resolves the preset layer; any other scope
+      // keys (a Promise, an unknown object) see the agent layer alone.
       if (scope === presetKey) return presetTools.get(name);
-      return agentLayer.get(name) ?? presetTools.get(name);
+      return agentLayer.get(name);
     },
     layers: { scoped: scopedLayers },
   };
@@ -84,15 +94,33 @@ function createHost(options: {
       ? undefined
       : {
           composedPreset: () => (options.mode === "preset-free" ? undefined : options.preset!.id),
-          ...(options.mode === "preset" || options.mode === "no-scope-api"
+          // Production shape (0.2.1-rc.2 / 0.2.2-rc.1): `acquireScope` returns a
+          // PROMISE of the lease; a sync stub must not be the only coverage.
+          ...(options.mode === "preset" ||
+          options.mode === "no-scope-api" ||
+          options.mode === "keyless-lease" ||
+          options.mode === "rejects"
             ? {
-                acquireScope(id?: string) {
+                async acquireScope(id?: string) {
                   acquiredIds.push(id ?? "");
-                  return options.mode === "no-scope-api" ? undefined : lease;
+                  if (options.mode === "rejects") throw new Error("preset registry unavailable");
+                  if (options.mode === "no-scope-api") return undefined;
+                  if (options.mode === "keyless-lease") return {};
+                  return lease;
                 },
               }
             : {}),
+          // Older roster shape (0.1.5-rc.3): `standingKeyFor` also returns a
+          // promise; `sync` keeps the synchronous-stub form acceptable.
           ...(options.mode === "legacy"
+            ? {
+                async standingKeyFor(id?: string) {
+                  standingIds.push(id ?? "");
+                  return presetKey;
+                },
+              }
+            : {}),
+          ...(options.mode === "sync"
             ? {
                 standingKeyFor(id?: string) {
                   standingIds.push(id ?? "");
@@ -209,7 +237,7 @@ describe("preset toolset policy (probe seam)", () => {
     );
   });
 
-  it("gates on what the preset scope resolves and disposes the acquireScope lease", async () => {
+  it("awaits the async acquireScope lease (production shape) and releases it once", async () => {
     const host = createHost({
       mode: "preset",
       preset: { id: "readonly", tools: ["read"] },
@@ -225,7 +253,7 @@ describe("preset toolset policy (probe seam)", () => {
     expect(host.leaseDisposals).toBe(1);
   });
 
-  it("reads the standing key on the older registry shape", async () => {
+  it("awaits the async standingKeyFor of the older registry shape", async () => {
     const host = createHost({
       mode: "legacy",
       preset: { id: "standard", tools: ["read", "edit", "write"] },
@@ -237,6 +265,43 @@ describe("preset toolset policy (probe seam)", () => {
       writeHook: true,
     });
     expect(host.standingIds).toEqual(["standard"]);
+  });
+
+  it("still accepts a synchronous scope read", async () => {
+    const host = createHost({
+      mode: "sync",
+      preset: { id: "standard", tools: ["read", "edit"] },
+    });
+    await expect(resolveToolset(host.rootCtx as never, {} as never)).resolves.toEqual({
+      edit: true,
+      strReplaceEditor: false,
+      undo: true,
+      writeHook: false,
+    });
+    expect(host.standingIds).toEqual(["standard"]);
+  });
+
+  it("fails open and releases nothing when the scope read rejects", async () => {
+    const host = createHost({
+      mode: "rejects",
+      preset: { id: "standard", tools: ["read"] },
+    });
+    await expect(resolveToolset(host.rootCtx as never, {} as never)).resolves.toEqual(
+      UNCONDITIONAL_TOOLSET,
+    );
+    expect(host.warnCalls.some((message) => message.includes("preset tool policy"))).toBe(true);
+    expect(host.leaseDisposals).toBe(0);
+  });
+
+  it("releases no lease it could not use", async () => {
+    const host = createHost({
+      mode: "keyless-lease",
+      preset: { id: "standard", tools: ["read"] },
+    });
+    await expect(resolveToolset(host.rootCtx as never, {} as never)).resolves.toEqual(
+      UNCONDITIONAL_TOOLSET,
+    );
+    expect(host.leaseDisposals).toBe(0);
   });
 
   it("fails open to the unconditional set when the registry throws", async () => {

@@ -42,8 +42,12 @@ install time would be defeated on the next registry change.
 6. **The probe is an optional-service seam, never an injected dependency.**
    `ctx.get("agentPresets")` supplies `composedPreset(agentCtx)`; the preset's scope key comes
    from the feature-detected scope read — `acquireScope(id)` (0.2.x, a `{ key }` lease that must
-   be released) first, `standingKeyFor(id)` (older, unleased) next. `tools.get(name, scopeKey)`
-   then answers what that preset layer registers.
+   be released) first, `standingKeyFor(id)` (older, unleased) next. **Both reads are asynchronous
+   on every supported host:** `acquireScope` returns `Promise<{ key } & AsyncDisposable>` on
+   `dsh-agent-preset-registry@0.2.1-rc.2` and `0.2.2-rc.1`, and `standingKeyFor` returns
+   `Promise<ScopeKey>` on `dsh-agent-presets@0.1.5-rc.3`. The seam awaits each value before use
+   and still accepts a synchronous service shape; inspecting an unresolved promise is never
+   allowed. `tools.get(name, scopeKey)` then answers what that preset layer registers.
 7. **The fallback is today's install, not a smaller set.** No `agentPresets` service, no composed
    preset (preset-free composition), no scope-read API (pre-0.2.1), or any error during the probe
    installs all four tools and warns. The gate may only remove a tool it has positively seen the
@@ -69,7 +73,13 @@ install time would be defeated on the next registry change.
   over-install. That is the recorded compatibility floor, matching the plugin's existing
   `getSectionOrder` fallback pattern.
 - Cost per install: one optional `ctx.get`, one scope read, three `tools.get` calls, and one
-  lease release. No new injected service and no new hard dependency.
+- Cost per install: one optional `ctx.get`, one awaited scope read, three `tools.get` calls, and
+  one lease release. No new injected service and no new hard dependency.
+- **A synchronous read of either scope API is a defect, not an optimization.** `acquireScope`
+  resolves a promise, so `lease.key` on the promise is `undefined`; the probe then falls through
+  to the unconditional set while every synchronous stub stays green. The pins in
+  `test/core/preset-tools-gate.test.ts` use the production promise shapes for exactly this reason
+  (removing either `await` fails 7 / 2 cases respectively).
 
 ## Alternatives considered
 
