@@ -684,6 +684,50 @@ function windowHeader(startLine: number, endLine: number, totalLines: number): s
   return `=== Lines ${startLine}-${endLine} of ${totalLines} ===`;
 }
 
+/** One rendered section of a multi-window read: a merged run, or a window past EOF. */
+type WindowPlan =
+  | { kind: "run"; startLine: number; endLine: number; order: number }
+  | { kind: "pastEof"; offset: number; order: number };
+
+/**
+ * Folds a `windows` request into the sections the preview renders: the requested line ranges
+ * merge into their union, so every requested line renders — and is served — exactly once. Each
+ * maximal contiguous span of that union is one run, carrying the smallest caller index that
+ * contributed to it; ranges that touch coalesce, since no gap exists between them to frame.
+ * A window past EOF contributes no interval and keeps its message at its caller slot, which
+ * orders sections but never splits a run. Runs stay contiguous, so a section's rows are a single
+ * slice and `startLine - 1 + index` still locates every row.
+ */
+function mergeWindowRuns(windows: readonly ReadWindow[], totalLines: number): WindowPlan[] {
+  const intervals: { startLine: number; endLine: number; order: number }[] = [];
+  const pastEof: WindowPlan[] = [];
+  windows.forEach((window, order) => {
+    if (window.offset > totalLines) {
+      pastEof.push({ kind: "pastEof", offset: window.offset, order });
+      return;
+    }
+    intervals.push({
+      startLine: window.offset,
+      // WHY: the end is exclusive, and `offset + limit` can overshoot the file by thousands.
+      endLine: Math.min(window.offset - 1 + window.limit, totalLines),
+      order,
+    });
+  });
+  intervals.sort((left, right) => left.startLine - right.startLine);
+  const runs: WindowPlan[] = [];
+  for (const interval of intervals) {
+    const last = runs.at(-1);
+    if (last?.kind === "run" && interval.startLine <= last.endLine + 1) {
+      last.endLine = Math.max(last.endLine, interval.endLine);
+      last.order = Math.min(last.order, interval.order);
+      continue;
+    }
+    runs.push({ kind: "run", ...interval });
+  }
+  // WHY: the caller's order is part of the request; `order` is unique, so this sort is total.
+  return [...runs, ...pastEof].sort((left, right) => left.order - right.order);
+}
+
 /**
  * Renders one window through the same oversized/truncation pipeline a single-window read uses, but
  * against the shared budget actually LEFT to this window: `maxBytes`/`maxTruncLines` are the
@@ -742,10 +786,13 @@ function buildWindowSection(params: {
 }
 
 /**
- * Multi-window read (one tool result, several disjoint ranges). Sections render in the caller's
- * order — the order is part of the request, so it is never sorted — while every window draws on ONE
- * shared byte/line budget so N windows cannot multiply the auto-read budget by N. Rows are served
- * only for the lines actually shown, and overlapping windows collapse to one served row per line.
+ * Multi-window read (one tool result, several requested line ranges). The ranges merge into their
+ * union first (see `mergeWindowRuns`), so a line requested by several windows renders and is
+ * served once and every header names the run it actually shows. Sections render in the order their
+ * runs first appear in the request — that order is part of the request, so it is never sorted by
+ * position — while every section draws on ONE shared byte/line budget so N windows cannot multiply
+ * the auto-read budget by N. Rows are served only for the lines actually shown; because each
+ * position belongs to exactly one run, the position record is injective by construction.
  */
 function buildWindowedPreview(params: {
   windows: ReadWindow[];
@@ -762,22 +809,21 @@ function buildWindowedPreview(params: {
   let remainingBytes = maxBytes;
   let remainingLines = maxTruncLines;
 
-  for (const window of windows) {
-    if (window.offset > totalLines) {
+  for (const plan of mergeWindowRuns(windows, totalLines)) {
+    if (plan.kind === "pastEof") {
       sections.push(
-        `Offset ${window.offset} is beyond end of file (${totalLines} lines total). Use offset=1 to read from the start, or offset=${totalLines} to read the last line.`,
+        `Offset ${plan.offset} is beyond end of file (${totalLines} lines total). Use offset=1 to read from the start, or offset=${totalLines} to read the last line.`,
       );
       continue;
     }
-    const endIdx = Math.min(window.offset - 1 + window.limit, totalLines);
-    const header = windowHeader(window.offset, endIdx, totalLines);
-    const selected = allLines.slice(window.offset - 1, endIdx);
-    const selectedHashes = allHashes.slice(window.offset - 1, endIdx);
+    const header = windowHeader(plan.startLine, plan.endLine, totalLines);
+    const selected = allLines.slice(plan.startLine - 1, plan.endLine);
+    const selectedHashes = allHashes.slice(plan.startLine - 1, plan.endLine);
     if (remainingBytes <= 0 || remainingLines <= 0) {
       sections.push(
-        `${header}\n[Read budget exhausted; this window is not shown. Re-read it on its own.]`,
+        `${header}\n[Read budget exhausted; this section is not shown. Re-read it on its own.]`,
       );
-      // WHY: `metrics.truncated` must be honest when the shared budget cut a window away, so the
+      // WHY: `metrics.truncated` must be honest when the shared budget cut a section away, so the
       // WHY: same function that reports truncation elsewhere derives it from the budget actually spent.
       const skipped = truncateHead(fmtRegion(selectedHashes, selected), {
         maxBytes: Math.max(0, remainingBytes),
@@ -787,15 +833,15 @@ function buildWindowedPreview(params: {
       continue;
     }
     const rowSizes = selected.map((line, index) => ({
-      lineNumber: window.offset + index,
+      lineNumber: plan.startLine + index,
       bytes: Buffer.byteLength(`${selectedHashes[index]}${HASH_SEP}${line}`, "utf-8"),
     }));
     const built = buildWindowSection({
       rowSizes,
       selected,
       selectedHashes,
-      startLine: window.offset,
-      endIdx,
+      startLine: plan.startLine,
+      endIdx: plan.endLine,
       totalLines,
       maxBytes: remainingBytes,
       maxTruncLines: remainingLines,

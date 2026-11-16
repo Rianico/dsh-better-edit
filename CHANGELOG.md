@@ -15,6 +15,13 @@ All notable changes to this project will be documented in this file.
 
 * **hashline:** stop naming unverified anchors in `E_MALFORMED_ANCHOR` hints — a multi-line paste is refused by shape with the block redacted to `<n>-line block`, and `diagRef`'s `wUp`/`AU6` defaults are gone (#108)
 
+## [1.2.2] - 2026-11-15
+
+### Bug Fixes
+
+* **edit-diagnostics:** count and name distinct anchors in a stale/ambiguous rejection instead of repeated bounds, so one anchor submitted as both bounds reports one stale anchor rather than two — port of `pi-better-edit@3b22008` (#107) (#113)
+* **read:** merge overlapping windows into their union, so every line requested by overlapping windows renders and is served once per call (#114)
+
 ## [1.2.1] - 2026-11-04
 
 ### Bug Fixes

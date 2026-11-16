@@ -162,8 +162,12 @@ function fmtMismatchWithServes(
     seen.add(position);
     servedRows.push({ position, hash: fileHashes[ln - 1]! });
   };
-  const notFound = mismatches.filter((m) => m.kind === "not_found");
-  const ambiguous = mismatches.filter((m) => m.kind === "ambiguous");
+  const notFoundRaw = mismatches.filter((m) => m.kind === "not_found");
+  const ambiguousRaw = mismatches.filter((m) => m.kind === "ambiguous");
+  // WHY: a rejection counts and names distinct anchors, never bounds — one single-line edit
+  // submits one anchor as both bounds, so both slots report the same mismatch.
+  const notFound = [...new Map(notFoundRaw.map((m) => [m.ref.hash, m])).values()];
+  const ambiguous = [...new Map(ambiguousRaw.map((m) => [m.ref.hash, m])).values()];
 
   const refList = notFound.map((m) => `"${m.ref.hash}"`).join(", ");
   if (notFound.length > 0) {
