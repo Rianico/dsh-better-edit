@@ -22,7 +22,6 @@ import { scanDrift, loadServed, loadServedCanons, loadRetiredAnchors } from "../
 import {
   applyEdit,
   resEdit,
-  parseHashRef,
   type HEdit,
   type NEdit,
   type LeaseSpanSource,
@@ -104,10 +103,10 @@ import {
   type ResolvedRange,
   type ServedRow,
 } from "../hashline/anchor-pipeline.js";
-import { DomainError, formatError, formatWarning } from "../domain-errors.js";
+import { DomainError, formatWarning } from "../domain-errors.js";
 import type { RangeCause } from "../domain-errors.js";
 import type { EditMode } from "../contract.js";
-import { findSnapshotPathsByHashes, type ServedPersistence } from "../hash-store.js";
+import type { ServedPersistence } from "../hash-store.js";
 import { clearNoopLoop, noopPayloadKey, trackNoopPayload } from "../noop-guard.js";
 import { NOOP_LOOP_THRESHOLD } from "../constants.js";
 import { abortIf, splitLines } from "../utils.js";
@@ -122,7 +121,6 @@ export interface PreparedItem {
   anchor_from: string;
   anchor_to: string;
   replace_with: string;
-  fileWarning?: string;
   /** Request-level edit mode ("general" default, "literal" bypasses served-echo). */
   mode?: EditMode;
 }
@@ -153,48 +151,6 @@ export interface FileEditResult {
 
 // ---------------------------------------------------------------------------
 // request / counting helpers shared by both tool paths
-
-/**
- * Resolve a request's missing `path` from its anchors: the only file whose
- * stored hashes contain both anchors. Returns the path plus an autocorrect
- * warning, or undefined when no resolution is possible.
- */
-export async function resolveMissingPath(
-  request: Record<string, unknown>,
-): Promise<{ path: string; warning: string } | undefined> {
-  if (typeof request.path === "string") return undefined;
-  const from = request.anchor_from;
-  const to = request.anchor_to;
-  if (typeof from !== "string" || typeof to !== "string") return undefined;
-  const hashes: string[] = [];
-  for (const ref of [from, to]) {
-    try {
-      hashes.push(parseHashRef(ref).hash);
-    } catch {
-      return undefined;
-    }
-  }
-  let matches: string[];
-  try {
-    matches = await findSnapshotPathsByHashes(hashes);
-  } catch {
-    return undefined;
-  }
-  if (matches.length === 1) {
-    return {
-      path: matches[0]!,
-      warning: formatError("E_BAD_PAYLOAD", {
-        message: `Autocorrected: missing "path" resolved to ${matches[0]} — the only file whose stored hashes contain both anchors.`,
-      }),
-    };
-  }
-  if (matches.length > 1) {
-    throw new DomainError("E_BAD_PAYLOAD", {
-      message: `Edit request requires a non-empty "path" string; the anchors match multiple known files: ${matches.join(", ")}. Include the intended path.`,
-    });
-  }
-  return undefined;
-}
 
 /** The hashes a range edit removes, for stable re-hash bookkeeping. */
 export function collectRemovedHashes(edit: HEdit, originalHashes: string[]): Set<string> {
@@ -1028,7 +984,6 @@ export async function runFileEdits(
   if (hadUtf8DecodeErrors) {
     warnings.push("Non-UTF-8 bytes were shown as U+FFFD; this edit rewrote the file as UTF-8.");
   }
-  if (first.fileWarning) warnings.unshift(first.fileWarning);
 
   let driftNotice: string | undefined;
   if (appliedCount > 0 && unionStartLine !== Infinity) {
