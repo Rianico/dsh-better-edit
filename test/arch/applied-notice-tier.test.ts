@@ -27,6 +27,20 @@ import { firedWarnings, listSources, stripComments } from "../support/arch-scan.
  * this test's expectations, and `WARNING_REGISTRY`'s declared keys versus the
  * `formatWarning("<CODE>"` call sites `firedWarnings` finds. Neither side reads
  * the other back.
+ *
+ * ── DECLARED LIMIT — variable indirection (a DIFFERENT class, not a widening gap) ──
+ * A text scanner sees SHAPES, not VALUES (the ceiling stated in
+ * `test/support/arch-scan.ts`). The original defect flowed through a variable —
+ * `const fileWarning = formatError(…)` then `warnings.unshift(fileWarning)` —
+ * and `warnings.push(...list)` (live today at `src/mutation/engine.ts:730,734`)
+ * spreads a list whose elements are invisible here. No pattern below claims to
+ * see either: they are MISSED by construction, and the probe cell pins that
+ * miss instead of hiding it.
+ *
+ * Behavioural backstop for this class: `test/core/notice-tier-e2e.test.ts`
+ * drives real applied paths (reversed-range heal, literal-mode bypass) and
+ * asserts the RENDERED output lacks `[E_`. A variable-carried error header that
+ * reaches an applied notice reddens there, whatever the source shape.
  */
 
 const SRC_ROOT = join(process.cwd(), "src");
@@ -46,19 +60,24 @@ const MIN_SOURCE_FILES = 66;
  * The forbidden shapes, each named in the failure so a RED is actionable.
  * Comments are stripped before matching (prose may name the shapes; this very
  * docblock does).
+ *
+ * The channel names — `warning(s)` and `notice(s)` — are those of the applied
+ * tier; the composer positions are the property, the channel method
+ * (`push`/`unshift`, the historical carrier was `warnings.unshift(…)`), and any
+ * binding assignment (`const`/`let`/`var` or bare).
  */
 const FORBIDDEN_SHAPES: ReadonlyArray<{ name: string; re: RegExp }> = [
   {
-    name: "`warning: formatError(` — an [E_*] header bound to the applied-notice channel",
-    re: /\bwarnings?\s*:\s*formatError\s*\(/g,
+    name: "a `warning:`/`notice:` property composed from `formatError(` — an [E_*] header bound to the applied-notice channel",
+    re: /\b(?:warnings?|notices?)\s*:\s*formatError\s*\(/g,
   },
   {
-    name: "`warnings.push(formatError(` — an [E_*] header pushed into the applied-notice channel",
-    re: /\bwarnings\s*\.\s*push\s*\(\s*formatError\s*\(/g,
+    name: "a `warnings.push(`/`warnings.unshift(` of `formatError(` — an [E_*] header pushed into the applied-notice channel",
+    re: /\b(?:warnings?|notices?)\s*\.\s*(?:push|unshift)\s*\(\s*formatError\s*\(/g,
   },
   {
-    name: "a warning-named local initialised from `formatError(` (annotated or not)",
-    re: /\b(?:const|let|var)\s+(?:warnings?|notices?)\b[^=\n]*=\s*formatError\s*\(/g,
+    name: "a warning-/notice-named binding assigned from `formatError(` (declared or bare, annotated or not)",
+    re: /\b(?:warnings?|notices?)\b[^=\n]*=(?!=)\s*formatError\s*\(/g,
   },
   {
     name: "a raw `[TO <AUDIENCE>] [E_*]` header literal",
@@ -92,6 +111,11 @@ function appliedNoticeViolations(sources: readonly ScanSource[]): string[] {
 
 function liveSources(): ScanSource[] {
   return listSources(SRC_ROOT).map((file) => ({ file, text: readFileSync(file, "utf-8") }));
+}
+
+/** One planted line, scanned alone so a miss cannot hide behind another match. */
+function offendersOf(text: string): string[] {
+  return appliedNoticeViolations([{ file: "/planted/engine.ts", text: `${text}\n` }]);
 }
 
 describe("applied-notice tier: no [E_*] header on an applied notice (#115)", () => {
@@ -144,7 +168,7 @@ describe("applied-notice tier: no [E_*] header on an applied notice (#115)", () 
     ];
     const offenders = appliedNoticeViolations(planted);
     expect(offenders).toHaveLength(1);
-    expect(offenders[0]).toContain("warning: formatError(");
+    expect(offenders[0]).toContain("`warning:`/`notice:` property");
 
     // Control on the control: the same shape through the warning composer is clean.
     expect(
@@ -157,38 +181,105 @@ describe("applied-notice tier: no [E_*] header on an applied notice (#115)", () 
     ).toEqual([]);
   });
 
+  it("negative control: a planted `notice:`/`notices:` property fails the scan", () => {
+    for (const line of [
+      'const row = { notice: formatError("E_BAD_PAYLOAD", { message: "x" }) };',
+      'const row = { notices: formatError("E_BAD_PAYLOAD", { message: "x" }) };',
+    ]) {
+      const offenders = offendersOf(line);
+      expect(offenders, line).toHaveLength(1);
+      expect(offenders[0]).toContain("`warning:`/`notice:` property");
+    }
+  });
+
   it("negative control: a planted `warnings.push(formatError(` fixture fails the scan", () => {
-    const offenders = appliedNoticeViolations([
-      {
-        file: "/planted/engine.ts",
-        text: 'warnings.push(formatError("E_BAD_PAYLOAD", { message: "x" }));\n',
-      },
-    ]);
+    const offenders = offendersOf('warnings.push(formatError("E_BAD_PAYLOAD", { message: "x" }));');
     expect(offenders).toHaveLength(1);
-    expect(offenders[0]).toContain("warnings.push(formatError(");
+    expect(offenders[0]).toContain("`warnings.push(`/`warnings.unshift(`");
+  });
+
+  it("negative control: a planted `warnings.unshift(formatError(` fixture fails the scan", () => {
+    // The historical carrier was `warnings.unshift(...)` — `push` alone was blind.
+    for (const line of [
+      'warnings.unshift(formatError("E_BAD_PAYLOAD", { message: "x" }));',
+      'notices.unshift(formatError("E_BAD_PAYLOAD", { message: "x" }));',
+    ]) {
+      const offenders = offendersOf(line);
+      expect(offenders, line).toHaveLength(1);
+      expect(offenders[0]).toContain("`warnings.push(`/`warnings.unshift(`");
+    }
+  });
+
+  it("negative control: a bare warning assignment fails the scan", () => {
+    // A bare assignment (no const/let/var) is the same defect with less syntax.
+    const offenders = offendersOf('warnings = formatError("E_BAD_PAYLOAD", { message: "x" });');
+    expect(offenders).toHaveLength(1);
+    expect(offenders[0]).toContain("binding assigned from `formatError(`");
   });
 
   it("negative control: a type-annotated warning local fails the scan", () => {
-    // The first fixture run found this gap: `const warning: string = formatError(…)`
-    // slips the property shape because the annotation sits between name and `=`.
-    const offenders = appliedNoticeViolations([
-      {
-        file: "/planted/noop-guard.ts",
-        text: 'const warning: string = formatError("E_BAD_PAYLOAD", { message: "x" });\n',
-      },
-    ]);
+    // `const warning: string = formatError(…)` slips the property shape because
+    // the annotation sits between name and `=`; the binding shape owns it.
+    const offenders = offendersOf(
+      'const warning: string = formatError("E_BAD_PAYLOAD", { message: "x" });',
+    );
     expect(offenders).toHaveLength(1);
-    expect(offenders[0]).toContain("warning-named local");
+    expect(offenders[0]).toContain("binding assigned from `formatError(`");
   });
 
   it("negative control: a planted raw E-header literal fails the scan", () => {
-    const offenders = appliedNoticeViolations([
-      {
-        file: "/planted/edit-response.ts",
-        text: 'const header = "[TO MODEL] [E_BAD_PAYLOAD] boom";\n',
-      },
-    ]);
+    const offenders = offendersOf('const header = "[TO MODEL] [E_BAD_PAYLOAD] boom";');
     expect(offenders).toHaveLength(1);
     expect(offenders[0]).toContain("raw");
+  });
+
+  // The reach table, one row per carrier class the review probed. CAUGHT rows are
+  // the guard; MISSED rows are the DECLARED LIMIT in the header, pinned so the
+  // miss is a recorded fact rather than an assumed closure.
+  it("shape reach: the eight probed carriers, caught and declared-missed", () => {
+    const probe: Array<{ carrier: string; text: string; caught: boolean }> = [
+      // Historical producer (the pre-#117 flow): a variable, invisible by construction.
+      {
+        carrier: "historical producer",
+        text: "warnings.unshift(first.fileWarning);",
+        caught: false,
+      },
+      { carrier: "unshift(var)", text: "warnings.unshift(warning);", caught: false },
+      {
+        carrier: "unshift(direct)",
+        text: 'warnings.unshift(formatError("E_BAD_PAYLOAD", { message: "x" }));',
+        caught: true,
+      },
+      {
+        carrier: "notice: property",
+        text: 'const row = { notice: formatError("E_BAD_PAYLOAD", { message: "x" }) };',
+        caught: true,
+      },
+      {
+        carrier: "notices: property",
+        text: 'const row = { notices: formatError("E_BAD_PAYLOAD", { message: "x" }) };',
+        caught: true,
+      },
+      {
+        carrier: "notices.push",
+        text: 'notices.push(formatError("E_BAD_PAYLOAD", { message: "x" }));',
+        caught: true,
+      },
+      {
+        carrier: "bare assignment",
+        text: 'warnings = formatError("E_BAD_PAYLOAD", { message: "x" });',
+        caught: true,
+      },
+      // Spread of a list whose elements are values, not shapes: invisible here.
+      { carrier: "spread", text: "warnings.push(...list);", caught: false },
+    ];
+
+    for (const { carrier, text, caught } of probe) {
+      const offenders = offendersOf(text);
+      expect(offenders.length > 0, `${carrier}: ${caught ? "CAUGHT" : "MISSED"} — ${text}`).toBe(
+        caught,
+      );
+      if (caught) expect(offenders).toHaveLength(1);
+    }
   });
 });
