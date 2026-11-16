@@ -11,6 +11,10 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Bug Fixes
+
+* **write-hook:** record the `fs/observed` observation on the post-write auto-read, so an `edit` using an auto-read anchor no longer fails the host read-before-write gate with `E_BLIND_REPLACE` / `E_STALE_RANGE` — the emit is unconditional and fail-open, and the serve seam stays emission-free (ADR-0029) (#109) (#119)
+
 ## [1.2.1] - 2026-11-04
 
 ### Bug Fixes
