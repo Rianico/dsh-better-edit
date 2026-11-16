@@ -11,3 +11,4 @@ tmp/
 !.lsz/config.yaml
 __pycache__/
 dist/
+.lane/
