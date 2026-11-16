@@ -63,7 +63,8 @@ export function runNoopPolicySync(input: NoopPolicyInput, count: number): NoopPo
     return { action: "reject", count, message };
   }
   if (count === 2) {
-    // Channel rule: applied-tier notices are human-observable → USER audience via the registry.
+    // Audience rule: the notice predicts the next resend rejects, so the model must
+    // act on it — MODEL (#116, ADR-0014 amendment).
     const notice = formatWarning("W_NOOP", {
       ref: input.ref,
       anchorFrom: input.anchorFrom,

@@ -490,7 +490,7 @@ async function runNoopLoop(
 
     await editTool.execute("noop-1", noop);
     const second = getText(await editTool.execute("noop-2", noop));
-    expect(second).toMatch(/\[USER\] \[W_NOOP\]/);
+    expect(second).toMatch(/\[MODEL\] \[W_NOOP\]/);
 
     await writeFile(path, NOOP_LOOP_EXTERNAL, "utf-8");
 

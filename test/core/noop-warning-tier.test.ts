@@ -5,7 +5,7 @@ import { extractHash, getText, setupIntegrationTest, withTempFile } from "../sup
 
 /**
  * W_NOOP tier lock: the identical no-op submitted twice warns (applied,
- * [USER] [W_NOOP]) instead of erroring; the third submission is E_NOOP_LOOP
+ * [MODEL] [W_NOOP]) instead of erroring; the third submission is E_NOOP_LOOP
  * and writes nothing. The count === 2 arm is a notice, NOT a refusal —
  * only NOOP_LOOP_THRESHOLD (3) refuses.
  */
@@ -33,7 +33,8 @@ describe("noop warning tier (W_NOOP vs E_NOOP_LOOP)", () => {
 
       const second = await editTool.execute("noop-2", noop);
       const secondText = getText(second);
-      expect(secondText).toMatch(/\[USER\] \[W_NOOP\]/);
+      expect(secondText).toMatch(/\[MODEL\] \[W_NOOP\]/);
+      expect(secondText).toMatch(/Resend will reject/);
       expect(secondText).toMatch(/no-op'd twice/);
 
       await expect(editTool.execute("noop-3", noop)).rejects.toThrow(/E_NOOP_LOOP/);

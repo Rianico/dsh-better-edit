@@ -804,7 +804,7 @@ export const WARNING_REGISTRY: {
     format: () => "served-echo check bypassed by literal declaration.",
   },
   W_NOOP: {
-    audience: "USER",
+    audience: "MODEL",
     format: noopWarnFormat,
   },
 };
