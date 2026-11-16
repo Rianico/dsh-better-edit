@@ -306,6 +306,9 @@ describe("preset toolset policy (install gate)", () => {
     const host = await mount({ mode: "preset", preset: { id: "readonly", tools: ["read"] } });
     expect(registeredNames(host)).toEqual(["read"]);
     expect(host.sections.map((section) => section.name)).toEqual(["tool:read"]);
+    // The write hook follows the preset's `write`: no `write`, no listeners.
+    expect(host.agentListeners.has("tools/pre-execute")).toBe(false);
+    expect(host.agentListeners.has("tools/post-execute")).toBe(false);
   });
 
   it("read+edit preset installs read, edit, undo_last_edit and no str_replace_editor", async () => {
