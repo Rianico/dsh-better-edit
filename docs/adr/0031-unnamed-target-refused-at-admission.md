@@ -1,4 +1,4 @@
-# ADR-0030 — An unnamed target is refused at admission, never inferred from the hash store
+# ADR-0031 — An unnamed target is refused at admission, never inferred from the hash store
 
 Status: Accepted (fix for [#117](https://github.com/Rianico/dsh-better-edit/issues/117), lane `i117`).
 Upstream referents: `pi-better-edit@efd7f25` (2026-08-09) added "resolve missing path from anchors";

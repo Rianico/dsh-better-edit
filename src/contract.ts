@@ -277,7 +277,7 @@ export function prepareEditArguments(args: unknown): Record<string, unknown> {
 /** The spellings a caller may name the target with, in payload precedence order. */
 const FILE_SPELLINGS = ["file", "path", "file_path"] as const;
 
-/** The exact refusal ADR-0030 quotes; one sentence, one owner. */
+/** The exact refusal ADR-0031 quotes; one sentence, one owner. */
 const FILE_REQUIRED_MESSAGE =
   "Edit request file must be a non-empty string; name the file to edit.";
 

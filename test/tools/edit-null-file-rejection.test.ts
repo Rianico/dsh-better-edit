@@ -20,7 +20,7 @@ import { getText, setupIntegrationTest, withTempFile } from "../support/fixtures
 type ToolResult = { content: Array<{ text?: string }> };
 
 /**
- * The exact refusal ADR-0030 quotes. Asserted byte-for-byte so the specific
+ * The exact refusal ADR-0031 quotes. Asserted byte-for-byte so the specific
  * sentence stays reachable — the generic payload hint also quotes `"file"`,
  * so a loose match would pass on the wrong branch.
  */
