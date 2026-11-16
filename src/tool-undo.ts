@@ -33,6 +33,8 @@ import type { FileIO } from "./fs-bridge.js";
 import { execCwd, execSessionKey } from "./workspace-context.js";
 import type { FsSandboxController, FsEscalationArgs } from "./sandbox.js";
 import { withWorkspace } from "./workspace-context.js";
+import { encodingHintAtVersion, getEncodingState, prepareForSave } from "./file-encoding-state.js";
+import { loadConfig } from "./store-config.js";
 
 function isAnchorSpaceExhausted(e: unknown): boolean {
   return (
@@ -112,7 +114,12 @@ export function buildUndoTool(io: FileIO, sandbox: FsSandboxController) {
 
         let currentRaw: string;
         try {
-          currentRaw = await io.readText(absolutePath, signal);
+          // Issue #112: the staleness read consumes the encoding recorded by the preceding
+          // read, so a file admitted by read({ encoding }) compares as decoded text instead
+          // of mojibake (which would misreport a false E_UNDO_STALE "modified").
+          const currentVersion = await io.statVersion(absolutePath, signal);
+          const encodingHint = encodingHintAtVersion(absolutePath, currentVersion);
+          currentRaw = await io.readText(absolutePath, signal, encodingHint);
         } catch (error) {
           if (codeOf(error) === "E_NOT_FOUND") {
             await clearUndo(absolutePath);
@@ -221,15 +228,21 @@ export function buildUndoTool(io: FileIO, sandbox: FsSandboxController) {
         // before `writeText` let a failed revert leave anchors retired for a file that still
         // holds them — a torn store state with no later read likely to notice.
         const retiredByUndo = currentHashes.filter((hash) => !restoredSet.has(hash));
+        // The revert goes through the same save seam as every other write, so an
+        // encoding that cannot round-trip refuses BEFORE any write (#112).
+        const recorded = getEncodingState(absolutePath) ?? {
+          encoding: undo.bom ? "utf8bom" : "utf8",
+          hasBOM: undo.bom !== "",
+          lineEnding: undo.originalEnding,
+          version: undefined,
+        };
+        const prepared = prepareForSave(undo.content, recorded, {
+          normalizeToUtf8: loadConfig().normalizeToUtf8,
+          displayPath: path,
+        });
 
         try {
-          await io.writeText(
-            absolutePath,
-            undo.bom + restoreEndings(undo.content, undo.originalEnding),
-            signal,
-            exec,
-            sandboxPolicy,
-          );
+          await io.writeText(absolutePath, prepared.textToWrite, signal, exec, sandboxPolicy);
         } catch (error) {
           throw sandbox.mapError(error, sandboxPolicy);
         }

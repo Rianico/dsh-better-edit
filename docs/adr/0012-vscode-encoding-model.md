@@ -1,7 +1,7 @@
 # ADR-0012 — VS Code Encoding Model for Non-UTF-8 Text
 
 Date: 2026-08-30
-Status: accepted (grill-with-docs, Q1–Q12)
+Status: accepted (grill-with-docs, Q1–Q12). Amended 2026-11-16 (#112): the write seam is text-only, so the save side refuses a non-round-trippable encoding instead of transcoding.
 Related: #34 `read/edit reject non-UTF-8 text files`, `docs/specs/issue-34-encoding-research.md`, GLOSSARY.md `File Encoding`
 
 ## Context
@@ -66,6 +66,8 @@ flowchart TD
     K --> L
 ```
 
+> **Superseded by the #112 amendment below:** the `utf16le/utf16be → Encode UTF-16` and `Legacy → Transcode back` arms are not expressible over the harness filesystem (the only write is `writeText(target, content: string, …)`, which encodes UTF-8). Those two arms are replaced by the typed `E_ENCODING_UNWRITABLE` refusal before any write.
+
 _State at open, invert at save:_ `file encoding state` `{encoding, hasBOM, lineEnding}` is recorded at open and inverted on save — never re-derived. Drift-aware: if `stat.version` changed, discard stale `file encoding state` and re-run deterministic `BOM→UTF-8` before any guess. Session-TTL (like `served state`), not cross-restart.
 
 _Defaults favor modern convention:_ New files `utf8` without BOM; BOM only ever preserved, never added spontaneously. Failure explicit — undecodable/mojibake surfaces as `E_NOT_TEXT`/`E_DECODE_FAILED` or `details.candidates` warning, never silent rewrite.
@@ -97,6 +99,42 @@ Errors: `E_NOT_TEXT` (initial, with `candidates` when guessing), `E_BAD_ENCODING
 - `src/encoding.ts` (new, pure) + `src/fs-bridge.ts` fallback `Map` + `tool-read.ts`/`tool-write.ts` `encoding` params follow in implementation PRs.
 - `FsWriteOutcome.before` becomes `string` (not `null`) for permissively decoded legacy files; large legacy files (`>readBytes maxBytes` ~10 MiB) still `E_FILE_TOO_LARGE` v1.
 - Upstream proposal: enrich `FS_NOT_TEXT` `cause` + permissive `readWholeText` normalization — complementary, not blocking.
+
+## Amendment (#112, 2026-11-16) — the write seam is text-only, so the save side refuses instead of transcoding
+
+**Status note.** The write-flow diagram above (arms `utf16le/utf16be → Encode UTF-16 restore original BOM` and `Legacy → normalizeToUtf8:false → Transcode back to recorded encoding`) described an intent the harness filesystem cannot express. This amendment records the real seam and replaces those two arms with the fail-safe refusal. Everything about the READ flow stands.
+
+### The seam: there is no byte-write
+
+- The only write the deployment exposes to this plugin is `writeText(target, content: string, …)` (`src/fs-bridge.ts` `FileIO.writeText`; dsh `ctx.fs.writeText` / `editText`). Every backend — including `dsh-fs-local` — encodes that string as **UTF-8**. There is no `writeBytes` primitive, and writing bytes out of band (`node:fs`) would bypass the sandbox policy, the `fs/write-intent` guard, the `fs/observed` event, and remote/sandboxed backends. That bypass is not an option; it is the reason the seam is narrow.
+- Consequence: a UTF-16/UTF-32 image and a non-ASCII single-byte image (GBK, windows-1251, Shift-JIS, …) **cannot be reproduced** by a text write. Before #112 the save side pretended otherwise: the legacy arm returned a UTF-8 string, the provider wrote it, the memo still said `utf16le`, and the next read silently re-detected UTF-8 — a silent transcode.
+- `prepareForSave` (`src/file-encoding-state.ts`) is the single save decision. It now returns one of three verdicts:
+  1. **utf8 / utf8bom** — restore the recorded BOM + line ending and write; unchanged behaviour.
+  2. **any other recorded encoding, byte-faithful** — `isByteFaithfulAsUtf8(text, encoding)` proves the UTF-8 byte image equals the image under the recorded encoding (an ASCII-only file recorded as `windows-1251`, or empty content). The write is byte-identical, so it is allowed; the memo becomes `utf8` because that is what the bytes now are.
+  3. **any other recorded encoding, not byte-faithful** — refuse **before any write**.
+- Narrowness is decided by **bytes, not the encoding name**: an ASCII-only file recorded as `cp1251` stays editable, while `utf16le` of the same text does not (its byte image differs).
+
+### The refusal
+
+`E_ENCODING_UNWRITABLE` (new member of the shared vocabulary in `src/domain-errors.ts`, MODEL audience). It is deliberately **not** `E_STALE_ANCHOR` and **not** `E_UNSUPPORTED_FILE`: the read succeeded and the anchors are valid — only the write is impossible. Its rendered text names the limitation (the filesystem exposes only a text write that always encodes UTF-8; writing would transcode silently) and the remedy (`normalizeToUtf8: true` / `DSH_BETTER_EDIT_NORMALIZE_TO_UTF8=true`). Nothing is written; for a batch the verdict is computed for every file before the first write, so a multi-file edit never leaves one file transcoded and the next refused.
+
+### `normalizeToUtf8: true` keeps its meaning
+
+The explicit migration is the only way a non-UTF-8 file becomes writable: write UTF-8, drop the legacy BOM, and record `{ encoding: "utf8", hasBOM: false }` so the next read agrees with the bytes. Defaults and auto-guess are untouched (still `false`; ADR unchanged on that point).
+
+### Mutating reads consume the recorded encoding
+
+`read({ encoding })` serves anchors for the decoded text, so every re-read that feeds a mutation must decode the same way: `edit` (`src/mutation/engine.ts` `runFileEdits`), `str_replace_editor` (`src/tool-str-replace-editor.ts`), and the `undo_last_edit` staleness check (`src/tool-undo.ts`) pass `encodingHintAtVersion(...)` as the bridge's decode hint. The helper drops a memo whose `version` no longer matches the file, so a drifted file is re-detected rather than having the old encoding laundered onto new bytes; `utf8`/`utf8bom` are not hinted because the plain path already reproduces them. Without the hint a windows-1251 file decoded lossily (`�`) or failed, which surfaced as a false stale-anchor / unsupported-file.
+
+### Memo/bytes agreement
+
+After any successful write the memo describes the bytes actually written: the bridge records `prepareForSave`'s `newState` with the provider's post-write version (`ctxFsIO.writeText`), and the host bridge does the same from the fresh snapshot (`localIO.writeText`). There is no post-write state where the memo says `utf16le` while the bytes are UTF-8.
+
+### Trigger for future work
+
+Byte-preserving writes stay out of scope until the harness filesystem offers a **byte-write primitive** — a `writeBytes(target, Uint8Array, …)` (or equivalent `editBytes`) that goes through the same policy, intent, and observation gates. When it lands, the trigger is: `prepareForSave` gains an encode arm (`encodeText` already exists in `src/encoding.ts`) and `E_ENCODING_UNWRITABLE` is produced only when the recorded encoding itself is unmappable. Until then the refusal is the contract, and its message tells the model the one legal way forward.
+
+- Tests: `test/core/encoding-roundtrip.test.ts`.
 
 ## References
 
