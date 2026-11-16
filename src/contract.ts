@@ -275,7 +275,50 @@ export function prepareEditArguments(args: unknown): Record<string, unknown> {
 
 // ---- assertions ---------------------------------------------------------------
 
+/** The spellings a caller may name the target with, in payload precedence order. */
+const FILE_SPELLINGS = ["file", "path", "file_path"] as const;
+
+/** The exact refusal ADR-0030 quotes; one sentence, one owner. */
+const FILE_REQUIRED_MESSAGE =
+  "Edit request file must be a non-empty string; name the file to edit.";
+
+/**
+ * #117: is this raw record an unnamed target rather than a malformed payload?
+ *
+ * `normalizeRequest` stamps its marker only when `editRequestFrom` succeeds, and
+ * the fold rejects a null/absent file — so without this predicate the specific
+ * refusal is unreachable and the caller only sees the generic hint. A spelling
+ * that is present but wrongly typed is malformed, not unnamed, and stays generic.
+ */
+function namesNoFile(request: Record<string, unknown>): boolean {
+  let seesUnnamed = false;
+  for (const key of FILE_SPELLINGS) {
+    if (!(key in request)) continue;
+    const value = request[key];
+    if (typeof value === "string") {
+      if (sanitizePath(value) !== null) return false; // a usable name wins
+      seesUnnamed = true;
+      continue;
+    }
+    if (value === null || value === undefined) {
+      seesUnnamed = true;
+      continue;
+    }
+    return false; // present but wrongly typed: malformed payload
+  }
+  // No spelling at all is still unnamed when the record carries an edit payload;
+  // a record naming nothing and carrying nothing keeps the generic hint.
+  return seesUnnamed || Array.isArray(request.edits);
+}
+
 export function assertEditRequest(request: unknown): asserts request is NormalizedEditRequest {
+  // #117: the specific refusal must be reachable before the marker guard — a raw
+  // record whose file is null/absent/empty never normalizes, so the generic hint
+  // would otherwise be the only message the caller sees.
+  if (isRec(request) && namesNoFile(request)) {
+    throw new DomainError("E_BAD_PAYLOAD", { message: FILE_REQUIRED_MESSAGE });
+  }
+
   if (!isNormalizedEdit(request)) {
     throw new DomainError("E_BAD_PAYLOAD", {
       message:
@@ -287,7 +330,7 @@ export function assertEditRequest(request: unknown): asserts request is Normaliz
   const req = request as NormalizedEditRequest;
   if (typeof req.file !== "string" || req.file.length === 0) {
     throw new DomainError("E_BAD_PAYLOAD", {
-      message: "Edit request file must be a non-empty string; name the file to edit.",
+      message: FILE_REQUIRED_MESSAGE,
     });
   }
   if (req.mode !== undefined && req.mode !== "general" && req.mode !== "literal") {
