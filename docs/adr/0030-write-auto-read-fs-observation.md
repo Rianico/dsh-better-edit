@@ -1,4 +1,4 @@
-# ADR-0029 — Post-write auto-read owns its fs observation (caller-owned emit)
+# ADR-0030 — Post-write auto-read owns its fs observation (caller-owned emit)
 
 Status: Accepted (issue #109, lane `i109`).
 Downstream records: `src/write-hook.ts` (the `tools/post-execute` auto-read),
