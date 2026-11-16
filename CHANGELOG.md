@@ -11,6 +11,10 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Tests
+
+* **edit:** pin the applied-vs-rejection notice tier (#115) (#121)
+
 ### Bug Fixes
 
 * **edit:** reject an unnamed file at admission instead of guessing it from anchors (#117) (#120)
