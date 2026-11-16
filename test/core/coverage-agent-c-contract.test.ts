@@ -28,7 +28,9 @@ describe("coverage: contract.ts", () => {
 
   it("editRequestFrom validates path and edits", () => {
     expect(editRequestFrom({ path: "file.txt", edits: [["a", "b", "c"]] })).toBeDefined();
-    expect(editRequestFrom({ path: null, edits: [["a", "b", "c"]] })).toBeDefined();
+    // #117: a null file is an admission error, never inferred
+    expect(editRequestFrom({ path: null, edits: [["a", "b", "c"]] })).toBeUndefined();
+    expect(editRequestFrom({ file: null, edits: [["a", "b", "c"]] })).toBeUndefined();
     // empty path string -> undefined
     expect(editRequestFrom({ path: "", edits: [["a", "b", "c"]] })).toBeUndefined();
     expect(editRequestFrom({ path: 123 as any, edits: [["a", "b", "c"]] })).toBeUndefined();
@@ -120,7 +122,7 @@ describe("coverage: contract.ts", () => {
     ).toThrow(/E_BAD_PAYLOAD/);
   });
   it("normalizeRequest handles edits already normalized (object form via editRequestFrom)", () => {
-    const rec = { path: null, edits: [["a", "b", "c"]] } as any;
+    const rec = { path: "a.txt", edits: [["a", "b", "c"]] } as any;
     const result = normalizeRequest(rec) as any;
     expect(isNormalizedEdit(result)).toBe(true);
   });

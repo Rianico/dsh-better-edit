@@ -1,6 +1,5 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect } from "vitest";
 import { readFile } from "node:fs/promises";
-import { join } from "node:path";
 import { withTempFile, setupIntegrationTest, getText } from "../support/fixtures.js";
 import { localIO } from "../../src/fs-bridge.js";
 import { buildEditTool } from "../../src/tool-edit.js";
@@ -41,16 +40,15 @@ describe("tool-edit coverage", () => {
     });
   });
 
-  it("resolveNullPath with matching hashes", async () => {
+  it("a null path is refused at admission even when one file matches its anchors", async () => {
     await withTempFile("only.txt", "line one\nline two\n", async ({ cwd, path }) => {
       const harness = setupIntegrationTest(cwd);
-      // serve to create snapshots
+      // serve to create snapshots — one file matches, the retired inference arm's best case
       const res = await harness.readTool.execute("read", { path: "only.txt" });
-      const text = getText(res);
-      const lines = text.split("\n").filter((l) => l.includes("│"));
+      const lines = getText(res)
+        .split("\n")
+        .filter((l) => l.includes("│"));
       const h1 = lines[0]!.split("│")[0]!;
-      const h2 = lines[0]!.split("│")[0]!;
-      // null path should resolve when only one file matches
       const io = localIO();
       const sandbox = new FsSandboxController({
         fs: { sandboxMode: undefined },
@@ -58,20 +56,16 @@ describe("tool-edit coverage", () => {
       } as never);
       const tool = buildEditTool(io, sandbox);
       const exec = makeExec(cwd);
-      // This will exercise resolveNullPath; may throw warning or succeed
-      try {
-        const r = await tool.execute({ path: null, edits: [[h1, h2, "replaced"]] } as any, exec);
-        expect(typeof r).toBe("string");
-        expect(await readFile(path, "utf-8")).toContain("replaced");
-      } catch (e) {
-        // if multiple matches or no match, error is expected
-        expect((e as Error).message).toMatch(/E_BAD_PAYLOAD/);
-      }
+      // #117: null file is an admission error — even a single hash match must not infer.
+      await expect(
+        tool.execute({ path: null, edits: [[h1, h1, "replaced"]] } as any, exec),
+      ).rejects.toMatchObject({ code: "E_BAD_PAYLOAD" });
+      expect(await readFile(path, "utf-8")).toBe("line one\nline two\n");
     });
   });
 
-  it("resolveNullPath with unknown hashes throws E_BAD_PAYLOAD", async () => {
-    await withTempFile("t.txt", "a\nb\n", async ({ cwd }) => {
+  it("a null path is refused without advertising an anchor lookup", async () => {
+    await withTempFile("t.txt", "a\nb\n", async ({ cwd, path }) => {
       const io = localIO();
       const sandbox = new FsSandboxController({
         fs: { sandboxMode: undefined },
@@ -79,9 +73,17 @@ describe("tool-edit coverage", () => {
       } as never);
       const tool = buildEditTool(io, sandbox);
       const exec = makeExec(cwd);
-      await expect(
-        tool.execute({ path: null, edits: [["zzz", "zzz", "x"]] } as any, exec),
-      ).rejects.toThrow(/E_BAD_PAYLOAD/);
+      let error: unknown;
+      try {
+        await tool.execute({ path: null, edits: [["zzz", "zzz", "x"]] } as any, exec);
+      } catch (e) {
+        error = e;
+      }
+      expect(error).toBeDefined();
+      expect(error).toMatchObject({ code: "E_BAD_PAYLOAD" });
+      // #117 retired the inference seam: the rejection must not advertise a lookup.
+      expect((error as Error).message).not.toMatch(/inferred|Autocorrected/);
+      expect(await readFile(path, "utf-8")).toBe("a\nb\n");
     });
   });
 

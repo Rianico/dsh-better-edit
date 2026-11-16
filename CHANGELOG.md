@@ -11,8 +11,13 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Tests
+
+* **edit:** pin the applied-vs-rejection notice tier (#115) (#121)
+
 ### Bug Fixes
 
+* **edit:** reject an unnamed file at admission instead of guessing it from anchors (#117) (#120)
 * **domain-errors:** route `W_NOOP` to `MODEL` so the second identical no-op carries "Resend will reject" to the model that would resend, not a human-only `[USER]` notice — warnings are now guarded by an audience oracle that refuses model-directed text on a `USER` warning (ADR-0014 amendment) (#122)
 
 ## [1.2.3] - 2026-11-16
