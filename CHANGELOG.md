@@ -13,7 +13,7 @@ All notable changes to this project will be documented in this file.
 
 ### Bug Fixes
 
-* **edit:** reject an unnamed file at admission instead of guessing it from anchors (#117)
+* **edit:** reject an unnamed file at admission instead of guessing it from anchors (#117) (#120)
 
 ## [1.2.3] - 2026-11-16
 
