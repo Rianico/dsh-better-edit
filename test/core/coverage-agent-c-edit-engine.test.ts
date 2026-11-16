@@ -1,16 +1,13 @@
-import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   collectRemovedHashes,
   countLineChanges,
-  resolveMissingPath,
   applyOne,
   enforceNoopLoop,
   persistUndoAndWrite,
-  runFileEdits,
 } from "../../src/edit-engine.js";
 import { lineHashesPure } from "../../src/hashline/hash-assign.js";
 import { initHasher } from "../../src/hashline/hash-assign.js";
-import * as hashStore from "../../src/hash-store.js";
 import * as undoMod from "../../src/undo-edit.js";
 
 describe("coverage: edit-engine collectRemovedHashes / countLineChanges", () => {
@@ -63,72 +60,6 @@ describe("coverage: edit-engine collectRemovedHashes / countLineChanges", () => 
       totalAddedLines: 2,
       totalRemovedLines: 0,
     });
-  });
-});
-
-describe("coverage: edit-engine resolveMissingPath", () => {
-  it("returns undefined when path present", async () => {
-    expect(await resolveMissingPath({ path: "a.txt" } as any)).toBeUndefined();
-  });
-  it("returns undefined when missing anchor_from/to types", async () => {
-    expect(
-      await resolveMissingPath({ path: null, anchor_from: 123 as any, anchor_to: "abc" } as any),
-    ).toBeUndefined();
-    expect(await resolveMissingPath({ path: null } as any)).toBeUndefined();
-  });
-  it("returns undefined on invalid hash ref", async () => {
-    expect(
-      await resolveMissingPath({
-        path: null,
-        anchor_from: "not-a-hash!!!",
-        anchor_to: "also-bad",
-      } as any),
-    ).toBeUndefined();
-  });
-  it("returns undefined when findSnapshot throws", async () => {
-    const spy = vi
-      .spyOn(hashStore, "findSnapshotPathsByHashes")
-      .mockRejectedValue(new Error("db fail"));
-    // need valid hashes (3-char alphanumeric)
-    const hashes = lineHashesPure("a\nb\nc");
-    await expect(
-      resolveMissingPath({ path: null, anchor_from: hashes[0]!, anchor_to: hashes[1]! } as any),
-    ).resolves.toBeUndefined();
-    spy.mockRestore();
-  });
-  it("returns single match and warning", async () => {
-    const spy = vi
-      .spyOn(hashStore, "findSnapshotPathsByHashes")
-      .mockResolvedValue(["/tmp/file.txt"]);
-    const hashes = lineHashesPure("a\nb");
-    const res = await resolveMissingPath({
-      path: null,
-      anchor_from: hashes[0]!,
-      anchor_to: hashes[1]!,
-    } as any);
-    expect(res?.path).toBe("/tmp/file.txt");
-    expect(res?.warning).toMatch(/Autocorrected/);
-    spy.mockRestore();
-  });
-  it("throws when multiple matches", async () => {
-    const spy = vi.spyOn(hashStore, "findSnapshotPathsByHashes").mockResolvedValue(["a", "b"]);
-    const hashes = lineHashesPure("a\nb");
-    await expect(
-      resolveMissingPath({ path: null, anchor_from: hashes[0]!, anchor_to: hashes[1]! } as any),
-    ).rejects.toThrow(/multiple known files/);
-    spy.mockRestore();
-  });
-  it("returns undefined when no matches", async () => {
-    const spy = vi.spyOn(hashStore, "findSnapshotPathsByHashes").mockResolvedValue([]);
-    const hashes = lineHashesPure("a\nb");
-    expect(
-      await resolveMissingPath({
-        path: null,
-        anchor_from: hashes[0]!,
-        anchor_to: hashes[1]!,
-      } as any),
-    ).toBeUndefined();
-    spy.mockRestore();
   });
 });
 

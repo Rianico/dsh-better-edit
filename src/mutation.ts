@@ -36,7 +36,7 @@ import type { LineEnding } from "./edit-diff.js";
 import { toCwd } from "./paths.js";
 import { recordServedTruncated, retireAnchors, scanDrift } from "./session-view.js";
 import { abortIf, splitLines } from "./utils.js";
-import { runFileEdits, resolveMissingPath } from "./mutation/engine.js";
+import { runFileEdits } from "./mutation/engine.js";
 import type { FileEditResult, PreparedItem } from "./mutation/engine.js";
 import { saveUndo } from "./undo-edit.js";
 import { restoreEndings } from "./edit-diff.js";
@@ -70,7 +70,7 @@ export async function snapshotIdFor(
 
 // Engine helpers are private to Mutation — not re-exported for new code.
 // Deprecated re-exports kept for existing tests (commitlint: ignore):
-export { runFileEdits, resolveMissingPath };
+export { runFileEdits };
 export { persistUndoAndWrite };
 export type { FileEditResult, PreparedItem };
 export { buildMetrics, buildNoop, buildChanged, buildBatchResult };
@@ -197,7 +197,7 @@ async function commitBatch(
  * Owns: applySequence → branch (single/multi × noop/applied) → commit →
  * buildBatchResult → recordServedTruncated → return text.
  *
- * The tool layer (adapter) only validates and resolves the nullable path; all
+ * The tool layer (adapter) only validates and delegates; all
  * lifecycle branching concentrates here (locality). One interface serves N
  * call sites (leverage). Deleting this module would scatter the lifecycle
  * across every tool — it concentrates (deep).

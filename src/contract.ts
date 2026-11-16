@@ -4,7 +4,7 @@
  * declared once here; every tool validates through these asserts, and the
  * E_BAD_PAYLOAD vocabulary is shared instead of re-implemented per tool.
  *
- * Contract mirrors upstream ADR-0015: {file: string|null, edits: [{anchor_from, anchor_to, replace_with},...]} named-object payload
+ * Contract mirrors upstream ADR-0015: {file: string, edits: [{anchor_from, anchor_to, replace_with},...]} named-object payload
  * (plus legacy tuple items and legacy key spellings folded pre-validation), single-file, atomic. batch_edit is removed.
  * @module dsh-better-edit/contract
  */
@@ -25,7 +25,7 @@ export type EditItem = {
 };
 
 export type EditRequest = {
-  file: string | null;
+  file: string;
   edits: EditItem[];
   /**
    * "general" (default) refuses bytes reproducing served rows;
@@ -133,23 +133,16 @@ export function editRequestFrom(input: unknown): NormalizedEditRequest | undefin
     edits?: unknown;
     mode?: unknown;
   };
-  // file preferred; legacy path/file_path fold (sanitized). null stays null:
-  // the undocumented anchor-inference seam (resolveNullPath) still resolves it.
+  // file preferred; legacy path/file_path fold (sanitized). #117: a null or
+  // absent file is an admission error — the anchor-inference seam is retired.
   let effectiveFile: unknown;
   if (file !== undefined) effectiveFile = file;
   else if (path !== undefined) effectiveFile = path;
   else if (file_path !== undefined) effectiveFile = file_path;
   else return undefined;
-  let effectivePath: string | null;
-  if (typeof effectiveFile === "string") {
-    const sanitized = sanitizePath(effectiveFile);
-    if (sanitized === null) return undefined;
-    effectivePath = sanitized;
-  } else if (effectiveFile === null) {
-    effectivePath = null;
-  } else {
-    return undefined;
-  }
+  if (typeof effectiveFile !== "string") return undefined;
+  const effectivePath = sanitizePath(effectiveFile);
+  if (effectivePath === null) return undefined;
   if (!Array.isArray(edits) || edits.length === 0) return undefined;
   const items: EditItem[] = [];
   for (const item of edits) {
@@ -241,6 +234,7 @@ const LEGACY_ITEM_KS = new Set(["remove_from", "remove_to", "replacement_text"])
  * Returns the input unchanged when not a record; otherwise returns a shallow copy with
  * the alias applied so callers never mutate the original `args` object.
  */
+// pi-lens-ignore: no-unknown-returns -- identity passthrough is the pinned contract (replace-normalize.test.ts); the caller's assert is the parse site.
 export function normalizeRequest(input: unknown): unknown {
   if (!isRec(input)) return input;
   const record: Record<string, unknown> = { ...input };
@@ -291,9 +285,9 @@ export function assertEditRequest(request: unknown): asserts request is Normaliz
   }
   rejectUnknownFields(request as Record<string, unknown>, EDIT_KS, "Edit request");
   const req = request as NormalizedEditRequest;
-  if (req.file !== null && (typeof req.file !== "string" || req.file.length === 0)) {
+  if (typeof req.file !== "string" || req.file.length === 0) {
     throw new DomainError("E_BAD_PAYLOAD", {
-      message: "Edit request file must be a non-empty string or null.",
+      message: "Edit request file must be a non-empty string; name the file to edit.",
     });
   }
   if (req.mode !== undefined && req.mode !== "general" && req.mode !== "literal") {
@@ -368,14 +362,13 @@ export const anchorToSchema = {
 } as const;
 export const pathSchema = {
   type: "string",
-  description: "File path; null infers it from anchors",
+  description: "File path",
 } as const;
 
 export const editPathSchema = {
-  anyOf: [
-    { type: "string", minLength: 1, description: "File path; null infers it from anchors" },
-    { type: "null", description: "null infers path from anchors" },
-  ],
+  type: "string",
+  minLength: 1,
+  description: "Text file to edit (a file, never a directory)",
 } as const;
 
 export const editTupleSchema = {

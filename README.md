@@ -210,12 +210,12 @@ Single stochastic run, `opencode-go/gpt-5.6-luna` high. [Artifact](https://githu
 
 ## Tools
 
-| Tool             | What it does                                                                                                |
-| ---------------- | ----------------------------------------------------------------------------------------------------------- |
-| `read`           | `HASH│content` with `offset`/`limit`; `[Showing N-M of T]` paging; `>200KB` lines show marker               |
-| `read_skill`     | Plain text, no hashes, no serves — editing after it needs a serve                                           |
-| `edit`           | `{path, edits:[[from,to,text]]}` `path:string\|null` inference, `""` deletes, atomic ≤32, verify-then-write |
-| `undo_last_edit` | `{path}` restores last edit (BOM/line endings/anchors), persisted                                           |
+| Tool             | What it does                                                                                                                       |
+| ---------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| `read`           | `HASH│content` with `offset`/`limit`; `[Showing N-M of T]` paging; `>200KB` lines show marker                                      |
+| `read_skill`     | Plain text, no hashes, no serves — editing after it needs a serve                                                                  |
+| `edit`           | `{file, edits:[[from,to,text]]}` (named objects too; `path`/`file_path` aliases fold), `""` deletes, atomic ≤32, verify-then-write |
+| `undo_last_edit` | `{path}` restores last edit (BOM/line endings/anchors), persisted                                                                  |
 
 `write` stays, but refuses an exact `HASH│` echo for same `session/path/line` before dispatch.
 

@@ -1,8 +1,8 @@
 /**
  * The dsh `edit` tool: hash-anchored literal range edits that shadow the
  * built-in `edit` on the agent's own scope layer. Now the sole mutation tool
- * (batch_edit removed, ADR-0007): payload is { file: string|null, edits: [{anchor_from,anchor_to,replace_with},...] }
- * single-file atomic batch, legacy null file inference via anchors.
+ * (batch_edit removed, ADR-0007): payload is { file: string, edits: [{anchor_from,anchor_to,replace_with},...] }
+ * single-file atomic batch; the file is named explicitly, never inferred (#117).
  * @module dsh-better-edit/tool-edit
  */
 
@@ -12,45 +12,12 @@ import { normalizeRequest as normReq, assertEditRequest } from "./contract.js";
 import { abortIf } from "./utils.js";
 import { execute } from "./mutation.js";
 import { EDIT_DESCRIPTION } from "./prompts.js";
-import { codeOf } from "./utils.js";
-import { DomainError, formatError } from "./domain-errors.js";
-import type { EditMode } from "./contract.js";
+import { DomainError } from "./domain-errors.js";
 import type { FileIO } from "./fs-bridge.js";
 import { execCwd, execSessionKey } from "./workspace-context.js";
 import type { FsSandboxController, FsEscalationArgs } from "./sandbox.js";
 import { withWorkspace } from "./workspace-context.js";
-import { findSnapshotPathsByHashes } from "./hash-store.js";
-import { parseHashRef } from "./hashline/anchor-pipeline.js";
 import type { PreparedItem } from "./edit-engine.js";
-
-async function resolveNullPath(
-  edits: Array<{ anchor_from: string; anchor_to: string }>,
-): Promise<{ file: string; warning: string } | undefined> {
-  if (edits.length === 0) return undefined;
-  const first = edits[0]!;
-  try {
-    const h1 = parseHashRef(first.anchor_from).hash;
-    const h2 = parseHashRef(first.anchor_to).hash;
-    const matches = await findSnapshotPathsByHashes([h1, h2]);
-    if (matches.length === 1) {
-      return {
-        file: matches[0]!,
-        warning: formatError("E_BAD_PAYLOAD", {
-          message: `Autocorrected: missing "file" resolved to ${matches[0]} — the only file whose stored hashes contain both anchors.`,
-        }),
-      };
-    }
-    if (matches.length > 1) {
-      throw new DomainError("E_BAD_PAYLOAD", {
-        message: `Edit request requires a non-empty "file" string; the anchors match multiple known files: ${matches.join(", ")}. Include the intended file.`,
-      });
-    }
-  } catch (e) {
-    if (codeOf(e) === "E_BAD_PAYLOAD") throw e;
-    return undefined;
-  }
-  return undefined;
-}
 
 /**
  * E_UNKNOWN producer: the edit tool boundary is where raw unexpected errors
@@ -74,11 +41,12 @@ export function buildEditTool(io: FileIO, sandbox: FsSandboxController) {
       file: {
         oneOf: [
           { type: "string", description: "Text file to edit (a file, never a directory)" },
-          // N1: no description — ADR-0015 keeps the legacy null path admissible
-          // but undocumented, so the schema admits without teaching.
+          // #117: null stays wire-admissible so the domain rejects it with
+          // E_BAD_PAYLOAD; dsh would otherwise answer INVALID_ARGS before the
+          // contract runs. Undocumented and never inferable.
           { type: "null" },
         ],
-      } as unknown as import("@deepseek-ai/dsh-tools").ValueSchemaSpec & { required?: true },
+      },
       edits: {
         type: "array",
         description:
@@ -96,14 +64,14 @@ export function buildEditTool(io: FileIO, sandbox: FsSandboxController) {
             },
             { type: "array", items: { type: "string" } },
           ],
-        } as unknown as import("@deepseek-ai/dsh-tools").ValueSchemaSpec,
-      } as unknown as import("@deepseek-ai/dsh-tools").ValueSchemaSpec & { required?: true },
+        },
+      },
       mode: {
         type: "string",
         enum: ["general", "literal"],
         description:
           'How to treat bytes reproducing served rows: "general" refuses them, "literal" declares them as intended file content',
-      } as unknown as import("@deepseek-ai/dsh-tools").ValueSchemaSpec,
+      },
       ...(sandbox.escalationModes.length > 0 ? sandbox.schemaFields() : {}),
     },
     output: {
@@ -119,29 +87,17 @@ export function buildEditTool(io: FileIO, sandbox: FsSandboxController) {
 
           const canonical = normReq(args);
           assertEditRequest(canonical);
-          const req = canonical as unknown as {
-            file: string | null;
-            mode?: EditMode;
-            edits: Array<{ anchor_from: string; anchor_to: string; replace_with: string }> & {
-              [key: symbol]: unknown;
-            };
-          };
-          let resolvedFile = req.file;
-          let fileWarning: string | undefined;
-          if (resolvedFile === null) {
-            const resolved = await resolveNullPath(req.edits);
-            if (resolved) {
-              resolvedFile = resolved.file;
-              fileWarning = resolved.warning;
-            } else {
-              throw new DomainError("E_BAD_PAYLOAD", {
-                message:
-                  "Edit request file is null and could not be inferred from anchors — anchors match no known file. Include the intended file.",
-              });
-            }
-          }
+          // `assertEditRequest` narrows the raw args to the normalized contract.
+          const req = canonical;
+          // #117: a null/absent file is rejected at admission (assertEditRequest);
+          // the retired anchor-inference arm never resolves one here.
+          const resolvedFile = req.file;
           const sandboxPolicy = await sandbox.resolvePolicy(
+            // SAFETY: `resolvePolicy` reads only sandbox_permissions/justification;
+            // the file/edits fields are legacy context it ignores.
             "edit",
+            // SAFETY: `resolvePolicy` reads only sandbox_permissions/justification;
+            // the file/edits fields are legacy context it ignores.
             { file: resolvedFile, edits: req.edits } as unknown as FsEscalationArgs,
             exec,
           );
@@ -152,12 +108,11 @@ export function buildEditTool(io: FileIO, sandbox: FsSandboxController) {
             const e = req.edits[index]!;
             items.push({
               index,
-              file: resolvedFile!,
-              absolutePath: await io.resolve(resolvedFile!, cwd, signal),
+              file: resolvedFile,
+              absolutePath: await io.resolve(resolvedFile, cwd, signal),
               anchor_from: e.anchor_from,
               anchor_to: e.anchor_to,
               replace_with: e.replace_with,
-              fileWarning: index === 0 ? fileWarning : undefined,
               ...(req.mode !== undefined ? { mode: req.mode } : {}),
             });
           }
