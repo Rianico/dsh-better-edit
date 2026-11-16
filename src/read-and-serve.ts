@@ -72,8 +72,8 @@ export interface ReadAndServeResult {
  * carries the UTF-8 rewrite note when the file had decode errors.
  *
  * Emits nothing on the fs-observation gate — callers that need the
- * observation recorded (the `read` tool) do that themselves with their exec
- * context.
+ * observation recorded (the `read` tool and the write auto-read hook) do that
+ * themselves with their exec context.
  */
 export async function readAndServe(
   io: FileIO,
