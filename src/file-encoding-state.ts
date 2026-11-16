@@ -19,6 +19,7 @@ import {
   detectBom,
   isValidUtf8,
   decodeBytes,
+  encodeText,
   normalizeEncoding,
   top3Candidates,
   chardetTop3Candidates,
@@ -26,6 +27,32 @@ import {
 import type { CandidatePreview } from "./encoding.js";
 import { detectEnding, restoreEndings, toLF, type LineEnding } from "./edit-diff.js";
 import { DomainError, formatError } from "./domain-errors.js";
+
+/**
+ * The decode hint a mutating re-read must pass to the byte seam: the encoding
+ * recorded by the preceding `read({ encoding })` — but only while the memo still
+ * matches the on-disk version, and only for encodings the plain read path cannot
+ * reproduce.
+ *
+ * `utf8` / `utf8bom` need no hint: BOM sniff + strict UTF-8 (and the bridge's
+ * stripped-BOM restore) already decode them to the text the anchors were served
+ * for, so asking for a byte reread would only cost an RPC. Everything else
+ * (utf16le, windows-1251, GBK, …) is invisible to the plain path — without the
+ * hint the mutation re-read decodes lossily or fails, which is the stale-anchor /
+ * unsupported-file symptom this hint removes (issue #112).
+ *
+ * A drifted memo is dropped first, so a changed file is re-detected instead of
+ * having the old encoding laundered onto its new bytes.
+ */
+export function encodingHintAtVersion(
+  targetKey: string,
+  currentVersion: string | undefined,
+): string | undefined {
+  invalidateIfStale(targetKey, currentVersion);
+  const encoding = encodingMemo.get(targetKey)?.encoding;
+  if (encoding === undefined || encoding === "utf8" || encoding === "utf8bom") return undefined;
+  return encoding;
+}
 
 // ---------------------------------------------------------------------------
 // State — per-targetKey, session-TTL, version-invalidated
@@ -255,17 +282,11 @@ export async function decodeForOpen(
       if (chardetCands.length > 0) {
         const top = chardetCands[0]!;
         const second = chardetCands[1];
-        const isMid = isMidConfidenceChardet(
-          top as { confidence: number },
-          second as unknown as { confidence: number } | undefined,
-        );
+        const isMid = isMidConfidenceChardet(top, second);
         const dec = decodeBytes(bytes, top.encoding);
         if (dec !== undefined && !dec.includes("\uFFFD")) {
           let footer: string | undefined;
-          if (isMid)
-            footer = buildAutoGuessFooterFromCandidates(
-              chardetCands as unknown as Array<{ encoding: string; confidence: number }>,
-            );
+          if (isMid) footer = buildAutoGuessFooterFromCandidates(chardetCands);
           return {
             text: dec,
             encoding: top.encoding,
@@ -295,9 +316,7 @@ export async function decodeForOpen(
         // Keep existing behavior: always a footer for heuristic, but mid decides inclusion — for now always include
         // to match prior fs-bridge which always built footerHeu.
         void isMid;
-        const footer = buildAutoGuessFooterFromCandidates(
-          candidates as unknown as Array<{ encoding: string; score: number }>,
-        );
+        const footer = buildAutoGuessFooterFromCandidates(candidates);
         return {
           text: dec,
           encoding: best.encoding,
@@ -369,6 +388,8 @@ export interface EncodeForSaveOptions {
   encodingHint?: string;
   normalizeToUtf8?: boolean;
   currentVersion?: string | undefined;
+  /** Model-facing path for the round-trip refusal. */
+  displayPath?: string;
 }
 
 /** Shared UTF-8 BOM marker — single source for the BOM round-trip seam.
@@ -376,51 +397,103 @@ export interface EncodeForSaveOptions {
 export const UTF8_BOM = "\uFEFF";
 
 /**
- * Decide what bytes (as text, since provider expects string) to write and
- * what new state to record. BOM and lineEnding are restored here when a
- * previous state exists; otherwise defaults are UTF-8 without BOM and LF.
- * For legacy encodings with normalizeToUtf8:false, we preserve the memo
- * (provider will write UTF-8 string, next read re-detects via version bump).
+ * True when the text's UTF-8 byte image is byte-identical to its byte image
+ * under `encoding` — an ASCII-only file in a single-byte charset, where the
+ * text-only write seam reproduces the original bytes exactly. Checking bytes
+ * (not the encoding name) is what keeps that file editable.
+ *
+ * This is a property of the TEXT only. A recorded `hasBOM` is a property of the
+ * FILE and is checked separately at the call site: the legacy BOM bytes cannot be
+ * reproduced by a UTF-8 string write (a UTF-8 BOM is a different byte image).
+ */
+export function isByteFaithfulAsUtf8(text: string, encoding: string): boolean {
+  if (encoding === "utf8" || encoding === "utf8bom") return true;
+  const encoded = encodeText(text, encoding);
+  if (encoded === undefined) return false;
+  const utf8 = new TextEncoder().encode(text);
+  if (encoded.length !== utf8.length) return false;
+  for (let i = 0; i < utf8.length; i += 1) if (encoded[i] !== utf8[i]) return false;
+  return true;
+}
+
+/**
+ * Decide what bytes (as text, since the write seam takes a string) to write and
+ * what new state to record. BOM and lineEnding are restored here when a state
+ * exists; otherwise defaults are UTF-8 without BOM and LF.
+ *
+ * ROUND-TRIP VERDICT: the bridge's only write is `writeText(target, content:
+ * string, …)`, which every backend encodes as UTF-8. So the save side can
+ * restore BOM + line ending for the UTF-8 family, and can write a legacy file
+ * only when its UTF-8 byte image is identical (ASCII-only). Anything else
+ * throws `E_ENCODING_UNWRITABLE` BEFORE the write, because writing UTF-8 would
+ * silently transcode the file and leave the anchors describing other bytes.
+ * `normalizeToUtf8: true` is the explicit migration: write UTF-8 and record
+ * `utf8` so the next read agrees with the bytes.
  */
 export function prepareForSave(
   content: string,
   existingState: FileEncodingState | undefined,
   opts: EncodeForSaveOptions = {},
 ): { textToWrite: string; newState?: FileEncodingState } {
+  const displayPath = opts.displayPath ?? "(unknown path)";
+  const normalize = opts.normalizeToUtf8 === true;
+
   if (opts.encodingHint) {
     const norm = normalizeEncoding(opts.encodingHint);
     if (!norm)
       throw new DomainError("E_BAD_PAYLOAD", { message: `Unknown encoding: ${opts.encodingHint}` });
+    // A non-UTF-8 hint names an encoding the UTF-8 text write cannot reproduce
+    // except byte-faithfully; a recorded BOM adds bytes it cannot reproduce at all.
+    const hintFaithful =
+      (norm === "utf8" || norm === "utf8bom" || isByteFaithfulAsUtf8(content, norm)) &&
+      !(existingState?.hasBOM === true && norm !== "utf8bom");
+    if (!hintFaithful)
+      throw new DomainError("E_ENCODING_UNWRITABLE", { path: displayPath, encoding: norm });
     const hasBOM = norm === "utf8bom";
     const lineEnding: LineEnding = existingState?.lineEnding ?? detectEnding(content);
-    // Caller will write `content` as UTF-8 string; record new state for next read.
+    // Caller writes `content` as a UTF-8 string; record what the next read detects.
     return {
       textToWrite: content,
       newState: { encoding: norm, hasBOM, lineEnding, version: undefined },
     };
   }
 
-  if (
-    existingState &&
-    !opts.normalizeToUtf8 &&
-    existingState.encoding !== "utf8" &&
-    existingState.encoding !== "utf8bom"
-  ) {
-    // Legacy file, normalize false — preserve memo on wire (no transcode),
-    // provider writes UTF-8 string, version bump will invalidate on next read.
+  if (!existingState) {
+    // New file, no memo: UTF-8, caller's own line endings.
     return { textToWrite: content };
   }
 
-  // Default: restore recorded BOM + lineEnding via the shared seam so
-  // governed writers (e.g. the str_replace_editor shadow) don't re-implement
-  // the round-trip locally and diverge on future utf16le/lineEnding evolution.
-  // Only add, never strip: a missing memo means UTF-8 without BOM + LF.
-  let textToWrite = content;
-  if (existingState?.lineEnding) {
-    textToWrite = restoreEndings(toLF(textToWrite), existingState.lineEnding);
+  const recorded = existingState.encoding;
+  const lineEnding: LineEnding = existingState.lineEnding ?? detectEnding(content);
+
+  if (recorded !== "utf8" && recorded !== "utf8bom") {
+    const body = restoreEndings(toLF(content), lineEnding);
+    // A recorded BOM on a non-UTF-8 encoding means bytes the text write cannot
+    // reproduce (e.g. read({ encoding: "windows-1251" }) on a UTF-8-BOM file, or
+    // utf16le's FF FE), so even an ASCII body is not byte-faithful there.
+    const faithful = !existingState.hasBOM && isByteFaithfulAsUtf8(body, recorded);
+    if (!normalize && !faithful) {
+      throw new DomainError("E_ENCODING_UNWRITABLE", { path: displayPath, encoding: recorded });
+    }
+    // Migration (normalizeToUtf8) or a byte-faithful legacy image: both land UTF-8
+    // bytes, so the memo must describe UTF-8 — never a stale utf16le/legacy name.
+    return {
+      textToWrite: body,
+      newState: { encoding: "utf8", hasBOM: false, lineEnding, version: undefined },
+    };
   }
-  if (existingState?.hasBOM && !textToWrite.startsWith(UTF8_BOM)) {
+
+  // UTF-8 family: restore the recorded BOM + lineEnding via the shared seam so
+  // governed writers (e.g. the str_replace_editor shadow) don't re-implement the
+  // round-trip locally and diverge on future lineEnding evolution.
+  // Only add, never strip: a missing BOM means UTF-8 without BOM.
+  let textToWrite = restoreEndings(toLF(content), lineEnding);
+  if (existingState.hasBOM && !textToWrite.startsWith(UTF8_BOM)) {
     textToWrite = `${UTF8_BOM}${textToWrite}`;
   }
-  return { textToWrite };
+  const hasBOM = textToWrite.startsWith(UTF8_BOM);
+  return {
+    textToWrite,
+    newState: { encoding: hasBOM ? "utf8bom" : "utf8", hasBOM, lineEnding, version: undefined },
+  };
 }

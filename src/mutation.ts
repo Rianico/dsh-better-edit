@@ -45,6 +45,9 @@ import type { RMeta, BatchSection } from "./edit-response.js";
 import { genDiff, toLF, stripBOM } from "./edit-diff.js";
 import { computeDrift } from "./session-view.js";
 import { trackNoopPayload, clearNoopLoop, noopPayloadKey } from "./noop-guard.js";
+import { getEncodingState, prepareForSave } from "./file-encoding-state.js";
+import type { FileEncodingState } from "./file-encoding-state.js";
+import { loadConfig } from "./store-config.js";
 
 /** Resolve the display path a caller names against the session cwd. */
 export function resolveDisplayPath(path: string, cwd: string): string {
@@ -106,11 +109,33 @@ interface PersistWriteOptions {
 
 async function persistUndoAndWrite(opts: PersistWriteOptions): Promise<void> {
   const { io, files } = opts;
+  // Issue #112: decide the save text for EVERY file BEFORE any write. The seam throws
+  // E_ENCODING_UNWRITABLE when the recorded encoding cannot be reproduced through the
+  // text-only write, so a batch never leaves file 1 transcoded and file 2 refused —
+  // nothing (not even the undo rows) is written when the round-trip is impossible.
+  const normalizeToUtf8 = loadConfig().normalizeToUtf8;
+  const prepared: Array<{ file: UndoWriteFile; textToWrite: string }> = files.map((file) => {
+    const recorded = getEncodingState(file.absolutePath);
+    // No memo (e.g. a first write): reconstruct the utf8/utf8bom state the edit read.
+    const state: FileEncodingState = recorded ?? {
+      encoding: file.bom ? "utf8bom" : "utf8",
+      hasBOM: file.bom !== "",
+      lineEnding: file.originalEnding,
+      version: undefined,
+    };
+    const prep = prepareForSave(file.result, state, {
+      normalizeToUtf8,
+      displayPath: file.displayPath,
+    });
+    return { file, textToWrite: prep.textToWrite };
+  });
+
   const undos: Array<{
     file: UndoWriteFile;
+    textToWrite: string;
     restore: () => Promise<void>;
   }> = [];
-  for (const file of files) {
+  for (const { file, textToWrite } of prepared) {
     const undo = await saveUndo(file.absolutePath, {
       content: file.originalNormalized,
       bom: file.bom,
@@ -128,7 +153,7 @@ async function persistUndoAndWrite(opts: PersistWriteOptions): Promise<void> {
       }
       throw new Error(opts.undoUnavailableMessage(file.displayPath));
     }
-    undos.push({ file, restore: undo.restore });
+    undos.push({ file, textToWrite, restore: undo.restore });
   }
 
   const written: typeof undos = [];
@@ -137,7 +162,7 @@ async function persistUndoAndWrite(opts: PersistWriteOptions): Promise<void> {
       abortIf(opts.signal);
       await io.writeText(
         u.file.absolutePath,
-        u.file.bom + restoreEndings(u.file.result, u.file.originalEnding),
+        u.textToWrite,
         opts.signal,
         opts.exec,
         opts.sandboxPolicy,

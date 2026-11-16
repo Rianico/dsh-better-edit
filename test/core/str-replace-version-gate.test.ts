@@ -11,7 +11,7 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import type { Context } from "@deepseek-ai/cordis";
 import { ctxFsIO, type FileIO } from "../../src/fs-bridge.js";
-import { clearEncodingState, clearAutoGuessFooter } from "../../src/fs-bridge.js";
+import { clearEncodingState, clearAutoGuessFooter, getEncodingState } from "../../src/fs-bridge.js";
 import { buildStrReplaceEditorTool } from "../../src/tool-str-replace-editor.js";
 import { makeTestSandbox } from "../support/fixtures.js";
 
@@ -162,5 +162,43 @@ describe("issue #69: ctxFsIO version semantics authorize shadow writes", () => {
     await expect(
       tool.execute({ command: "str_replace", path: p, old_str: "alpha", new_str: "ALPHA" }, exec),
     ).rejects.toThrow(/E_BLIND_REPLACE.*has not been viewed/);
+  });
+  it("a successful write records the post-write memo, so its own write is not blind (#112)", async () => {
+    const fake = makeProdFs();
+    const p = "/abs/gate.txt";
+    fake.seed(p, Buffer.from("alpha\r\nbravo\r\n", "utf-8"));
+    const io: FileIO = ctxFsIO(fake.fs as never, makeCtx());
+    const tool = buildStrReplaceEditorTool(io, makeTestSandbox());
+    const exec = fakeExec("/abs");
+    await tool.execute({ command: "view", path: p }, exec);
+    await tool.execute(
+      { command: "str_replace", path: p, old_str: "bravo", new_str: "BRAVO" },
+      exec,
+    );
+    // Memo/bytes agreement: the state now describes the written bytes at their version.
+    expect(getEncodingState(p)?.encoding).toBe("utf8");
+    expect(getEncodingState(p)?.version).toBe("v2");
+    await expect(
+      tool.execute({ command: "str_replace", path: p, old_str: "BRAVO", new_str: "bravo" }, exec),
+    ).resolves.toMatchObject({ text: expect.stringMatching(/Replaced 1 occurrence/) });
+  });
+
+  it("ctxFsIO refuses a UTF-16LE write before the provider sees it and leaves the memo alone (#112)", async () => {
+    const fake = makeProdFs();
+    const p = "/abs/u16.txt";
+    const bytes = Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from("hello there", "utf16le")]);
+    fake.seed(p, bytes);
+    const io: FileIO = ctxFsIO(fake.fs as never, makeCtx());
+    // read({ encoding }) records utf16le for the next save verdict.
+    await io.readText(p, undefined, "utf16le");
+    expect(getEncodingState(p)?.encoding).toBe("utf16le");
+
+    await expect(io.writeText(p, "changed", undefined)).rejects.toThrow(
+      /\[E_ENCODING_UNWRITABLE\][\s\S]*normalizeToUtf8/,
+    );
+
+    expect(fake.fs.writeText).not.toHaveBeenCalled();
+    expect(fake.readRaw(p).equals(bytes)).toBe(true);
+    expect(getEncodingState(p)?.encoding).toBe("utf16le");
   });
 });
