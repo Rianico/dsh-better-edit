@@ -11,7 +11,7 @@
 import { readFile } from "node:fs/promises";
 import { beforeAll, describe, expect, it } from "vitest";
 import { setupIntegrationTest, getText, withTempFile } from "../support/fixtures.js";
-import { parseHashRef } from "../../src/hashline/anchor-pipeline.js";
+import { parseHashRef, resEdit } from "../../src/hashline/anchor-pipeline.js";
 import { initHasher } from "../../src/hashline/hasher.js";
 
 /** The one anchored-shape token the message may quote: the documented example. */
@@ -71,6 +71,10 @@ describe("#108 multi-line anchor paste — shape refusal, no minted coordinate",
       expect(message).toContain("[E_MALFORMED_ANCHOR]");
       expect(message).toMatch(/must be a single bare 3-char hash/);
       expect(message).toMatch(/4-line block/);
+      // T3: the paste is redacted at the echo site — no block byte reaches the transcript.
+      expect(message).toContain('Invalid anchor "4-line block"');
+      expect(message).not.toContain("settlementStatus");
+      expect(message).not.toContain("remark");
       // The deleted hint shipped a coordinate plus an instruction to reuse it.
       expect(message).not.toMatch(/extracted first hash/);
       expect(message).not.toMatch(/use bare "/);
@@ -169,5 +173,30 @@ describe("#108 diagRef — no fabricated coordinate on a │ + newline paste", (
       expect(message).not.toContain("E_MALFORMED_ANCHOR");
       expect(await readFile(path, "utf-8")).toBe(INITIAL);
     });
+  });
+});
+
+describe("#108 multi-line rawAnchor redaction", () => {
+  it("renders the N-line block redaction, never the pasted bytes", () => {
+    let message = "";
+    try {
+      resEdit({ anchor_from: PASTED_BLOCK, anchor_to: PASTED_BLOCK, replace_with: "REPLACED" });
+      expect.unreachable("multi-line anchor paste must be refused");
+    } catch (error) {
+      message = String((error as Error).message);
+    }
+    expect(message).toContain('Invalid anchor "4-line block"');
+    // No byte of the pasted block survives into the transcript.
+    expect(message).not.toContain("settlementStatus");
+    expect(message).not.toContain("remark");
+    expect(message).not.toContain("})");
+    expect(message).not.toMatch(/\n/);
+  });
+
+  it("single-line refs keep the verbatim echo", () => {
+    expect(() =>
+      resEdit({ anchor_from: "abc│x", anchor_to: "abc", replace_with: "y" }),
+    ).toThrow(/Invalid anchor "abc│x"/);
+    expect(() => parseHashRef("abc│content")).toThrow(/Invalid anchor "abc│content"/);
   });
 });

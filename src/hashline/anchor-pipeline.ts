@@ -259,7 +259,8 @@ export function resEdit(edit: HTEdit, _warnings?: string[]): HEdit {
     if (trimmed.includes("\n")) {
       const lines = trimmed.split("\n").length;
       throw new DomainError("E_MALFORMED_ANCHOR", {
-        rawAnchor: trimmed,
+        // Redacted, upstream shape: never echo the pasted block back into the transcript.
+        rawAnchor: `${lines}-line block`,
         reason: `anchor_from/anchor_to must be a single bare 3-char hash — the anchor read() served beside the one line you mean. You passed a ${lines}-line block; pass that bare hash, or re-read the file.`,
       });
     }
