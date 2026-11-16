@@ -84,7 +84,9 @@ describe("unverified-anchor hints are banned from src/ (#108)", () => {
       expect(hint.pattern.test(hint.preFixSample), hint.name).toBe(true);
     }
     // One planted line per hint: T1's sample twice (two patterns reach it) then T2's.
-    expect(offenderLines(BANNED_HINTS.map((hint) => hint.preFixSample).join("\n"))).toEqual([1, 2, 3]);
+    expect(offenderLines(BANNED_HINTS.map((hint) => hint.preFixSample).join("\n"))).toEqual([
+      1, 2, 3,
+    ]);
   });
 
   it("the scanner reports the line of a planted hint", () => {

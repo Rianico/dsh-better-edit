@@ -50,7 +50,8 @@ function reasonOf(error: unknown): string {
   if (!(error instanceof DomainError)) throw error;
   expect(error.code).toBe("E_MALFORMED_ANCHOR");
   const payload = error.payload as { reason?: unknown };
-  if (typeof payload.reason !== "string") throw new Error("E_MALFORMED_ANCHOR payload has no reason");
+  if (typeof payload.reason !== "string")
+    throw new Error("E_MALFORMED_ANCHOR payload has no reason");
   return payload.reason;
 }
 
@@ -77,7 +78,7 @@ const CORPUS: string[] = [
   "settlementStatus: '',\n      remark: ''\n    })\n  })",
   // Collision: the first 3-char run is a real hash (`wUp` = `"site": {`, `AU6` = `}` in src/).
   'wUp│  "site": {\nconst beta = 2;',
-  'AU6│}\nconst gamma = 3;',
+  "AU6│}\nconst gamma = 3;",
   // No 3-char alnum run anywhere — the deleted extractor's `undefined` arm, then the raw tail.
   '— —"\n"││"',
   "│\n│",

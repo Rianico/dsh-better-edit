@@ -49,9 +49,11 @@ describe("#108 multi-line anchor paste — shape refusal, no minted coordinate",
       "set",
       "set",
     ]);
-    expect(unlistedQuotedAnchors(`Expected a 3-char alphanumeric anchor (e.g. "${DOCUMENTED_EXAMPLE}").`)).toEqual(
-      [],
-    );
+    expect(
+      unlistedQuotedAnchors(
+        `Expected a 3-char alphanumeric anchor (e.g. "${DOCUMENTED_EXAMPLE}").`,
+      ),
+    ).toEqual([]);
   });
 
   it("rejects with E_MALFORMED_ANCHOR, leaves the file byte-identical, names no coordinate", async () => {
@@ -194,9 +196,9 @@ describe("#108 multi-line rawAnchor redaction", () => {
   });
 
   it("single-line refs keep the verbatim echo", () => {
-    expect(() =>
-      resEdit({ anchor_from: "abc│x", anchor_to: "abc", replace_with: "y" }),
-    ).toThrow(/Invalid anchor "abc│x"/);
+    expect(() => resEdit({ anchor_from: "abc│x", anchor_to: "abc", replace_with: "y" })).toThrow(
+      /Invalid anchor "abc│x"/,
+    );
     expect(() => parseHashRef("abc│content")).toThrow(/Invalid anchor "abc│content"/);
   });
 });
