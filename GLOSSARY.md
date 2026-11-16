@@ -16,6 +16,7 @@ _Avoid_: expectation, last read, snapshot
 
 **model–tool boundary**:
 The separation of responsibilities: the tool owns verification of what the model submits; the model owns intent. The tool never relies on the model to supply verification data or to perform pre-edit rituals (re-reading) to keep its own checks honest.
+The tool never names a coordinate (anchor, line, path) it has not verified against served state; when no single coordinate is pinned, a refusal states the shape rule and leaves the choice to the model.
 _Avoid_: —
 
 **anchor philosophy**:

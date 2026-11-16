@@ -56,21 +56,6 @@ function diagRef(ref: string): { rawAnchor: string; reason: string } {
     };
   }
 
-  if (trimmed.includes("│") && trimmed.includes("\n")) {
-    const lines = trimmed.split("\n");
-    const first = lines[0] ?? "";
-    const last = lines[lines.length - 1] ?? "";
-    const hashRe = new RegExp(HASH_CLASS);
-    const firstMatch = first.match(hashRe);
-    const lastMatch = last.match(hashRe);
-    const firstHash = firstMatch?.[0] ?? "wUp";
-    const lastHash = lastMatch?.[0] ?? "AU6";
-    const preview = first.slice(0, 60);
-    return {
-      rawAnchor: trimmed,
-      reason: `anchor_from must be a single bare 3-char hash (e.g. "wUp"), not a block with HASH│. Received ${lines.length} lines starting "${preview}…" — use only the first hash "${firstHash}" as anchor_from and "${lastHash}" as anchor_to, and put the new content (without HASH│) in replace_with.`,
-    };
-  }
   if (trimmed.includes("│")) {
     return {
       rawAnchor: trimmed,
@@ -265,15 +250,6 @@ function assertItem(edit: Record<string, unknown>): void {
 }
 
 const ANCHOR_ROW_RE = new RegExp(`^([+-]?)(${HASH_CLASS})│`);
-function firstHashFromBlock(block: string): string | undefined {
-  for (const line of block.split("\n")) {
-    const m = line.match(ANCHOR_ROW_RE);
-    if (m) return m[2]!;
-    const bare = line.match(new RegExp(HASH_CLASS));
-    if (bare) return bare[0]!;
-  }
-  return undefined;
-}
 
 export function resEdit(edit: HTEdit, _warnings?: string[]): HEdit {
   assertItem(edit as Record<string, unknown>);
@@ -281,15 +257,16 @@ export function resEdit(edit: HTEdit, _warnings?: string[]): HEdit {
   const editLines = parseText(edit.replace_with);
   const bounds = [edit.anchor_from, edit.anchor_to].map((ref) => {
     const trimmed = ref.trim();
+    // #108: a pasted block carries no verified coordinate — refuse by SHAPE, naming no
+    // extracted hash. The old first-3-char-alnum-run guess minted a pseudo-anchor whose
+    // "use bare <hash> next time" hint steered the model into an unrelated line.
     if (trimmed.includes("\n")) {
-      const hash = firstHashFromBlock(trimmed);
-      if (hash) {
-        const lines = trimmed.split("\n").length;
-        throw new DomainError("E_MALFORMED_ANCHOR", {
-          rawAnchor: trimmed,
-          reason: `extracted first hash "${hash}" from ${lines}-line block — use bare "${hash}" next time`,
-        });
-      }
+      const lines = trimmed.split("\n").length;
+      throw new DomainError("E_MALFORMED_ANCHOR", {
+        // Redacted, upstream shape: never echo the pasted block back into the transcript.
+        rawAnchor: `${lines}-line block`,
+        reason: `anchor_from/anchor_to must be a single bare 3-char hash — the anchor read() served beside the one line you mean. You passed a ${lines}-line block; pass that bare hash, or re-read the file.`,
+      });
     }
     const match = trimmed.match(ANCHOR_ROW_RE);
     if (match) {
@@ -398,7 +375,7 @@ function valEdit(
   edit: HEdit,
   fileLines: string[],
   fileHashes: string[],
-  warnings: string[],
+  _warnings: string[],
   signal: AbortSignal | undefined,
 ): {
   resolved: RHEdit | undefined;
