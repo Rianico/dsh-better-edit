@@ -89,11 +89,9 @@ describe("undo leases — read, edit, undo through the real tools", () => {
       await undoTool.execute("undo", { path: "undo-flow.txt" });
       expect(await fileText()).toBe(textB1);
 
-      // Evidence 1: the restored lines resolve again with pre-edit ids (adopt, not
-      // fresh). The undo tool deliberately mints fresh anchors for assignments it
-      // retired (removedHashes exclusion — "fresh anchors for follow-up edits"), so
-      // same-anchor revival cannot happen through it by design; what resolves is
-      // the line identity, live under the restored anchor.
+      // Evidence 1: the restore revives the exact pre-edit assignments — same anchor,
+      // same line id (ADR-0017 reversal). The revived anchor is live again; the
+      // superseded post-edit anchor is the one that retires.
       const storeU = await leases();
       const lineageU = await withWorkspace(cwd, async () =>
         storeU.lineageFor(path, snapshotHashFor(textB1)),
@@ -102,7 +100,7 @@ describe("undo leases — read, edit, undo through the real tools", () => {
       expect(gammaRowU).toBeDefined();
       expect(gammaRowU?.lineId).toBe(3);
       const restoredGammaAnchor = gammaRowU!.anchor;
-      expect(restoredGammaAnchor).not.toBe(gammaAnchorB1);
+      expect(restoredGammaAnchor).toBe(gammaAnchorB1);
       const gammaRestored = await withWorkspace(cwd, async () =>
         storeU.leaseFor("test-session", path, restoredGammaAnchor),
       );
@@ -115,18 +113,15 @@ describe("undo leases — read, edit, undo through the real tools", () => {
       expect(idByCanon.get(canonDigest("gamma"))).toBe(3);
       expect(idByCanon.get(canonDigest("delta"))).toBe(4);
       // The superseded assignment is never resurrected.
+      // The superseded post-edit assignment never comes back: the line it named left the
+      // restored content, so its anchor stays retired.
       const gammaSuperseded = await withWorkspace(cwd, async () =>
-        storeU.leaseFor("test-session", path, gammaAnchorB1),
+        storeU.leaseFor("test-session", path, gammaAnchorNow),
       );
       expect(gammaSuperseded?.retiredAt).not.toBeNull();
 
-      // Evidence 2: the added line stays retired (absent from restored content)…
-      const gammaGone = await withWorkspace(cwd, async () =>
-        storeU.leaseFor("test-session", path, gammaAnchorNow),
-      );
-      expect(gammaGone).toBeDefined();
-      expect(gammaGone?.retiredAt).not.toBeNull();
-      // …and the line the edit removed and the undo never re-served stays retired.
+      // Evidence 2: the line the edit removed and the undo never re-served stays retired
+      // (the restored assignment is the pre-edit one, not a fresh allocation).
       const betaStill = await withWorkspace(cwd, async () =>
         storeU.leaseFor("test-session", path, betaAnchor),
       );
@@ -135,10 +130,10 @@ describe("undo leases — read, edit, undo through the real tools", () => {
     });
   });
 
-  it("stale pre-edit anchors fail loudly and change nothing", async () => {
+  it("stale post-edit anchors fail loudly and change nothing", async () => {
     // Guard mechanism: the served-anchor hash-equality check in applyEdit
     // (anchor-pipeline.ts) rejects anchors absent from the current assignment —
-    // the exclusion lists only decide which anchors get minted, not this guard.
+    // after the restore that is the superseded post-edit anchor, not the pre-edit one.
     await withTempFile("undo-stale.txt", "alpha\nbeta\ngamma\ndelta\n", async ({ cwd, path }) => {
       const harness = setupIntegrationTest(cwd);
       const readTool = harness.getTool("read");
@@ -160,15 +155,27 @@ describe("undo leases — read, edit, undo through the real tools", () => {
         const rows = store.lineageFor(path, snapshotHashFor(textB1));
         return rows.find((row) => row.lineId === 3)!.anchor;
       });
-      await editTool.execute("edit", {
+      const editResult = await editTool.execute("edit", {
         path: "undo-stale.txt",
         anchor_from: gammaAnchorB1,
         anchor_to: gammaAnchorB1,
         replace_with: "GAMMA",
       });
+      const supersededAnchor = getText(editResult)
+        .split("\n")
+        .find((line) => line.startsWith("+") && line.endsWith("│GAMMA"))!
+        .slice(1)
+        .split("│")[0]!;
+      expect(supersededAnchor).not.toBe(gammaAnchorB1);
       const undoTool = harness.getTool("undo_last_edit");
       await undoTool.execute("undo", { path: "undo-stale.txt" });
       expect(await fileText()).toBe(textB1);
+      const restoredGammaAnchor = await withWorkspace(cwd, async () => {
+        const store = await internalStore();
+        const rows = store.lineageFor(path, snapshotHashFor(textB1));
+        return rows.find((row) => row.lineId === 3)!.anchor;
+      });
+      expect(restoredGammaAnchor).toBe(gammaAnchorB1);
       const { codeOf } = await import("../../src/utils.js");
       const beforeStale = await fileText();
       let threw = false;
@@ -177,8 +184,8 @@ describe("undo leases — read, edit, undo through the real tools", () => {
       try {
         await editTool.execute("edit", {
           path: "undo-stale.txt",
-          anchor_from: gammaAnchorB1,
-          anchor_to: gammaAnchorB1,
+          anchor_from: supersededAnchor,
+          anchor_to: supersededAnchor,
           replace_with: "STALE",
         });
       } catch (error) {

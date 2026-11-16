@@ -60,7 +60,7 @@ export const UNDO_GUIDANCE: ToolGuidance = {
   intro: "Revert the last edit on a file.",
   lines: [
     "`undo_last_edit`: reverts only the most recent edit — any write clears history, so call it immediately after a bad edit.",
-    "`undo_last_edit`: the restored diff\u2019s `+HASH│` and ` HASH│` rows are fresh anchors for follow-up edits \u2014 unless the result says the rows were NOT recorded as served, then re-read.",
+    "`undo_last_edit`: the restored diff\u2019s `+HASH│` and ` HASH│` rows carry the file\u2019s original pre-edit anchors for follow-up edits \u2014 unless the result says the rows were NOT recorded as served, then re-read.",
   ],
 };
 

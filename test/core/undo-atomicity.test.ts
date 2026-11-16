@@ -327,7 +327,7 @@ describe("undo atomicity — the snapshot adopt and the undo-pair clear", () => 
         // The serve fault is a PARTIAL failure: it must not roll the committed pair back.
         pairCommitted,
         promisesAnchors: text.includes(
-          "carry the restored file\u2019s fresh anchors for follow-up edits",
+          "carry the restored file\u2019s original anchors for follow-up edits",
         ),
         namesPartialFailure: /NOT recorded as served/.test(text) && /Re-read the file/.test(text),
         shownAnchorsServed: shownAnchors.every((hash) => servedAnchors.has(hash)),
@@ -364,7 +364,7 @@ describe("undo atomicity — the snapshot adopt and the undo-pair clear", () => 
         head: [
           "Undone last edit on t.txt.",
           "Removed 1 line(s) that were added and restored 1 line(s) that were removed.",
-          "File reverted to previous state. The post-edit diff rows carry the restored file\u2019s fresh anchors for follow-up edits.",
+          "File reverted to previous state. The post-edit diff rows carry the restored file\u2019s original anchors for follow-up edits.",
         ].join("\n"),
         hasDiffHeader: true,
         restoredRows: 1,

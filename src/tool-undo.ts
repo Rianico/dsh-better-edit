@@ -27,6 +27,7 @@ import {
   loadServedStore,
   recordServedTruncated,
   retireAnchorsInStore,
+  unretireAnchorsInStore,
 } from "./session-view.js";
 import { UNDO_DESCRIPTION } from "./prompts.js";
 import type { FileIO } from "./fs-bridge.js";
@@ -165,19 +166,18 @@ export function buildUndoTool(io: FileIO, sandbox: FsSandboxController) {
             ),
           promoteRetiredForAnchorSpace,
         );
-        const retiredOriginalHashes = new Set(
-          undo.hashes.filter((hash) => retiredHashes.has(hash)),
-        );
+        // Restore the pre-edit assignment verbatim (ADR-0017 reversal): `undo.hashes` are
+        // the anchors the restored content carried before the edit, and `undo.content` is
+        // byte-identical to the content they were assigned to. The edit retired them; that
+        // retirement is reversed with the restore below, so the pass no longer lists them
+        // as removed. What still blocks reuse is the superseded post-edit assignment
+        // (`currentHashes`, live on the file right now) plus this session's reserved set.
         const restoredHashes = await hashWithAnchorSpacePromotion(
           () =>
             lineHashes(
               undo.content,
               absolutePath,
-              {
-                content: undo.content,
-                hashes: undo.hashes,
-                removedHashes: retiredOriginalHashes,
-              },
+              { content: undo.content, hashes: undo.hashes },
               undefined,
               false,
               new Set([...reservedHashes, ...currentHashes]),
@@ -217,6 +217,11 @@ export function buildUndoTool(io: FileIO, sandbox: FsSandboxController) {
         }
         const restoredRange = changedRange(currentNormalized, undo.content);
         const restoredSet = new Set(restoredHashes);
+        // Retirement moves with the restore: the anchors the edit retired for lines that come
+        // back byte-identically are revived in the same unit that retires the superseded
+        // post-edit assignment. An anchor whose line does not come back stays retired, and no
+        // anchor is rebound to different content — the restore is byte-identical or refused.
+        const revivedByUndo = [...restoredSet].filter((hash) => retiredHashes.has(hash));
         // WHY (#98, port of upstream CAND-3): retirement waits for the write. Committing it
         // before `writeText` let a failed revert leave anchors retired for a file that still
         // holds them — a torn store state with no later read likely to notice.
@@ -255,6 +260,7 @@ export function buildUndoTool(io: FileIO, sandbox: FsSandboxController) {
               undo.content,
             );
             retireAnchorsInStore(store, sessionKey, absolutePath, retiredByUndo);
+            unretireAnchorsInStore(store, sessionKey, absolutePath, revivedByUndo);
             store.deleteUndoPair(absolutePath);
           });
         } catch (error) {
@@ -287,8 +293,8 @@ export function buildUndoTool(io: FileIO, sandbox: FsSandboxController) {
 
         parts.push(
           serveLanded
-            ? "File reverted to previous state. The post-edit diff rows carry the restored file\u2019s fresh anchors for follow-up edits."
-            : "File reverted to previous state. WARNING: the restored file\u2019s fresh anchors were NOT recorded as served — the diff rows below are NOT usable anchors and no edit can be based on them. Re-read the file before editing it.",
+            ? "File reverted to previous state. The post-edit diff rows carry the restored file\u2019s original anchors for follow-up edits."
+            : "File reverted to previous state. WARNING: the restored file\u2019s original anchors were NOT recorded as served — the diff rows below are NOT usable anchors and no edit can be based on them. Re-read the file before editing it.",
         );
 
         return [parts.join("\n"), "", "Diff of the revert:", "", undoDiff].join("\n");
