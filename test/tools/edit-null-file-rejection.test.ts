@@ -19,6 +19,14 @@ import { getText, setupIntegrationTest, withTempFile } from "../support/fixtures
 
 type ToolResult = { content: Array<{ text?: string }> };
 
+/**
+ * The exact refusal ADR-0030 quotes. Asserted byte-for-byte so the specific
+ * sentence stays reachable — the generic payload hint also quotes `"file"`,
+ * so a loose match would pass on the wrong branch.
+ */
+const UNNAMED_FILE_REFUSAL =
+  "[TO MODEL] [E_BAD_PAYLOAD] Edit request file must be a non-empty string; name the file to edit.";
+
 /** All server blocks (result text + any warning block), joined for header scans. */
 function allText(result: ToolResult): string {
   return result.content.map((block) => block.text ?? "").join("\n");
@@ -52,7 +60,7 @@ describe("edit admission: file: null (#117)", () => {
       );
 
       expect(error).toMatchObject({ code: "E_BAD_PAYLOAD" });
-      expect((error as Error).message).toMatch(/"file"/);
+      expect((error as Error).message).toBe(UNNAMED_FILE_REFUSAL);
       expect(await readFile(path, "utf-8")).toBe("a\nb\nc\n");
     });
   });
@@ -68,6 +76,7 @@ describe("edit admission: file: null (#117)", () => {
       );
 
       expect(error).toMatchObject({ code: "E_BAD_PAYLOAD" });
+      expect((error as Error).message).toBe(UNNAMED_FILE_REFUSAL);
       expect(await readFile(path, "utf-8")).toBe("a\nb\nc\n");
     });
   });
@@ -83,6 +92,63 @@ describe("edit admission: file: null (#117)", () => {
       );
 
       expect(error).toMatchObject({ code: "E_BAD_PAYLOAD" });
+      expect((error as Error).message).toBe(UNNAMED_FILE_REFUSAL);
+      expect(await readFile(path, "utf-8")).toBe("a\nb\nc\n");
+    });
+  });
+  it('rejects `file: ""` with the exact unnamed-file refusal', async () => {
+    await withTempFile("only.txt", "a\nb\nc\n", async ({ cwd, path }) => {
+      const harness = setupIntegrationTest(cwd);
+      const read = await harness.readTool.execute("read", { path: "only.txt" });
+      const hash = anchorFor(getText(read), "b");
+
+      const error = await caught(() =>
+        harness.editTool.execute("edit", { file: "", edits: [[hash, hash, "B"]] } as never),
+      );
+
+      expect(error).toMatchObject({ code: "E_BAD_PAYLOAD" });
+      expect((error as Error).message).toBe(UNNAMED_FILE_REFUSAL);
+      expect(await readFile(path, "utf-8")).toBe("a\nb\nc\n");
+    });
+  });
+
+  it("rejects an absent file with the exact unnamed-file refusal", async () => {
+    await withTempFile("only.txt", "a\nb\nc\n", async ({ cwd, path }) => {
+      const harness = setupIntegrationTest(cwd);
+      const read = await harness.readTool.execute("read", { path: "only.txt" });
+      const hash = anchorFor(getText(read), "b");
+
+      const error = await caught(() =>
+        harness.editTool.execute("edit", { edits: [[hash, hash, "B"]] } as never),
+      );
+
+      expect(error).toMatchObject({ code: "E_BAD_PAYLOAD" });
+      expect((error as Error).message).toBe(UNNAMED_FILE_REFUSAL);
+      expect(await readFile(path, "utf-8")).toBe("a\nb\nc\n");
+    });
+  });
+
+  it("rejects a two-item batch with file: null and writes neither item", async () => {
+    await withTempFile("only.txt", "a\nb\nc\n", async ({ cwd, path }) => {
+      const harness = setupIntegrationTest(cwd);
+      const read = await harness.readTool.execute("read", { path: "only.txt" });
+      const text = getText(read);
+      const first = anchorFor(text, "a");
+      const last = anchorFor(text, "c");
+
+      const error = await caught(() =>
+        harness.editTool.execute("edit", {
+          file: null,
+          edits: [
+            [first, first, "A"],
+            [last, last, "C"],
+          ],
+        } as never),
+      );
+
+      expect(error).toMatchObject({ code: "E_BAD_PAYLOAD" });
+      expect((error as Error).message).toBe(UNNAMED_FILE_REFUSAL);
+      // Whole-request refusal: neither item reached the file.
       expect(await readFile(path, "utf-8")).toBe("a\nb\nc\n");
     });
   });
