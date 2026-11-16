@@ -1,0 +1,109 @@
+/**
+ * #108 — a multi-line anchor paste must be refused by SHAPE alone.
+ *
+ * The deleted bare-arm extraction mined a 3-char alnum run out of the pasted block
+ * and told the model `use bare "<run>" next time`. That token is not a coordinate the
+ * read served, so following the hint could edit an unrelated line. Regression: the
+ * refusal names no coordinate, writes nothing, and mints no quoted anchor-shaped token.
+ *
+ * @module dsh-better-edit/test/malformed-anchor-hints
+ */
+import { readFile } from "node:fs/promises";
+import { beforeAll, describe, expect, it } from "vitest";
+import { setupIntegrationTest, getText, withTempFile } from "../support/fixtures.js";
+import { initHasher } from "../../src/hashline/hasher.js";
+
+/** The one anchored-shape token the message may quote: the documented example. */
+const DOCUMENTED_EXAMPLE = "aB3";
+
+/** Quoted 3-char anchor-shaped tokens, minus the documented example. */
+function unlistedQuotedAnchors(message: string): string[] {
+  return [...message.matchAll(/"([A-Za-z0-9]{3})"/g)]
+    .map((m) => m[1]!)
+    .filter((token) => token !== DOCUMENTED_EXAMPLE);
+}
+
+/** Hashes served by a read, keyed by line content. */
+function servedByContent(text: string): Map<string, string> {
+  const map = new Map<string, string>();
+  for (const line of text.split("\n")) {
+    const m = line.match(/^([ +]?)([A-Za-z0-9]{3})│(.*)$/);
+    if (m) map.set(m[3]!, m[2]!);
+  }
+  return map;
+}
+
+const INITIAL = "const alpha = 1;\nconst value274777 = 274777;\nconst beta = 2;\n";
+
+/** The 4-line paste that reproduced the defect: `settlementStatus` yielded the pseudo-anchor "set". */
+const PASTED_BLOCK = "settlementStatus: '',\n      remark: ''\n    })\n  })";
+
+beforeAll(async () => {
+  await initHasher();
+});
+
+describe("#108 multi-line anchor paste — shape refusal, no minted coordinate", () => {
+  it("the token extractor is refutable (it finds a quoted pseudo-anchor when one exists)", () => {
+    expect(unlistedQuotedAnchors('Invalid anchor "set": use bare "set" next time')).toEqual([
+      "set",
+      "set",
+    ]);
+    expect(unlistedQuotedAnchors(`Expected a 3-char alphanumeric anchor (e.g. "${DOCUMENTED_EXAMPLE}").`)).toEqual(
+      [],
+    );
+  });
+
+  it("rejects with E_MALFORMED_ANCHOR, leaves the file byte-identical, names no coordinate", async () => {
+    await withTempFile("app.ts", INITIAL, async ({ cwd, path }) => {
+      const { editTool } = setupIntegrationTest(cwd);
+      let message = "";
+      try {
+        await editTool.execute("e1", {
+          path: "app.ts",
+          edits: [{ anchor_from: PASTED_BLOCK, anchor_to: PASTED_BLOCK, replace_with: "REPLACED" }],
+        });
+        expect.unreachable("multi-line anchor paste must be refused");
+      } catch (error) {
+        message = String((error as Error).message);
+      }
+
+      expect(message).toContain("[E_MALFORMED_ANCHOR]");
+      expect(message).toMatch(/must be a single bare 3-char hash/);
+      expect(message).toMatch(/4-line block/);
+      // The deleted hint shipped a coordinate plus an instruction to reuse it.
+      expect(message).not.toMatch(/extracted first hash/);
+      expect(message).not.toMatch(/use bare "/);
+      expect(unlistedQuotedAnchors(message)).toEqual([]);
+      expect(message).not.toContain('"set"');
+      // No write happened: the refusal grants nothing.
+      expect(await readFile(path, "utf-8")).toBe(INITIAL);
+    });
+  });
+
+  it("a rejected paste does not write its sibling batch item either", async () => {
+    await withTempFile("app.ts", INITIAL, async ({ cwd, path }) => {
+      const { readTool, editTool } = setupIntegrationTest(cwd);
+      const served = servedByContent(getText(await readTool.execute("r1", { path: "app.ts" })));
+      const beta = served.get("const beta = 2;")!;
+      expect(beta).toMatch(/^[A-Za-z0-9]{3}$/);
+
+      let message = "";
+      try {
+        await editTool.execute("e2", {
+          path: "app.ts",
+          edits: [
+            { anchor_from: beta, anchor_to: beta, replace_with: "const beta = 999;" },
+            { anchor_from: PASTED_BLOCK, anchor_to: PASTED_BLOCK, replace_with: "REPLACED" },
+          ],
+        });
+        expect.unreachable("multi-line anchor paste must be refused");
+      } catch (error) {
+        message = String((error as Error).message);
+      }
+
+      expect(message).toContain("E_MALFORMED_ANCHOR");
+      expect(unlistedQuotedAnchors(message)).toEqual([]);
+      expect(await readFile(path, "utf-8")).toBe(INITIAL);
+    });
+  });
+});

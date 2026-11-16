@@ -66,7 +66,18 @@ describe("coverage: anchor-pipeline resEdit warnings", () => {
     const block = "abc│first\nother line\ndef│second";
     const edit: any = { anchor_from: block, anchor_to: "def", replace_with: "new" };
     expect(() => resEdit(edit, warnings)).toThrow(/\[E_MALFORMED_ANCHOR\]/);
-    expect(() => resEdit(edit, warnings)).toThrow(/extracted first hash/);
+    // #108: the refusal names NO coordinate — shape rule plus the pasted block's line count.
+    let message = "";
+    try {
+      resEdit(edit, warnings);
+    } catch (error) {
+      message = String((error as Error).message);
+    }
+    expect(message).toMatch(/must be a single bare 3-char hash/);
+    expect(message).toMatch(/3-line block/);
+    expect(message).not.toMatch(/extracted first hash/);
+    expect(message).not.toMatch(/use bare/);
+    expect(message).not.toMatch(/"[A-Za-z0-9]{3}"/);
   });
   it("rejects missing fields", () => {
     // anchor_from must be string
