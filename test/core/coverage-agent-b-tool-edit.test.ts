@@ -40,7 +40,7 @@ describe("tool-edit coverage", () => {
     });
   });
 
-  it("resolveNullPath with matching hashes: null path rejects E_BAD_PAYLOAD, no inference", async () => {
+  it("a null path is refused at admission even when one file matches its anchors", async () => {
     await withTempFile("only.txt", "line one\nline two\n", async ({ cwd, path }) => {
       const harness = setupIntegrationTest(cwd);
       // serve to create snapshots — one file matches, the retired inference arm's best case
@@ -64,7 +64,7 @@ describe("tool-edit coverage", () => {
     });
   });
 
-  it("resolveNullPath with unknown hashes: null path rejects without inference wording", async () => {
+  it("a null path is refused without advertising an anchor lookup", async () => {
     await withTempFile("t.txt", "a\nb\n", async ({ cwd, path }) => {
       const io = localIO();
       const sandbox = new FsSandboxController({

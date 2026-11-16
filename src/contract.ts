@@ -234,7 +234,6 @@ const LEGACY_ITEM_KS = new Set(["remove_from", "remove_to", "replacement_text"])
  * Returns the input unchanged when not a record; otherwise returns a shallow copy with
  * the alias applied so callers never mutate the original `args` object.
  */
-// pi-lens-ignore: no-unknown-returns -- identity passthrough is the pinned contract (replace-normalize.test.ts); the caller's assert is the parse site.
 export function normalizeRequest(input: unknown): unknown {
   if (!isRec(input)) return input;
   const record: Record<string, unknown> = { ...input };

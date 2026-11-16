@@ -93,8 +93,6 @@ export function buildEditTool(io: FileIO, sandbox: FsSandboxController) {
           // the retired anchor-inference arm never resolves one here.
           const resolvedFile = req.file;
           const sandboxPolicy = await sandbox.resolvePolicy(
-            // SAFETY: `resolvePolicy` reads only sandbox_permissions/justification;
-            // the file/edits fields are legacy context it ignores.
             "edit",
             // SAFETY: `resolvePolicy` reads only sandbox_permissions/justification;
             // the file/edits fields are legacy context it ignores.

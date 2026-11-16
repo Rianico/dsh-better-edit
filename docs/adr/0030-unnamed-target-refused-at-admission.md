@@ -21,11 +21,11 @@ applies the mutation there.
 
 The three arms before this record, measured on the tree at `5717cd5`:
 
-| anchors | outcome |
-| --------------- | --------------------------------------------------------------- |
+| anchors           | outcome                                                                                     |
+| ----------------- | ------------------------------------------------------------------------------------------- |
 | one matching file | edit **applies** to that file; output carries `[TO MODEL] [E_BAD_PAYLOAD] Autocorrected: …` |
-| several files | `E_BAD_PAYLOAD` ("the anchors match multiple known files") |
-| none | `E_BAD_PAYLOAD` ("could not be inferred from anchors") |
+| several files     | `E_BAD_PAYLOAD` ("the anchors match multiple known files")                                  |
+| none              | `E_BAD_PAYLOAD` ("could not be inferred from anchors")                                      |
 
 Only the ambiguity arm fails closed. The single-match arm writes to a file the caller never named,
 and its "Autocorrected" line is an `E_*` header attached to a successful mutation — the warning and
@@ -36,24 +36,23 @@ error tiers say the opposite thing about the same call.
 1. **An unnamed target is an admission error.** `editRequestFrom` folds a `null` or absent
    `file` (including the `path` / `file_path` alias spellings) to `undefined`, so `assertEditRequest`
    refuses with `E_BAD_PAYLOAD` before any IO: "Edit request file must be a non-empty string; name
-   the file to edit." `EditRequest.file` narrows to `string`; the engine's `PreparedItem` no longer
-   receives a file warning.
+   the file to edit." `EditRequest.file` narrows to `string`.
 2. **Delete both inference seams.** `resolveNullPath` (`src/tool-edit.ts`) and `resolveMissingPath`
    (`src/mutation/engine.ts`) go with their `findSnapshotPathsByHashes` / `parseHashRef` imports.
-   `PreparedItem.fileWarning` survives: it is a general warning slot, and only its inference
-   producer leaves.
+   `PreparedItem.fileWarning` is removed together with its `warnings.unshift` carrier — the slot
+   had no other producer.
 3. **The wire schema keeps the undocumented `null` branch.** Dropping it made dsh's argument
    validation answer `ToolArgsError INVALID_ARGS` before the contract ran, so the domain would not
    own the rejection code. `null` stays admissible and untaught — the same admit-but-not-teach
    posture as before — but nothing resolves it. The runtime refusal is ours, and it is
    `E_BAD_PAYLOAD`.
-4. **Legacy *name* folds stay.** `path` / `file_path` → `file` and legacy tuple items remain
+4. **Legacy _name_ folds stay.** `path` / `file_path` → `file` and legacy tuple items remain
    pre-validation conveniences; they are spellings of the caller's intent, not guesses about it.
    Only the null/inference arm is retired.
 
 ## Rejected alternatives
 
-- **Warn and keep inferring (`W_FILE_INFERRED`).** A `W_*` line reports an *applied* mutation;
+- **Warn and keep inferring (`W_FILE_INFERRED`).** A `W_*` line reports an _applied_ mutation;
   emitting one here would institutionalise exactly the harm #117 reports — a silent wrong-file
   write with a notice attached. Once the guess is gone there is nothing left to warn about.
   Rejected by ruling.

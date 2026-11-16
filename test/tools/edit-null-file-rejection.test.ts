@@ -173,7 +173,10 @@ describe("edit admission: file: null (#117)", () => {
   );
 
   // #115 acceptance pinned by construction: a successful edit's output carries no
-  // `[E_*]` header (error headers are the rejection channel only).
+  // `[E_*]` header (error headers are the rejection channel only). #115's null-file
+  // producer is eliminated by the admission refusal, so this case pins the tier for
+  // the remaining success paths; the producer's removal is pinned by the rejection
+  // cases above.
   it("successful edit output carries no [E_ header", async () => {
     await withTempFile("t.txt", "a\nb\nc\n", async ({ cwd }) => {
       const harness = setupIntegrationTest(cwd);

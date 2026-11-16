@@ -121,7 +121,6 @@ export interface PreparedItem {
   anchor_from: string;
   anchor_to: string;
   replace_with: string;
-  fileWarning?: string;
   /** Request-level edit mode ("general" default, "literal" bypasses served-echo). */
   mode?: EditMode;
 }
@@ -985,7 +984,6 @@ export async function runFileEdits(
   if (hadUtf8DecodeErrors) {
     warnings.push("Non-UTF-8 bytes were shown as U+FFFD; this edit rewrote the file as UTF-8.");
   }
-  if (first.fileWarning) warnings.unshift(first.fileWarning);
 
   let driftNotice: string | undefined;
   if (appliedCount > 0 && unionStartLine !== Infinity) {
