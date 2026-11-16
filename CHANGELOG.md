@@ -13,7 +13,7 @@ All notable changes to this project will be documented in this file.
 
 ### Tests
 
-* **edit:** pin the applied-vs-rejection notice tier (#115)
+* **edit:** pin the applied-vs-rejection notice tier (#115) (#121)
 
 ### Bug Fixes
 
