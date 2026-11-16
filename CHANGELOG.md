@@ -14,6 +14,7 @@ All notable changes to this project will be documented in this file.
 ### Bug Fixes
 
 * **hashline:** stop naming unverified anchors in `E_MALFORMED_ANCHOR` hints — a multi-line paste is refused by shape with the block redacted to `<n>-line block`, and `diagRef`'s `wUp`/`AU6` defaults are gone (#108) (#118)
+* **write-hook:** record the `fs/observed` observation on the post-write auto-read, so an `edit` using an auto-read anchor no longer fails the host read-before-write gate with `E_BLIND_REPLACE` / `E_STALE_RANGE` — the emit is unconditional and fail-open, and the serve seam stays emission-free (ADR-0030) (#109) (#119)
 
 ## [1.2.2] - 2026-11-15
 

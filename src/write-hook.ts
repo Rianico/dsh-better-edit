@@ -148,7 +148,16 @@ export function registerWriteHook(rootCtx: Context, agentCtx: Context, io: FileI
           const cwd = execCwd(exec);
           const sessionKey = execSessionKey(exec);
           const signal = exec.signal;
-          const { text } = await readAndServe(io, rawPath, cwd, { sessionKey, signal });
+          const { text, absolutePath } = await readAndServe(io, rawPath, cwd, {
+            sessionKey,
+            signal,
+          });
+          // Record the present observation with the fs policy gate so later
+          // built-in write/edit calls see this file as observed at the version
+          // these rows describe — this block advertises every row above as an
+          // anchor, and the gate only knows a version it was told about
+          // (a no-op when no policy listens).
+          await io.emitObserved(absolutePath, exec, signal);
           return {
             kind: "accept" as const,
             content: [

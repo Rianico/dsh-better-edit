@@ -7,9 +7,15 @@
  * @module dsh-better-edit/fs-bridge.policy.test
  */
 
-import { describe, expect, it, vi, beforeEach } from "vitest";
+import { readFile, stat, writeFile } from "node:fs/promises";
+import { join, resolve } from "node:path";
+import type { PostToolDecision, ToolExecution } from "@deepseek-ai/dsh-tools";
+import { beforeAll, describe, expect, it, vi, beforeEach } from "vitest";
 import type { Context } from "@deepseek-ai/cordis";
 import { ctxFsIO, type FileIO, getEncodingState, clearEncodingState } from "../../src/fs-bridge.js";
+import { initHasher } from "../../src/hashline/hash-assign.js";
+import { registerWriteHook } from "../../src/write-hook.js";
+import { setupIntegrationTest, withTempDir } from "../support/fixtures.js";
 
 beforeEach(() => {
   clearEncodingState();
@@ -287,5 +293,160 @@ describe("ctxFsIO emitObserved", () => {
     const io: FileIO = ctxFsIO(fs as never, ctx);
 
     await expect(io.emitObserved("/abs/gone.txt", exec)).resolves.toBeUndefined();
+  });
+});
+
+/**
+ * A `ctx.fs` over the real filesystem that versions every path but records no
+ * observation of its own — the host-write shape of the field failure (#109).
+ * `hostWrite` models the built-in `write`: bytes land, nothing is emitted.
+ */
+function makeDiskFs() {
+  const versions = new Map<string, string>();
+  let counter = 0;
+  const nextVersion = () => {
+    counter += 1;
+    return `v${counter}`;
+  };
+  const fs = {
+    resolve: vi.fn(async (path: string) => ({
+      targetKey: resolve(path),
+      displayPath: resolve(path),
+    })),
+    processPath: (target: { targetKey: string }) => target.targetKey,
+    readText: vi.fn(async (target: { targetKey: string }) => readFile(target.targetKey, "utf-8")),
+    readBytes: vi.fn(
+      async (target: { targetKey: string }) => new Uint8Array(await readFile(target.targetKey)),
+    ),
+    stat: vi.fn(async (target: { targetKey: string }) => {
+      const info = await stat(target.targetKey);
+      return { version: versions.get(target.targetKey) ?? "v0", type: "file", size: info.size };
+    }),
+    writeText: vi.fn(
+      async (
+        target: { targetKey: string },
+        content: string,
+        intent?: { kind: string; version?: string },
+      ) => {
+        const current = versions.get(target.targetKey) ?? "v0";
+        // The backend answers a create on an existing file exactly like dsh-fs.
+        if (intent?.kind === "createIfAbsent" && versions.has(target.targetKey)) {
+          throw Object.assign(new Error("file exists but was never observed"), {
+            code: "FS_NOT_OBSERVED",
+          });
+        }
+        if (intent?.kind === "replaceIfVersion" && intent.version !== current) {
+          throw Object.assign(new Error(`stale: intent ${intent.version} current ${current}`), {
+            code: "FS_STALE_VERSION",
+          });
+        }
+        const version = nextVersion();
+        await writeFile(target.targetKey, content, "utf-8");
+        versions.set(target.targetKey, version);
+        return { version, operation: "update", before: "", after: "" };
+      },
+    ),
+  };
+  return {
+    fs,
+    /** The host `write` outcome: bytes land, no `fs/observed` is recorded. */
+    async hostWrite(path: string, content: string) {
+      await writeFile(path, content, "utf-8");
+      versions.set(resolve(path), nextVersion());
+    },
+  };
+}
+
+/**
+ * The `fs` observation policy simulator: a session-scoped observed-version map,
+ * a `fs/write-intent` that guards replaces at the observed version, and
+ * `fs/observed` recording. This is the gate the field failure died in.
+ */
+function makeObservationPolicy() {
+  const observed = new Map<string, string>();
+  const warnings: string[] = [];
+  const keyOf = (target: { targetKey: string }, exec: unknown) =>
+    `${(exec as { agent?: { session?: { id?: string } } })?.agent?.session?.id ?? "no-session"}:${target.targetKey}`;
+  const ctx = {
+    waterfall: vi.fn(async (name: string, target: never, exec: never, fallback: () => unknown) => {
+      if (name !== "fs/write-intent") return fallback();
+      const seen = observed.get(keyOf(target, exec));
+      // Never observed: the policy admits a create only, which fails on an existing file.
+      return seen === undefined
+        ? { kind: "createIfAbsent" }
+        : { kind: "replaceIfVersion", version: seen };
+    }),
+    emit: vi.fn((name: string, target: never, observation: never, exec: never) => {
+      const present = observation as { kind?: string; version?: unknown };
+      if (name === "fs/observed" && present?.kind === "present") {
+        observed.set(keyOf(target, exec), String(present.version));
+      }
+    }),
+    logger: { warn: (message: string) => warnings.push(message) },
+  };
+  return { ctx: ctx as unknown as Context, observed, warnings };
+}
+
+describe("post-write auto-read records the fs observation (#109)", () => {
+  beforeAll(async () => {
+    await initHasher();
+  });
+
+  it("lets a plugin edit use an auto-read anchor with no re-read", async () => {
+    await withTempDir("fs-policy-auto-read-", async (cwd) => {
+      const path = join(cwd, "notes.txt");
+      await writeFile(path, "alpha\nbeta\n", "utf-8");
+
+      const disk = makeDiskFs();
+      const policy = makeObservationPolicy();
+      const io = ctxFsIO(disk.fs as never, policy.ctx);
+      // setupIntegrationTest drives the plugin `edit` tool under this session key.
+      const sessionKey = "test-session";
+
+      // The host `write` lands the new bytes and records no observation (the premise).
+      await disk.hostWrite(path, "alpha\nbeta\ngamma\n");
+
+      const listeners = new Map<string, unknown>();
+      registerWriteHook(
+        policy.ctx,
+        {
+          on(event: string, listener: unknown) {
+            listeners.set(event, listener);
+            return () => listeners.delete(event);
+          },
+        } as unknown as Context,
+        io,
+      );
+      const post = listeners.get("tools/post-execute") as (
+        exec: ToolExecution,
+        result: { isError: boolean; content: unknown[] },
+        next: () => Promise<PostToolDecision>,
+      ) => Promise<PostToolDecision>;
+
+      const exec = {
+        name: "write",
+        arguments: { file_path: path },
+        signal: new AbortController().signal,
+        agent: { id: sessionKey, session: { id: sessionKey, header: { cwd } } },
+      } as unknown as ToolExecution;
+
+      const decision = await post(exec, { isError: false, content: [] }, async () => ({
+        kind: "accept",
+        content: [],
+      }));
+      expect(decision.kind).toBe("accept");
+      if (decision.kind !== "accept") return;
+      const autoRead = (decision.content ?? [])
+        .map((block) => (block as { text?: string }).text ?? "")
+        .join("\n");
+      const anchor = /^([A-Za-z0-9]{3})│/m.exec(autoRead)?.[1];
+      expect(anchor).toBeTruthy();
+
+      // The reporter's shape: no re-read, so only the auto-read rows may carry the anchor.
+      const { editTool } = setupIntegrationTest(cwd, io);
+      await editTool.execute("call-1", { file: path, edits: [[anchor, anchor, "ALPHA"]] });
+      await expect(readFile(path, "utf-8")).resolves.toBe("ALPHA\nbeta\ngamma\n");
+      expect(policy.warnings).toEqual([]);
+    });
   });
 });

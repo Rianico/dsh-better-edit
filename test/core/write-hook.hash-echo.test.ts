@@ -1,7 +1,12 @@
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { Context } from "@deepseek-ai/cordis";
-import type { PreToolDecision, ToolExecution } from "@deepseek-ai/dsh-tools";
+import type {
+  PostToolDecision,
+  PreToolDecision,
+  ToolExecution,
+  ToolExecutionResult,
+} from "@deepseek-ai/dsh-tools";
 import { describe, expect, it, vi } from "vitest";
 import { readAndServe } from "../../src/read-and-serve.js";
 import { withWorkspace } from "../../src/workspace-context.js";
@@ -12,6 +17,23 @@ import {
 } from "../../src/write-hook.js";
 import { localIO } from "../../src/fs-bridge.js";
 import { withTempDir } from "../support/fixtures.js";
+
+/**
+ * Fault switch for the serve-store write. `recordServed` returns `false` when its
+ * store write does not land; the auto-read then appends the
+ * `SERVE_NOT_RECORDED_NOTE` downgrade instead of claiming the rows are anchors.
+ * Mocked at the seam so the downgrade path is reachable without a broken store.
+ */
+const serveStore = vi.hoisted(() => ({ fail: false }));
+
+vi.mock("../../src/session-view.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../src/session-view.js")>();
+  return {
+    ...actual,
+    recordServed: async (...args: Parameters<typeof actual.recordServed>) =>
+      serveStore.fail ? false : actual.recordServed(...args),
+  };
+});
 
 type PreExecuteListener = (
   exec: ToolExecution,
@@ -129,6 +151,145 @@ describe("write hash-echo guard", () => {
           servedHashEchoDenial(io, otherPath, preview.text, cwd, "session-a"),
         ),
       ).resolves.toBeUndefined();
+    });
+  });
+});
+
+type PostExecuteListener = (
+  exec: ToolExecution,
+  result: Readonly<ToolExecutionResult>,
+  next: () => Promise<PostToolDecision>,
+) => Promise<PostToolDecision>;
+
+/** Register the hook and return its post-execute listener plus the warn sink. */
+function makePostHook(io: ReturnType<typeof localIO>) {
+  const listeners = new Map<string, unknown>();
+  const agentCtx = {
+    on(event: string, listener: unknown) {
+      listeners.set(event, listener);
+      return () => listeners.delete(event);
+    },
+  } as unknown as Context;
+  const warn = vi.fn();
+  const rootCtx = { logger: { warn } } as unknown as Context;
+  registerWriteHook(rootCtx, agentCtx, io);
+  const post = listeners.get("tools/post-execute") as PostExecuteListener | undefined;
+  if (!post) throw new Error("registerWriteHook registered no tools/post-execute listener");
+  return { post, warn };
+}
+
+/** A settled successful `write` result (the host's own content). */
+function writeResult(): Readonly<ToolExecutionResult> {
+  return { isError: false, value: null, content: [] };
+}
+
+function makeWriteExec(cwd: string, path: string): ToolExecution {
+  return {
+    name: "write",
+    arguments: { file_path: path, content: "alpha\nbeta\n" },
+    signal: new AbortController().signal,
+    agent: { id: "write-hook-session", session: { id: "write-hook-session", header: { cwd } } },
+  } as unknown as ToolExecution;
+}
+
+describe("write auto-read post-execute", () => {
+  it("records the observation once with the served path, execution, and signal", async () => {
+    await withTempDir("write-hook-observe-", async (cwd) => {
+      const path = join(cwd, "observe.txt");
+      await writeFile(path, "alpha\nbeta\n", "utf-8");
+
+      const emitObserved = vi.fn(async () => {});
+      const io = { ...localIO(), emitObserved };
+      const { post, warn } = makePostHook(io);
+      const exec = makeWriteExec(cwd, path);
+
+      const decision = await post(exec, writeResult(), async () => ({
+        kind: "accept",
+        content: [],
+      }));
+
+      expect(decision.kind).toBe("accept");
+      if (decision.kind !== "accept") return;
+      // The anchors above are only usable if the policy gate knows this version was seen.
+      expect(emitObserved).toHaveBeenCalledOnce();
+      expect(emitObserved).toHaveBeenCalledWith(await io.resolve(path, cwd), exec, exec.signal);
+      expect(JSON.stringify(decision.content)).toContain("Auto-read (hashline anchors)");
+      expect(warn).not.toHaveBeenCalled();
+    });
+  });
+
+  it("emits for an empty file too (observation and anchor-usability are orthogonal)", async () => {
+    await withTempDir("write-hook-observe-empty-", async (cwd) => {
+      const path = join(cwd, "empty.txt");
+      await writeFile(path, "", "utf-8");
+
+      const emitObserved = vi.fn(async () => {});
+      const io = { ...localIO(), emitObserved };
+      const { post } = makePostHook(io);
+
+      const decision = await post(makeWriteExec(cwd, path), writeResult(), async () => ({
+        kind: "accept",
+        content: [],
+      }));
+
+      expect(decision.kind).toBe("accept");
+      expect(emitObserved).toHaveBeenCalledOnce();
+    });
+  });
+
+  it("keeps the write accept decision and warns when the observation faults", async () => {
+    await withTempDir("write-hook-observe-fail-", async (cwd) => {
+      const path = join(cwd, "observe.txt");
+      await writeFile(path, "alpha\nbeta\n", "utf-8");
+
+      const io = {
+        ...localIO(),
+        emitObserved: vi.fn(async () => {
+          throw Object.assign(new Error("stat exploded"), { code: "FS_NOT_FOUND" });
+        }),
+      };
+      const { post, warn } = makePostHook(io);
+      const original = {
+        kind: "accept",
+        content: [{ type: "text", text: "write ok" }],
+      } as PostToolDecision;
+
+      const decision = await post(makeWriteExec(cwd, path), writeResult(), async () => original);
+
+      // Fail-open: the write result stands and the fault is only logged.
+      expect(decision).toBe(original);
+      expect(warn).toHaveBeenCalledOnce();
+      expect(String(warn.mock.calls[0]?.[0])).toContain("auto-read after write failed");
+    });
+  });
+
+  it("emits even when the serve write does not land (downgrade path)", async () => {
+    await withTempDir("write-hook-serve-fault-", async (cwd) => {
+      const path = join(cwd, "downgrade.txt");
+      await writeFile(path, "alpha\nbeta\n", "utf-8");
+
+      const emitObserved = vi.fn(async () => {});
+      const io = { ...localIO(), emitObserved };
+      const { post, warn } = makePostHook(io);
+
+      serveStore.fail = true;
+      try {
+        const decision = await post(makeWriteExec(cwd, path), writeResult(), async () => ({
+          kind: "accept",
+          content: [],
+        }));
+
+        expect(decision.kind).toBe("accept");
+        if (decision.kind !== "accept") return;
+        const rendered = JSON.stringify(decision.content);
+        // The rows are advertised as unusable, yet the observation still lands:
+        // observation and anchor-usability are orthogonal gates.
+        expect(rendered).toContain("NOT recorded as served");
+        expect(emitObserved).toHaveBeenCalledOnce();
+        expect(warn).not.toHaveBeenCalled();
+      } finally {
+        serveStore.fail = false;
+      }
     });
   });
 });
