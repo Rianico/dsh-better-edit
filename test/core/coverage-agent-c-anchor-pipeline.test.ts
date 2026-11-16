@@ -23,7 +23,20 @@ describe("coverage: anchor-pipeline parseHashRef / diagRef branches", () => {
   });
   it("rejects multiline block with pipes", () => {
     const block = "abc│line one\ndef│line two";
-    expect(() => parseHashRef(block)).toThrow(/anchor_from must be a single bare 3-char hash/);
+    // #108: the pipe+newline branch that minted "wUp"/"AU6" is gone. A block that still
+    // carries │ lands on the pre-existing single-line "remove everything from │" shape rule
+    // (it names no coordinate); a pipe-free block reaches the generic tail.
+    let message = "";
+    try {
+      parseHashRef(block);
+    } catch (error) {
+      message = String((error as Error).message);
+    }
+    expect(message).toContain("[E_MALFORMED_ANCHOR]");
+    expect(message).not.toContain("wUp");
+    expect(message).not.toContain("AU6");
+    expect(message).not.toMatch(/"[A-Za-z0-9]{3}"/);
+    expect(() => parseHashRef("x\ny")).toThrow(/Expected a 3-char/);
   });
   it("parses valid 3-char alphanumeric", () => {
     // generate a valid hash via hasher

@@ -11,6 +11,7 @@
 import { readFile } from "node:fs/promises";
 import { beforeAll, describe, expect, it } from "vitest";
 import { setupIntegrationTest, getText, withTempFile } from "../support/fixtures.js";
+import { parseHashRef } from "../../src/hashline/anchor-pipeline.js";
 import { initHasher } from "../../src/hashline/hasher.js";
 
 /** The one anchored-shape token the message may quote: the documented example. */
@@ -103,6 +104,69 @@ describe("#108 multi-line anchor paste — shape refusal, no minted coordinate",
 
       expect(message).toContain("E_MALFORMED_ANCHOR");
       expect(unlistedQuotedAnchors(message)).toEqual([]);
+      expect(await readFile(path, "utf-8")).toBe(INITIAL);
+    });
+  });
+});
+
+describe("#108 diagRef — no fabricated coordinate on a │ + newline paste", () => {
+  it("parseHashRef names neither wUp nor AU6, and mints no quoted anchor", () => {
+    let message = "";
+    try {
+      parseHashRef("x│y\nz│w");
+      expect.unreachable("a pipe+newline paste must be refused");
+    } catch (error) {
+      message = String((error as Error).message);
+    }
+    expect(message).toContain("[E_MALFORMED_ANCHOR]");
+    expect(message).not.toContain("wUp");
+    expect(message).not.toContain("AU6");
+    expect(message).not.toMatch(/use only the first hash/);
+    expect(unlistedQuotedAnchors(message)).toEqual([]);
+  });
+
+  it("a pipe-free newline paste still reaches the generic shape tail", () => {
+    // The deleted branch's only replacement is the pre-existing tail — no new fallback.
+    expect(() => parseHashRef("x\ny")).toThrow(/Expected a 3-char/);
+  });
+
+  it("the tool's refusal for the paste names no coordinate and writes nothing", async () => {
+    await withTempFile("app.ts", INITIAL, async ({ cwd, path }) => {
+      const { editTool } = setupIntegrationTest(cwd);
+      let message = "";
+      try {
+        await editTool.execute("e3", {
+          path: "app.ts",
+          edits: [{ anchor_from: "x│y\nz│w", anchor_to: "x│y\nz│w", replace_with: "REPLACED" }],
+        });
+        expect.unreachable("a pipe+newline paste must be refused");
+      } catch (error) {
+        message = String((error as Error).message);
+      }
+      expect(message).toContain("[E_MALFORMED_ANCHOR]");
+      expect(message).not.toContain("wUp");
+      expect(message).not.toContain("AU6");
+      expect(unlistedQuotedAnchors(message)).toEqual([]);
+      expect(await readFile(path, "utf-8")).toBe(INITIAL);
+    });
+  });
+
+  it("following the old hint shape is the model's own input, not a malformed anchor", async () => {
+    // `wUp`/`AU6` are ordinary 3-char anchors: the tool must reject them on
+    // resolution, never re-label them as a shape failure or suggest them.
+    await withTempFile("app.ts", INITIAL, async ({ cwd, path }) => {
+      const { editTool } = setupIntegrationTest(cwd);
+      let message = "";
+      try {
+        await editTool.execute("e4", {
+          path: "app.ts",
+          edits: [{ anchor_from: "wUp", anchor_to: "AU6", replace_with: "REPLACED" }],
+        });
+        expect.unreachable("unserved anchors must not apply");
+      } catch (error) {
+        message = String((error as Error).message);
+      }
+      expect(message).not.toContain("E_MALFORMED_ANCHOR");
       expect(await readFile(path, "utf-8")).toBe(INITIAL);
     });
   });
