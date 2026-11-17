@@ -1408,6 +1408,8 @@ describe("hash-store — v7 snapshot materialization", () => {
       await recordServed("cp3-sess2", "/d2.ts", [{ position: 0, hash: "XYZ" }], 1, {
         hashes: ["XYZ"],
         content: "x\n",
+        // One row for a one-line file: the whole file served.
+        fullRead: true,
       });
       expect(internal.getSnapshot("/d2.ts", "x\n")).toEqual(["XYZ"]);
       const lease = internal.leaseFor("cp3-sess2", "/d2.ts", "XYZ");
@@ -1600,7 +1602,7 @@ it("#6 served ↔ served_leases: a lease fault leaves the served row at its pre-
         { position: 1, hash: hashes[1]! },
       ],
       2,
-      { hashes, content },
+      { hashes, content, fullRead: true },
     );
 
     // Row contract, never a COUNT: the stored JSON is byte-identical to the pre-write value.
@@ -1688,7 +1690,7 @@ it("adopt on an orphan snapshot row repairs it; the serve path grants leases aga
         { position: 1, hash: "AAb" },
       ],
       2,
-      { hashes, content },
+      { hashes, content, fullRead: true },
     );
     const warned = warn.mock.calls.map((call) => String(call[0])).join(" ");
     warn.mockRestore();

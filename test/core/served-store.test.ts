@@ -150,6 +150,8 @@ describe("served state — incremental hazard sweep", () => {
         {
           hashes: realHashes,
           canons: Array.from({ length: N }, (_, i) => `line${i}`),
+          // Setup is the whole file (every hash, in order): a full-read serve.
+          fullRead: true,
         },
       );
       const toRetire = realHashes.slice(0, 6);
@@ -168,6 +170,9 @@ describe("served state — incremental hazard sweep", () => {
       await recordServed(sessionKey, path, rows, N, {
         hashes: newHashes,
         canons: Array.from({ length: N }, (_, i) => (i < 6 ? `changed${i}` : `line${i}`)),
+        // The cell's subject: the first six lines, a genuine page — the sweep is what may
+        // touch the hazard state here, not the full-read clear.
+        fullRead: false,
       });
       const after = store.getRetiredEntries(sessionKey, path);
       expect(after.length).toBe(0);
@@ -186,7 +191,8 @@ describe("served state — incremental hazard sweep", () => {
         path,
         hashes.map((h, i) => ({ position: i, hash: h })),
         N,
-        { hashes, canons: Array.from({ length: N }, (_, i) => `line${i}`) },
+        // The whole file, so the seeding serve is a full read.
+        { hashes, canons: Array.from({ length: N }, (_, i) => `line${i}`), fullRead: true },
       );
       const store = await loadServedStore();
       const mixed: RetiredEntry[] = [
@@ -203,6 +209,8 @@ describe("served state — incremental hazard sweep", () => {
       await recordServed(sessionKey, path, rows, N, {
         hashes: newHashes,
         canons: Array.from({ length: N }, (_, i) => `line${i}`),
+        // Rows 2-3 of ten: the partial branch the cell is named for.
+        fullRead: false,
       });
       const afterPartial = store.getRetiredEntries(sessionKey, path);
       const afterHashes = new Set(afterPartial.map((e) => e.hash));
@@ -215,6 +223,8 @@ describe("served state — incremental hazard sweep", () => {
       await recordServed(sessionKey, path, fullRows, N, {
         hashes: newHashes,
         canons: Array.from({ length: N }, (_, i) => `line${i}`),
+        // "…and clears them on a full serve": the cell's second half is the full read.
+        fullRead: true,
       });
       const afterFull = store.getRetiredEntries(sessionKey, path);
       expect(afterFull.length).toBe(0);
@@ -233,7 +243,8 @@ describe("served state — incremental hazard sweep", () => {
         path,
         hashes.map((h, i) => ({ position: i, hash: h })),
         N,
-        { hashes, canons: Array.from({ length: N }, (_, i) => `line${i}`) },
+        // Seeding serve: the whole 1000-line file, so a full read.
+        { hashes, canons: Array.from({ length: N }, (_, i) => `line${i}`), fullRead: true },
       );
       const store = await loadServedStore();
       const retired: RetiredEntry[] = Array.from({ length: N }, (_, i) => ({
@@ -253,6 +264,8 @@ describe("served state — incremental hazard sweep", () => {
       await recordServed(sessionKey, path, rowsFirst, N, {
         hashes,
         canons: Array.from({ length: N }, (_, i) => `line${i}`),
+        // First half of a paged walk: the sweep, not the full-read clear.
+        fullRead: false,
       });
       const afterFirst = store.getRetiredEntries(sessionKey, path);
       expect(afterFirst.length).toBe(500);
@@ -269,6 +282,8 @@ describe("served state — incremental hazard sweep", () => {
       await recordServed(sessionKey, path, rowsSecond, N, {
         hashes,
         canons: Array.from({ length: N }, (_, i) => `line${i}`),
+        // Second half of the same paged walk.
+        fullRead: false,
       });
       const afterSecond = store.getRetiredEntries(sessionKey, path);
       expect(afterSecond.length).toBe(0);
@@ -279,6 +294,8 @@ describe("served state — incremental hazard sweep", () => {
       await recordServed(sessionKey, path, fullRows, N, {
         hashes,
         canons: Array.from({ length: N }, (_, i) => `line${i}`),
+        // The walk's terminal full read: this is the serve that clears cards and retired.
+        fullRead: true,
       });
       const cardsAfterFull = store.getCards(sessionKey, path);
       expect(cardsAfterFull.size).toBe(0);
@@ -412,12 +429,16 @@ describe("served state — session isolation", () => {
       await recordServed("sessionA", path, [{ position: 0, hash: "AAA" }], 1, {
         hashes: ["AAA"],
         canons: ["a"],
+        // A one-line file served whole; the cell asserts reservations, not serve shape.
+        fullRead: true,
       });
       const store = await loadServedStore();
       store.upsertRetiredAnchors("sessionA", path, JSON.stringify([{ hash: "BBB", deathPos: 0 }]));
       await recordServed("sessionB", path, [{ position: 0, hash: "CCC" }], 1, {
         hashes: ["CCC"],
         canons: ["c"],
+        // Same one-line whole-file serve, second session.
+        fullRead: true,
       });
       store.upsertRetiredAnchors("sessionB", path, JSON.stringify([{ hash: "DDD", deathPos: 0 }]));
       const resA = store.getAnchorReservations("sessionA", path);

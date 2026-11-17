@@ -724,6 +724,18 @@ export interface FileView {
   absolutePath: string;
   truncation?: TruncationResult;
   nextOffset?: number;
+  /**
+   * The full-read verdict — computed HERE and nowhere else (ADR-0035).
+   *
+   * True only for an untruncated whole-file read: no `offset`, no `limit` and no requested windows
+   * (`undefined`/`[]` both mean none, per `hasRequestedWindows`), and nothing cut by the render.
+   * A page that happens to cover every line is still a page.
+   *
+   * WHY here: the request shape lives in this seam — the consumers of the verdict (session-view's
+   * `recordServed`, read-and-serve's drift clear) see only rows, and any verdict re-derived from
+   * rows says "full" for a page whose rows turn out dense.
+   */
+  fullRead: boolean;
   hadUtf8DecodeErrors: boolean;
   bom: string;
   originalEnding: LineEnding;
@@ -770,6 +782,13 @@ export async function readView(
     fileHashes,
     absolutePath,
   );
+  // The ONE computation of the full-read verdict (ADR-0035): the whole file, no page request, and
+  // nothing truncated away. Consumers read `view.fullRead`; none of them re-derives it.
+  const fullRead =
+    opts.offset === undefined &&
+    opts.limit === undefined &&
+    !hasRequestedWindows(opts.windows) &&
+    !r.truncation?.truncated;
   return {
     text: r.text,
     hashes: fileHashes,
@@ -777,6 +796,7 @@ export async function readView(
     absolutePath,
     truncation: r.truncation,
     nextOffset: r.nextOffset,
+    fullRead,
     hadUtf8DecodeErrors,
     bom,
     originalEnding,

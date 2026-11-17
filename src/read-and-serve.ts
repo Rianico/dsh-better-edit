@@ -9,7 +9,7 @@
  */
 
 import { abortIf } from "./utils.js";
-import { hasRequestedWindows, readView } from "./file-view.js";
+import { readView } from "./file-view.js";
 import { canon } from "./hashline/hash-assign.js";
 import { splitLines } from "./utils.js";
 import { getAutoGuessFooter } from "./fs-bridge.js";
@@ -90,7 +90,8 @@ export async function readAndServe(
   // Build previous for stable reuse (S): served filtered + canons reconstruction.
   // #62 alignment gate: the reconstructed arrays carry the SERVED index as the line
   // position, which equals the real line number only when the mirror is dense — the
-  // `row.position === index` half of the `isFullRead` predicate (session-view.ts).
+  // `row.position === index` density half of the serve verdict, which session-view keeps as an
+  // ASSERTION about FileView rather than a decision (ADR-0035).
   // With holes (a partial mirror), `mapStableHashes` would match compressed indices
   // against whole-file positions and reshuffle anchors of an UNCHANGED file; pass
   // `previous = undefined` instead and take the content-addressed snapshot path
@@ -194,19 +195,18 @@ export async function readAndServe(
         hashes: view.hashes,
         canons: fullCanons,
         content: view.normalized,
+        // The verdict travels with the serve: FileView computed it from the request shape, this
+        // seam only carries it (ADR-0035).
+        fullRead: view.fullRead,
       },
     );
   }
-  // #69: epoch lifecycle belongs to full reads — a partial (paged or
-  // truncated) read merges window rows only and must not clear the
-  // drift-reported marks; only a full read resets them. The `undefined`/`[]` →
-  // no-windows rule is owned by file-view's `hasRequestedWindows`.
-  const isFullRead =
-    options.offset === undefined &&
-    options.limit === undefined &&
-    !hasRequestedWindows(options.windows) &&
-    !view.truncation?.truncated;
-  if (isFullRead) await clearDriftReported(sessionKey, view.absolutePath);
+  // #69: epoch lifecycle belongs to full reads — a partial (paged or truncated) read merges window
+  // rows only and must not clear the drift-reported marks; only a full read resets them. The
+  // verdict is `view.fullRead` (ADR-0035): FileView owns the request-shape rule — including
+  // `undefined`/`[]` → no windows via `hasRequestedWindows` — so no second predicate exists here
+  // to disagree with it.
+  if (view.fullRead) await clearDriftReported(sessionKey, view.absolutePath);
   const autoFooter =
     getAutoGuessFooter(view.absolutePath) ??
     getAutoGuessFooter(rawPath) ??
