@@ -341,6 +341,86 @@ describe("served state — incremental hazard sweep", () => {
   });
 });
 
+describe("served state — retired-anchor writer contract", () => {
+  function readServedRow(
+    home: string,
+    sessionKey: string,
+    path: string,
+  ): { retired: string | null; updated_at: number } {
+    const db = new DatabaseSync(sqlitePath(home), { defensive: false } as any);
+    const row = db
+      .prepare("SELECT retired, updated_at FROM served WHERE session_id = ? AND path = ?")
+      .get(sessionKey, path) as { retired: string | null; updated_at: number } | undefined;
+    db.close();
+    if (!row) throw new Error(`no served row for ${sessionKey}:${path}`);
+    return row;
+  }
+
+  it("rejects an invalid retired hash before it reads or writes the column", async () => {
+    // WHY the assertion is what it is: ADR-0036 decision 3 says an invalid hash is rejected
+    // "whether or not the hash is new", but the "even when already known" half is
+    // UNCONSTRUCTIBLE as a black-box case here — `isValidRetiredEntry` and
+    // `coerceRetiredEntry` (src/hash-store.ts) both require `HASH_RE`, so the store can never
+    // hold an invalid hash that a caller could then re-present as "known". What the ordering
+    // guarantees observably is exactly what this cell pins: an invalid argument aborts the
+    // call before any read or write, because the validation loop in `addRetiredAnchors`
+    // precedes its `getRetiredEntries` read.
+    await withTempHome(async (home) => {
+      const sessionKey = "sess-invalid-hash-1";
+      const path = "/tmp/invalid-hash-file.txt";
+      const store = await loadServedStore();
+      const seeded = JSON.stringify([{ hash: "AAA", deathPos: 2 }]);
+      store.upsertRetiredAnchors(sessionKey, path, seeded);
+      expect(readServedRow(home, sessionKey, path).retired).toBe(seeded);
+
+      // A lone invalid hash aborts the call …
+      await expect(retireAnchors(sessionKey, path, ["bad-hash!"])).rejects.toThrow(
+        /Invalid retired hash/,
+      );
+      // … and nothing was written: the column is byte-identical.
+      expect(readServedRow(home, sessionKey, path).retired).toBe(seeded);
+
+      // The sharper form: a VALID new hash followed by an invalid one. A writer that appended
+      // as it walked the batch would leave `BBB` behind; the validation loop covers the whole
+      // batch first, so the reject leaves the column byte-identical — no partial append.
+      await expect(retireAnchors(sessionKey, path, ["BBB", "bad-hash!"])).rejects.toThrow(
+        /Invalid retired hash/,
+      );
+      expect(readServedRow(home, sessionKey, path).retired).toBe(seeded);
+      expect(store.getRetiredEntries(sessionKey, path)).toEqual([{ hash: "AAA", deathPos: 2 }]);
+    });
+  });
+
+  it("re-retiring a known hash leaves the row untouched, and that no-write is refutable", async () => {
+    await withTempHome(async (home) => {
+      const sessionKey = "sess-idempotent-retire-1";
+      const path = "/tmp/idempotent-retire-file.txt";
+      const store = await loadServedStore();
+      await retireAnchors(sessionKey, path, ["AAA"]);
+      const seeded = readServedRow(home, sessionKey, path);
+      expect(JSON.parse(seeded.retired as string)).toEqual([{ hash: "AAA", deathPos: null }]);
+
+      // Same hash, after the clock has demonstrably moved: idempotent retirement is the
+      // writer's decision not to upsert, so the row's stamp and column must both stay put.
+      await new Promise((r) => setTimeout(r, 5));
+      await retireAnchors(sessionKey, path, ["AAA"]);
+      const afterRepeat = readServedRow(home, sessionKey, path);
+      expect(afterRepeat.updated_at).toBe(seeded.updated_at);
+      expect(afterRepeat.retired).toBe(seeded.retired);
+
+      // POSITIVE CONTROL — the assertion above can fail. Upserting that very same column
+      // directly, after another few ms, DOES move `updated_at`: the DB clock resolves finer
+      // than the gap this cell measures, so the unchanged stamp is the writer's no-write and
+      // not a clock artefact.
+      await new Promise((r) => setTimeout(r, 5));
+      store.upsertRetiredAnchors(sessionKey, path, afterRepeat.retired as string);
+      const afterControl = readServedRow(home, sessionKey, path);
+      expect(afterControl.updated_at).toBeGreaterThan(afterRepeat.updated_at);
+      expect(afterControl.retired).toBe(afterRepeat.retired);
+    });
+  });
+});
+
 describe("served state — merge helper (stale-tail invariant)", () => {
   it("drops the stale tail when a serve truncates to the current line count", async () => {
     await withTempHome(async () => {

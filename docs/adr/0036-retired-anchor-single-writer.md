@@ -16,7 +16,7 @@ Downstream records: `src/session-view.ts` (`addRetiredAnchors`, `retireAnchorsIn
 The `served.retired` column had two writers and two serializations.
 
 - `sweepAndRetire` and `unretireAnchorsInStore` read and write `RetiredEntry[]` —
-  `{hash, deathPos}` objects (`src/session-view.ts:165`, `:236`).
+  `{hash, deathPos}` objects (`src/session-view.ts`: `sweepAndRetire`, `unretireAnchorsInStore`).
 - `addRetiredAnchors` — the writer behind `retireAnchorsInStore`, i.e. the edit path
   (`src/mutation.ts:276`) and the undo path (`src/tool-undo.ts:274`) — read the read-side
   **projection** `store.getRetiredAnchors(...)` (a `Set<string>`, positions already gone) and wrote
@@ -33,11 +33,11 @@ for (const hash of additions) {
 store.upsertRetiredAnchors(sessionKey, path, JSON.stringify([...retired]));
 ```
 
-`parseRetiredJson` (`src/hash-store.ts:286`) still reads those bare strings — `isValidHashList` ⇒
+`parseRetiredJson` (`src/hash-store.ts`) still reads those bare strings — `isValidHashList` ⇒
 `parsed.map(h => ({ hash: h, deathPos: null }))` — which is right for legacy rows and wrong as a
 write shape. A `null` death position is by design never swept incrementally: `sweepAndRetire` keeps
-`e.deathPos === null` unconditionally (`src/session-view.ts:186`), so such an entry waits for a
-full-read serve or major-GC promotion.
+`e.deathPos === null` unconditionally (`src/session-view.ts`: `sweepAndRetire`'s
+`deathPos === null` clause), so such an entry waits for a full-read serve or major-GC promotion.
 
 The consequence, measured on `e9e5dc2` with 6-line file, seeds
 `retired = [{hash: "AAA", deathPos: 2}]` and `cards = [2]`, then one appending retirement
