@@ -97,6 +97,16 @@ rows, and rows are a consequence, not a request.
   context were triaged one by one against the shape they already carried, and no assertion changed:
   a dense mirror ⇒ `true`, a proper subset ⇒ `false` reproduces the previous branch exactly, so only
   the read path — the one place where the two predicates disagreed — changes behaviour.
+- The verdict's carrier was renamed `FullReadContext` → `ServeContext` when the verdict was added:
+  the old name was already a misnomer (a page passed the same context — `hashes`, `canons` — and
+  the full-read decision was derived from the rows inside `recordServed`), and the interface now
+  carries the verdict plus the serve's `content`, so the new name says what it is: one serve's
+  context. The rename is plain — no alias — and safe because nothing consumes the old name:
+  `rg -n "FullReadContext" src test` → 0 hits, and no external consumer is possible, since
+  `package.json`'s `exports` map publishes only `.` → `./lib/types/index.d.ts` (plus
+  `./package.json`) and `src/index.ts` re-exports only `name`/`inject`/`apply`/`AgentTools` — nothing
+  from `session-view.ts`. A deep import into `lib/types/session-view.d.ts` was never part of the
+  published contract.
 - Pins: `test/core/full-read-authority.test.ts` (four cells — the refined page clears nothing, the
   full read still clears, a genuinely partial page preserves, and a page of changed content keeps
   its anchors leasable), the repaired `test/core/epoch-lifecycle.test.ts` windowed cell (lease

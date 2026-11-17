@@ -16,6 +16,7 @@ All notable changes to this project will be documented in this file.
 * **install:** claim tools synchronously in `agent/created` turn, isolate per-step failures, and reclaim contested entries on collision (#123) (#131)
 * **mutation:** restore the undo row of every file a failed write never wrote, so a multi-item edit's failure no longer leaves `undo_last_edit` reporting `E_UNDO_STALE "modified"` for the tool's own failed write (ADR-0034).
 * **read:** stop a paged read that happens to cover every line from clearing retired anchors, hazard cards and the served canon map — the full-read verdict is FileView's alone, and the lease grant stays unconditional because a shown anchor must remain editable (ADR-0035).
+* **retired-anchors:** append a retirement as an object entry instead of rewriting the column into bare strings, so an existing retired anchor keeps its death position and the incremental hazard sweep can free it again rather than accumulating until a full read (ADR-0036).
 
 ### Code Refactoring
 

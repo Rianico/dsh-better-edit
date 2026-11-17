@@ -116,16 +116,30 @@ function addRetiredAnchors(
 ): void {
   const additions = [...hashes];
   if (additions.length === 0) return;
-  const retired = store.getRetiredAnchors(sessionKey, path);
+  // Contract first, dedupe second: an invalid hash is rejected whether or not it is new.
   for (const hash of additions) {
     if (!HASH_RE.test(hash)) {
       throw new TypeError(`Invalid retired hash: ${hash}`);
     }
-    retired.add(hash);
   }
-  // Persist as legacy string array for backward compat; `sweepAndRetire` writes object
-  // entries (hash + deathPos) for positions the served view displaced.
-  store.upsertRetiredAnchors(sessionKey, path, JSON.stringify([...retired]));
+  // WHY (ADR-0036): ONE writer, ONE serialization. `sweepAndRetire` and
+  // `unretireAnchorsInStore` read and write `RetiredEntry[]`; this appender is the third
+  // writer of the same column, so it must too — an appended entry carries `deathPos: null`
+  // (unknown position) while every existing entry keeps its own death position. Writing
+  // bare strings here rewrote the whole column into the shape `parseRetiredJson` coerces to
+  // `deathPos: null`, which no incremental sweep can free (accumulation until a full read).
+  // `store.getRetiredAnchors` stays the READ-side projection and is not used for writing.
+  const existing = store.getRetiredEntries(sessionKey, path);
+  const known = new Set(existing.map((entry) => entry.hash));
+  const appended: RetiredEntry[] = [];
+  for (const hash of additions) {
+    if (known.has(hash)) continue;
+    known.add(hash);
+    appended.push({ hash, deathPos: null });
+  }
+  // Idempotent retirement must not bump the row.
+  if (appended.length === 0) return;
+  store.upsertRetiredAnchors(sessionKey, path, JSON.stringify([...existing, ...appended]));
 }
 
 function displacedEntries(

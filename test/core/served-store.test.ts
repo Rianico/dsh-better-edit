@@ -179,6 +179,42 @@ describe("served state — incremental hazard sweep", () => {
     });
   });
 
+  it("an appending retirement keeps an existing entry's death position, and the sweep still frees it", async () => {
+    await withTempHome(async () => {
+      const sessionKey = "sess-append-deathpos-1";
+      const path = "/tmp/append-deathpos-file.txt";
+      const N = 6;
+      const content = Array.from({ length: N }, (_, i) => `line ${i}`).join("\n");
+      const hashes = lineHashesPure(content);
+      const store = await loadServedStore();
+      // Seed the column the way the sweep writes it — object entries carrying a real
+      // death position — plus the hazard card that entitles a serve re-observing
+      // position 2 to free `AAA` incrementally.
+      store.clearRetiredAnchors(sessionKey, path);
+      store.upsertRetiredAnchors(sessionKey, path, JSON.stringify([{ hash: "AAA", deathPos: 2 }]));
+      store.upsertCards(sessionKey, path, JSON.stringify([2]));
+
+      // The production appending writer (the edit path's retirement).
+      await retireAnchors(sessionKey, path, ["BBB"]);
+
+      const afterAppend = store.getRetiredEntries(sessionKey, path);
+      expect(afterAppend).toEqual([
+        { hash: "AAA", deathPos: 2 },
+        { hash: "BBB", deathPos: null },
+      ]);
+
+      // A genuinely partial serve re-observing position 2: card 2 is already tracked, so
+      // the sweep must free the entry that still knows where it died.
+      await recordServed(sessionKey, path, [{ position: 2, hash: hashes[2]! }], N, {
+        hashes,
+        canons: Array.from({ length: N }, (_, i) => `line${i}`),
+        fullRead: false,
+      });
+      const afterSweep = store.getRetiredEntries(sessionKey, path);
+      expect(afterSweep.map((entry) => entry.hash)).toEqual(["BBB"]);
+    });
+  });
+
   it("keeps deathPos=null retired entries through a partial sweep and clears them on a full serve", async () => {
     await withTempHome(async () => {
       const sessionKey = "sess-minus1-1";
