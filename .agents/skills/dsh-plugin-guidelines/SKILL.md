@@ -1,50 +1,57 @@
 ---
 name: dsh-plugin-guidelines
-description: Authoring DeepSeek Harness (dsh) plugins. Use when creating or editing a dsh bundle/plugin, registering tools with defineTool, replacing or shadowing built-in tools (edit, read, write, bash), wiring system-prompt sections, handling ctx.fs mutations, or debugging a dsh tool that doesn't shadow another, fails with FS_NOT_OBSERVED/FS_STALE_VERSION, or whose edits don't stick.
+description: Authoring DeepSeek Harness (dsh) plugins. Use when creating or editing a dsh bundle/plugin, configuring plugins with Schemastery, registering tools with defineTool, replacing or shadowing built-in tools (edit, read, write, bash), isolating and reclaiming contested tools, wiring system-prompt sections, handling ctx.fs mutations, or debugging a dsh tool that doesn't shadow another, fails with FS_NOT_OBSERVED/FS_STALE_VERSION, or whose edits don't stick.
 ---
 
 # dsh plugin guidelines
 
 Reference for writing a DeepSeek Harness (`dsh`) plugin — the parts of the
-model that the docs' tutorials assume you know. Two mental models carry the
+model that the official tutorials assume you know. Two mental models carry the
 whole surface: the **two planes** (where your code runs) and **own layer wins**
 (how tools and prompt sections shadow each other). Every rule below is
 checkable against the running deployment: if a tool fails to appear, fails to
 shadow, or breaks the next built-in tool, one of these rules was missed.
 
-**Pinned to dsh `0.2.1-rc.2`.** The harness is in developer preview and its
-docs promise compatibility-breaking changes. Every rule cites the mechanism
-it derives from — the registry's scope layering, the `fs/*` event gate, the
-bundle patch semantics. When a rule stops matching your installed dsh, the
-mechanism is where it broke: read the package that owns it (`dsh-tools`,
-`dsh-fs`, `dsh-agent-preset-registry`, `dsh-system-prompt`) rather than the rule.
+**Baseline:** `@deepseek-ai/dsh-*@0.2.x` (`0.2.1-rc.2`–`0.2.2-rc.1`) + `@deepseek-ai/cordis@4.0.5`.
+Official documentation and guides:
+- [Your first plugin](https://deepseek-harness.github.io/deepseek-harness/en/develop/basic/index.md)
+- [Build a tool](https://deepseek-harness.github.io/deepseek-harness/en/develop/basic/tool.md)
+- [Plugin configuration](https://deepseek-harness.github.io/deepseek-harness/en/develop/basic/config.md)
+- [Package and install](https://deepseek-harness.github.io/deepseek-harness/en/develop/basic/publish.md)
+- [Plugin lifecycle & framework](https://deepseek-harness.github.io/deepseek-harness/en/develop/framework/index.md)
+- [Services and dependencies](https://deepseek-harness.github.io/deepseek-harness/en/develop/framework/service.md)
+- [Event system](https://deepseek-harness.github.io/deepseek-harness/en/develop/framework/events.md)
+- [Agent lifecycle](https://deepseek-harness.github.io/deepseek-harness/en/reference/agent-lifecycle.md)
+- [Tool execution pipeline](https://deepseek-harness.github.io/deepseek-harness/en/reference/tool-execution-pipeline.md)
 
-The tutorials own the copy-paste shapes: `docs/cookbook/adding-a-tool.md` for a
-tool, `docs/cookbook/adding-a-package.md` for a bundle,
-`docs/user/develop/basic/publish.md` for installation. This skill owns what
-they don't confess.
+This skill owns the underlying runtime invariants, scope mechanics, failure modes,
+and registration isolation patterns they do not confess.
 
-## The two planes
+---
+
+## 1. The two planes
 
 A plugin row runs on one of two planes, and the plane decides what it can do:
 
 - **Host plane** — the deployment composition built from bundle patches. Owns
-  the registries themselves: `tools`, `fs`, `systemPrompt`, `sessions`,
-  `agents`. A bundle's `cordis.patch.yml` inserts host-plane rows only.
+  the core services and registries: `tools`, `fs`, `systemPrompt`, `sessions`,
+  `agents`, `llm`. A bundle's `cordis.patch.yml` inserts host-plane rows only.
 - **Agent plane** — per-session compositions (the **presets**), mounted once
   under a standing scope; every session that names a preset joins it by scope
   parentage. The model-facing tools (`edit`, `read`, `write`, `bash`, …) live
-  HERE, not on the host. A preset is a `@deepseek-ai/dsh-agent-preset` row (an
+  **here**, not on the host. A preset is a `@deepseek-ai/dsh-agent-preset` row (an
   id plus child plugin rows) served by the `agentPresets` service; the shipped
   ids are `standard`, `ptc`, `minimal`, `cordis`.
 
-Consequence: a bundle patch **cannot add rows to a preset**, and a host-plane
+**Consequence:** A bundle patch **cannot add rows directly to a preset**, and a host-plane
 registration of a tool name that a preset already registers does not replace
 it — the preset's nearer layer wins. To change what the model sees, either
 patch the preset's composition (a user-authored `@deepseek-ai/dsh-agent-preset` row) or
-shadow per-agent (below).
+shadow per-agent on `agent.ctx` (see [Shadowing a built-in](#5-shadowing-a-built-in-the-pattern)).
 
-## Own layer wins
+---
+
+## 2. Own layer wins
 
 The tool registry and the system-prompt registry are both **scope-layered**:
 each scope owns a layer, and a scope's view resolves `agent → preset → global`
@@ -57,120 +64,242 @@ sees into a sibling.
   work — the preset's X shadows it.
 - Registering a name twice **in the same layer throws**: `tool "X" is already
   registered in this scope (for a per-agent variant, register through that
-  agent's agent.ctx instead)`. The error message is the rule.
+  agent's agent.ctx instead)`. In DSH's `@deepseek-ai/dsh-scope` (`NamedEntries`),
+  the scope layer rejects collisions unconditionally.
 - **`run_code` is reserved** and can neither be registered nor shadowed.
 - Prompt sections shadow exactly the same way: `ctx.systemPrompt.section({ name, order, text })`
   with a duplicate name in the same layer throws, and a same-name section on a
   nearer scope replaces the farther one (this is how a preset shadows the
   deployment persona).
 
-## Prompt section order
+---
 
-Assembly merges every layer's sections, then concatenates them in ascending
-`order` — one number, nothing else. The `order` gotchas the tutorials' examples
-never confess:
+## 3. Plugin forms & configuration
 
-- **The bands are convention, not enforcement.** `-1000` harness identity, `0`
-  persona prefix, `500` plan policy, `600` team policy, `800` PTC-only, `900`
-  file reference, `1000–3100` tool guidance, `5000` SDK, `9900` structured
-  output — a section at any order sorts exactly where the number sits; nothing
-  validates the band. Do not hard-code a band number: ask the registry with
-  `ctx.systemPrompt.getSectionOrder('TOOL_READ')`, which returns the installed
-  build's slot for a named tool section (`TOOL_BASH` 1000, `TOOL_READ` 1100,
-  `TOOL_WRITE` 1200, `TOOL_EDIT` 1300, `TOOL_GLOB` 1400, `TOOL_GREP` 1500, … in
-  `0.2.1`; `TOOL_CORDIS` existed through `0.1.7` and is gone). The *order* band
-  itself has already moved once (the `0.1.0-rc.6` band was `100–199`) — a
-  pinned literal is how a plugin silently slides ahead of the built-ins.
-- **Equal `order` values tie-break by section name** — deterministic, but a
-  same-order pair silently reorders guidance relative to its tool. Distinct
-  names at one order do NOT throw (duplicate names do, per above); only
-  non-finite orders throw too. `dsh-better-edit` derives its tool-guidance
-  default from `getSectionOrder` (`TOOL_READ` / `TOOL_EDIT`, with a static
-  `1100`/`1300`/`1310` fallback for registries that predate the API) instead of
-  pinning a band literal.
+### Three plugin forms
 
-Consequence of own layer wins: a preset row can neither reorder nor override a
-plugin's agent-layer sections — its same-named sections are shadowed, its
-different-named ones only share an order (sorted by name, never by load order).
-A plugin that needs configurable text or order must read its own row `config`
-(it reaches `apply(ctx, config)`) or its own files; it cannot be patched from
-outside.
-
-### Shadowing a built-in (the pattern)
-
-To replace `edit`/`read`/`write` for a session, register on the **agent's own
-scope** via its scoped context, once per agent, inside an effect so it unwinds
-on disposal:
+A plugin can be authored in function, object, or service class form:
 
 ```ts
-const installed = new WeakSet<Agent>()
-ctx.on('agent/created', ({ agent }) => {
-  if (installed.has(agent)) return
-  installed.add(agent)
-  agent.ctx.effect(() => {
-    const disposers: Array<() => void> = []
-    disposers.push(agent.ctx.tools.register(defineTool({ ... })))   // own layer → shadows preset's
-    disposers.push(agent.ctx.systemPrompt.section({ name: 'tool:edit', order: agent.ctx.systemPrompt.getSectionOrder('TOOL_EDIT'), text }))
-    return () => { for (const dispose of disposers) dispose() }
-  })
-})
+import { Service, type Context } from '@deepseek-ai/cordis'
+
+// 1. Function form (standard for most plugins)
+export const name = 'my-tool-plugin'
+export const inject = ['tools']
+export function apply(ctx: Context, config: Config) {
+  // ctx.tools is ready here
+}
+
+// 2. Object form
+export default {
+  name: 'my-plugin',
+  inject: ['tools'],
+  apply(ctx: Context, config: Config) { /* ... */ },
+}
+
+// 3. Class form (when providing a new service to other plugins)
+declare module '@deepseek-ai/cordis' {
+  interface Context {
+    metrics: MetricsService
+  }
+}
+
+export default class MetricsService extends Service {
+  static inject = ['llm']
+  constructor(ctx: Context) {
+    super(ctx, 'metrics') // registers ctx.metrics
+  }
+  record(event: string, value: number) { /* ... */ }
+}
 ```
 
-`agent/created` is the first startup-driving extension point after the agent
-exists, so the shadow is installed before the first request. A subagent is an
-agent too and fires its own `agent/created`; the child's own layer shadows
-whatever it inherited. `agent.ctx` is agent-local, auto-unwound, and rejects
-registration after disposal — do not hoist the registration to the plain
-context.
+### Configuration with Schemastery
 
-**Probe with the agent's scope, not just the agent.** `systemPrompt.assemble({
-agent })` resolves the GLOBAL view — it will show the built-in `read`/`edit`
-even when your agent-layer shadow is correct. The real assembly carries the
-agent as the scope key: `systemPrompt.assemble(assembleContextFor(agent))`
-(`@deepseek-ai/dsh-agent`) returns `{ agent, scope: agent }`. Likewise
-`tools.get(name, agent)` and `tools.schemas(agent)` take that same key. On dsh
-`0.2.1-rc.2` an `agent/created` registration is visible only through that
-scope-aware view.
-**Render the section only while the tool is visible.** The built-ins pass a
-function instead of a string — `text: ({ scope }) => ctx.tools.get('read', scope)
-? … : ''` — so a restricted-away tool never advertises itself. A static string
-renders even when a policy has hidden the tool.
+Accept configuration from `cordis.yml` via Schemastery (`@deepseek-ai/schemastery`). Export both a TypeScript `interface Config` and a same-named `Config` schema. Do **not** export a plain object; Cordis requires a Standard Schema implementation:
 
-**Declare `inject` for every service the install touches.** Cordis refuses
-property access to an undeclared service — `cannot get property "fs" without
-inject` — and the failure is silent from the model's side: the install throws
-at agent creation, your tools never register, and the session quietly runs the
-built-ins. List `tools`, `systemPrompt`, and `fs` (and anything else the
-per-agent work uses) in the plugin's `inject` export.
+```ts
+import type { Context } from '@deepseek-ai/cordis'
+import Schema from '@deepseek-ai/schemastery'
 
-**Resolve host-plane services on the plugin's own context, not `agent.ctx`.**
-The agent's fiber chain does not carry your `inject` list, so `agent.ctx.fs`
-throws even after you declare it. Services like `fs` live on the host plane —
-use `rootCtx.fs` (covered by your inject) and let per-call session state
-(`exec.agent.session.header.cwd`) flow through the tool arguments instead.
-`agent.ctx.tools` / `agent.ctx.systemPrompt` DO resolve (the agent chain
-declares them) — only host services that your plugin, not the agent layer,
-declares must be read off `rootCtx`.
+export const name = 'my-plugin'
 
-## The fs event gate
+export interface Config {
+  greeting: string
+  timeoutMs: number
+  mode?: 'fast' | 'accurate'
+}
 
-`ctx.fs` is the only sanctioned mutation seam (sandboxed and remote backends
-implement it; raw `node:fs` bypasses them). But calling `fs.writeText` alone is
-**not enough** — the `fs-observation-policy` (mounted in the default
-composition) derives every write/edit guard from two events, and a tool that
-skips them leaves the policy's observed state stale:
+export const Config: Schema<Config> = Schema.object({
+  greeting: Schema.string().default('Hello'),
+  timeoutMs: Schema.number().default(30000),
+  mode: Schema.union(['fast', 'accurate']).default('fast'),
+})
 
-- **`fs/write-intent`** — single-slot waterfall; the policy answers
-  `createIfAbsent` / `replaceIfVersion` at the observed version. The bare
-  default `() => undefined` means unconditional when no policy listens.
-- **`fs/observed`** — fire-and-forget emit recording the version a tool just
-  read or wrote, keyed by session.
+export function apply(ctx: Context, config: Config) {
+  // config is validated at load time; invalid values fail the load loudly
+}
+```
 
-The failure mode is silent until the next built-in call: a plugin tool that
-writes without the gate makes the policy believe the file was never observed,
-so the very next built-in `write` fails `FS_NOT_OBSERVED` (it tries
-`createIfAbsent` on a file that exists) or `FS_STALE_VERSION`. Mirror the
-built-in tools exactly — resolve → waterfall → mutate → emit:
+- **No hardcoded tunables:** Anything two deployments might set differently must be a configuration field.
+- **HMR aware:** Configuration edits reload the plugin via `@deepseek-ai/dsh-hmr`; old effects and event listeners are automatically disposed before the new configuration applies.
+
+---
+
+## 4. The event system & modes
+
+Events communicate across plugins. Cordis supports four execution modes on `ctx`:
+
+1. **`ctx.emit(event, ...args)` — broadcast:** Every listener runs synchronously; return values are ignored.
+2. **`ctx.bail(event, ...args)` — short-circuit:** Listeners run in order; the first value other than `null`, `false`, or `undefined` stops execution and becomes the return value.
+3. **`ctx.serial(event, ...args)` — ordered async execution:** Listeners run sequentially in registration order, awaiting promises. The first non-falsy result stops execution.
+4. **`ctx.waterfall(event, ...args, fallback)` — pipeline transformation:** Each listener receives a `next()` callback wrapping downstream handlers. **Calling `next()` is mandatory** to delegate downstream; omitting it intentionally short-circuits the pipeline:
+   ```ts
+   ctx.on('my-plugin/transform', async (input, next) => {
+     const downstream = await next()
+     return downstream.trim()
+   })
+   ```
+
+### Cordis events vs Session events
+
+- **Cordis events** (`namespace/action`, e.g. `agent/pre-step`, `agent/request-error`, `tools/result`) live on `ctx`.
+- **Durable session records** (`turn/*`, `step/*`, `tool/call`, `tool/result`, `compaction/*`) are not Cordis events; observe them by listening to `session/event` and inspecting `event.type`.
+
+---
+
+## 5. Shadowing a built-in (the pattern)
+
+To replace `edit`/`read`/`write` for a session, register on the **agent's own scope** via its scoped context (`agent.ctx`).
+
+### The four trapdoors & best practices (derived from Issue #123)
+
+1. **The Async Effect Trap (Cordis Disposer Race):**
+   Cordis does **not** unwrap `Promise<disposer>` returned from an `async effect` callback into synchronous disposal hooks (`effect.then(safeCollect)`). An `agent.ctx.effect(async () => ...)` risks leaking registrations or listeners if the agent is terminated during in-flight async resolution.
+   *Fix:* Make the outer `agent.ctx.effect` **strictly synchronous**, returning an immediate cleanup closure that drains a shared `disposers` array and sets a `disposed` flag.
+2. **Synchronous `read` Anchor:**
+   `agent.ctx.effect(async () => { await resolveToolset(); ... })` yields to the microtask loop, allowing synchronous peer listeners (e.g. `dsh-sol-pi`) in `agent/created` to claim tool names first.
+   *Fix:* Unconditional tools like `read` (per ADR-0032) must be registered **synchronously** in the `agent/created` turn before yielding.
+3. **Per-Step Fault Isolation:**
+   `NamedEntries.insert` throws when a name collision occurs in the same scope layer. If registrations run in an unhandled linear chain, a collision on `edit` will abort all downstream tools (`str_replace_editor`, `undo_last_edit`, `writeHook`, self-heal watcher, and prompt guidance).
+   *Fix:* Wrap every tool registration and guidance mount in an isolated `try/catch` block.
+4. **Guarded Reclaim (`reclaimToolEntry`):**
+   When a peer plugin pre-claims an agent-layer tool, re-registration throws unless the occupied entry is cleared.
+   *Fix:* Use a guarded reclaim primitive that verifies collision (`layer.get(name) !== undefined` or matching collision error message), deletes the entry from `layer.data`, and re-registers once. Non-collision errors must never delete peer tools blindly.
+5. **Self-Heal Anchor Hygiene:**
+   Self-heal watchers must anchor to owned definition references stored in closure variables (e.g. `hashReadDef`), never snapshotting `layer.get("read")` during late resolution, which would ratify an intruder.
+
+### The Canonical Installation Pattern
+
+```ts
+import type { Context, Agent } from '@deepseek-ai/dsh-core'
+import { defineTool } from '@deepseek-ai/dsh-tools'
+
+const installed = new WeakSet<Agent>()
+
+export function installAgentTools(rootCtx: Context, agent: Agent): void {
+  if (installed.has(agent)) return
+  installed.add(agent)
+
+  agent.ctx.effect(() => {
+    let disposed = false
+    const disposers: Array<() => void> = []
+
+    const registerDisposer = (dispose: (() => void) | undefined): void => {
+      if (!dispose) return
+      if (disposed) {
+        try { dispose() } catch {}
+        return
+      }
+      disposers.push(dispose)
+    }
+
+    const toolsSvc = rootCtx.get('tools')
+
+    // Step 1: Synchronous unconditional claim in agent/created turn
+    const hashReadDef = buildReadTool()
+    try {
+      registerDisposer(registerWithReclaim({
+        toolsSvc, agent, agentCtx: agent.ctx, name: 'read', def: hashReadDef,
+      }))
+    } catch (err) {
+      rootCtx.logger.warn(`failed to install synchronous read: ${err}`)
+    }
+
+    // Detached async IIFE for policy resolution, mutating tools, and guidance
+    void (async () => {
+      const toolset = await resolveToolset(rootCtx, agent.ctx)
+      if (disposed) return // Gate after async lease
+
+      // Step 2: Isolated mutating tools
+      if (toolset.edit) {
+        try {
+          registerDisposer(registerWithReclaim({
+            toolsSvc, agent, agentCtx: agent.ctx, name: 'edit', def: buildEditTool(),
+          }))
+        } catch (err) {
+          rootCtx.logger.warn(`failed to install edit: ${err}`)
+        }
+      }
+
+      // Step 3: Self-heal watcher anchored to owned definition closure
+      try {
+        registerDisposer(createSelfHealWatcher({
+          agent, hashReadDef, // anchored on owned ref, not layer snapshot
+        }))
+      } catch (err) {
+        rootCtx.logger.warn(`failed to mount self-heal: ${err}`)
+      }
+
+      // Step 4: System prompt guidance
+      try {
+        registerDisposer(agent.ctx.systemPrompt.section({
+          name: 'tool:edit',
+          order: agent.ctx.systemPrompt.getSectionOrder('TOOL_EDIT'),
+          text: ({ scope }) => agent.ctx.tools.get('edit', scope) ? editGuidance : '',
+        }))
+      } catch (err) {
+        rootCtx.logger.warn(`failed to mount guidance: ${err}`)
+      }
+    })()
+
+    // Immediate synchronous teardown closure
+    return () => {
+      disposed = true
+      while (disposers.length > 0) {
+        try { disposers.pop()?.() } catch {}
+      }
+    }
+  })
+}
+```
+
+### Probing and Context Resolution
+
+- **Probe with the agent's scope, not just the agent:** `systemPrompt.assemble({ agent })` resolves the **global** view and ignores agent-layer shadows. The real assembly carries the scope key: `systemPrompt.assemble(assembleContextFor(agent))` (`@deepseek-ai/dsh-agent`), returning `{ agent, scope: agent }`. Likewise, `tools.get(name, agent)` and `tools.schemas(agent)` take that key.
+- **Render guidance conditionally:** The built-ins pass a function: `text: ({ scope }) => ctx.tools.get('read', scope) ? ... : ''`. A static string renders even when a preset or restriction policy hides the tool.
+- **Declare `inject` for every service touched:** Cordis refuses property access to undeclared services (`cannot get property "fs" without inject`). List `tools`, `systemPrompt`, and `fs` in the plugin's `inject` export.
+- **Resolve host-plane services on `rootCtx`, not `agent.ctx`:** The agent's fiber chain does not inherit your plugin's `inject` declarations. `agent.ctx.fs` throws even when declared. Use `rootCtx.fs` and pass per-call session state (`exec.agent.session.header.cwd` or `workingDirectory.get(session)`) through tool arguments.
+
+---
+
+## 6. System prompt section order
+
+Assembly merges every layer's sections and concatenates them in ascending `order`:
+
+- **The bands are convention, not enforcement:** `-1000` harness identity, `0` persona prefix, `500` plan policy, `600` team policy, `800` PTC-only, `900` file reference, `1000–3100` tool guidance, `5000` SDK, `9900` structured output.
+- **Do not hard-code band numbers:** Call `ctx.systemPrompt.getSectionOrder('TOOL_READ')` to get the installed build's slot (`TOOL_BASH` 1000, `TOOL_READ` 1100, `TOOL_WRITE` 1200, `TOOL_EDIT` 1300, `TOOL_GLOB` 1400, `TOOL_GREP` 1500, … in `0.2.x`). Always provide a static fallback for registries predating the API.
+- **Tie-breaks:** Equal `order` values tie-break deterministically by section name.
+
+---
+
+## 7. The fs event gate & sandbox policy
+
+`ctx.fs` is the only sanctioned mutation seam (sandboxed and remote backends implement it; raw `node:fs` bypasses them). Calling `fs.writeText` alone is **not enough** — the `fs-observation-policy` derives write/edit guards from two events:
+
+- **`fs/write-intent`** — single-slot waterfall; answers `createIfAbsent` / `replaceIfVersion` at the observed version.
+- **`fs/observed`** — fire-and-forget emit recording the version just read or written, keyed by session.
+
+A mutating tool MUST execute: **resolve → waterfall → mutate → emit**:
 
 ```ts
 const target = await ctx.fs.resolve(path, { cwd, signal })
@@ -179,161 +308,59 @@ const outcome = await ctx.fs.writeText(target, content, intent, signal, sandboxP
 ctx.emit('fs/observed', target, { kind: 'present', version: outcome.version }, exec)
 ```
 
-A read must also emit: resolve → read → stat → `fs/observed` present at
-`info.version`. Emit failures must never fail the tool that preceded them.
-Mutation errors carry stable codes (`FS_NOT_FOUND`, `FS_PERMISSION_DENIED`,
-`FS_NOT_TEXT`, `FS_STALE_VERSION`, `FS_NOT_OBSERVED`, `FS_SANDBOX_DENIED`, …) —
-map them onto your own model-facing vocabulary rather than leaking raw
-`FsError`s.
+### The sandbox policy
 
-## The sandbox policy
+In confined deployments (`@deepseek-ai/dsh-fs-sandbox`, reported by `ctx.fs.sandboxMode`), mutations are fenced by policy:
 
-A confined deployment (`@deepseek-ai/dsh-fs-sandbox`, reported by
-`ctx.fs.sandboxMode`) fences every mutation against a per-call policy: a
-**mode** (`read-only` / `workspace-write` / `danger-full-access`) and a
-**workspace root**. Omitting the policy is not "unconfined" — the backend
-falls back to `ctx.sandboxPolicy.resolve()` with the **deployment default
-root**, so a write inside the session workspace is denied under
-`workspace-write` even though the built-in `write` (which stamps the per-call
-policy) succeeds. A mutating tool MUST:
+1. **Resolve per-call policy with the session:** `sandboxPolicy.resolve({ session: exec.agent.session })`. Omitting it falls back to the deployment default root, denying edits inside session workspaces under `workspace-write`.
+2. **Pass policy as 5th argument:** Pass to `ctx.fs.writeText(..., sandboxPolicy)`.
+3. **Advertise escalation fields in tool schema:** When `ctx.fs.sandboxMode` is defined, expose `sandbox_permissions` (enum of `ESCALATION_TARGETS`) + `justification` in parameters so denials can escalate through `ctx.approval`.
+4. **Map `FS_SANDBOX_DENIED`:** Map onto `[sandbox: file access denied under <mode> mode]` with same-turn escalation hints.
 
-1. **Resolve the per-call policy with the session** before mutating —
-   `sandboxPolicy.resolve({ session: exec.agent.session })` — so the session
-   live cwd is the workspace root (the policy service reads the session's
-   `workingDirectory` projection). This is what lets `workspace-write` edits land
-   inside the session workspace. (Reuse the built-in's
-   `FsSandboxController` shape — `@deepseek-ai/dsh-tool-fs` — or mirror it
-   with `@deepseek-ai/dsh-sandbox`.)
-2. **Pass the policy to the mutation** as the 5th arg of
-   `ctx.fs.writeText` / `editText`; never omit it.
-3. **Advertise the escalation fields** — `sandbox_permissions` (enum of
-   `ESCALATION_TARGETS`) + `justification` — in the tool schema when
-   `ctx.fs.sandboxMode` is defined, so a denied operation can be retried
-   once at a wider mode through `ctx.approval` (strict-wider only; `read-only`
-   is the floor, `danger-full-access` the ceiling). A tool that silently
-   drops them turns a retryable denial into a hard `E_BAD_SHAPE` rejection.
-   Honor the fields in your own arg validation (allow them through, pass them
-   to the resolver). Take the model-facing `sandbox_permissions` description
-   from `sandboxPermissionsDescription('operation' | 'command')` so the wording
-   matches the built-ins; the approval request may carry an additive
-   `displayReason` (`{ en, [locale] }`) for a localized prompt while `reason`
-   stays the audited text.
-4. **Map `FS_SANDBOX_DENIED`** onto the shared `[sandbox: file access denied
-   under <mode> mode]` marker plus the same-turn escalation hint, so the model
-   sees the same vocabulary bash and the built-in fs tools use.
-## Tools
+---
 
-Register with `ctx.tools.register(defineTool({ ... }))`, which returns the
-exact disposer.
+## 8. Tools DSL & content blocks
 
-- **Schema DSL, not TypeBox.** `parameters` uses the unified value-schema DSL
-  (string/number/integer/boolean/array/object/oneOf). Array nodes support
-  `items` only — **no `minItems`/`maxItems`**; validate cardinality inside
-  `execute`. The implicit parameter root stays open, so enforce unknown fields
-  yourself (an open root is how an alias like `file_path`→`path` survives
-  validation).
-- **`execute(args, exec)`** — `exec.signal` is the required cancellation;
-  `exec.agent.session.header.cwd` is the directory the session was CREATED in —
-  not the live one: since `0.2.1` the `working_directory` tool can move a
-  session, and the effective directory lives on the `workingDirectory` service
-  (`ctx.workingDirectory.get(session)` is a synchronous committed read;
-  `ensure(agent)` validates and may recover). `exec.agent?.session.id` keys
-  per-session state. Non-agent callers (tests, previews) have neither — fall
-  back gracefully, and keep the header only as the pre-`0.2.1` fallback.
-- **Return one canonical JSON value** declared by `output.schema`; `output.render`
-  converts it to the model-facing content blocks. `presentCall`/`presentResult`
-  are pure functions of args (+ result) for UI cards — no I/O, no session
-  reads, since they also run on replay.
-- **Model-facing errors** — throw `Error` with a structured `[E_...]` code
-  prefix; the loop renders `Error: <message>` and the code is the contract.
+Register tools with `ctx.tools.register(defineTool({ ... }))`.
 
-### File content vs warnings — split `ContentBlock`s, don't hash warnings
+- **Parameters Schema:** Uses unified value-schema DSL (string, number, integer, boolean, array, object, oneOf). Array nodes support `items` only (**no `minItems`/`maxItems`**; validate cardinality in `execute`). In objects, each property specifies `required: true|false` and top-level `additionalProperties: false` is required.
+- **`execute(args, exec)`:** `exec.signal` is cancellation; live directory is read via `ctx.workingDirectory.get(session)` (with fallback to `exec.agent.session.header.cwd`).
+- **Canonical Output & Render:** `output.schema` declares the canonical JSON structure returned by `execute`. `output.render(_args, value)` maps it to model-facing `ContentBlock[]`:
+  ```ts
+  output: {
+    schema: {
+      type: 'object',
+      properties: {
+        text: { type: 'string', required: true },
+        warning: { type: 'string' },
+      },
+      additionalProperties: false,
+    },
+    render: (_args, value) => [
+      { type: 'text', text: value.text },
+      ...(value.warning ? [{ type: 'text', text: value.warning }] : []),
+    ],
+  }
+  ```
+- **File Content vs Warnings:** **Never concatenate warnings/footers into normalized file text.** Concatenating a warning into hash-anchored lines turns the warning into editable file content and breaks line-identity tracking. Return warnings out-of-band and split them in `render`.
 
-- **Never concatenate a warning/footer into the file's `normalized` text.** A footer like `[Auto-guessed: shift_jis …]` hashed as `HASH│…` becomes editable file content and breaks the hashline contract (`ServedRow`/`lineHashes` would include the warning as a file line). Store it out-of-band (e.g. `Map<targetKey, footer>` keyed by `absolutePath`/`targetKey`/`FsVersion`) and keep `dec` clean. Seen in #34: `fs-bridge` initially did `return dec + footer` at 4 sites (ctxFsIO chardet/heuristic + localIO chardet/heuristic); after moving to a memo, the ctxFsIO heuristic still did `return decHeu + footerHeu` — verify all 4.
-- **In `read-and-serve` return `{text, warning?}`** where `text` is the hash-anchored preview and `warning` is the optional footer. The tool's `output.schema` must match the return: `type: "object", properties: { text: {type:"string", required:true}, warning: {type:"string"} }, additionalProperties:false`. `ObjectValueSchemaSpec` has no top-level `required` — per-property `required:true` is the only valid form and `additionalProperties` is mandatory.
-- **`output.render` returns one or two `ContentBlock`s.** `[{type:"text", text: v.text}]` plus, when `v.warning`, a second `[{type:"text", text: v.warning}]`. The second block is plain text after the hashline block — model-visible, not hashed, not editable, not part of `normalized`. Keep backward compat by handling `typeof v === "string"` in `render`.
-- **`execute` must always return the canonical object shape.** With `exactOptionalPropertyTypes`, don't return `{text, warning: undefined}` — omit the key: `return warning ? {text, warning} : {text}`. Returning `string` when the schema is `object` fails `defineTool`'s `Output` inference (`Promise<never>`).
-- **Test helpers that wrap `defineTool` must not `String(result)`.** `wrapTool(..., String(text))` turns `{text, warning}` into `"[object Object]"` and drops the warning, causing `hashline-stable-duplicate` to see 0 `b` lines. Branch on `typeof result === "object" && "text" in result` and produce `content: [{text: r.text}, ...(r.warning ? [{text: r.warning}] : [])]`.
+---
 
-The policy extension points, in pipeline order: `tools/pre-execute`
-(allow/deny/ask waterfall), `ctx.tools.guard()` (monotonic final denial),
-`tools/execute` (wrap dispatch: deadlines, retries, metrics), `tools/post-execute`
-(replace content or value, attach context), `tools/result` (observe the frozen
-outcome only). Scope-filtered events on `agent.ctx` receive only that agent's
-calls.
+## 9. Bundles, packaging & installation
 
-## Bundles and installation
+- **Bundle:** An npm package declaring `"dsh": { "bundle": { "patch": "./cordis.patch.yml" } }`. The patch is a YAML array of plugin rows (`- insert: [{ id, name }]`).
+- **Compatibility range:** Declare supported DSH versions in `package.json` under `"engines": { "dsh": ">=0.2.0 <0.3.0" }`.
+- **Profile:** `$DSH_HOME/profiles/<name>/package.json` declares `"dsh": { "profile": { "bundles": [...] } }`. Managed via `dsh plugin --profile <name> add <pkg>`.
+- **Loading Order:**
+  1. Bundle patches in `bundles` list order (`@deepseek-ai/dsh-base` first).
+  2. Profile's own `cordis.patch.yml`.
+  3. Machine-level `$DSH_HOME/cordis.patch.yml`.
+  4. `--patch <path>` command-line overlays.
+- **Git-hosted packages:** Git installs fetch source without running `build`. Ship a `prepare` script that compiles `src/` → `lib/` self-contained. Note that pnpm ≥10 requires user approval via `allowBuilds: { <pkg>: true }` in `pnpm-workspace.yaml`.
 
-- A **bundle** is an npm package whose manifest declares
-  `"dsh": { "bundle": { "patch": "./cordis.patch.yml" } }`; the patch is a
-  YAML array of plugin rows. `- insert: [{ id, name }]` appends rows.
-- A **profile** is `$DSH_HOME/profiles/<name>` — an ordered bundle list plus
-  the user's own `cordis.patch.yml`. Layer order: bundle layers (in list
-  order) → profile patch → `$DSH_HOME/cordis.patch.yml` → `--patch` overlays.
-  A patch replaces a row's entire `config` by id (no deep merge) and can
-  `disabled: true` a row an earlier layer inserted.
-- Install with `dsh plugin --profile <name> add <pkg>` (a pnpm forwarder that
-  reconciles the bundle list against installed state). A package without the
-  `dsh.bundle` declaration installs as a plain dependency and activates
-  nothing.
-- Ship built `lib/` in `files` (plus `cordis.patch.yml`). Git-hosted installs
-  run nothing at build time, so a TypeScript bundle needs a `prepare` script
-  that transpiles self-contained — and the user must allow that build.
-- Verify a layer without booting: `dsh --profile <name> --dump-config` shows
-  each bundle's contribution under `# == <bundle>`.
+### Local verification gotcha
 
-### Local install & verification (a real deployment, not just dump-config)
-
-To run an unpublished build in a live deployment — e.g. a PR branch — install a
-packed snapshot into a profile, then boot:
-
-1. Build and pack: `npm run build` (transpile `src` → `lib/`, which is
-gitignored) then `npm pack --pack-destination /tmp` →
-`<pkg>-<version>.tgz`. The tgz is what `files` ships, so this mirrors the
-published package exactly.
-2. Install into a profile: `dsh plugin --profile <name> add /path/<pkg>.tgz`
-(the same pnpm forwarder as any install). This rewrites the profile's
-`package.json` dependency to `file:/path/<pkg>.tgz` and reconciles the
-bundle list; `dsh plugin --profile <name> add <pkg>@<range>` reverts it.
-3. **`--dump-config` does NOT boot agents.** It shows the host-plane rows
-only — it will not run `apply()` side effects, register prompt sections, or
-materialize files. Confirming the row is loaded is necessary but not
-sufficient for verifying behaviour that happens at `agent/created` or
-boot.
-4. Boot the app and observe the real effects: template files the plugin
-materializes into `$DSH_HOME/plugins/<pkg>/` on `apply()`, then per-
-preset/per-agent registrations the first session triggers. A plugin whose
-state is keyed by preset or workspace is often fastest to verify by
-materializing its sample files once, overriding one, and starting a new
-session.
-
-> **Gotcha — a same-version `file:` tgz silently serves STALE content.** pnpm's
-> content store is keyed by package@version, so `dsh plugin --profile <name> add
-> <same-version.tgz>` (and plain `pnpm add`) reports "added 0" and re-links the
-> OLD build when only the tarball's bytes changed — the `.tgz` in `package.json`
-> is unchanged, so pnpm never re-reads it. Symptom: you booted the "new" build
-> but behaviour/files are exactly as before. Force the refresh in the profile
-> with `rm -rf node_modules/<pkg> && pnpm install --force` (this re-extracts
-> from the changed tarball), or bump the version — a distinct version defeats
-> the store dedup by construction. This is why iterating on a PR build should
-> bump the version (e.g. `0.2.0-rc.0` → `0.2.0-rc.1`) or clear the entry each
-> round rather than re-`add` a rebuilt same-version snapshot.
-
-The plugin's per-preset guidance dirs (and other files it materializes on
-`apply()`) land in the plugin's SHARED home under `$DSH_HOME/plugins/<pkg>/`,
-shared across every profile — the seeding function never rewrites existing
-files, so stale seeded files from an earlier profile boot survive a fresh
-install until you delete them explicitly.
-
-Install a local build into a THROWAWAY profile (e.g. `dsh plugin --profile
-scratch-<topic> add …`) first when the change is experimental — it keeps the
-real profiles untouched and exercises the exact pack→add→boot path; delete the
-profile dir to clean up.
-
-## Session-scoped state
-
-The store for per-session state belongs under the dsh home
-(`resolveDshHome()` from `@deepseek-ai/dsh-home-paths`) keyed by
-`exec.agent?.session.id` — never a global map, which leaks state across
-sessions and dies on HMR. Registrations inside `agent.ctx.effect` unwind
-automatically; registrations on the plain context live for the process.
+pnpm's content store keys by `package@version`. Running `dsh plugin add <same-version.tgz>` reports "added 0" and serves **stale** cached bytes if only file contents changed. When testing locally:
+- Either bump the version between iterations (`0.2.0-rc.0` → `0.2.0-rc.1`), or
+- Force re-extraction: `rm -rf node_modules/<pkg> && pnpm install --force`.
+- Note: `--dump-config` only displays host-plane rows; it does not boot agents or run `agent/created` hooks. Always test in a live throwaway profile.
