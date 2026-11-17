@@ -19,7 +19,7 @@ All notable changes to this project will be documented in this file.
 
 * **edit:** reject an unnamed file at admission instead of guessing it from anchors (#117) (#120)
 * **domain-errors:** route `W_NOOP` to `MODEL` so the second identical no-op carries "Resend will reject" to the model that would resend, not a human-only `[USER]` notice — warnings are now guarded by an audience oracle that refuses model-directed text on a `USER` warning (ADR-0014 amendment) (#122)
-* **install:** gate the hashline tools on the composed preset's own tool policy — `read` stays unconditional, while `edit`, `str_replace_editor`, `undo_last_edit` and the write hook follow the preset's layer, and self-heal heals exactly the installed set; ADR-0031 records the async scope seam and the fail-open fallback (#110) (#125)
+* **install:** gate the hashline tools on the composed preset's own tool policy — `read` stays unconditional, while `edit`, `str_replace_editor`, `undo_last_edit` and the write hook follow the preset's layer, and self-heal heals exactly the installed set; ADR-0032 records the async scope seam and the fail-open fallback (#110) (#125)
 * **edit-undo:** restore the pre-edit anchor strings on undo — the restore reuses the pre-edit assignment, revives it, and retires the superseded post-edit anchors in the same store unit, reversing ADR-0017's named deviation (#111) (#126)
 * **encoding:** consume the encoding recorded by `read({ encoding })` in every mutating read, and refuse a write the text seam cannot reproduce byte-faithfully with the typed `E_ENCODING_UNWRITABLE` instead of transcoding silently; ADR-0012 amended (#112) (#127)
 
