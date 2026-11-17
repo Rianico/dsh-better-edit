@@ -38,7 +38,7 @@ import {
   prepareForSave,
 } from "./file-encoding-state.js";
 import type { FileEncodingState } from "./file-encoding-state.js";
-import { codeOf } from "./utils.js";
+import { codeOf, errCode } from "./utils.js";
 import { DomainError } from "./domain-errors.js";
 // Re-export file encoding state seam for backward compat (file-view, read-and-serve, tests)
 export type { FileEncodingState } from "./file-encoding-state.js";
@@ -99,6 +99,8 @@ export interface FileIO {
  */
 export function mapFsError(error: unknown, displayPath: string): never {
   if (error instanceof Error && typeof (error as { code?: unknown }).code === "string") {
+    // SAFETY: provider failures (FsError or the local backend's plain Error) carry a
+    // string `code` field that the published error type does not declare.
     const code = (error as unknown as { code: string }).code;
     if (code === "FS_NOT_FOUND") {
       throw new DomainError("E_NOT_FOUND", { path: displayPath });
@@ -196,7 +198,15 @@ async function restoreStrippedUtf8Bom(
   return { text: `${UTF8_BOM}${text}`, version };
 }
 
-/** FileIO over the deployment's `ctx.fs` service. */
+/**
+ * The memo/policy key for a resolved target: the backend's optional `targetKey`
+ * when it carries one (symlink/case canonicalisation), else the absolute path.
+ * One seam for the five read/write sites so the memo cannot be keyed two ways.
+ */
+function targetKeyOf(target: FsTarget, absolutePath: string): string {
+  // SAFETY: FsTarget is opaque; `targetKey` is an optional string field on the local backend.
+  return String((target as unknown as { targetKey?: string }).targetKey ?? absolutePath);
+}
 export function ctxFsIO(fs: FileSystem, ctx: Context): FileIO {
   return {
     async resolve(path, cwd, signal) {
@@ -220,9 +230,7 @@ export function ctxFsIO(fs: FileSystem, ctx: Context): FileIO {
           encodingHint,
           displayPath: absolutePath,
         });
-        const targetKey = String(
-          (target as unknown as { targetKey?: string }).targetKey ?? absolutePath,
-        );
+        const targetKey = targetKeyOf(target, absolutePath);
         recordOpenState(
           targetKey,
           decoded.text,
@@ -259,9 +267,7 @@ export function ctxFsIO(fs: FileSystem, ctx: Context): FileIO {
         const { text: restored, version } = await restoreStrippedUtf8Bom(fs, target, text, signal);
         // record file encoding state for round-trip (BOM + lineEnding)
         try {
-          const targetKey = String(
-            (target as unknown as { targetKey?: string }).targetKey ?? absolutePath,
-          );
+          const targetKey = targetKeyOf(target, absolutePath);
           const hasBOM = restored.startsWith(UTF8_BOM);
           const clean = hasBOM ? restored.slice(1) : restored;
           // use seam to record with correct lineEnding detection
@@ -277,8 +283,7 @@ export function ctxFsIO(fs: FileSystem, ctx: Context): FileIO {
         }
         return restored;
       } catch (error) {
-        const isNotText =
-          error instanceof Error && (error as unknown as { code?: string }).code === "FS_NOT_TEXT";
+        const isNotText = errCode(error) === "FS_NOT_TEXT";
         if (isNotText) {
           const cfg = loadConfig();
           const target = await fs.resolve(absolutePath, {
@@ -288,9 +293,7 @@ export function ctxFsIO(fs: FileSystem, ctx: Context): FileIO {
           const maxBytes = info?.size ?? 10 * 1024 * 1024;
           if (info && info.size !== undefined && info.size > maxBytes) throw error;
           const bytes = await fs.readBytes(target, signal, maxBytes);
-          const targetKey = String(
-            (target as unknown as { targetKey?: string }).targetKey ?? absolutePath,
-          );
+          const targetKey = targetKeyOf(target, absolutePath);
           // Delegate deterministic admission to the deep seam
           const decoded = await decodeForOpen(bytes, cfg, { displayPath: absolutePath });
           recordOpenState(
@@ -319,44 +322,42 @@ export function ctxFsIO(fs: FileSystem, ctx: Context): FileIO {
       }
     },
     async writeText(absolutePath, content, signal, exec, sandboxPolicy) {
-      // handle drift invalidation before encode — seam owns version check
-      try {
-        const targetTmp = await fs.resolve(absolutePath, {
-          ...(signal === undefined ? {} : { signal }),
-        });
-        const key = String(
-          (targetTmp as unknown as { targetKey?: string }).targetKey ?? absolutePath,
-        );
-        const info = await fs.stat(targetTmp, signal).catch(() => undefined);
-        invalidateIfStale(key, info?.version as string | undefined);
-        if (key !== absolutePath)
-          invalidateIfStale(absolutePath, info?.version as string | undefined);
-      } catch {} // biome-ignore: best-effort
-
       try {
         const target = await fs.resolve(absolutePath, {
           ...(signal === undefined ? {} : { signal }),
         });
+        const key = targetKeyOf(target, absolutePath);
+        // Drop a memo that no longer matches the on-disk version before deciding:
+        // the save verdict must describe the bytes actually being replaced.
+        const info = await fs.stat(target, signal).catch(() => undefined);
+        const version = info?.version as string | undefined;
+        invalidateIfStale(key, version);
+        if (key !== absolutePath) invalidateIfStale(absolutePath, version);
+
+        // The seam owns the round-trip verdict. It throws E_ENCODING_UNWRITABLE
+        // BEFORE the provider sees a write when the recorded encoding cannot be
+        // reproduced through the text-only write (issue #112).
+        const cfgW = loadConfig();
+        const existing = _getEncodingState(key) ?? _getEncodingState(absolutePath);
+        const prep = prepareForSave(content, existing, {
+          normalizeToUtf8: cfgW.normalizeToUtf8,
+          displayPath: absolutePath,
+        });
+
         const intent = await ctx.waterfall("fs/write-intent", target, exec, () => undefined);
-        // Seam owns Save-with-Encoding memo update and normalizeToUtf8 check.
-        // Provider expects UTF-8 string; for legacy without normalize we keep
-        // string as-is (next read re-detects via version bump).
-        try {
-          const cfgW = loadConfig();
-          const key = String(
-            (target as unknown as { targetKey?: string }).targetKey ?? absolutePath,
-          );
-          // Honor manual override if content was produced via write({encoding}) — not wired here,
-          // encodingHint is not part of writeText signature for ctxFsIO in current call sites.
-          // Check existing memo for legacy preservation.
-          const existing = _getEncodingState(key);
-          const prep = prepareForSave(content, existing, { normalizeToUtf8: cfgW.normalizeToUtf8 });
-          // For Save with Encoding hint, prepareForSave would create newState — not used in this path (tool-undo/write-hook carry hint separately)
-          if (prep.newState) _setEncodingState(key, prep.newState as FileEncodingState);
-          // content stays as UTF-8 string for provider; prep.textToWrite is same as content
-        } catch {} // biome-ignore: best-effort
-        const outcome = await fs.writeText(target, content, intent, signal, sandboxPolicy);
+        // The provider encodes the string as UTF-8; prep.textToWrite already carries
+        // the restored BOM + line endings (or the explicit normalizeToUtf8 migration).
+        const outcome = await fs.writeText(target, prep.textToWrite, intent, signal, sandboxPolicy);
         ctx.emit("fs/observed", target, { kind: "present", version: outcome.version }, exec);
+        // Memo/bytes agreement: every write records the state of the bytes just written.
+        if (prep.newState) {
+          const written: FileEncodingState = {
+            ...prep.newState,
+            version: outcome.version as string | undefined,
+          };
+          _setEncodingState(key, written);
+          if (key !== absolutePath) _setEncodingState(absolutePath, written);
+        }
       } catch (error) {
         return mapFsError(error, absolutePath);
       }
@@ -441,12 +442,20 @@ export function localIO(): FileIO {
     },
     async writeText(absolutePath, content, signal, _exec, _sandboxPolicy) {
       signal?.throwIfAborted();
-      // Invalidate stale memo before write, and handle lineEnding via seam if needed
-      try {
-        const info = await fileSnap(absolutePath).catch(() => undefined);
-        invalidateIfStale(absolutePath, info?.snapshotId);
-      } catch {}
-      await writeAtomic(absolutePath, content);
+      // Drop a stale memo, then let the seam decide: it throws E_ENCODING_UNWRITABLE
+      // before writeAtomic when the recorded encoding cannot round-trip (#112).
+      const info = await fileSnap(absolutePath).catch(() => undefined);
+      invalidateIfStale(absolutePath, info?.snapshotId);
+      const cfgL = loadConfig();
+      const prep = prepareForSave(content, _getEncodingState(absolutePath), {
+        normalizeToUtf8: cfgL.normalizeToUtf8,
+        displayPath: absolutePath,
+      });
+      await writeAtomic(absolutePath, prep.textToWrite);
+      if (prep.newState) {
+        const after = await fileSnap(absolutePath).catch(() => undefined);
+        _setEncodingState(absolutePath, { ...prep.newState, version: after?.snapshotId });
+      }
     },
     async emitObserved() {
       // No policy event gate on the host filesystem; nothing to record.

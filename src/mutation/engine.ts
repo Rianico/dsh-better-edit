@@ -29,6 +29,7 @@ import {
 import { lineHashes } from "../hashline/hash.js";
 import { AnchorSpaceExhaustedError, HASH_SPACE } from "../hashline/hash-assign.js";
 import { buildNeverServedEditHint } from "../hashline/served-guard.js";
+import { encodingHintAtVersion } from "../file-encoding-state.js";
 
 function isAnchorSpaceExhausted(e: unknown): boolean {
   return (
@@ -701,7 +702,13 @@ export async function runFileEdits(
   const absolutePath = first.absolutePath;
   const perSessionRetired = await loadRetiredAnchors(opts.sessionKey, absolutePath);
   const reservedHashes = new Set(perSessionRetired);
-  const rawText = await io.readText(absolutePath, opts.signal);
+  // Issue #112: the mutating re-read consumes the encoding recorded by `read`,
+  // so a file admitted by `read({ encoding })` decodes to the same text (and the
+  // same anchors). The version guard drops a drifted memo first — re-detect, never
+  // launder the old encoding onto changed bytes.
+  const currentVersion = await io.statVersion(absolutePath, opts.signal);
+  const encodingHint = encodingHintAtVersion(absolutePath, currentVersion);
+  const rawText = await io.readText(absolutePath, opts.signal, encodingHint);
   const {
     normalized: originalNormalized,
     bom,

@@ -89,6 +89,11 @@ export type DomainErrorCode =
   | "E_BATCH_ABORT"
   | "E_NOOP_LOOP"
   | "E_UNSUPPORTED_FILE"
+  // The text-only write seam cannot reproduce the recorded encoding byte-for-byte
+  // (UTF-16/UTF-32, or a legacy charset with non-ASCII content). A distinct code,
+  // never E_STALE_ANCHOR / E_UNSUPPORTED_FILE: the read succeeded, only the write
+  // is impossible through `writeText(target, content: string, …)`.
+  | "E_ENCODING_UNWRITABLE"
   | "E_ACCESS"
   | "E_NOT_FOUND"
   | "E_UNDO_STALE"
@@ -229,6 +234,11 @@ export interface ErrorPayloadMap {
     path: string;
     kind: "directory" | "binary" | "image";
     description?: string;
+  };
+  E_ENCODING_UNWRITABLE: {
+    path: string;
+    /** The encoding recorded when the file was read. */
+    encoding: string;
   };
   E_ACCESS: {
     path: string;
@@ -615,6 +625,13 @@ export const ERROR_REGISTRY: { [K in DomainErrorCode]: CodeSpec<ErrorPayloadMap[
     format: unsupportedFormat,
     // WHY remedy: detection classified the target — kind (directory, binary or image) proves it is not an editable text file.
     remedy: "Choose a text file and retry.",
+  },
+  E_ENCODING_UNWRITABLE: {
+    audience: "MODEL",
+    format: ({ path, encoding }) =>
+      `Cannot write ${path}: it was read as ${encoding}, and this filesystem exposes only a text write that always encodes UTF-8. Writing now would transcode the file silently, and its anchors would no longer describe the bytes on disk. Nothing was written. Set normalizeToUtf8: true (DSH_BETTER_EDIT_NORMALIZE_TO_UTF8=true) to migrate the file to UTF-8 explicitly, then retry.`,
+    // WHY remedy: the recorded encoding proves the text seam cannot reproduce it, and normalizeToUtf8 is the one setting that makes the write legal.
+    remedy: "Set normalizeToUtf8: true to migrate the file to UTF-8 explicitly, then retry.",
   },
   E_ACCESS: {
     audience: "MODEL",
