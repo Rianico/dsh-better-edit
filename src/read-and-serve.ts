@@ -207,11 +207,7 @@ export async function readAndServe(
   // `undefined`/`[]` → no windows via `hasRequestedWindows` — so no second predicate exists here
   // to disagree with it.
   if (view.fullRead) await clearDriftReported(sessionKey, view.absolutePath);
-  const autoFooter =
-    getAutoGuessFooter(view.absolutePath) ??
-    getAutoGuessFooter(rawPath) ??
-    getAutoGuessFooter(view.absolutePath.replace(/\\/g, "/")) ??
-    "";
+  const autoFooter = getAutoGuessFooter(view.absolutePath) ?? "";
   const autoWarning = autoFooter || undefined;
   const warning = promotionWarning
     ? autoWarning

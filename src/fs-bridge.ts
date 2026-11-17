@@ -199,15 +199,6 @@ async function restoreStrippedUtf8Bom(
   return { text: `${UTF8_BOM}${text}`, version };
 }
 
-/**
- * The memo/policy key for a resolved target: the backend's optional `targetKey`
- * when it carries one (symlink/case canonicalisation), else the absolute path.
- * One seam for the five read/write sites so the memo cannot be keyed two ways.
- */
-function targetKeyOf(target: FsTarget, absolutePath: string): string {
-  // SAFETY: FsTarget is opaque; `targetKey` is an optional string field on the local backend.
-  return String((target as unknown as { targetKey?: string }).targetKey ?? absolutePath);
-}
 export function ctxFsIO(fs: FileSystem, ctx: Context): FileIO {
   return {
     async resolve(path, cwd, signal) {
@@ -231,29 +222,14 @@ export function ctxFsIO(fs: FileSystem, ctx: Context): FileIO {
           encodingHint,
           displayPath: absolutePath,
         });
-        const targetKey = targetKeyOf(target, absolutePath);
         recordOpenState(
-          targetKey,
+          absolutePath,
           decoded.text,
           decoded.encoding,
           decoded.hasBOM,
           info?.version as string | undefined,
         );
-        // Gate looks up by resolved absolutePath; targetKey may differ
-        // (symlink/case) — mirror under both keys (issue #69 note).
-        if (targetKey !== absolutePath) {
-          recordOpenState(
-            absolutePath,
-            decoded.text,
-            decoded.encoding,
-            decoded.hasBOM,
-            info?.version as string | undefined,
-          );
-        }
-        if (decoded.footer) {
-          recordFooter(targetKey, decoded.footer);
-          if (targetKey !== absolutePath) recordFooter(absolutePath, decoded.footer);
-        }
+        if (decoded.footer) recordFooter(absolutePath, decoded.footer);
         return decoded.text;
       }
 
@@ -268,17 +244,12 @@ export function ctxFsIO(fs: FileSystem, ctx: Context): FileIO {
         const { text: restored, version } = await restoreStrippedUtf8Bom(fs, target, text, signal);
         // record file encoding state for round-trip (BOM + lineEnding)
         try {
-          const targetKey = targetKeyOf(target, absolutePath);
           const hasBOM = restored.startsWith(UTF8_BOM);
           const clean = hasBOM ? restored.slice(1) : restored;
           // use seam to record with correct lineEnding detection
-          recordOpenState(targetKey, clean, hasBOM ? "utf8bom" : "utf8", hasBOM, version);
-          if (targetKey !== absolutePath) {
-            recordOpenState(absolutePath, clean, hasBOM ? "utf8bom" : "utf8", hasBOM, version);
-          }
+          recordOpenState(absolutePath, clean, hasBOM ? "utf8bom" : "utf8", hasBOM, version);
           // clear any stale autoGuess footer on clean UTF-8 read
-          _clearAutoGuessFooter(targetKey);
-          if (targetKey !== absolutePath) _clearAutoGuessFooter(absolutePath);
+          _clearAutoGuessFooter(absolutePath);
         } catch {
           // best-effort
         }
@@ -294,29 +265,16 @@ export function ctxFsIO(fs: FileSystem, ctx: Context): FileIO {
           const maxBytes = info?.size ?? 10 * 1024 * 1024;
           if (info && info.size !== undefined && info.size > maxBytes) throw error;
           const bytes = await fs.readBytes(target, signal, maxBytes);
-          const targetKey = targetKeyOf(target, absolutePath);
           // Delegate deterministic admission to the deep seam
           const decoded = await decodeForOpen(bytes, cfg, { displayPath: absolutePath });
           recordOpenState(
-            targetKey,
+            absolutePath,
             decoded.text,
             decoded.encoding,
             decoded.hasBOM,
             info?.version as string | undefined,
           );
-          if (targetKey !== absolutePath) {
-            recordOpenState(
-              absolutePath,
-              decoded.text,
-              decoded.encoding,
-              decoded.hasBOM,
-              info?.version as string | undefined,
-            );
-          }
-          if (decoded.footer) {
-            recordFooter(targetKey, decoded.footer);
-            if (targetKey !== absolutePath) recordFooter(absolutePath, decoded.footer);
-          }
+          if (decoded.footer) recordFooter(absolutePath, decoded.footer);
           return decoded.text;
         }
         return mapFsError(error, absolutePath);
@@ -327,19 +285,17 @@ export function ctxFsIO(fs: FileSystem, ctx: Context): FileIO {
         const target = await fs.resolve(absolutePath, {
           ...(signal === undefined ? {} : { signal }),
         });
-        const key = targetKeyOf(target, absolutePath);
         // Drop a memo that no longer matches the on-disk version before deciding:
         // the save verdict must describe the bytes actually being replaced.
         const info = await fs.stat(target, signal).catch(() => undefined);
         const version = info?.version as string | undefined;
-        invalidateIfStale(key, version);
-        if (key !== absolutePath) invalidateIfStale(absolutePath, version);
+        invalidateIfStale(absolutePath, version);
 
         // The seam owns the round-trip verdict. It throws E_ENCODING_UNWRITABLE
         // BEFORE the provider sees a write when the recorded encoding cannot be
         // reproduced through the text-only write (issue #112).
         const cfgW = loadConfig();
-        const existing = _getEncodingState(key) ?? _getEncodingState(absolutePath);
+        const existing = _getEncodingState(absolutePath);
         const prep = prepareForSave(content, existing, {
           normalizeToUtf8: cfgW.normalizeToUtf8,
           displayPath: absolutePath,
@@ -356,8 +312,7 @@ export function ctxFsIO(fs: FileSystem, ctx: Context): FileIO {
             ...prep.newState,
             version: outcome.version as string | undefined,
           };
-          _setEncodingState(key, written);
-          if (key !== absolutePath) _setEncodingState(absolutePath, written);
+          _setEncodingState(absolutePath, written);
         }
       } catch (error) {
         return mapFsError(error, absolutePath);

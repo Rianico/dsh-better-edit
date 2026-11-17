@@ -159,7 +159,7 @@ describe("ctxFsIO", () => {
     const io = ctxFsIO(fs, ctx);
     const text = await io.readText("/abs/file.txt", undefined, "utf8");
     expect(text).toBe("hello");
-    expect(getEncodingState("tk:/abs/file.txt")).toBeDefined();
+    expect(getEncodingState("/abs/file.txt")).toBeDefined();
   });
 
   it("readText explicit encodingHint bad encoding maps to FS_BAD_ENCODING", async () => {

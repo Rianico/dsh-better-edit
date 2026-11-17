@@ -49,13 +49,13 @@ export function encodingHintAtVersion(
   currentVersion: string | undefined,
 ): string | undefined {
   invalidateIfStale(targetKey, currentVersion);
-  const encoding = encodingMemo.get(targetKey)?.encoding;
+  const encoding = getEncodingState(targetKey)?.encoding;
   if (encoding === undefined || encoding === "utf8" || encoding === "utf8bom") return undefined;
   return encoding;
 }
 
 // ---------------------------------------------------------------------------
-// State — per-targetKey, session-TTL, version-invalidated
+// State — per-file memo identity, session-TTL, version-invalidated
 // ---------------------------------------------------------------------------
 
 export interface FileEncodingState {
@@ -68,36 +68,52 @@ export interface FileEncodingState {
 const encodingMemo = new Map<string, FileEncodingState>();
 const autoGuessFooterMemo = new Map<string, string>();
 
+/**
+ * The memo identity of a file: its absolute path, slash-normalized (ADR-0038).
+ *
+ * This module is the only key construction site. A caller passes whatever path it
+ * holds — `FileIO.resolve` already returned `fs.processPath(target)` — and gets
+ * the same identity back, so no reader has to probe a second spelling: a memo
+ * keyed two ways makes every lookup a ladder and every write a dual write, and
+ * the two spellings then have to be kept in sync by hand. Backend canonicaliza-
+ * tion (symlink/case, the backend's opaque `targetKey`) is the backend's view of
+ * the target, not the memo's identity; it does not belong in this key.
+ */
+function keyOf(path: string): string {
+  return String(path).replace(/\\/g, "/");
+}
+
 export function getEncodingState(targetKey: string): FileEncodingState | undefined {
-  return encodingMemo.get(targetKey);
+  return encodingMemo.get(keyOf(targetKey));
 }
 
 export function setEncodingState(targetKey: string, state: FileEncodingState): void {
-  encodingMemo.set(targetKey, state);
+  encodingMemo.set(keyOf(targetKey), state);
 }
 
 export function clearEncodingState(targetKey?: string): void {
-  if (targetKey) encodingMemo.delete(targetKey);
+  if (targetKey) encodingMemo.delete(keyOf(targetKey));
   else encodingMemo.clear();
 }
 
 export function getAutoGuessFooter(targetKey: string): string | undefined {
-  return autoGuessFooterMemo.get(targetKey);
+  return autoGuessFooterMemo.get(keyOf(targetKey));
 }
 
 export function setAutoGuessFooter(targetKey: string, footer: string): void {
-  autoGuessFooterMemo.set(targetKey, footer);
+  autoGuessFooterMemo.set(keyOf(targetKey), footer);
 }
 
 export function clearAutoGuessFooter(targetKey?: string): void {
-  if (targetKey) autoGuessFooterMemo.delete(targetKey);
+  if (targetKey) autoGuessFooterMemo.delete(keyOf(targetKey));
   else autoGuessFooterMemo.clear();
 }
 
 /** Invalidate memo when FsVersion drifted (ADR-0012). */
 export function invalidateIfStale(targetKey: string, currentVersion: string | undefined): void {
-  const memo = encodingMemo.get(targetKey);
-  if (memo && memo.version !== currentVersion) encodingMemo.delete(targetKey);
+  const key = keyOf(targetKey);
+  const memo = encodingMemo.get(key);
+  if (memo && memo.version !== currentVersion) encodingMemo.delete(key);
 }
 
 // ---------------------------------------------------------------------------
@@ -356,7 +372,8 @@ export async function decodeForOpen(
 }
 
 // ---------------------------------------------------------------------------
-// Recording helpers — caller supplies targetKey + version after decode
+// Recording helpers — caller supplies the file path + version after decode
+// (identity is `keyOf`'d inside the seam, so one path is one memo entry)
 // ---------------------------------------------------------------------------
 
 export function recordOpenState(

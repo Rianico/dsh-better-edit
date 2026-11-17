@@ -190,7 +190,7 @@ describe("ctxFsIO readText", () => {
     expect(fs.readBytes).not.toHaveBeenCalled();
     // A version-only stat is required so the read-first gate records the real
     // version instead of undefined (issue #69 fix 2) — drift stays detectable.
-    expect(getEncodingState("tk-1")?.version).toBe("v1");
+    expect(getEncodingState("/abs/file.txt")?.version).toBe("v1");
   });
 });
 

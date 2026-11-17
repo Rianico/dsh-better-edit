@@ -225,7 +225,7 @@ describe("coverage-agent-e fs-bridge", () => {
     const io = ctxFsIO(fakeFs, fakeCtx);
     const txt = await io.readText("/abs/gbk2.txt");
     expect(txt).toContain("你好");
-    expect(getEncodingState("tk:/abs/gbk2.txt")).toBeDefined();
+    expect(getEncodingState("/abs/gbk2.txt")).toBeDefined();
     delete process.env.DSH_BETTER_EDIT_AUTO_GUESS_ENCODING;
     _resetConfigCache();
   });

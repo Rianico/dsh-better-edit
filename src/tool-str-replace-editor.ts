@@ -176,13 +176,8 @@ function restoreForSave(content: string, absolutePath: string): string {
   }).textToWrite;
 }
 
-function autoGuessWarning(absolutePath: string, rawPath: string): string | undefined {
-  return (
-    getAutoGuessFooter(absolutePath) ??
-    getAutoGuessFooter(rawPath) ??
-    getAutoGuessFooter(absolutePath.replace(/\\/g, "/")) ??
-    undefined
-  );
+function autoGuessWarning(absolutePath: string): string | undefined {
+  return getAutoGuessFooter(absolutePath);
 }
 
 export function buildStrReplaceEditorTool(io: FileIO, sandbox: FsSandboxController) {
@@ -282,7 +277,7 @@ export function buildStrReplaceEditorTool(io: FileIO, sandbox: FsSandboxControll
               }
             }
           }
-          const warning = autoGuessWarning(absolutePath, rawPath);
+          const warning = autoGuessWarning(absolutePath);
           return warning ? { text: out, warning } : { text: out };
         }
 
