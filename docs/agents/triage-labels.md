@@ -9,10 +9,10 @@ Every triaged issue carries exactly one category label and one state label.
 
 ## Category roles
 
-| Role          | Label           | Meaning                            |
-| ------------- | --------------- | ---------------------------------- |
-| `bug`         | `bug`           | Something is broken                |
-| `enhancement` | `enhancement`   | New feature or improvement         |
+| Role          | Label           | Meaning                             |
+| ------------- | --------------- | ----------------------------------- |
+| `bug`         | `bug`           | Something is broken                 |
+| `enhancement` | `enhancement`   | New feature or improvement          |
 | (repo-local)  | `documentation` | Documentation-only change or defect |
 
 `documentation` is a repo-local category with no canonical role name. Use it
