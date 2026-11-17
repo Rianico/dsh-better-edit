@@ -11,6 +11,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.2.4] - 2026-11-17
+
 ### Tests
 
 * **edit:** pin the applied-vs-rejection notice tier (#115) (#121)
