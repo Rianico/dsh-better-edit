@@ -4,11 +4,13 @@
  * Version semantics belong to `str-replace-version-gate.test.ts`; sandbox
  * escalation policy to `str-replace-sandbox-policy.test.ts`. This file covers
  * the remaining gates: encoding auto-guess on `view` (its warning is a second
- * rendered block), the blind gate on `insert`, and `old_str`'s exactly-once
- * rule.
+ * rendered block), the blind gate on `insert` and `str_replace` (both reject ⇒
+ * no write), BOM round-tripping through `view` → `str_replace`, and `old_str`'s
+ * exactly-once rule.
  * @module dsh-better-edit/str-replace-editor.gates.test
  */
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { readFile } from "node:fs/promises";
 import type { ToolRunContext } from "@deepseek-ai/dsh-tools";
 import iconv from "iconv-lite";
 import { localIO, clearAutoGuessFooter, clearEncodingState } from "../../src/fs-bridge.js";
@@ -77,13 +79,48 @@ describe("str_replace_editor — encoding auto-guess on view", () => {
 });
 
 describe("str_replace_editor — write gates", () => {
-  it("rejects a blind insert without a prior view", async () => {
+  it("rejects a blind str_replace without a prior view, leaving the file untouched", async () => {
+    await withTempFile("blind.txt", "alpha\nbeta\n", async ({ cwd, path }) => {
+      const tool = buildStrReplaceEditorTool(localIO(), makeTestSandbox());
+      const params = { command: "str_replace", path, old_str: "beta", new_str: "BETA" };
+      await expect(tool.execute(params, execFor(cwd, params))).rejects.toThrow(
+        /E_BLIND_REPLACE.*has not been viewed/,
+      );
+      // The gate fires before any write: reject ⇒ byte-identical file.
+      expect(await readFile(path, "utf-8")).toBe("alpha\nbeta\n");
+    });
+  });
+
+  it("rejects a blind insert without a prior view, leaving the file untouched", async () => {
     await withTempFile("blind2.txt", "a\nb\n", async ({ cwd, path }) => {
       const tool = buildStrReplaceEditorTool(localIO(), makeTestSandbox());
       const params = { command: "insert", path, insert_line: 1, new_str: "x" };
       await expect(tool.execute(params, execFor(cwd, params))).rejects.toThrow(
         /E_BLIND_REPLACE.*has not been viewed/,
       );
+      // Same no-write guarantee as the blind str_replace cell above.
+      expect(await readFile(path, "utf-8")).toBe("a\nb\n");
+    });
+  });
+
+  it("preserves a UTF-8 BOM across view → str_replace", async () => {
+    const seeded = Buffer.concat([
+      Buffer.from([0xef, 0xbb, 0xbf]),
+      Buffer.from("hello\nworld\n", "utf-8"),
+    ]);
+    await withTempBytes("bom.txt", seeded, async ({ cwd, path }) => {
+      const tool = buildStrReplaceEditorTool(localIO(), makeTestSandbox());
+      const viewParams = { command: "view", path };
+      await tool.execute(viewParams, execFor(cwd, viewParams));
+      const replaceParams = { command: "str_replace", path, old_str: "world", new_str: "there" };
+      const res = (await tool.execute(replaceParams, execFor(cwd, replaceParams))) as unknown as {
+        text: string;
+      };
+      expect(res.text).toMatch(/Replaced 1 occurrence/);
+      // The BOM is encoding scaffolding, not content: the rewrite must round-trip it.
+      const raw = await readFile(path);
+      expect([raw[0], raw[1], raw[2]]).toEqual([0xef, 0xbb, 0xbf]);
+      expect(raw.toString("utf-8")).toContain("there");
     });
   });
 

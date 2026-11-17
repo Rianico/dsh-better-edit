@@ -76,7 +76,13 @@ describe("large-file heavy-edit integration (deadlock repro #51)", () => {
       const reserved = retired.length + servedCount;
       expect(reserved).toBeLessThan(HASH_SPACE);
       expect(retired.length).toBeLessThan(N * 2);
-      expect(retired.length).toBeLessThan(5_000);
+      // Deleted original: < 15_000 retired at 20_000 lines / 100 rewrites → 0.75
+      // retired anchors per line. Same proportion here: 0.75 × 2_000 = 1_500.
+      // Measured 0 (every paged serve is reused; nothing is displaced), so the cap
+      // is a growth bound: this run serves ~13_000 lines in total (2_000 baseline
+      // + 20 × 550 during the rewrites), 8.7× the cap, so per-serve retirement
+      // regression fails it.
+      expect(retired.length).toBeLessThan(1_500);
 
       for (let off = 1; off <= N; off += 500) {
         await readAndServe(io, filePath, tmpDir, { sessionKey, offset: off, limit: 500 });
@@ -122,7 +128,11 @@ describe("large-file heavy-edit integration (deadlock repro #51)", () => {
       const served = await loadServed(sessionKey, filePath);
       const servedCount = served.filter((h) => h !== null).length;
       expect(retired.length + servedCount).toBeLessThan(HASH_SPACE);
-      expect(retired.length).toBeLessThan(20_000);
+      // Same 0.75-retired-per-line proportion as the deleted original (15_000 at
+      // 20_000 lines / 100 rewrites): 0.75 × 5_000 = 3_750. Measured 0, so the cap
+      // is a growth bound: this run serves ~35_000 lines in total (5_000 baseline
+      // + 20 × 1_500 during the rewrites), 9.3× the cap.
+      expect(retired.length).toBeLessThan(3_750);
 
       const finalText = await readFile(filePath, "utf-8");
       const finalHashes = await lineHashes(finalText, filePath, {
@@ -132,8 +142,13 @@ describe("large-file heavy-edit integration (deadlock repro #51)", () => {
       let kept = 0;
       for (let i = 0; i < N; i++) if (finalHashes[i] === baselineHashes[i]) kept++;
       // 20 scattered 500-line rewrites cannot touch every line, so stable reuse
-      // must have survived for the untouched ones (S threading).
-      expect(kept).toBeGreaterThan(0);
+      // must survive for the untouched ones (S threading). The windows start at
+      // edit × 199 and span 500 lines, so they cover [0, 3_781 + 500) = 4_281 of
+      // the 5_000 lines and leave 719 alone — measured kept = 719, i.e. the whole
+      // untouched set. Pin half of it (350 ≈ 7% of the file, a 2.05× margin): a
+      // reuse regression that loses even half the stable anchors fails, while the
+      // threshold stays a real fraction of the file rather than > 0.
+      expect(kept).toBeGreaterThan(350);
 
       for (let off = 1; off <= N; off += 1_000)
         await readAndServe(io, filePath, tmpDir, { sessionKey, offset: off, limit: 1_000 });
