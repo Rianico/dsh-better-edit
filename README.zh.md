@@ -58,7 +58,7 @@ Hashline 用两个哈希代替旧文本——**编辑 token 减少 31%**（多�
 > - **自愈而非静默。** 外部编辑永不被覆盖——过期范围被拒绝并以全新 `HASH│content` 重发重试；孤儿 served 条目无需全量重读即可自愈（ADR-0008）。Fail-closed，而非自动合并。
 > - **格式化容忍。** ASCII 空白不敏感锚点在 `prettier`/`black`/`eslint --fix` 之间存活（`formatOnSave`、监听、CI）。仅限 linter 场景——字符串内的空白不区分（ADR-0005）。
 > - **链式与批量，无重读仪式。** 未受影响行的锚点保持有效；diff/回显/拒绝行即视为已提供。`edit` 最多 32 个同文件编辑原子执行（`[E_BATCH_ABORT]`），相比 `str_replace` 信封约 -40%。
-> - **读守卫。** 从未展示过的行永不被编辑——`[E_RANGE_UNSERVED]`/`[E_RANGE_UNVERIFIED]`/`[E_STALE_ANCHOR]` 在写入前拒绝，随后 `reject-and-serve`。
+> - **读守卫。** 从未展示过的行永不被编辑——`[E_UNSERVED_RANGE]`/`[E_UNVERIFIED_RANGE]`/`[E_STALE_ANCHOR]` 在写入前拒绝，随后 `reject-and-serve`。
 > - **更少往返。** 实测：同样外部漂移重构，OMP 封装需 6 次调用，hashline 仅 3 次；信封 vs `str_replace` 的节省是稳定值—— upstream 电池可复现（算法相同）。
 
 不适用于单行小改动（接近持平）或新建文件（用 `write`）。它的价值在长会话与结构性编辑中体现——任何不允许改错行的场景。
@@ -225,8 +225,8 @@ token 基准测试衡量的是模型发出的负载——它假设模型每次�
 | 错误地址（锚点/行号差一行）  | **不可能**——锚点解析到具体行；解析出的每一行都对照已提供状态校验，在**写入任何内容之前**被拒绝 | **可能**——当前标签下的错误行号会**悄悄**落到错误位置；标签只证明文件版本，从不证明行       |
 | 模型查看后文件在磁盘上被改动 | 硬拒绝 + 回传新锚点（reject-and-serve）；重试无需 `read`                                       | 标签不匹配 → 拒绝**或**对未知的当前内容做尽力而为的三方合并                                |
 | 上方编辑导致文件移位         | 什么都不移位——锚点是内容地址；diff 提供新锚点                                                  | **每次编辑都重新编号**——“RE-GROUND AFTER EVERY EDIT” 是它自己的头号规则；账由模型记        |
-| 重复/相同文本                | 每行哈希唯一（冲突已消解）；歧义 → `[E_AMBIGUOUS_ANCHOR]`                                      | 基于位置，重复不会混淆——但位置本身未被校验                                                 |
-| 从未展示给模型的行           | `[E_RANGE_UNSERVED]`——硬拒绝并回传新锚点                                                       | 未展示的 hunk 被拒绝——同样依赖模型知道自己看过什么                                         |
+| 重复/相同文本                | 每行哈希唯一（冲突已消解）；歧义 → `[E_STALE_ANCHOR]`                                          | 基于位置，重复不会混淆——但位置本身未被校验                                                 |
+| 从未展示给模型的行           | `[E_UNSERVED_RANGE]`——硬拒绝并回传新锚点                                                       | 未展示的 hunk 被拒绝——同样依赖模型知道自己看过什么                                         |
 | 表达式中间 / 错误的块节点    | 无关——任何已校验的行范围都合法                                                                 | 语法规则 + `PUT N*:` 节点选择；点错（锚在 `def` 会让装饰器变成孤儿）会悄悄落错；无语法检查 |
 | 多编辑批量中途失败           | `edit` 多条目——原子、全有或全无；失败项以新锚点回显                                            | 多段补丁先预检——同样原子                                                                   |
 
@@ -274,29 +274,37 @@ token 基准测试衡量的是模型发出的负载——它假设模型每次�
 
 ### 错误码
 
-| 代码                   | 含义                                                                                                                         |
-| ---------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
-| `[E_ACCESS]`           | 文件存在但工具不可读/不可写。                                                                                                |
-| `[E_AMBIGUOUS_ANCHOR]` | 一个哈希匹配当前多行；调用 `read` 获取新锚点。                                                                               |
-| `[E_BAD_OP]`           | 范围结束先于范围开始（首尾颠倒时会自动纠正）。                                                                               |
-| `[E_BAD_REF]`          | `remove_from`/`remove_to` 不是裸 3 字符哈希。                                                                                |
-| `[E_BAD_SHAPE]`        | 请求/字段形态错误（未知字段、缺少 path、非字符串文本等）。                                                                   |
-| `[E_BARE_HASH_PREFIX]` | `HASH│` 前缀被粘贴进 `replacement_text`（自动纠正）。                                                                        |
-| `[E_BATCH_ABORT]`      | 批次内某项失败；整个批次被拒绝，未写入任何内容。                                                                             |
-| `[E_FILE_TOO_LARGE]`   | 文件超过 hashline 行数上限；请改用 `write` 或其他方式。                                                                      |
-| `[E_INVALID_PATCH]`    | diff 预览标记被粘贴进 `replacement_text`（自动纠正）。                                                                       |
-| `[E_NOOP_LOOP]`        | 完全相同的编辑反复不产生任何变化；再次提交会被拒绝。                                                                         |
-| `[E_NOT_FOUND]`        | 文件不存在。                                                                                                                 |
-| `[E_NOT_OBSERVED]`     | 该文件在本会话中尚未被观察（先读后写策略）；请先调用 `read`。                                                                |
-| `[E_NOT_TEXT]`         | 路径是目录、二进制或非 UTF-8 文件；hashline 只能编辑文本。                                                                   |
-| `[E_WRITE_HASH_ECHO]`  | 内置 `write` 候选内容复制了同一会话、路径及行位置所提供的 `HASH│` 预览锚点。写入在执行前被拒绝；移除整条复制的锚点链后重试。 |
-| `[E_RANGE_STALE]`      | 某行自被读取以来在磁盘上发生变化；范围以全新锚点回显。                                                                       |
-| `[E_RANGE_UNSERVED]`   | 范围内包含从未提供给模型的行。                                                                                               |
-| `[E_RANGE_UNVERIFIED]` | 边界锚点无法对照已提供状态验证。                                                                                             |
-| `[E_STALE_ANCHOR]`     | 锚点不再能解析；调用 `read` 获取新锚点。                                                                                     |
-| `[E_UNDO_STALE]`       | 无法撤销：编辑之后文件被修改（或删除）。                                                                                     |
-| `[E_UNDO_UNAVAILABLE]` | 撤销历史无法持久化；编辑未被应用。                                                                                           |
-| `[E_WOULD_EMPTY]`      | 编辑会把非空文件清空；请用 `write` 清空。                                                                                    |
+| 代码                      | 含义                                                | 处理方式                                         |
+| ------------------------- | --------------------------------------------------- | ------------------------------------------------ |
+| `[E_BAD_PAYLOAD]`         | 请求形态错误（未知字段、缺少 `file`、元组位置错误） | 修正形态后重发                                   |
+| `[E_MALFORMED_ANCHOR]`    | 锚点不是裸 3 字符锚点（粘贴的块或伪锚点）           | 传裸锚点后重试                                   |
+| `[E_UNKNOWN_ANCHOR]`      | 该锚点从未为本文件提供过                            | `read` 获取新锚点                                |
+| `[E_FOREIGN_ANCHOR]`      | 该锚点属于其他文件或会话                            | 使用本文件提供的锚点                             |
+| `[E_STALE_ANCHOR]`        | 锚点已无法解析（哈希/已退役/规范化失配）            | `read` 获取新锚点                                |
+| `[E_AMBIGUOUS_MATCH]`     | `str_replace` 的 `old_str` 命中多处                 | 扩大 `old_str` 上下文                            |
+| `[E_NO_MATCH]`            | `str_replace` 的 `old_str` 不存在                   | 重新 `view` 后重试                               |
+| `[E_EMPTY_RANGE]`         | 编辑会清空非空文件                                  | 改用 `write`                                     |
+| `[E_STALE_RANGE]`         | 已提供的范围在磁盘上发生变化                        | 使用回显的新行                                   |
+| `[E_UNSERVED_RANGE]`      | 范围内包含从未提供的行                              | `read` 该范围                                    |
+| `[E_UNVERIFIED_RANGE]`    | 边界锚点无法对照已提供状态校验                      | `read` 后重试                                    |
+| `[E_SUSPICIOUS_TEXT]`     | 替换文本含复制的 `HASH│` 或 diff 预览标记           | 移除后重发                                       |
+| `[E_BLIND_REPLACE]`       | `write` / `str_replace_editor` 在观察文件前执行     | 先 `read` / `view`                               |
+| `[E_TARGET_LOST]`         | 目标在操作中途消失或身份改变                        | `read` 后重新定位                                |
+| `[E_BATCH_ABORT]`         | 批次中某项失败，未写入任何内容                      | 修正该项后重发批次                               |
+| `[E_NOOP_LOOP]`           | 同一空操作编辑被反复提交                            | 修改编辑内容                                     |
+| `[E_ACCESS]`              | 路径不可读或不可写                                  | 修正权限                                         |
+| `[E_NOT_FOUND]`           | 文件不存在                                          | 检查父目录                                       |
+| `[E_FILE_EXISTS]`         | `create` 目标已存在                                 | 换一个路径                                       |
+| `[E_UNSUPPORTED_FILE]`    | 目录、二进制或非文本文件                            | 选择文本文件                                     |
+| `[E_ENCODING_UNWRITABLE]` | 记录的编码无法由 UTF-8 文本写入复现                 | 设 `normalizeToUtf8: true` 迁移，或在插件外编辑  |
+| `[E_UNSUPPORTED]`         | `str_replace_editor undo_edit` 未实现               | 改用 `undo_last_edit`                            |
+| `[E_BAD_COMMAND]`         | 未知的 `str_replace_editor` 命令                    | 使用 `view`、`str_replace`、`insert` 或 `create` |
+| `[E_LARGE_FILE]`          | 超过行数或锚点空间上限                              | 改用 `write` 或拆分文件                          |
+| `[E_UNDO_STALE]`          | 编辑之后文件被修改                                  | 无法撤销；重新读取                               |
+| `[E_UNDO_UNAVAILABLE]`    | 撤销历史无法持久化                                  | 重试编辑                                         |
+| `[E_UNDO_NOT_RECORDED]`   | 回滚已落盘但存储未能记录                            | 重新读取；下次撤销会清掉旧历史                   |
+| `[E_STORE_NEWER_VERSION]` | 存储由更新版本的插件写入                            | 升级插件，或改用其他存储目录                     |
+| `[E_UNKNOWN]`             | 未预期的内部错误                                    | 上报；消息原文保留                               |
 
 ## 如何替换内置工具
 
