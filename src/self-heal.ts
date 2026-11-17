@@ -8,6 +8,8 @@
  * @module dsh-better-edit/self-heal
  */
 
+import { getAgentScopedToolLayer, reclaimToolEntry } from "./reclaim.js";
+
 export interface SelfHealOptions {
   // SAFETY: Cordis Context.get is service-specific and returns an untyped service instance — narrow immediately at use site to the tools service shape
   agentId: string;
@@ -59,12 +61,7 @@ export function createSelfHealWatcher(options: SelfHealOptions): () => void {
   const stop = agentCtx.on("tools/change", () => {
     try {
       if (selfHealDisabled) return;
-      // SAFETY: toolsSvc is the DSH tools service — shape is `layers.scoped: Map<agent, {tools}>` per cordis internals; narrow at boundary
-      const layer = (
-        toolsSvc as unknown as { layers?: { scoped?: Map<unknown, { tools?: unknown }> } }
-      )?.layers?.scoped?.get?.(agent)?.tools as
-        | { get?: (name: string) => unknown; data?: Map<string, unknown> }
-        | undefined;
+      const layer = getAgentScopedToolLayer(toolsSvc, agent);
       if (!layer) return;
       const currentRead = layer?.get?.("read") ?? layer?.data?.get?.("read");
       const currentEdit = layer?.get?.("edit") ?? layer?.data?.get?.("edit");
@@ -98,19 +95,12 @@ export function createSelfHealWatcher(options: SelfHealOptions): () => void {
       const restoreCount = healCount;
       queueMicrotask(() => {
         try {
-          // SAFETY: re-read layer inside microtask — same shape as above
-          const currentLayer = (
-            toolsSvc as unknown as { layers?: { scoped?: Map<unknown, { tools?: unknown }> } }
-          )?.layers?.scoped?.get?.(agent)?.tools as
-            | { get?: (name: string) => unknown; data?: Map<string, unknown> }
-            | undefined;
+          const currentLayer = getAgentScopedToolLayer(toolsSvc, agent);
           if (!currentLayer) return;
           const restoreTool = (name: string, def: unknown, toolLabel: string): boolean => {
-            try {
-              (currentLayer as { data?: Map<string, unknown> })?.data?.delete?.(name);
-            } catch {
-              // ignore — best-effort delete of intruding entry
-            }
+            // Best-effort delete of an intruding entry; a failed delete
+            // surfaces through the register throw below.
+            reclaimToolEntry(currentLayer, name);
             try {
               agentCtx.tools.register(def);
             } catch (e) {
