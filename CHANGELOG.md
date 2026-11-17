@@ -19,6 +19,7 @@ All notable changes to this project will be documented in this file.
 
 * **edit:** reject an unnamed file at admission instead of guessing it from anchors (#117) (#120)
 * **domain-errors:** route `W_NOOP` to `MODEL` so the second identical no-op carries "Resend will reject" to the model that would resend, not a human-only `[USER]` notice — warnings are now guarded by an audience oracle that refuses model-directed text on a `USER` warning (ADR-0014 amendment) (#122)
+* **install:** gate the hashline tools on the composed preset's own tool policy — `read` stays unconditional, while `edit`, `str_replace_editor`, `undo_last_edit` and the write hook follow the preset's layer, and self-heal heals exactly the installed set; ADR-0031 records the async scope seam and the fail-open fallback (#110) (#125)
 
 ## [1.2.3] - 2026-11-16
 
