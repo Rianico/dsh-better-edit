@@ -19,6 +19,7 @@ All notable changes to this project will be documented in this file.
 
 * **edit:** reject an unnamed file at admission instead of guessing it from anchors (#117) (#120)
 * **domain-errors:** route `W_NOOP` to `MODEL` so the second identical no-op carries "Resend will reject" to the model that would resend, not a human-only `[USER]` notice — warnings are now guarded by an audience oracle that refuses model-directed text on a `USER` warning (ADR-0014 amendment) (#122)
+* **encoding:** consume the encoding recorded by `read({ encoding })` in every mutating read, and refuse a write the text seam cannot reproduce byte-faithfully with the typed `E_ENCODING_UNWRITABLE` instead of transcoding silently; ADR-0012 amended (#112) (#127)
 
 ## [1.2.3] - 2026-11-16
 
