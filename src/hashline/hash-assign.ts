@@ -31,6 +31,8 @@ export function getH(): Hasher {
 }
 const hasherP: Promise<Hasher> = xxhash()
   .then((h) => {
+    // SAFETY: `xxhash()` resolves the package's own hasher object, whose declaration types the
+    // wider lazy-loaded API surface; the assertion narrows it to the two methods `getH()` exposes.
     hasher = h as unknown as Hasher;
     return hasher;
   })
@@ -78,6 +80,57 @@ export class AnchorSpaceExhaustedError extends DomainError<"E_LARGE_FILE"> {
     this.retiredCount = retiredCount;
     this.servedCount = servedCount;
   }
+}
+
+/**
+ * The ONE anchor-space-exhaustion test, owned by the error's own module: "is this
+ * exhaustion?" (a typing question).
+ *
+ * WHY single: the classification lives beside the error it classifies, and no site keeps a private
+ * copy — the two translate blocks below ask exactly this question, and the promotion sites ask its
+ * strict subset (`isPromotableAnchorSpaceExhaustion`). Each of the five sites used to carry its own
+ * copy (or an inline variant) of the test; a rewording of the allocator's probe message in one copy
+ * would silently change a decision at the others, and the failure mode is a raw `Error` reaching
+ * the model instead of the typed refusal.
+ *
+ * Members: the typed `AnchorSpaceExhaustedError` (already translated), the allocator wording
+ * `nextZeroBit` raises when the probe wraps the whole space ("probing failed over"), and that
+ * same refusal's formatted headline ("Cannot allocate a unique hash anchor", which survives a
+ * re-wrap that costs the error its class).
+ */
+export function isAnchorSpaceExhaustion(e: unknown): boolean {
+  if (e instanceof AnchorSpaceExhaustedError) return true;
+  return (
+    e instanceof Error &&
+    (e.message.includes("probing failed over") || e.message.includes("Cannot allocate"))
+  );
+}
+
+/**
+ * Promotion's narrower question: is this an exhaustion that clearing retired anchors and
+ * retrying could actually cure?
+ *
+ * WHY a second predicate, not the one above: `isAnchorSpaceExhaustion` answers "is this
+ * exhaustion" — a typing question, asked by the two translate blocks that must turn any
+ * allocator wording into the typed `E_LARGE_FILE`. Promotion asks a different question, and the
+ * two answers differ on every refusal whose subject is the file's line count rather than the
+ * anchor space: exhaustion and the line cap are the same diagnosis (a file too long to hash),
+ * but promotion cannot out-grow the line cap, because the retry re-reads the same oversized file
+ * and throws the identical error — with this `(session, path)`'s retired anchors now cleared, so
+ * the failed read has also degraded its own stale-anchor checks. "Can promotion help?" is
+ * therefore the strict subset: the probe wrapping the whole space.
+ *
+ * The line cap is a capacity refusal, never an identity one, and its wording is not the hash-space
+ * one: `eLargeFileMsg` formats with `limitKind: "lines"` ("<path> has N lines, exceeding the
+ * N-line limit"), so `isAnchorSpaceExhaustion` already declines it; "Cannot allocate a unique hash
+ * anchor" is `AnchorSpaceExhaustedError`'s own headline, reachable as message-only text on a
+ * re-wrap. Declining both keeps promotion off every refusal a retry cannot out-grow, and leaves
+ * the line cap free to be re-formatted through the hash-space wording without promotion silently
+ * becoming a hazard-clear.
+ */
+export function isPromotableAnchorSpaceExhaustion(e: unknown): boolean {
+  if (e instanceof AnchorSpaceExhaustedError) return true;
+  return e instanceof Error && e.message.includes("probing failed over");
 }
 
 export function idxToHash(idx: number): string {
@@ -172,9 +225,9 @@ export function lineHashesPure(
       hashes[i] = h;
     }
   } catch (e: unknown) {
-    const msg = e instanceof Error ? e.message : String(e);
+    // Rethrow identity: an already-typed exhaustion keeps its counts untouched.
     if (e instanceof AnchorSpaceExhaustedError) throw e;
-    if (msg.includes("probing failed over") || msg.includes("Cannot allocate")) {
+    if (isAnchorSpaceExhaustion(e)) {
       const rc = retiredCount ?? reservedHashes.size;
       const sc = servedCount ?? 0;
       throw new AnchorSpaceExhaustedError(rc, sc);
@@ -288,9 +341,9 @@ export function mapStableHashes(
       newHashes[i] = h;
     }
   } catch (e: unknown) {
-    const msg = e instanceof Error ? e.message : String(e);
+    // Rethrow identity: an already-typed exhaustion keeps its counts untouched.
     if (e instanceof AnchorSpaceExhaustedError) throw e;
-    if (msg.includes("probing failed over") || msg.includes("Cannot allocate")) {
+    if (isAnchorSpaceExhaustion(e)) {
       const rc = retiredCount ?? reservedHashes.size;
       const sc = servedCount ?? 0;
       throw new AnchorSpaceExhaustedError(rc, sc);

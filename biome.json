@@ -26,12 +26,6 @@
           "level": "error",
           "options": {
             "paths": {
-              "./hashline/served.js": "Use ./hashline/anchor-pipeline.js \u2014 served is private to AnchorPipeline seam",
-              "./hashline/served": "Use ./hashline/anchor-pipeline.js \u2014 served is private",
-              "../hashline/served.js": "Use ../hashline/anchor-pipeline.js \u2014 served is private",
-              "../hashline/served": "Use ../hashline/anchor-pipeline.js \u2014 served is private",
-              "../../src/hashline/served.js": "Use ../../src/hashline/anchor-pipeline.js \u2014 served is private",
-              "../../src/hashline/served": "Use ../../src/hashline/anchor-pipeline.js \u2014 served is private",
               "./hashline/resolve.js": "Use ./hashline/anchor-pipeline.js \u2014 resolve is private to AnchorPipeline seam",
               "./hashline/resolve": "Use ./hashline/anchor-pipeline.js \u2014 resolve is private",
               "../hashline/resolve.js": "Use ../hashline/anchor-pipeline.js \u2014 resolve is private",

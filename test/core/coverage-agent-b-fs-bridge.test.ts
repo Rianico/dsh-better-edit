@@ -160,6 +160,11 @@ describe("ctxFsIO", () => {
     const text = await io.readText("/abs/file.txt", undefined, "utf8");
     expect(text).toBe("hello");
     expect(getEncodingState("/abs/file.txt")).toBeDefined();
+    // ADR-0038: ONE key construction site, the plain path. This fake backend resolves to
+    // `tk:/abs/file.txt`, so the removed dual write would land exactly there — the memo must stay
+    // empty under the backend's opaque key.
+    expect(fs.resolve).toHaveBeenCalled();
+    expect(getEncodingState("tk:/abs/file.txt")).toBeUndefined();
   });
 
   it("readText explicit encodingHint bad encoding maps to FS_BAD_ENCODING", async () => {

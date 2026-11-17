@@ -373,10 +373,18 @@ describe("served state — retired-anchor writer contract", () => {
       store.upsertRetiredAnchors(sessionKey, path, seeded);
       expect(readServedRow(home, sessionKey, path).retired).toBe(seeded);
 
+      // The READ half of the ordering claim, pinned directly: `addRetiredAnchors` validates the
+      // whole batch before its `getRetiredEntries` read, so a rejected batch never reaches the
+      // column. `loadHashStore` is memoized per store path, so this is the very object the call
+      // under test reaches.
+      const readSpy = vi.spyOn(store, "getRetiredEntries");
+
       // A lone invalid hash aborts the call …
       await expect(retireAnchors(sessionKey, path, ["bad-hash!"])).rejects.toThrow(
         /Invalid retired hash/,
       );
+      // … before the column is read at all …
+      expect(readSpy).not.toHaveBeenCalled();
       // … and nothing was written: the column is byte-identical.
       expect(readServedRow(home, sessionKey, path).retired).toBe(seeded);
 
@@ -386,8 +394,18 @@ describe("served state — retired-anchor writer contract", () => {
       await expect(retireAnchors(sessionKey, path, ["BBB", "bad-hash!"])).rejects.toThrow(
         /Invalid retired hash/,
       );
+      expect(readSpy).not.toHaveBeenCalled();
       expect(readServedRow(home, sessionKey, path).retired).toBe(seeded);
+      readSpy.mockRestore();
       expect(store.getRetiredEntries(sessionKey, path)).toEqual([{ hash: "AAA", deathPos: 2 }]);
+
+      // … and the seam the two claims above lean on is LIVE: a valid retirement does read the
+      // column. Without this control the `not.toHaveBeenCalled` claims would also pass against a
+      // spy that observes nothing (e.g. a store facade that stopped being the memoized object).
+      const liveSpy = vi.spyOn(store, "getRetiredEntries");
+      await retireAnchors(sessionKey, path, ["CCC"]);
+      expect(liveSpy).toHaveBeenCalled();
+      liveSpy.mockRestore();
     });
   });
 

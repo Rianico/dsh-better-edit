@@ -116,8 +116,8 @@ Makes `shift==rebind` loud only when `changed` overlaps target, not when exterio
 
 ## T4 reconciliation — the two accepted ADRs disagreed; the measurement chose this one
 
-[ADR-0018](0018-exact-position-served-span-verification.md):167-168 asserted _"The recovery is
-the re-read the message already instructs."_ The blockquote above asserted the opposite for
+ADR-0018 (at its own text, lines 167-168 at the time of this reconciliation) asserted:
+"The recovery is the re-read the message already instructs." The blockquote above asserted the opposite for
 four arms: the hint survived, and the echo rows were "the current file's anchors" — i.e. a
 retry looked on offer. Both could not be true at `3f4aca6`. Measured through the real tools at
 that revision (CP0 G3 → `SR@802`, H1 → `SR@790`): the echo-retry is **rejected

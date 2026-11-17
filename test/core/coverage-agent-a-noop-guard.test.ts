@@ -60,19 +60,25 @@ describe("noop-guard coverage", () => {
  * the rendered decision `enforceNoopLoop` makes from them.
  */
 describe("noop-loop counter is scoped by session (ADR-0039)", () => {
-  const path = "/tmp/noop-session-scope/shared.txt";
+  // WHY per-run tokens: the counter map is process-global, so fixed session keys and a fixed path
+  // would let a concurrent/repeat run of this file collide with a leftover entry — the same count
+  // read twice or a stale refusal. Every key here is unique per run; nothing else changes.
+  const run = Math.random().toString(36).slice(2);
+  const path = `/tmp/noop-session-scope/${run}/shared.txt`;
+  const sessionA = `session-A-${run}`;
+  const sessionB = `session-B-${run}`;
   const payload = JSON.stringify([path, "aBc", "xYz", "same replacement"]);
 
   it("two sessions on one file keep independent counts", async () => {
-    clearNoopLoop("session-A", path);
-    clearNoopLoop("session-B", path);
+    clearNoopLoop(sessionA, path);
+    clearNoopLoop(sessionB, path);
 
     // (a) session A's own repeats advance only A's counter.
-    const a1 = trackNoopPayload("session-A", path, payload);
-    const a2 = trackNoopPayload("session-A", path, payload);
+    const a1 = trackNoopPayload(sessionA, path, payload);
+    const a2 = trackNoopPayload(sessionA, path, payload);
     expect([a1, a2]).toEqual([1, 2]);
     // (b) session B's FIRST submission starts at 1 — not 3 (the pre-fix value).
-    const b1 = trackNoopPayload("session-B", path, payload);
+    const b1 = trackNoopPayload(sessionB, path, payload);
     expect(b1).toBe(1);
 
     // (c) B's count is below the warn tier: no notice, and no refusal.
@@ -88,7 +94,7 @@ describe("noop-loop counter is scoped by session (ADR-0039)", () => {
     ).resolves.toBeUndefined();
 
     // A's third repeat is its own loop: refused with E_NOOP_LOOP.
-    const a3 = trackNoopPayload("session-A", path, payload);
+    const a3 = trackNoopPayload(sessionA, path, payload);
     expect(a3).toBe(3);
     await expect(
       enforceNoopLoop({
@@ -102,11 +108,11 @@ describe("noop-loop counter is scoped by session (ADR-0039)", () => {
     ).rejects.toThrow(/E_NOOP_LOOP/);
 
     // (d) clearing A's entry leaves B's counter intact: B continues from its own count.
-    clearNoopLoop("session-A", path);
-    expect(trackNoopPayload("session-B", path, payload)).toBe(2);
-    expect(trackNoopPayload("session-A", path, payload)).toBe(1);
+    clearNoopLoop(sessionA, path);
+    expect(trackNoopPayload(sessionB, path, payload)).toBe(2);
+    expect(trackNoopPayload(sessionA, path, payload)).toBe(1);
 
-    clearNoopLoop("session-A", path);
-    clearNoopLoop("session-B", path);
+    clearNoopLoop(sessionA, path);
+    clearNoopLoop(sessionB, path);
   });
 });

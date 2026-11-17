@@ -13,10 +13,10 @@ import { assertUndoRequest } from "./contract.js";
 import { normalizeRequest as normReq } from "./contract.js";
 import { loadHashStore, withStore, type InternalHashStore } from "./hash-store.js";
 import {
-  AnchorSpaceExhaustedError,
   HASH_SPACE,
   canon,
   contentChecksum,
+  isPromotableAnchorSpaceExhaustion,
 } from "./hashline/hash-assign.js";
 import { lineHashes } from "./hashline/hash.js";
 import { changedRange } from "./hashline/anchor-pipeline.js";
@@ -36,17 +36,12 @@ import { withWorkspace } from "./workspace-context.js";
 import { encodingHintAtVersion, getEncodingState, prepareForSave } from "./file-encoding-state.js";
 import { loadConfig } from "./store-config.js";
 
-function isAnchorSpaceExhausted(e: unknown): boolean {
-  return (
-    e instanceof AnchorSpaceExhaustedError ||
-    (e instanceof Error && e.message.includes("probing failed over"))
-  );
-}
-
 /**
  * Anchor-space exhaustion guard mirrored from the edit path (`retryLineHashesWithPromotion` in
  * src/mutation/engine.ts): clear this (session, path)'s retired anchors once to promote hash space
  * and retry; a retry that still exhausts is a typed hard capacity refusal, never a raw probe error.
+ * The exhaustion test itself is shared (`isPromotableAnchorSpaceExhaustion`) — see its docblock
+ * for why promotion's question is narrower than "is this exhaustion".
  */
 async function hashWithAnchorSpacePromotion(
   fn: () => Promise<string[]>,
@@ -55,12 +50,12 @@ async function hashWithAnchorSpacePromotion(
   try {
     return await fn();
   } catch (error) {
-    if (!isAnchorSpaceExhausted(error)) throw error;
+    if (!isPromotableAnchorSpaceExhaustion(error)) throw error;
     await onPromote();
     try {
       return await fn();
     } catch (retryError) {
-      if (isAnchorSpaceExhausted(retryError))
+      if (isPromotableAnchorSpaceExhaustion(retryError))
         throw new DomainError("E_LARGE_FILE", { limitKind: "hash-space", limit: HASH_SPACE });
       throw retryError;
     }

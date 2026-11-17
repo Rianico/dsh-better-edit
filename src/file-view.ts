@@ -549,7 +549,11 @@ function buildWindowSection(params: {
  * runs first appear in the request — that order is part of the request, so it is never sorted by
  * position — while every section draws on ONE shared byte/line budget so N windows cannot multiply
  * the auto-read budget by N. Rows are served only for the lines actually shown; because each
- * position belongs to exactly one run, the position record is injective by construction.
+ * position belongs to exactly one run, the union's position record is injective by construction.
+ * The record is SORTED by position but never de-duplicated: the sort is load-bearing (runs render
+ * in request order, so run order is not position order), yet a collector that dropped duplicates
+ * would mask a `mergeWindowRuns` regression — overlapping runs would collapse into one served row
+ * instead of surfacing as two for the same position.
  */
 function buildWindowedPreview(params: {
   windows: ReadWindow[];
@@ -561,7 +565,7 @@ function buildWindowedPreview(params: {
 }): { text: string; truncation?: TruncationResult; served: ServedRow[] } {
   const { windows, allLines, allHashes, totalLines, maxBytes, maxTruncLines } = params;
   const sections: string[] = [];
-  const hashByPosition = new Map<number, string>();
+  const servedRows: ServedRow[] = [];
   let truncation: TruncationResult | undefined;
   let remainingBytes = maxBytes;
   let remainingLines = maxTruncLines;
@@ -604,7 +608,7 @@ function buildWindowedPreview(params: {
       maxTruncLines: remainingLines,
     });
     sections.push(`${header}\n${built.text}`);
-    for (const row of built.served) hashByPosition.set(row.position, row.hash);
+    for (const row of built.served) servedRows.push(row);
     remainingLines -= built.text === "" ? 0 : built.text.split("\n").length;
     remainingBytes -= Buffer.byteLength(`${built.text}${header}`, "utf-8");
     if (truncation === undefined && built.truncation) truncation = built.truncation;
@@ -616,9 +620,7 @@ function buildWindowedPreview(params: {
     // WHY: a multi-window request is N discrete slices, not one stream, so the result carries no root
     // WHY: `nextOffset`: a scalar would invite `offset = nextOffset` and silently re-read a window the
     // WHY: caller never asked to continue. A truncated window says so in its own section text.
-    served: [...hashByPosition.entries()]
-      .sort((left, right) => left[0] - right[0])
-      .map(([position, hash]) => ({ position, hash })),
+    served: [...servedRows].sort((left, right) => left.position - right.position),
   };
 }
 

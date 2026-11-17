@@ -16,7 +16,7 @@ function countMatches(haystack: string, needle: RegExp): number {
  * shape evidence that steers away from line numbers.
  *
  * T4 (CP1-r3) deleted the declaration-only `E_UNKNOWN_ANCHOR`; FU-4 re-introduced it
- * WITH its producer (the never-served anchor refusals in `anchor-pipeline.ts`), exactly
+ * WITH its producer (the never-served anchor refusals in `served-evidence.ts`), exactly
  * as this file's own rule demanded ("a future absorb that ports its upstream producer
  * must reintroduce it WITH the producer"). The `E_STALE_ANCHOR` not_found headline still
  * carries the note, pinned end-to-end below.

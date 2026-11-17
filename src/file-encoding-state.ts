@@ -45,11 +45,11 @@ import { DomainError, formatError } from "./domain-errors.js";
  * having the old encoding laundered onto its new bytes.
  */
 export function encodingHintAtVersion(
-  targetKey: string,
+  filePath: string,
   currentVersion: string | undefined,
 ): string | undefined {
-  invalidateIfStale(targetKey, currentVersion);
-  const encoding = getEncodingState(targetKey)?.encoding;
+  invalidateIfStale(filePath, currentVersion);
+  const encoding = getEncodingState(filePath)?.encoding;
   if (encoding === undefined || encoding === "utf8" || encoding === "utf8bom") return undefined;
   return encoding;
 }
@@ -77,41 +77,42 @@ const autoGuessFooterMemo = new Map<string, string>();
  * keyed two ways makes every lookup a ladder and every write a dual write, and
  * the two spellings then have to be kept in sync by hand. Backend canonicaliza-
  * tion (symlink/case, the backend's opaque `targetKey`) is the backend's view of
- * the target, not the memo's identity; it does not belong in this key.
+ * the target, not the memo's identity; it does not belong in this key — which is
+ * why every public function here takes `filePath`, never a backend key.
  */
 function keyOf(path: string): string {
   return String(path).replace(/\\/g, "/");
 }
 
-export function getEncodingState(targetKey: string): FileEncodingState | undefined {
-  return encodingMemo.get(keyOf(targetKey));
+export function getEncodingState(filePath: string): FileEncodingState | undefined {
+  return encodingMemo.get(keyOf(filePath));
 }
 
-export function setEncodingState(targetKey: string, state: FileEncodingState): void {
-  encodingMemo.set(keyOf(targetKey), state);
+export function setEncodingState(filePath: string, state: FileEncodingState): void {
+  encodingMemo.set(keyOf(filePath), state);
 }
 
-export function clearEncodingState(targetKey?: string): void {
-  if (targetKey) encodingMemo.delete(keyOf(targetKey));
+export function clearEncodingState(filePath?: string): void {
+  if (filePath) encodingMemo.delete(keyOf(filePath));
   else encodingMemo.clear();
 }
 
-export function getAutoGuessFooter(targetKey: string): string | undefined {
-  return autoGuessFooterMemo.get(keyOf(targetKey));
+export function getAutoGuessFooter(filePath: string): string | undefined {
+  return autoGuessFooterMemo.get(keyOf(filePath));
 }
 
-export function setAutoGuessFooter(targetKey: string, footer: string): void {
-  autoGuessFooterMemo.set(keyOf(targetKey), footer);
+export function setAutoGuessFooter(filePath: string, footer: string): void {
+  autoGuessFooterMemo.set(keyOf(filePath), footer);
 }
 
-export function clearAutoGuessFooter(targetKey?: string): void {
-  if (targetKey) autoGuessFooterMemo.delete(keyOf(targetKey));
+export function clearAutoGuessFooter(filePath?: string): void {
+  if (filePath) autoGuessFooterMemo.delete(keyOf(filePath));
   else autoGuessFooterMemo.clear();
 }
 
 /** Invalidate memo when FsVersion drifted (ADR-0012). */
-export function invalidateIfStale(targetKey: string, currentVersion: string | undefined): void {
-  const key = keyOf(targetKey);
+export function invalidateIfStale(filePath: string, currentVersion: string | undefined): void {
+  const key = keyOf(filePath);
   const memo = encodingMemo.get(key);
   if (memo && memo.version !== currentVersion) encodingMemo.delete(key);
 }
@@ -377,7 +378,7 @@ export async function decodeForOpen(
 // ---------------------------------------------------------------------------
 
 export function recordOpenState(
-  targetKey: string,
+  filePath: string,
   text: string,
   encoding: string,
   hasBOM: boolean,
@@ -389,12 +390,12 @@ export function recordOpenState(
     lineEnding: detectEnding(text),
     version,
   };
-  setEncodingState(targetKey, state);
+  setEncodingState(filePath, state);
   return state;
 }
 
-export function recordFooter(targetKey: string, footer: string | undefined): void {
-  if (footer) setAutoGuessFooter(targetKey, footer);
+export function recordFooter(filePath: string, footer: string | undefined): void {
+  if (footer) setAutoGuessFooter(filePath, footer);
 }
 
 // ---------------------------------------------------------------------------

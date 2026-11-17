@@ -16,7 +16,7 @@ import { codeOf } from "../../src/utils.js";
  * are constructed exactly once from `args.leaseSource` in `verifyServedRange`.
  *
  * Flip procedure (load-bearing proof, run before committing any change to the route):
- * invert `acceptsInteriorHole` in src/hashline/anchor-pipeline.ts
+ * invert `acceptsInteriorHole` in src/hashline/served-evidence.ts
  * (`k !== 0 && k !== servedLen - 1` → `k === 0 || k === servedLen - 1`) and run `pnpm test`:
  * the authoritative RED set is ledger id RX1M1 (test/tools/mutate-ledger.mjs) — 8/8
  * interior-hole cells spanning this file, lease-resolve-seam, range-family-retry-truth

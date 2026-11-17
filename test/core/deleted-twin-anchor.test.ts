@@ -21,8 +21,9 @@ beforeAll(async () => {
  * requested range's length, and every line's hash must equal the served hash at its
  * served position. Since FU-4 the rejections are granular: a leased boundary whose line
  * identity is gone rejects `E_TARGET_LOST` at the interception
- * (`src/hashline/anchor-pipeline.ts:703`), a zero-served-position anchor rejects
- * `E_UNKNOWN_ANCHOR` (`:923`), an ambiguous boundary keeps `E_UNSERVED_RANGE` with rows,
+ * (`src/hashline/served-evidence.ts`, `interceptLeaseBoundaries`), a zero-served-position anchor
+ * rejects `E_UNKNOWN_ANCHOR` (`verifyServedRange`), an ambiguous boundary keeps
+ * `E_UNSERVED_RANGE` with rows,
  * and the `verifyRebasedSpan` gate keeps `E_STALE_RANGE`. The edit NEVER re-binds onto a
  * surviving twin.
  *
@@ -31,13 +32,14 @@ beforeAll(async () => {
  * Refutability (a) identity arms, not the position check: Case 1 runs on the tool path (a lease
  * source is present), so the boundary reaches `interceptLeaseBoundaries` before any placement or
  * gate check, and the position check is never reached for it. Knocking out the interception's
- * stale-identity landing — the `E_TARGET_LOST` mint (`src/hashline/anchor-pipeline.ts:703`) —
- * demotes the rejection to the downstream `verifyRebasedSpan` arms (retired `:806`,
- * rebind-mismatch `:816`), which report `E_STALE_RANGE`: this test goes red either way. The seam's
+ * stale-identity landing — the `E_TARGET_LOST` mint
+ * (`src/hashline/served-evidence.ts`, `interceptLeaseBoundaries`) — demotes the rejection to the
+ * downstream `verifyRebasedSpan` arms (its retired and rebind-mismatch arms), which report
+ * `E_STALE_RANGE`: this test goes red either way. The seam's
  * arm-level pins moved to `test/core/lease-resolve-seam.test.ts` (direct `verifyRebasedSpan` calls).
  * The twin keeps the deleted line's hash and its canon still matches — only identity disagrees. The
- * position check (`:1001`) is the lease-less fallback, pinned by the pos-free test in this file
- * (`:159`), not Case 1.
+ * position check (`verifyServedRange`'s lease-less fallback) is pinned by the pos-free test in this
+ * file (`:159`), not Case 1.
  *
  * Case 2 — an orphaned serve (the same hash written at a new position while the old
  * served slot survives) makes the boundary anchor ambiguous; the span must reject with

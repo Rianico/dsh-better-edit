@@ -22,16 +22,9 @@ import { scanDrift, loadServed, loadServedCanons, loadRetiredAnchors } from "../
 import { applyEdit, resEdit, type HEdit, type NEdit } from "../hashline/anchor-pipeline.js";
 import type { LeaseSpanSource } from "../hashline/served-evidence.js";
 import { lineHashes } from "../hashline/hash.js";
-import { AnchorSpaceExhaustedError, HASH_SPACE } from "../hashline/hash-assign.js";
+import { HASH_SPACE, isPromotableAnchorSpaceExhaustion } from "../hashline/hash-assign.js";
 import { buildNeverServedEditHint } from "../hashline/served-guard.js";
 import { encodingHintAtVersion } from "../file-encoding-state.js";
-
-function isAnchorSpaceExhausted(e: unknown): boolean {
-  return (
-    e instanceof AnchorSpaceExhaustedError ||
-    (e instanceof Error && e.message.includes("probing failed over"))
-  );
-}
 
 function promotionWarning(retiredSize: number, servedLen: number): string {
   // Soft promotion notice: plain non-header text (no [E_] code, no audience).
@@ -85,7 +78,7 @@ async function retryLineHashesWithPromotion(
   try {
     return await fn(recomputed, new Set<string>());
   } catch (e2: unknown) {
-    if (isAnchorSpaceExhausted(e2))
+    if (isPromotableAnchorSpaceExhaustion(e2))
       throw new DomainError("E_LARGE_FILE", { limitKind: "hash-space", limit: HASH_SPACE });
     throw e2;
   }
@@ -318,7 +311,7 @@ export async function applyOne(
         retiredForHash,
       );
     } catch (e: unknown) {
-      if (!isAnchorSpaceExhausted(e)) throw e;
+      if (!isPromotableAnchorSpaceExhaustion(e)) throw e;
       resultHashes = await retryLineHashesWithPromotion(
         input.sessionKey,
         input.absolutePath,
@@ -955,7 +948,7 @@ export async function runFileEdits(
         perSessionRetired,
       );
     } catch (e: unknown) {
-      if (!isAnchorSpaceExhausted(e)) throw e;
+      if (!isPromotableAnchorSpaceExhaustion(e)) throw e;
       resultHashes = await retryLineHashesWithPromotion(
         opts.sessionKey,
         absolutePath,

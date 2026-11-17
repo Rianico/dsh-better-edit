@@ -13,7 +13,7 @@ import { readView } from "./file-view.js";
 import { canon } from "./hashline/hash-assign.js";
 import { splitLines } from "./utils.js";
 import { getAutoGuessFooter } from "./fs-bridge.js";
-import { AnchorSpaceExhaustedError, HASH_SPACE } from "./hashline/hash-assign.js";
+import { HASH_SPACE, isPromotableAnchorSpaceExhaustion } from "./hashline/hash-assign.js";
 import {
   recordServed,
   clearDriftReported,
@@ -136,51 +136,49 @@ export async function readAndServe(
       previous,
     });
   } catch (e: unknown) {
-    if (
-      e instanceof AnchorSpaceExhaustedError ||
-      (e instanceof Error && e.message.includes("probing failed over"))
-    ) {
-      const retiredCount = retiredHashes.size;
-      const servedCount = servedForNorm.filter((h): h is string => h !== null).length;
-      const reservedCount = retiredCount + servedCount;
-      // Major GC promotion: clear retired for this (session,path), keep served/canons
+    // INVARIANT (promotion is a retired-anchor GC, not a line-count escape hatch): a read that
+    // cannot be hashed at all must leave hazard state untouched — so the uncurable refusals
+    // (the line cap, and any other non-promotable error) rethrow HERE, before the store is
+    // reached. Clearing this (session,path)'s retired anchors for a failure the retry cannot
+    // cure would degrade stale-anchor checks while the same error still reaches the model.
+    if (!isPromotableAnchorSpaceExhaustion(e)) throw e;
+    const retiredCount = retiredHashes.size;
+    const servedCount = servedForNorm.filter((h): h is string => h !== null).length;
+    const reservedCount = retiredCount + servedCount;
+    // Major GC promotion: clear retired for this (session,path), keep served/canons
+    try {
+      const store = await loadServedStore();
+      store.clearRetiredAnchors(sessionKey, absolutePath);
       try {
-        const store = await loadServedStore();
-        store.clearRetiredAnchors(sessionKey, absolutePath);
-        try {
-          store.clearCards(sessionKey, absolutePath);
-        } catch {
-          // Best-effort: card state is a cache; the promotion retry below proceeds without it.
-        }
+        store.clearCards(sessionKey, absolutePath);
       } catch {
-        // Best-effort: a store fault here must not fail the read — the retry proceeds on the
-        // in-memory reservation state (ADR-0020 R2, promotion/wipe arm).
+        // Best-effort: card state is a cache; the promotion retry below proceeds without it.
       }
-      // Soft promotion notice: plain non-header text (no [E_] code, no audience).
-      promotionWarning = `Anchor space exhausted (retired ${retiredCount} + served ${servedCount} = ${reservedCount} of ${HASH_SPACE}); promotion cleared retired — re-read recommended, stale-anchor checks degraded until next full read.`;
-      // Retry ignoring retired (served only) — also drop removedHashes from previous
-      retiredHashes = new Set<string>();
-      reservedHashes = new Set<string>([...servedForNorm.filter((h): h is string => h !== null)]);
-      reservations = { reservedHashes, retiredHashes };
-      if (previous) previous = { content: previous.content, hashes: previous.hashes };
-      view = await readView(io, rawPath, cwd, {
-        encoding: options.encoding,
-        offset: options.offset,
-        limit: options.limit,
-        windows: options.windows,
-        signal,
-        reservedHashes: reservations.reservedHashes,
-        retiredHashes: reservations.retiredHashes,
-        previous,
-      });
-    } else {
-      throw e;
+    } catch {
+      // Best-effort: a store fault here must not fail the read — the retry proceeds on the
+      // in-memory reservation state (ADR-0020 R2, promotion/wipe arm).
     }
+    // Soft promotion notice: plain non-header text (no [E_] code, no audience).
+    promotionWarning = `Anchor space exhausted (retired ${retiredCount} + served ${servedCount} = ${reservedCount} of ${HASH_SPACE}); promotion cleared retired — re-read recommended, stale-anchor checks degraded until next full read.`;
+    // Retry ignoring retired (served only) — also drop removedHashes from previous
+    retiredHashes = new Set<string>();
+    reservedHashes = new Set<string>([...servedForNorm.filter((h): h is string => h !== null)]);
+    reservations = { reservedHashes, retiredHashes };
+    if (previous) previous = { content: previous.content, hashes: previous.hashes };
+    view = await readView(io, rawPath, cwd, {
+      encoding: options.encoding,
+      offset: options.offset,
+      limit: options.limit,
+      windows: options.windows,
+      signal,
+      reservedHashes: reservations.reservedHashes,
+      retiredHashes: reservations.retiredHashes,
+      previous,
+    });
   }
   let servedLanded = true;
   if (view.served.length > 0) {
     const canons = splitLines(view.normalized).map((l) => canon(l));
-    const canonServed = canons.map((canonText) => canonText as string | null);
     // Pad or trim canons to served length? For now use canons for full file
     const fullCanons: (string | null)[] = [];
     for (let i = 0; i < view.hashes.length; i++) {
