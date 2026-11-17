@@ -11,6 +11,10 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Bug Fixes
+
+* **install:** claim tools synchronously in `agent/created` turn, isolate per-step failures, and reclaim contested entries on collision (#123) (#131)
+
 ## [1.2.4] - 2026-11-17
 
 ### Tests
