@@ -1,6 +1,6 @@
-# ADR-0031 — The install consults the composed preset's own tool policy
+# ADR-0032 — The install consults the composed preset's own tool policy
 
-Status: Accepted (fix for #110, lane `i110`).
+Status: Accepted (fix for #110, lane `i110`). Renumbered from 0031 to 0032 after #117 landed a different ADR-0031 while this branch was in flight.
 Downstream records: `src/preset-toolset.ts` (`HashlineToolset`, `toolsetFor`,
 `sectionsForToolset`, `resolveToolset`), `src/index.ts` (`installAgentTools`), `src/self-heal.ts`
 (the heal set is the installed set), `test/core/preset-tools-gate.test.ts` (the pins).
