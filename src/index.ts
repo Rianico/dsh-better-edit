@@ -26,6 +26,7 @@ import { buildStrReplaceEditorTool } from "./tool-str-replace-editor.js";
 import { registerUndoTool } from "./tool-undo.js";
 import { registerWriteHook } from "./write-hook.js";
 import { createSelfHealWatcher } from "./self-heal.js";
+import { resolveToolset, sectionsForToolset } from "./preset-toolset.js";
 import { initHasher } from "./hashline/hash-assign.js";
 import {
   composeSections,
@@ -134,20 +135,31 @@ function installAgentTools(rootCtx: Context, agent: Agent): void {
     // not declare it. The session's live directory still reaches the bridge
     // per call via `execCwd` (the `workingDirectory` service, falling back to
     // `exec.agent.session.header.cwd`).
+    // The composed preset's own tool policy decides which mutating tools
+    // this agent gets; `read` is unconditional (Rianico/dsh-better-edit#110).
+    const toolset = await resolveToolset(rootCtx, agent.ctx);
     const io = ctxFsIO(rootCtx.fs as FileSystem, rootCtx);
     const disposers: Array<() => void> = [];
     const sandbox = new FsSandboxController(rootCtx);
-    // Keep owned definitions by reference for self-heal identity check
+    // Keep owned definitions by reference for self-heal identity check. An
+    // absent definition is also the watcher's "never heal this" signal, so the
+    // heal set and the installed set cannot drift apart.
     const hashReadDef = buildReadTool(io);
     disposers.push(agent.ctx.tools.register(hashReadDef));
-    const hashEditDef = buildEditTool(io, sandbox);
-    disposers.push(agent.ctx.tools.register(hashEditDef));
+    const hashEditDef = toolset.edit ? buildEditTool(io, sandbox) : undefined;
+    if (hashEditDef !== undefined) disposers.push(agent.ctx.tools.register(hashEditDef));
     // Governed shadow of the preset's built-in str_replace_editor
-    // (ADR-0015): identical contract, encoding-governed mutations.
-    const hashStrReplaceDef = buildStrReplaceEditorTool(io, sandbox);
-    disposers.push(agent.ctx.tools.register(hashStrReplaceDef));
-    disposers.push(registerUndoTool(rootCtx, agent.ctx, io, sandbox));
-    disposers.push(registerWriteHook(rootCtx, agent.ctx, io));
+    // (ADR-0015): identical contract, encoding-governed mutations. Only a
+    // preset that composed the built-in earns the shadow.
+    const hashStrReplaceDef = toolset.strReplaceEditor
+      ? buildStrReplaceEditorTool(io, sandbox)
+      : undefined;
+    if (hashStrReplaceDef !== undefined) {
+      disposers.push(agent.ctx.tools.register(hashStrReplaceDef));
+    }
+    if (toolset.undo) disposers.push(registerUndoTool(rootCtx, agent.ctx, io, sandbox));
+    // The hook guards the preset's own built-in `write` and auto-reads after it.
+    if (toolset.writeHook) disposers.push(registerWriteHook(rootCtx, agent.ctx, io));
 
     const toolsSvc = rootCtx.get("tools");
     disposers.push(
@@ -166,7 +178,7 @@ function installAgentTools(rootCtx: Context, agent: Agent): void {
     // contract. Same section names on the agent's own layer win over the
     // preset's; text and order come from the per-preset resolution, with the
     // harness's canonical tool slot as the default order.
-    const sections = await resolveAgentSections(rootCtx, agent);
+    const sections = sectionsForToolset(await resolveAgentSections(rootCtx, agent), toolset);
     for (const section of sections) {
       disposers.push(agent.ctx.systemPrompt.section(section));
     }

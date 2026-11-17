@@ -1,7 +1,9 @@
 /**
  * Self-healing watcher for hash-anchored tools.
- * Restores `read`/`edit` on the agent's own scope layer if an external
- * preset deletes them (e.g. router-standard stage advance).
+ * Restores the hashline tools the install actually registered when an external
+ * preset deletes them (e.g. router-standard stage advance). The heal set is the
+ * installed set: a tool the preset gate declined has no definition to restore,
+ * so a `tools/change` can never resurrect it (Rianico/dsh-better-edit#110).
  * See Rianico/dsh-better-edit#43.
  * @module dsh-better-edit/self-heal
  */
@@ -20,7 +22,11 @@ export interface SelfHealOptions {
   };
   toolsSvc: unknown;
   hashReadDef: unknown;
-  hashEditDef: unknown;
+  /**
+   * Omitted when the preset gate declined the hashline `edit`: an absent
+   * definition is the watcher's "never heal this" signal, not a takeover.
+   */
+  hashEditDef?: unknown;
   /** ADR-0015 shadow def; when present the watcher also heals `str_replace_editor`. */
   hashStrReplaceDef?: unknown;
   healMinIntervalMs?: number;
@@ -38,6 +44,7 @@ export function createSelfHealWatcher(options: SelfHealOptions): () => void {
     hashStrReplaceDef,
     healMinIntervalMs = 1000,
   } = options;
+  const watchEdit = hashEditDef !== undefined;
   const watchStrReplace = hashStrReplaceDef !== undefined;
 
   let lastHealAt = 0;
@@ -62,7 +69,9 @@ export function createSelfHealWatcher(options: SelfHealOptions): () => void {
       const currentRead = layer?.get?.("read") ?? layer?.data?.get?.("read");
       const currentEdit = layer?.get?.("edit") ?? layer?.data?.get?.("edit");
       const readOk = currentRead === hashReadDef;
-      const editOk = currentEdit === hashEditDef;
+      // A declined edit has no definition to restore: a layer that happens to
+      // hold a built-in `edit` is the preset's own tool, not a takeover.
+      const editOk = !watchEdit || currentEdit === hashEditDef;
       const currentStrReplace = watchStrReplace
         ? (layer?.get?.("str_replace_editor") ?? layer?.data?.get?.("str_replace_editor"))
         : hashStrReplaceDef;
