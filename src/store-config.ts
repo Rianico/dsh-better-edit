@@ -11,6 +11,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { resolveDshHome } from "@deepseek-ai/dsh-home-paths";
 import { z } from "zod";
 import { errCode } from "./utils.js";
+import { SUPPORTED_ENCODINGS } from "./encoding.js";
 
 // ---- helpers (pure, no IO) ----
 
@@ -95,9 +96,7 @@ const StoreConfigSchema = z.object({
   autoGitignore: z.boolean().default(false), // workspace only: auto-append ".dsh_better_edit/" to .gitignore when .git exists but entry missing (false = warn once)
   autoGuessEncoding: z.boolean().default(false), // VS Code files.autoGuessEncoding — deterministic BOM→UTF-8 first, model-assisted top-3 only when true
   normalizeToUtf8: z.boolean().default(false), // when true, legacy files (GBK etc.) migrate to UTF-8 on first edit/write
-  supportedEncodings: z
-    .array(z.string())
-    .default(["gbk", "big5", "shift_jis", "euc-kr", "windows-1251", "iso-8859-1"]),
+  supportedEncodings: z.array(z.string()).default([...SUPPORTED_ENCODINGS]),
   undo_ttl_s: z.number().int().min(-1).default(604800), // undo history TTL in seconds; -1 = keep forever (default 604800 = 7 days)
   storeMaxAgeS: z.number().int().min(1).default(2592000), // central janitor: max idle age in seconds before evicting runtime/<name>-<hash8>/ (default 2592000 = 30 days)
   storeMaxTotalBytes: z.number().int().min(0).default(524288000), // central janitor: max total bytes under runtime/ before LRU eviction (default 524288000 = 500 MB)
@@ -139,7 +138,7 @@ autoGuessEncoding: false
 # when true, legacy files (GBK etc.) migrate to UTF-8 on first write
 normalizeToUtf8: false
 # allowlist scored for top-3 previews when autoGuessEncoding:true
-supportedEncodings: [gbk, big5, shift_jis, euc-kr, windows-1251, iso-8859-1]
+supportedEncodings: [${SUPPORTED_ENCODINGS.join(", ")}]
 
 # undo history TTL in seconds; -1 = keep forever (default 604800 = 7 days)
 undo_ttl_s: 604800
@@ -380,9 +379,7 @@ function complementMissingFieldsSync(yamlPath: string, yamlPartial: Partial<Stor
   if (yamlPartial.autoGuessEncoding === undefined) missingLines.push("autoGuessEncoding: false");
   if (yamlPartial.normalizeToUtf8 === undefined) missingLines.push("normalizeToUtf8: false");
   if (yamlPartial.supportedEncodings === undefined)
-    missingLines.push(
-      "supportedEncodings: [gbk, big5, shift_jis, euc-kr, windows-1251, iso-8859-1]",
-    );
+    missingLines.push(`supportedEncodings: [${SUPPORTED_ENCODINGS.join(", ")}]`);
   if (yamlPartial.undo_ttl_s === undefined) missingLines.push("undo_ttl_s: 604800");
   if (yamlPartial.storeMaxAgeS === undefined) missingLines.push("storeMaxAgeS: 2592000");
   if (yamlPartial.storeMaxTotalBytes === undefined)

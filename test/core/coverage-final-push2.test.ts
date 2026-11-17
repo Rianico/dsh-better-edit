@@ -43,7 +43,7 @@ describe("push2 simple coverage", () => {
   });
 
   it("mutation and lifecycle", async () => {
-    const m1: any = await import("../../src/mutation.js");
+    const m1: any = await import("../../src/noop-guard.js");
     expect(typeof m1.noopPayloadKey("/a", "b", "c", "d")).toBe("string");
     const m2: any = await import("../../src/store-lifecycle.js");
     m2._resetLifecycleForTests();

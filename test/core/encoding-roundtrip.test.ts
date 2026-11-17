@@ -23,7 +23,7 @@ import {
 import { localIO } from "../../src/fs-bridge.js";
 import { buildStrReplaceEditorTool } from "../../src/tool-str-replace-editor.js";
 import { saveUndo, getUndo } from "../../src/undo-edit.js";
-import { commit } from "../../src/mutation.js";
+import { persistUndoAndWrite } from "../../src/mutation.js";
 import { initHasher, lineHashes } from "../../src/hashline/index.js";
 import { resolveTarget } from "../../src/paths.js";
 import { withWorkspace } from "../../src/workspace-context.js";
@@ -441,13 +441,14 @@ describe("transaction — the round-trip verdict precedes every write", () => {
 
       await withWorkspace(cwd, async () => {
         await expect(
-          commit({
+          persistUndoAndWrite({
             io: spied,
             files,
             exec: makeExec(cwd)({}),
             sandbox: makeTestSandbox(),
             sandboxPolicy: undefined,
             undoUnavailableMessage: () => "[E_UNDO_UNAVAILABLE] unreachable",
+            restoreUnwrittenUndos: false,
           }),
         ).rejects.toThrow(/E_ENCODING_UNWRITABLE[\s\S]*normalizeToUtf8/);
       });

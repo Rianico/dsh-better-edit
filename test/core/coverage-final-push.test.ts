@@ -186,8 +186,7 @@ describe("final-push store-lifecycle and mutation branches", () => {
     expect(true).toBe(true);
   });
   it("mutation noop policy edge cases", async () => {
-    const { trackNoopPayload, clearNoopLoop, noopPayloadKey } =
-      await import("../../src/mutation.js");
+    const { trackNoopPayload, clearNoopLoop } = await import("../../src/noop-guard.js");
     const { runNoopPolicySync } = await import("../../src/noop-guard.js");
     const base = {
       absolutePath: "/tmp/a.txt",

@@ -4,13 +4,13 @@ import {
   countLineChanges,
   applyOne,
   enforceNoopLoop,
-  persistUndoAndWrite,
-} from "../../src/edit-engine.js";
+} from "../../src/mutation/engine.js";
+import { persistUndoAndWrite } from "../../src/mutation.js";
 import { lineHashesPure } from "../../src/hashline/hash-assign.js";
 import { initHasher } from "../../src/hashline/hash-assign.js";
 import * as undoMod from "../../src/undo-edit.js";
 
-describe("coverage: edit-engine collectRemovedHashes / countLineChanges", () => {
+describe("coverage: mutation engine collectRemovedHashes / countLineChanges", () => {
   it("collectRemovedHashes handles found and not-found hashes", () => {
     const hashes = ["aaa", "bbb", "ccc", "ddd"];
     const edit: any = { hash_bounds: [{ hash: "bbb" }, { hash: "ccc" }], content_lines: ["x"] };
@@ -63,7 +63,7 @@ describe("coverage: edit-engine collectRemovedHashes / countLineChanges", () => 
   });
 });
 
-describe("coverage: edit-engine applyOne", () => {
+describe("coverage: mutation engine applyOne", () => {
   it("applies pre-resolved edit", async () => {
     await initHasher();
     const content = "a\nb\nc";
@@ -170,7 +170,7 @@ describe("coverage: edit-engine applyOne", () => {
   });
 });
 
-describe("coverage: edit-engine enforceNoopLoop", () => {
+describe("coverage: mutation engine enforceNoopLoop", () => {
   it("batch: throws at threshold and notice at 2", async () => {
     const { NOOP_LOOP_THRESHOLD } = await import("../../src/constants.js");
     await expect(
@@ -248,7 +248,7 @@ describe("coverage: edit-engine enforceNoopLoop", () => {
   });
 });
 
-describe("coverage: edit-engine persistUndoAndWrite", () => {
+describe("coverage: mutation engine persistUndoAndWrite", () => {
   it("throws undo unavailable and restores previous undos", async () => {
     const saveSpy = vi
       .spyOn(undoMod, "saveUndo")

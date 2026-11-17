@@ -1,8 +1,8 @@
 /**
  * Mutation — deep module owning the full file mutation lifecycle.
  *
- * Previously fragmented: tool-edit → edit-pipeline → edit-engine.applyOne →
- * edit-response/diff/drift, and tool-batch-edit → edit-engine.runFileEdits
+ * Previously fragmented: tool-edit → edit-pipeline → engine.applyOne →
+ * edit-response/diff/drift, and tool-batch-edit → engine.runFileEdits
  * (loop + unionRange + counters) → persistUndoAndWrite with a boolean flag.
  * Warnings, hadUtf8DecodeErrors, firstChangedLine, driftNotice were threaded
  * by mutation across 5 hops; bugs hid in wiring, not pure helpers.
@@ -13,13 +13,14 @@
  *
  * Public surface:
  *   execute(io, items, {sessionKey, exec, sandbox, signal}) → string  — deep seam: ONE interface
- *   applySequence(io, items, ctx) → FileEditResult                    — per-file sequencer
- *   commit(io, files, {exec, sandboxPolicy, signal}) → void           — transaction
+ *   resolveDisplayPath(path, cwd) → string                            — path adapter
+ *   snapshotIdFor(io, absolutePath, signal) → string | undefined      — snapshot bookkeeping
+ *   persistUndoAndWrite(opts) → void                                  — transaction (exported for tests)
  *
  * Depth: small interface (execute) with large implementation — locality and leverage.
  *
- * Internals (private): verifyServedRange, resToSpan, assemble, scanDrift,
- * boundaryDups, noopGuard. Tested via FileEditResult, not via split e2e.
+ * Internals (private): verifyServedRange, resToSpan, assemble, boundaryDups,
+ * noopGuard. Tested via FileEditResult, not via split e2e.
  *
  * @module dsh-better-edit/mutation
  */
@@ -31,20 +32,17 @@ import type { FsSandboxController } from "./sandbox.js";
 
 import { formatError } from "./domain-errors.js";
 import { canon } from "./hashline/hash-assign.js";
-import { fileSnap } from "./file-reader.js";
+import { fileSnap } from "./file-view.js";
 import type { LineEnding } from "./edit-diff.js";
 import { toCwd } from "./paths.js";
-import { recordServedTruncated, retireAnchors, scanDrift } from "./session-view.js";
+import { recordServedTruncated, retireAnchors } from "./session-view.js";
 import { abortIf, splitLines } from "./utils.js";
 import { runFileEdits } from "./mutation/engine.js";
-import type { FileEditResult, PreparedItem } from "./mutation/engine.js";
+import type { PreparedItem } from "./mutation/engine.js";
 import { saveUndo } from "./undo-edit.js";
 import { restoreEndings } from "./edit-diff.js";
-import { buildMetrics, buildNoop, buildChanged, buildBatchResult } from "./edit-response.js";
-import type { RMeta, BatchSection } from "./edit-response.js";
-import { genDiff, toLF, stripBOM } from "./edit-diff.js";
-import { computeDrift } from "./session-view.js";
-import { trackNoopPayload, clearNoopLoop, noopPayloadKey } from "./noop-guard.js";
+import { buildBatchResult } from "./edit-response.js";
+import type { BatchSection } from "./edit-response.js";
 import { getEncodingState, prepareForSave } from "./file-encoding-state.js";
 import type { FileEncodingState } from "./file-encoding-state.js";
 import { loadConfig } from "./store-config.js";
@@ -71,16 +69,7 @@ export async function snapshotIdFor(
   }
 }
 
-// Engine helpers are private to Mutation — not re-exported for new code.
-// Deprecated re-exports kept for existing tests (commitlint: ignore):
-export { runFileEdits };
-export { persistUndoAndWrite };
-export type { FileEditResult, PreparedItem };
-export { buildMetrics, buildNoop, buildChanged, buildBatchResult };
-export type { RMeta, BatchSection };
-export { genDiff, restoreEndings, toLF, stripBOM };
-export { computeDrift, scanDrift };
-export { trackNoopPayload, clearNoopLoop, noopPayloadKey };
+// Engine helpers are private to Mutation — not re-exported.
 
 // ---------------------------------------------------------------------------
 // Transaction (private to Mutation) — persist-undo → write → restore
@@ -107,7 +96,7 @@ interface PersistWriteOptions {
   restoreUnwrittenUndos: boolean;
 }
 
-async function persistUndoAndWrite(opts: PersistWriteOptions): Promise<void> {
+export async function persistUndoAndWrite(opts: PersistWriteOptions): Promise<void> {
   const { io, files } = opts;
   // Issue #112: decide the save text for EVERY file BEFORE any write. The seam throws
   // E_ENCODING_UNWRITABLE when the recorded encoding cannot be reproduced through the
@@ -219,7 +208,7 @@ async function commitBatch(
 /**
  * Deep seam: execute the full mutation lifecycle.
  *
- * Owns: applySequence → branch (single/multi × noop/applied) → commit →
+ * Owns: runFileEdits → branch (single/multi × noop/applied) → commit →
  * buildBatchResult → recordServedTruncated → return text.
  *
  * The tool layer (adapter) only validates and delegates; all
@@ -238,7 +227,7 @@ export async function execute(opts: {
 }): Promise<string> {
   const { io, items, sessionKey, signal, exec, sandbox, sandboxPolicy } = opts;
 
-  const fileResult = await applySequence(io, items, { signal, sessionKey });
+  const fileResult = await runFileEdits(io, items, { signal, sessionKey });
 
   const toSection = (): BatchSection => ({
     path: fileResult.displayPath,
@@ -374,45 +363,3 @@ export async function execute(opts: {
   const serveLanded = await recordIfNeeded(built);
   return withServeNotice(built.content[0]!.text, serveLanded);
 }
-
-/** Apply a per-file sequence (batch's group) — owns the loop + unionRange + counters. */
-export async function applySequence(
-  io: FileIO,
-  items: PreparedItem[],
-  ctx: { sessionKey: string; signal?: AbortSignal },
-): Promise<FileEditResult> {
-  return runFileEdits(io, items, ctx);
-}
-
-/** Commit the transaction — owns persist-undo → write → restore. */
-export async function commit(opts: {
-  io: FileIO;
-  files: Array<{
-    absolutePath: string;
-    displayPath: string;
-    originalNormalized: string;
-    bom: string;
-    originalEnding: import("./edit-diff.js").LineEnding;
-    originalHashes: string[];
-    result: string;
-  }>;
-  exec: ToolExecution;
-  sandbox: FsSandboxController;
-  sandboxPolicy: SandboxExecutionPolicy | undefined;
-  signal?: AbortSignal;
-  undoUnavailableMessage: (displayPath: string) => string;
-  restoreUnwrittenUndos?: boolean;
-}): Promise<void> {
-  return persistUndoAndWrite({
-    io: opts.io,
-    files: opts.files,
-    exec: opts.exec,
-    sandbox: opts.sandbox,
-    sandboxPolicy: opts.sandboxPolicy,
-    signal: opts.signal,
-    undoUnavailableMessage: opts.undoUnavailableMessage,
-    restoreUnwrittenUndos: opts.restoreUnwrittenUndos ?? false,
-  });
-}
-
-export { commitSingle, commitBatch };

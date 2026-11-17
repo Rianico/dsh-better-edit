@@ -16,6 +16,9 @@ export const SUPPORTED_ENCODINGS = [
 ] as const;
 export type SupportedEncoding = (typeof SUPPORTED_ENCODINGS)[number];
 
+// Rejection-message roster: utf8 is always accepted (see ALIASES), the roster is the six model codecs.
+export const SUPPORTED_ENCODINGS_LABEL = `utf8, ${SUPPORTED_ENCODINGS.join(", ")}`;
+
 const ALIASES: Record<string, string> = {
   utf8: "utf8",
   utf8bom: "utf8bom",

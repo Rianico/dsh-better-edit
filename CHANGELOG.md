@@ -15,6 +15,10 @@ All notable changes to this project will be documented in this file.
 
 * **install:** claim tools synchronously in `agent/created` turn, isolate per-step failures, and reclaim contested entries on collision (#123) (#131)
 
+### Code Refactoring
+
+* **dead-code:** retire the duplicate-name shims and the dead FileView sub-graph — `edit-engine`, `preview-controller`, the five `file-view` re-export shims, and the `mutation.ts` deprecated re-export block go, and `SUPPORTED_ENCODINGS` becomes the one encoding roster (ADR-0033).
+
 ## [1.2.4] - 2026-11-17
 
 ### Tests

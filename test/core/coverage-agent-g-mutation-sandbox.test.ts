@@ -28,14 +28,6 @@ describe("coverage-agent-g mutation", () => {
     expect(id3).toBeUndefined();
     await rm(dir, { recursive: true, force: true });
   });
-
-  it("execute branches", async () => {
-    const mod: any = await import("../../src/mutation.js");
-    expect(mod.execute).toBeDefined();
-    expect(mod.applySequence).toBeDefined();
-    expect(mod.commit).toBeDefined();
-    expect(true).toBe(true);
-  });
 });
 
 describe("coverage-agent-g sandbox", () => {

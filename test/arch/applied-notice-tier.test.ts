@@ -52,9 +52,10 @@ const COMPOSER_FILE = join(SRC_ROOT, "domain-errors.ts");
 
 /**
  * Floor, not a pin: a growing `src/` keeps passing, an emptied walk (wrong root,
- * broken recursion) fails. Today: 66 `.ts` files under `src/`.
+ * broken recursion) fails. Today: 61 `.ts` files under `src/` (66 before arch-T1's
+ * surface reduction retired seven modules).
  */
-const MIN_SOURCE_FILES = 66;
+const MIN_SOURCE_FILES = 61;
 
 /**
  * The forbidden shapes, each named in the failure so a RED is actionable.

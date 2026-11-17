@@ -1,7 +1,7 @@
 import { stat } from "node:fs/promises";
 import { describe, expect, it } from "vitest";
 
-import { fileSnap, loadFileKindAndText, type FileStats } from "../../src/file-view.js";
+import { fileSnap, type FileStats } from "../../src/file-view.js";
 import { withTempFile } from "../support/fixtures.js";
 
 /**
@@ -9,22 +9,11 @@ import { withTempFile } from "../support/fixtures.js";
  * `test/core/file-content-stats.test.ts` has six cells; the "propagates the stat through
  * prepareFile" cell is dropped here because this tree has no `prepareFile` seam — the read
  * tool loads text through `FileIO.readText` (`src/file-view.ts` readView), and
- * `loadFileKindAndText` → `fileSnap` is the local seam the plumbing lands on. Upstream's
+ * `fileSnap`'s preloaded-stats parameter is the local seam the plumbing lands on. Upstream's
  * fake-stats cell asserts a `|checksum` suffix in the snapshot id; this tree's `fmtSnapId`
  * predates ADR-0013 (no checksum segment), so the id is asserted without it.
  */
 describe("file-view — stat consolidation", () => {
-  it("returns the loader's stat with text content", async () => {
-    await withTempFile("stats.txt", "alpha\nbeta\n", async ({ path }) => {
-      const file = await loadFileKindAndText(path);
-      const actual = await stat(path);
-      if (file.kind !== "text") throw new Error(`expected text, got ${file.kind}`);
-      expect(file.stats?.ino).toBe(actual.ino);
-      expect(file.stats?.size).toBe(actual.size);
-      expect(file.stats?.mtimeMs).toBe(actual.mtimeMs);
-    });
-  });
-
   it("snapshots from preloaded stats without re-stat'ing the file", async () => {
     await withTempFile("snap.txt", "alpha\nbeta\n", async ({ path }) => {
       const preloaded: FileStats = { ino: 4242, mtimeMs: 1, ctimeMs: 2, size: 999 };

@@ -22,7 +22,7 @@ import type { ToolExecution } from "@deepseek-ai/dsh-tools";
 import type { SandboxExecutionPolicy } from "@deepseek-ai/dsh-sandbox";
 import { writeAtomic } from "./fs-write.js";
 import { loadConfig } from "./store-config.js";
-import { fileSnap } from "./file-reader.js";
+import { fileSnap } from "./file-view.js";
 import { resolveTarget, toCwd } from "./paths.js";
 import {
   decodeForOpen,
@@ -39,6 +39,7 @@ import {
 } from "./file-encoding-state.js";
 import type { FileEncodingState } from "./file-encoding-state.js";
 import { codeOf, errCode } from "./utils.js";
+import { SUPPORTED_ENCODINGS_LABEL } from "./encoding.js";
 import { DomainError } from "./domain-errors.js";
 // Re-export file encoding state seam for backward compat (file-view, read-and-serve, tests)
 export type { FileEncodingState } from "./file-encoding-state.js";
@@ -118,7 +119,7 @@ export function mapFsError(error: unknown, displayPath: string): never {
     }
     if (code === "FS_BAD_ENCODING") {
       throw new DomainError("E_BAD_PAYLOAD", {
-        message: `Unknown encoding for ${displayPath}. Supported: utf8, gbk, big5, shift_jis, euc-kr, windows-1251, iso-8859-1`,
+        message: `Unknown encoding for ${displayPath}. Supported: ${SUPPORTED_ENCODINGS_LABEL}`,
       });
     }
     if (code === "FS_DECODE_FAILED") {

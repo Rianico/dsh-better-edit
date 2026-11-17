@@ -7,9 +7,6 @@ import {
   truncateHead,
   formatPaginationHint,
   fmtReadPreview,
-  preview,
-  valKind,
-  valAccess,
 } from "../../src/file-view.js";
 import { DEFAULT_MAX_LINES, DEFAULT_MAX_BYTES } from "../../src/file-view.js";
 
@@ -76,24 +73,5 @@ describe("coverage-agent-d file-view", () => {
     const content = `a\n${long}\nb`;
     const r = await fmtReadPreview(content, {}, undefined, "/tmp/f.txt", 10);
     expect(r.text).toContain("exceeds");
-  });
-  it("valKind throws for each kind", () => {
-    expect(() => valKind({ kind: "directory" } as any, "/tmp/d")).toThrow(/directory/);
-    expect(() => valKind({ kind: "binary", description: "bin" } as any, "/tmp/b")).toThrow(
-      /binary/,
-    );
-    expect(() => valKind({ kind: "image", mimeType: "image/png" } as any, "/tmp/i")).toThrow(
-      /image/,
-    );
-    expect(() => valKind({ kind: "text", text: "hi" } as any, "/tmp/t")).not.toThrow();
-  });
-  it("valAccess throws E_NOT_FOUND and ELOOP", async () => {
-    await expect(valAccess("/no/such/file/abc", "/no/such/file/abc")).rejects.toThrow(
-      /E_NOT_FOUND/,
-    );
-  });
-  it("preview helper", async () => {
-    const r = await preview("a\nb\nc", ["aaa", "bbb", "ccc"], { limit: 2 }, "/tmp/f.txt");
-    expect(r.text).toContain("aaa");
   });
 });

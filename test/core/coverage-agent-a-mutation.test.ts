@@ -44,18 +44,4 @@ describe("mutation coverage agent-a", () => {
     expect(id3).toBeUndefined();
     await rm(dir, { recursive: true, force: true });
   });
-
-  it("re-exports are accessible", async () => {
-    const mod = await import("../../src/mutation.js");
-    expect(typeof mod.noopPayloadKey).toBe("function");
-    expect(typeof mod.trackNoopPayload).toBe("function");
-    expect(typeof mod.clearNoopLoop).toBe("function");
-    expect(typeof mod.buildMetrics).toBe("function");
-    expect(typeof mod.genDiff).toBe("function");
-    expect(typeof mod.computeDrift).toBe("function");
-    expect(typeof mod.runFileEdits).toBe("function");
-    expect(typeof mod.execute).toBe("function");
-    expect(typeof mod.applySequence).toBe("function");
-    expect(typeof mod.commit).toBe("function");
-  });
 });

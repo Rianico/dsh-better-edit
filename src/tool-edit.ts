@@ -17,7 +17,7 @@ import type { FileIO } from "./fs-bridge.js";
 import { execCwd, execSessionKey } from "./workspace-context.js";
 import type { FsSandboxController, FsEscalationArgs } from "./sandbox.js";
 import { withWorkspace } from "./workspace-context.js";
-import type { PreparedItem } from "./edit-engine.js";
+import type { PreparedItem } from "./mutation/engine.js";
 
 /**
  * E_UNKNOWN producer: the edit tool boundary is where raw unexpected errors

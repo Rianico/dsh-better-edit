@@ -17,7 +17,7 @@ import { loadHashStore, type HashStore, type InternalHashStore } from "../hash-s
 import type { LineEnding } from "../edit-diff.js";
 import { loadConfig } from "../store-config.js";
 import { canon } from "../hashline/hash-assign.js";
-import { normFromText } from "../file-reader.js";
+import { normFromText } from "../file-view.js";
 import { scanDrift, loadServed, loadServedCanons, loadRetiredAnchors } from "../session-view.js";
 import {
   applyEdit,
