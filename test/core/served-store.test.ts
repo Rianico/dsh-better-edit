@@ -3,13 +3,20 @@ import { mkdtemp, mkdir, readdir, rm, writeFile } from "fs/promises";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
-import { loadHashStore, loadServedStore, shutdownHashStore } from "../../src/hash-store.js";
+import {
+  loadHashStore,
+  loadServedStore,
+  shutdownHashStore,
+  type RetiredEntry,
+} from "../../src/hash-store.js";
 import { DomainError } from "../../src/domain-errors.js";
 import {
   _mergeServedRows,
+  loadAnchorReservations,
   loadServed,
   recordServed,
   recordServedTruncated,
+  retireAnchors,
   driftReported,
   markDriftReported,
   clearDriftReported,
@@ -18,6 +25,7 @@ import {
 } from "../../src/session-view.js";
 import { HASH_STORE_VERSION, SERVED_TTL_MS } from "../../src/constants.js";
 import { initHasher, contentChecksum } from "../../src/hashline/hasher.js";
+import { HASH_SPACE, idxToHash, lineHashesPure } from "../../src/hashline/hash-assign.js";
 import { getWritableTempRoot } from "../support/fixtures.js";
 import { saveUndo } from "../../src/undo-edit.js";
 
@@ -122,6 +130,160 @@ describe("served state — record semantics", () => {
       ]);
       shutdownHashStore();
       expect(await loadServed("sessionA", "/p.ts")).toEqual(["abc", null, "def"]);
+    });
+  });
+});
+
+describe("served state — incremental hazard sweep", () => {
+  it("sweeps the retired entries a partial serve re-observed at their death position", async () => {
+    await withTempHome(async () => {
+      const sessionKey = "sess-hazard-1";
+      const path = "/tmp/hazard-file.txt";
+      const N = 20;
+      const content = Array.from({ length: N }, (_, i) => `line ${i}`).join("\n");
+      const realHashes = lineHashesPure(content);
+      await recordServed(
+        sessionKey,
+        path,
+        realHashes.map((h, i) => ({ position: i, hash: h })),
+        N,
+        {
+          hashes: realHashes,
+          canons: Array.from({ length: N }, (_, i) => `line${i}`),
+        },
+      );
+      const toRetire = realHashes.slice(0, 6);
+      await retireAnchors(sessionKey, path, toRetire);
+      const newContent = Array.from({ length: N }, (_, i) =>
+        i < 6 ? `changed ${i}` : `line ${i}`,
+      ).join("\n");
+      const newHashes = lineHashesPure(newContent);
+      const store = await loadServedStore();
+      const entries: RetiredEntry[] = toRetire.map((h, idx) => ({ hash: h, deathPos: idx }));
+      store.clearRetiredAnchors(sessionKey, path);
+      store.upsertRetiredAnchors(sessionKey, path, JSON.stringify(entries));
+      const before = store.getRetiredEntries(sessionKey, path);
+      expect(before.length).toBe(6);
+      const rows = newHashes.slice(0, 6).map((h, i) => ({ position: i, hash: h }));
+      await recordServed(sessionKey, path, rows, N, {
+        hashes: newHashes,
+        canons: Array.from({ length: N }, (_, i) => (i < 6 ? `changed${i}` : `line${i}`)),
+      });
+      const after = store.getRetiredEntries(sessionKey, path);
+      expect(after.length).toBe(0);
+    });
+  });
+
+  it("keeps deathPos=null retired entries through a partial sweep and clears them on a full serve", async () => {
+    await withTempHome(async () => {
+      const sessionKey = "sess-minus1-1";
+      const path = "/tmp/minus1-file.txt";
+      const N = 10;
+      const content = Array.from({ length: N }, (_, i) => `line ${i}`).join("\n");
+      const hashes = lineHashesPure(content);
+      await recordServed(
+        sessionKey,
+        path,
+        hashes.map((h, i) => ({ position: i, hash: h })),
+        N,
+        { hashes, canons: Array.from({ length: N }, (_, i) => `line${i}`) },
+      );
+      const store = await loadServedStore();
+      const mixed: RetiredEntry[] = [
+        { hash: hashes[0]!, deathPos: null },
+        { hash: hashes[1]!, deathPos: null },
+        { hash: hashes[2]!, deathPos: 2 },
+        { hash: hashes[3]!, deathPos: 3 },
+        { hash: hashes[4]!, deathPos: 4 },
+      ];
+      store.clearRetiredAnchors(sessionKey, path);
+      store.upsertRetiredAnchors(sessionKey, path, JSON.stringify(mixed));
+      const newHashes = lineHashesPure(content);
+      const rows = [2, 3].map((i) => ({ position: i, hash: newHashes[i]! }));
+      await recordServed(sessionKey, path, rows, N, {
+        hashes: newHashes,
+        canons: Array.from({ length: N }, (_, i) => `line${i}`),
+      });
+      const afterPartial = store.getRetiredEntries(sessionKey, path);
+      const afterHashes = new Set(afterPartial.map((e) => e.hash));
+      expect(afterHashes.has(hashes[0]!)).toBe(true);
+      expect(afterHashes.has(hashes[1]!)).toBe(true);
+      expect(afterHashes.has(hashes[2]!)).toBe(false);
+      expect(afterHashes.has(hashes[3]!)).toBe(false);
+      expect(afterHashes.has(hashes[4]!)).toBe(true);
+      const fullRows = newHashes.map((h, i) => ({ position: i, hash: h }));
+      await recordServed(sessionKey, path, fullRows, N, {
+        hashes: newHashes,
+        canons: Array.from({ length: N }, (_, i) => `line${i}`),
+      });
+      const afterFull = store.getRetiredEntries(sessionKey, path);
+      expect(afterFull.length).toBe(0);
+    });
+  });
+
+  it("sweeps paged serves death position by death position and tracks them as cards", async () => {
+    await withTempHome(async () => {
+      const sessionKey = "sess-cards-paged-1";
+      const path = "/tmp/cards-paged-file.txt";
+      const N = 1000;
+      const content = Array.from({ length: N }, (_, i) => `line ${i}`).join("\n");
+      const hashes = lineHashesPure(content);
+      await recordServed(
+        sessionKey,
+        path,
+        hashes.map((h, i) => ({ position: i, hash: h })),
+        N,
+        { hashes, canons: Array.from({ length: N }, (_, i) => `line${i}`) },
+      );
+      const store = await loadServedStore();
+      const retired: RetiredEntry[] = Array.from({ length: N }, (_, i) => ({
+        hash: idxToHash((90000 + i) % HASH_SPACE),
+        deathPos: i,
+      }));
+      store.clearRetiredAnchors(sessionKey, path);
+      store.upsertRetiredAnchors(sessionKey, path, JSON.stringify(retired));
+      try {
+        store.clearCards(sessionKey, path);
+      } catch {}
+      const before = store.getRetiredEntries(sessionKey, path);
+      expect(before.length).toBe(N);
+      const cardsBefore = store.getCards(sessionKey, path);
+      expect(cardsBefore.size).toBe(0);
+      const rowsFirst = Array.from({ length: 500 }, (_, i) => ({ position: i, hash: hashes[i]! }));
+      await recordServed(sessionKey, path, rowsFirst, N, {
+        hashes,
+        canons: Array.from({ length: N }, (_, i) => `line${i}`),
+      });
+      const afterFirst = store.getRetiredEntries(sessionKey, path);
+      expect(afterFirst.length).toBe(500);
+      const remainingDeathPos = new Set(afterFirst.map((e) => e.deathPos));
+      for (let i = 0; i < 500; i++) expect(remainingDeathPos.has(i)).toBe(false);
+      for (let i = 500; i < 1000; i++) expect(remainingDeathPos.has(i)).toBe(true);
+      const cardsAfterFirst = store.getCards(sessionKey, path);
+      expect(cardsAfterFirst.size).toBe(500);
+      for (let i = 0; i < 500; i++) expect(cardsAfterFirst.has(i)).toBe(true);
+      const rowsSecond = Array.from({ length: 500 }, (_, i) => ({
+        position: 500 + i,
+        hash: hashes[500 + i]!,
+      }));
+      await recordServed(sessionKey, path, rowsSecond, N, {
+        hashes,
+        canons: Array.from({ length: N }, (_, i) => `line${i}`),
+      });
+      const afterSecond = store.getRetiredEntries(sessionKey, path);
+      expect(afterSecond.length).toBe(0);
+      const cardsAfterSecond = store.getCards(sessionKey, path);
+      expect(cardsAfterSecond.size).toBe(1000);
+      for (let i = 0; i < 1000; i++) expect(cardsAfterSecond.has(i)).toBe(true);
+      const fullRows = hashes.map((h, i) => ({ position: i, hash: h }));
+      await recordServed(sessionKey, path, fullRows, N, {
+        hashes,
+        canons: Array.from({ length: N }, (_, i) => `line${i}`),
+      });
+      const cardsAfterFull = store.getCards(sessionKey, path);
+      expect(cardsAfterFull.size).toBe(0);
+      const retiredAfterFull = store.getRetiredEntries(sessionKey, path);
+      expect(retiredAfterFull.length).toBe(0);
     });
   });
 });
@@ -241,6 +403,45 @@ describe("served state — session isolation", () => {
     await withTempHome(async () => {
       await recordServed("sessionA", "/p.ts", [{ position: 0, hash: "abc" }]);
       expect(await loadServed("sessionB", "/p.ts")).toEqual([]);
+    });
+  });
+
+  it("keeps one path's retired set disjoint from a second session's", async () => {
+    await withTempHome(async () => {
+      const path = "/proj/file.ts";
+      await recordServed("sessionA", path, [{ position: 0, hash: "AAA" }], 1, {
+        hashes: ["AAA"],
+        canons: ["a"],
+      });
+      const store = await loadServedStore();
+      store.upsertRetiredAnchors("sessionA", path, JSON.stringify([{ hash: "BBB", deathPos: 0 }]));
+      await recordServed("sessionB", path, [{ position: 0, hash: "CCC" }], 1, {
+        hashes: ["CCC"],
+        canons: ["c"],
+      });
+      store.upsertRetiredAnchors("sessionB", path, JSON.stringify([{ hash: "DDD", deathPos: 0 }]));
+      const resA = store.getAnchorReservations("sessionA", path);
+      const resB = store.getAnchorReservations("sessionB", path);
+      const svResA = await loadAnchorReservations("sessionA", path);
+      const svResB = await loadAnchorReservations("sessionB", path);
+      expect(resA.reservedHashes.has("AAA")).toBe(true);
+      expect(resA.reservedHashes.has("BBB")).toBe(true);
+      expect(resA.reservedHashes.has("CCC")).toBe(false);
+      expect(resA.reservedHashes.has("DDD")).toBe(false);
+      expect(resA.retiredHashes.has("BBB")).toBe(true);
+      expect(resA.retiredHashes.has("DDD")).toBe(false);
+      expect(resB.reservedHashes.has("CCC")).toBe(true);
+      expect(resB.reservedHashes.has("DDD")).toBe(true);
+      expect(resB.reservedHashes.has("AAA")).toBe(false);
+      expect(resB.reservedHashes.has("BBB")).toBe(false);
+      expect(resB.retiredHashes.has("DDD")).toBe(true);
+      expect(resB.retiredHashes.has("BBB")).toBe(false);
+      expect(svResA.reservedHashes.has("AAA")).toBe(true);
+      expect(svResA.reservedHashes.has("BBB")).toBe(true);
+      expect(svResA.reservedHashes.has("CCC")).toBe(false);
+      expect(svResB.reservedHashes.has("CCC")).toBe(true);
+      expect(svResB.reservedHashes.has("DDD")).toBe(true);
+      expect(svResB.reservedHashes.has("AAA")).toBe(false);
     });
   });
 });

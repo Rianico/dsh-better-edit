@@ -5,7 +5,6 @@
  * @module dsh-better-edit/tool-undo
  */
 
-import type { Context } from "@deepseek-ai/cordis";
 import { defineTool } from "@deepseek-ai/dsh-tools";
 import { toLF, stripBOM, genDiff, restoreEndings } from "./edit-diff.js";
 import { visLines, splitLines, codeOf } from "./utils.js";
@@ -314,16 +313,4 @@ export function buildUndoTool(io: FileIO, sandbox: FsSandboxController) {
       });
     },
   });
-}
-
-/**
- * Register the hashline tool on the calling agent’s scope (own layer).
- */
-export function registerUndoTool(
-  _rootCtx: Context,
-  agentCtx: Context,
-  io: FileIO,
-  sandbox: FsSandboxController,
-): () => void {
-  return agentCtx.tools.register(buildUndoTool(io, sandbox));
 }

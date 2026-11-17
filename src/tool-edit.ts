@@ -6,7 +6,6 @@
  * @module dsh-better-edit/tool-edit
  */
 
-import type { Context } from "@deepseek-ai/cordis";
 import { defineTool } from "@deepseek-ai/dsh-tools";
 import { normalizeRequest as normReq, assertEditRequest } from "./contract.js";
 import { abortIf } from "./utils.js";
@@ -123,13 +122,4 @@ export function buildEditTool(io: FileIO, sandbox: FsSandboxController) {
       });
     },
   });
-}
-
-export function registerEditTool(
-  _rootCtx: Context,
-  agentCtx: Context,
-  io: FileIO,
-  sandbox: FsSandboxController,
-): () => void {
-  return agentCtx.tools.register(buildEditTool(io, sandbox));
 }

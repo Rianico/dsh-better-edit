@@ -369,12 +369,3 @@ export function buildStrReplaceEditorTool(io: FileIO, sandbox: FsSandboxControll
     },
   });
 }
-
-/** Register the shadow `str_replace_editor` on the calling agent's scope (own layer). */
-export function registerStrReplaceEditorTool(
-  agentCtx: { tools: { register(def: unknown): () => void } },
-  io: FileIO,
-  sandbox: FsSandboxController,
-): () => void {
-  return agentCtx.tools.register(buildStrReplaceEditorTool(io, sandbox));
-}

@@ -55,7 +55,7 @@ a silent behavior change: every accepted call does what the built-in promises.
 
 - Agent-layer shadow (chosen): zero upstream coordination, per-agent unwind
   on dispose, preset guidance untouched. Cost: we own contract parity — every
-  upstream command/param addition must be ported (see `tests/contract/`).
+  upstream command/param addition must be ported (see `test/contract/`).
 - Upstream fix (rejected for now): enriching `FS_NOT_TEXT` / teaching the
   built-in governance helps every consumer, but `dsh-fs` is `0.1.0-rc`
   (breaking changes allowed) and the harness team has not committed to the
@@ -68,6 +68,6 @@ a silent behavior change: every accepted call does what the built-in promises.
   `recordOpenState`, `prepareForSave` via `io.writeText`,
   `invalidateIfStale`, `getEncodingState`).
 - `src/index.ts` + `src/self-heal.ts`: register and watch the third shadow.
-- Contract tests (`tests/tool-str-replace-editor.test.ts`,
-  `tests/contract/str-replace-editor.test.ts`) pin parity: name, params, no
+- Contract tests (`test/core/str-replace-editor.gates.test.ts`,
+  `test/contract/str-replace-editor.test.ts`) pin parity: name, params, no
   `encoding` param, range slicing, `E_BLIND_REPLACE`, BOM round-trip.

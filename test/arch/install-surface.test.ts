@@ -39,6 +39,23 @@ function sameEntry(a: string | undefined, b: string | undefined): boolean {
   return norm(a) === norm(b);
 }
 
+/**
+ * A script body with every `pnpm run <name>` / `npm run <name>` / `npm <name>`
+ * reference expanded in place, depth-capped so a self-referencing script cannot
+ * spin. The cell below pins an INVARIANT — the build runs and its exit is never
+ * swallowed — not a spelling: `prepare` routes through the `build` script (which
+ * is `clean && tsc`), so the check must follow the reference. Text-pinning
+ * `prepare` instead would force the build body to be duplicated inline and would
+ * leave `|| true` hidden one level down unguarded.
+ */
+function expandScript(body: string, depth = 3): string {
+  const expanded = body.replace(/\b(?:pnpm|npm)(?:\s+run)?\s+([\w:-]+)/g, (match, name: string) => {
+    const nested = pkg.scripts?.[name];
+    return nested === undefined ? match : `${nested} `;
+  });
+  return expanded === body || depth === 0 ? body : expandScript(expanded, depth - 1);
+}
+
 describe("install surface (manifest)", () => {
   it("names the same single built entry through main and exports", () => {
     const entry = exportEntry();
@@ -63,10 +80,22 @@ describe("install surface (manifest)", () => {
   it("cannot swallow a failed build in prepare or prepublishOnly", () => {
     const prepare = pkg.scripts?.prepare ?? "";
     const prepublish = pkg.scripts?.prepublishOnly ?? "";
-    expect(prepare).not.toContain("|| true");
-    expect(prepare).toContain("tsc");
-    expect(prepublish).not.toContain("|| true");
+    // Reach through the script references, so the pin is "tsc runs and nothing
+    // swallows its exit" rather than "`prepare` spells `tsc` inline".
+    const prepareChain = expandScript(prepare);
+    const prepublishChain = expandScript(prepublish);
+    expect(prepareChain, "prepare must reach tsc, directly or via a script it runs").toContain(
+      "tsc",
+    );
+    expect(
+      prepareChain,
+      "neither prepare nor the scripts it runs may swallow a failure",
+    ).not.toContain("|| true");
     expect(prepublish).toContain("npm run typecheck");
     expect(prepublish).toContain("npm test");
+    expect(
+      prepublishChain,
+      "neither prepublishOnly nor the scripts it runs may swallow a failure",
+    ).not.toContain("|| true");
   });
 });

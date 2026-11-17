@@ -1,11 +1,9 @@
 import { describe, it, expect } from "vitest";
 import { readFile, writeFile } from "node:fs/promises";
 import { withTempFile, setupIntegrationTest, getText } from "../support/fixtures.js";
-import { localIO } from "../../src/fs-bridge.js";
 import { buildUndoTool } from "../../src/tool-undo.js";
-import { FsSandboxController } from "../../src/sandbox.js";
 import { saveUndo, clearUndo, getUndo } from "../../src/undo-edit.js";
-import { hashStorePath } from "../../src/paths.js";
+import { hashStorePath } from "../../src/store-tenancy.js";
 
 function makeExec(cwd: string, sessionKey = "test-session") {
   return {
@@ -93,23 +91,6 @@ describe("tool-undo coverage", () => {
       const res2 = await undo.execute("undo_last_edit", { path: "t.txt" });
       expect(getText(res2)).toContain("No undo history");
     });
-  });
-
-  it("registerUndoTool registers", async () => {
-    try {
-      const { Context } = await import("@deepseek-ai/cordis");
-      const io = localIO();
-      const sandbox = new FsSandboxController({
-        fs: { sandboxMode: undefined },
-        get: () => undefined,
-      } as never);
-      const root = new (Context as any)();
-      const agent = new (Context as any)();
-      const { registerUndoTool } = await import("../../src/tool-undo.js");
-      const dispose = registerUndoTool(root, agent, io, sandbox);
-      expect(typeof dispose).toBe("function");
-      dispose();
-    } catch {}
   });
 });
 

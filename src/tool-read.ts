@@ -6,7 +6,6 @@
  * @module dsh-better-edit/tool-read
  */
 
-import type { Context } from "@deepseek-ai/cordis";
 import { defineTool } from "@deepseek-ai/dsh-tools";
 import { normalizeRequest as normReq, assertReadRequest, pathSchema } from "./contract.js";
 
@@ -115,11 +114,4 @@ export function buildReadTool(io: FileIO) {
       });
     },
   });
-}
-
-/**
- * Register the hashline tool on the calling agent’s scope (own layer).
- */
-export function registerReadTool(_rootCtx: Context, agentCtx: Context, io: FileIO): () => void {
-  return agentCtx.tools.register(buildReadTool(io));
 }

@@ -36,7 +36,7 @@ and the tombstone path, not from resolution.
 - **Benign shift** — the intended line's content is unchanged, its position moved → resolves →
   applies. Pinned by `test/core/lease-resolve-seam.test.ts` ("applies a benign exterior insert above
   the served span", "applies a benign exterior delete above the served span") and by
-  `tests/51-epoch-strict.test.ts` ("applies at the rebased coordinate after an exterior insert"),
+  `test/core/lease-resolve-seam.test.ts` ("applies at the rebased coordinate after an exterior insert"),
   which asserts the exact resulting bytes.
 - **Look-alike rebind** — the intended line was deleted and another line holds its bytes → its
   `line_id` is absent from the current lineage → reject `E_STALE_RANGE`, no write. Pinned by

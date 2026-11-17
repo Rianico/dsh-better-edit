@@ -49,8 +49,9 @@
     "./package.json": "./package.json"
   },
   "scripts": {
-    "prepare": "tsc -p tsconfig.json && husky",
-    "build": "tsc -p tsconfig.json",
+    "prepare": "pnpm run build && husky",
+    "build": "pnpm run clean && tsc -p tsconfig.json",
+    "clean": "node -e \"require('node:fs').rmSync('lib',{recursive:true,force:true})\"",
     "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.test.json",
     "typecheck:test": "tsc --noEmit -p tsconfig.test.json",
     "test": "vitest run",

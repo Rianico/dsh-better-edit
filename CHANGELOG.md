@@ -18,6 +18,7 @@ All notable changes to this project will be documented in this file.
 ### Code Refactoring
 
 * **dead-code:** retire the duplicate-name shims and the dead FileView sub-graph — `edit-engine`, `preview-controller`, the five `file-view` re-export shims, and the `mutation.ts` deprecated re-export block go, and `SUPPORTED_ENCODINGS` becomes the one encoding roster (ADR-0033).
+* **dead-code:** retire the four `register*Tool` bypasses, the stray `tests/` tree (unique cases ported into `test/`), the duplicate guidance barrel and the `paths.ts → store/index.ts` barrel edge; `pnpm run build` now cleans `lib/` first, so a stale module cannot ride the output.
 
 ## [1.2.4] - 2026-11-17
 
