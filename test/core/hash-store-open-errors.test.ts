@@ -80,7 +80,7 @@ beforeAll(async () => {
   vi.stubEnv("HOME", tmpHome);
   vi.stubEnv("DSH_HOME", join(tmpHome, ".dsh"));
   vi.stubEnv("XDG_CONFIG_HOME", "");
-  const { initHasher } = await import("../../src/hashline/hasher");
+  const { initHasher } = await import("../../src/hashline/hash-assign.js");
   await initHasher();
 });
 

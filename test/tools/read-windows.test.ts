@@ -8,7 +8,7 @@ import { localIO } from "../../src/fs-bridge.js";
 import { loadHashStore, type InternalHashStore } from "../../src/hash-store.js";
 import { driftReported, markDriftReported } from "../../src/session-view.js";
 import { sessionKeyFor, withWorkspace } from "../../src/workspace-context.js";
-import { initHasher } from "../../src/hashline/hasher.js";
+import { initHasher } from "../../src/hashline/hash-assign.js";
 import {
   extractHash,
   getText,

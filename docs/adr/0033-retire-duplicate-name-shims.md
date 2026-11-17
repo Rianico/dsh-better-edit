@@ -152,3 +152,78 @@ path is `readView` → `io.readText` → `normFromText` plus `fs-bridge`'s own e
 - `GLOSSARY.md` — `source of truth`, `projection`: the two entries that make "one name per concept"
   checkable rather than stylistic. No glossary entry is added: "shim" carries no repo-specific sense
   here, so defining it would be vocabulary with no reader.
+
+## Amendment (arch-rE1, 2026-11-17) — the hashline family, missed on the first pass
+
+Ticket arch-rE1, lane `arch-r1`. The Decision body above is untouched; this section records six shims
+that the T1 pass left standing and the guard that outlived them.
+
+### What survived T1
+
+Six two-line `export *` shims in `src/hashline/`: `alphabet`, `hasher` and `pure` (each
+`export * from "./hash-assign.js"`) and `apply`, `parse`, `resolve` (each
+`export * from "./anchor-pipeline.js"`). Same shape, same failure mode as the five `file-view` shims
+decision 6 deleted — a second specifier for a name that already had an owner.
+
+### Why T1 missed them — two distinct reasons, not one
+
+1. **The inventory was an explicit name list.** Decision 6 enumerated the `file-view` family
+   (`file-reader`, `file-kind`, `validation`, `read-render`, `truncate`) by name. The hashline family
+   was never in that list, so no step of T1 ever asked about it. An enumeration is complete exactly
+   with respect to the names someone thought of.
+2. **The shower sweep used a path-prefixed pattern.** The importer sweep was
+   `rg 'hashline/(alphabet|apply|hasher|parse|pure|resolve)' src/`. A path-prefixed pattern **cannot
+   match a sibling-relative specifier**, so it structurally could not see
+   `src/hashline/index.ts:29-30`, which imported the `parse` shim as `"./parse.js"`. The premise
+   "zero `src/` importers" was therefore false for exactly one shim, and the `src/`-scoped sweep was
+   what hid it. (Unrelated `./parse.js` / `./resolve.js` imports in `src/guidance/` are a different
+   module pair and were correctly left alone.)
+
+For the other five shims the sweep's conclusion held: their only consumers were tests, and a
+**test-only** importer is invisible to a `src/`-scoped `rg` — so the audit read them as import-free
+while 32 test files were importing `hashline/hasher.js`. Test-only importers are the one consumer class
+an audit that only walks production code cannot see.
+
+### What was done
+
+- All 32 test files were re-pointed at the owning module: 31 static `from` imports spelled with the
+  `.js` suffix, plus one dynamic `await import(…)` of the extensionless form in
+  `test/core/hash-store-open-errors.test.ts`. Only
+  the specifier changed — `initHasher` (31 files) and `contentChecksum` (3) are declared in
+  `hash-assign.ts`, which is exactly what the shim re-exported.
+- The `parse` barrel edge moved to its owner: `src/hashline/index.ts` now names `./anchor-pipeline.js`
+  for `parseHashRef`, `parseText` and `Anchor` (all declared there — lines 85, 87 and 45). The barrel's
+  external surface is byte-identical.
+- The six shims were deleted, and so was the guard that had been written to forbid them.
+
+### The guard went with them, rather than becoming a tombstone
+
+`biome.json`'s `style.noRestrictedImports` held exactly 36 entries — six shims × two spellings ×
+three prefixes — and every one named a file this ticket deleted, plus two `"off"` disablers (a
+`src/hashline/**` override whose only content was the rule, and a line in the `test/**` override).
+The whole rule, the map and both disablers are gone; `suspicious.noExplicitAny` stays in the `test/**`
+override because it still covers live test code. This keeps faith with the Consequences section above:
+a rule against paths that no longer exist is dead config. It also matters that **`biome` is not in the
+gate chain** — `pnpm run lint` is `oxlint` and no workflow invokes biome — which is precisely why the
+six shims and this guard survived together: the rule was never enforced on a commit, so it neither
+failed nor was noticed. Removing it loses no enforcement, because it enforced nothing.
+
+### What now prevents return
+
+- The shims do not exist, so nothing can name them.
+- A future shim needs the module to be **re-created and wired into the barrel**:
+  `src/hashline/index.ts` now names `anchor-pipeline.js` and `served-evidence.js` directly, so the
+  barrel — the seam's one external surface — no longer carries a second spelling to copy.
+- There is no config slot left that could bless one: the durable record is this ADR, and because
+  biome is outside the gate chain, re-adding `noRestrictedImports` would buy no enforcement anyway. A
+  re-introduced shim therefore needs **a new decision record**, not a config entry.
+
+### Same pass, adjacent surface change
+
+Decision 2 listed the `src/mutation.ts` public surface as `execute`, `resolveDisplayPath`,
+`snapshotIdFor` plus `persistUndoAndWrite`. `resolveDisplayPath` (a one-line `toCwd` forwarder) and
+`snapshotIdFor` (no production caller, and shadowed by the unrelated
+`lineage-store`/`hash-store` `snapshotIdFor(path, snapshotHash)` methods) were test-only exports of the
+same kind this record retires, so they were deleted and the surface is now `execute` and
+`persistUndoAndWrite`. The four cells that pinned them went with them — they asserted the forwarders,
+not the seam. Corpus: 170 files / 1756 tests → 169 / 1752, the four cells exactly.

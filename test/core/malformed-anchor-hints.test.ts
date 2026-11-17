@@ -12,7 +12,7 @@ import { readFile } from "node:fs/promises";
 import { beforeAll, describe, expect, it } from "vitest";
 import { setupIntegrationTest, getText, withTempFile } from "../support/fixtures.js";
 import { parseHashRef, resEdit } from "../../src/hashline/anchor-pipeline.js";
-import { initHasher } from "../../src/hashline/hasher.js";
+import { initHasher } from "../../src/hashline/hash-assign.js";
 
 /** The one anchored-shape token the message may quote: the documented example. */
 const DOCUMENTED_EXAMPLE = "aB3";

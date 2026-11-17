@@ -11,7 +11,7 @@ import {
   ServedRejectionError,
 } from "../../src/hashline/index.js";
 import { xxh32 } from "../../src/hashline/hash-assign.js";
-import { initHasher } from "../../src/hashline/hasher.js";
+import { initHasher } from "../../src/hashline/hash-assign.js";
 import { shutdownHashStore } from "../../src/hash-store.js";
 import { loadServedCanons, recordServed } from "../../src/session-view.js";
 import { getWritableTempRoot } from "../support/fixtures.js";

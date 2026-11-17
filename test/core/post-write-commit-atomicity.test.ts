@@ -1,6 +1,6 @@
 import { readFile } from "node:fs/promises";
 import { beforeAll, describe, expect, it, vi } from "vitest";
-import { initHasher } from "../../src/hashline/hasher.js";
+import { initHasher } from "../../src/hashline/hash-assign.js";
 import { getUndo } from "../../src/undo-edit.js";
 import { loadAnchorReservations, loadServedStore } from "../../src/session-view.js";
 import { loadHashStore } from "../../src/hash-store.js";

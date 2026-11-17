@@ -26,8 +26,8 @@ export {
 
 export { lineHashes } from "./hash.js";
 
-export { parseHashRef, parseText } from "./parse.js";
-export type { Anchor } from "./parse.js";
+export { parseHashRef, parseText } from "./anchor-pipeline.js";
+export type { Anchor } from "./anchor-pipeline.js";
 
 export { resEdit } from "./anchor-pipeline.js";
 export type { HEdit, HTEdit, NEdit } from "./anchor-pipeline.js";

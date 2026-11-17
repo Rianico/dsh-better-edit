@@ -15,7 +15,7 @@ import { hashStorePath } from "../../src/store-tenancy.js";
 import { loadHashStore, shutdownHashStore } from "../../src/hash-store.js";
 import { recordServed, loadServed } from "../../src/session-view.js";
 import { lineHashes } from "../../src/hashline/index.js";
-import { initHasher } from "../../src/hashline/hasher.js";
+import { initHasher } from "../../src/hashline/hash-assign.js";
 
 function tempWorkspace(prefix: string): string {
   return mkdtempSync(join(tmpdir(), prefix));

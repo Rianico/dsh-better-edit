@@ -1,7 +1,7 @@
 import { beforeAll, describe, expect, it } from "vitest";
 import { buildBatchResult, buildChanged } from "../../src/edit-response.js";
 import { lineHashes } from "../../src/hashline/index.js";
-import { initHasher } from "../../src/hashline/hasher.js";
+import { initHasher } from "../../src/hashline/hash-assign.js";
 import { useTestHome } from "../support/fixtures.js";
 
 const home = useTestHome();

@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
 import { loadHashStore, shutdownHashStore, type HashStore } from "../../src/hash-store.js";
-import { initHasher, contentChecksum } from "../../src/hashline/hasher.js";
+import { initHasher, contentChecksum } from "../../src/hashline/hash-assign.js";
 import { splitLines } from "../../src/utils.js";
 import { getWritableTempRoot } from "../support/fixtures.js";
 import { saveUndo } from "../../src/undo-edit.js";

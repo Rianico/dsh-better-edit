@@ -7,7 +7,7 @@ import { loadHashStore, type InternalHashStore } from "../../src/hash-store.js";
 import { snapshotHashFor } from "../../src/snapshot-store/lineage-store.js";
 import { sessionKeyFor } from "../../src/workspace-context.js";
 import { withTempFile } from "../support/fixtures.js";
-import { initHasher } from "../../src/hashline/hasher.js";
+import { initHasher } from "../../src/hashline/hash-assign.js";
 
 beforeAll(async () => {
   await initHasher();

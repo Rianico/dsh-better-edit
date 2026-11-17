@@ -5,7 +5,7 @@ import { localIO } from "../../src/fs-bridge.js";
 import { loadServed, markDriftReported, driftReported } from "../../src/session-view.js";
 import { sessionKeyFor } from "../../src/workspace-context.js";
 import { withTempFile } from "../support/fixtures.js";
-import { initHasher } from "../../src/hashline/hasher.js";
+import { initHasher } from "../../src/hashline/hash-assign.js";
 
 beforeAll(async () => {
   await initHasher();

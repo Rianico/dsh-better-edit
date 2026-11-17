@@ -2,7 +2,7 @@ import { describe, expect, it, beforeAll } from "vitest";
 import { ServedRejectionError } from "../../src/hashline/served-evidence.js";
 import { finalizeToolResult } from "../../src/edit-response.js";
 import { applyEdit, lineHashesPure, type HEdit } from "../../src/hashline/index.js";
-import { initHasher } from "../../src/hashline/hasher.js";
+import { initHasher } from "../../src/hashline/hash-assign.js";
 
 beforeAll(async () => {
   await initHasher();

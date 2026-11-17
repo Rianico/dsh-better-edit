@@ -6,7 +6,7 @@ import { loadServed, recordServed, recordServedTruncated } from "../../src/sessi
 import { loadHashStore, upsertSnapshotFor, type InternalHashStore } from "../../src/hash-store.js";
 import { sessionKeyFor, withWorkspace } from "../../src/workspace-context.js";
 import { extractHash, getText, setupIntegrationTest, withTempFile } from "../support/fixtures.js";
-import { initHasher } from "../../src/hashline/hasher.js";
+import { initHasher } from "../../src/hashline/hash-assign.js";
 import {
   canon,
   canonDigest,

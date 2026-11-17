@@ -13,7 +13,7 @@ import {
   currentPositionOfDrifted,
 } from "../../src/session-view.js";
 import { shutdownHashStore } from "../../src/hash-store.js";
-import { initHasher } from "../../src/hashline/hasher.js";
+import { initHasher } from "../../src/hashline/hash-assign.js";
 import { getWritableTempRoot } from "../support/fixtures.js";
 
 let tmpHome: string;

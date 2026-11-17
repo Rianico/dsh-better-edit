@@ -8,7 +8,7 @@ import {
   ServedRejectionError,
   verifyServedRange,
 } from "../../src/hashline/index.js";
-import { initHasher } from "../../src/hashline/hasher.js";
+import { initHasher } from "../../src/hashline/hash-assign.js";
 import { codeOf } from "../../src/utils.js";
 
 beforeAll(async () => {

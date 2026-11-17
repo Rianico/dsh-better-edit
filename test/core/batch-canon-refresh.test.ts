@@ -1,7 +1,7 @@
 import { describe, expect, it, beforeAll } from "vitest";
 import { readFile } from "node:fs/promises";
 import { withTempFile, setupIntegrationTest, getText } from "../support/fixtures.js";
-import { initHasher } from "../../src/hashline/hasher.js";
+import { initHasher } from "../../src/hashline/hash-assign.js";
 
 beforeAll(async () => {
   await initHasher();

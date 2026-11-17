@@ -16,7 +16,7 @@ import { snapshotHashFor } from "../../src/snapshot-store/lineage-store.js";
 import { DomainError } from "../../src/domain-errors.js";
 import { HASH_STORE_VERSION } from "../../src/constants.js";
 import { CANON_VERSION } from "../../src/hashline/hash-assign.js";
-import { initHasher, contentChecksum } from "../../src/hashline/hasher.js";
+import { initHasher, contentChecksum } from "../../src/hashline/hash-assign.js";
 import { splitLines } from "../../src/utils.js";
 import type { UndoEntry } from "../../src/undo-edit.js";
 import { getWritableTempRoot } from "../support/fixtures.js";

@@ -24,7 +24,7 @@ import {
   servedPositionsOf,
 } from "../../src/session-view.js";
 import { HASH_STORE_VERSION, SERVED_TTL_MS } from "../../src/constants.js";
-import { initHasher, contentChecksum } from "../../src/hashline/hasher.js";
+import { initHasher, contentChecksum } from "../../src/hashline/hash-assign.js";
 import { HASH_SPACE, idxToHash, lineHashesPure } from "../../src/hashline/hash-assign.js";
 import { getWritableTempRoot } from "../support/fixtures.js";
 import { saveUndo } from "../../src/undo-edit.js";

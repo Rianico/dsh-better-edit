@@ -3,7 +3,7 @@ import { beforeAll, describe, expect, it } from "vitest";
 
 import type { ServedRow } from "../../src/domain-errors.js";
 import { localIO, mapFsError } from "../../src/fs-bridge.js";
-import { initHasher } from "../../src/hashline/hasher.js";
+import { initHasher } from "../../src/hashline/hash-assign.js";
 import { lineHashesPure } from "../../src/hashline/index.js";
 import { loadServed } from "../../src/session-view.js";
 import { withWorkspace } from "../../src/workspace-context.js";

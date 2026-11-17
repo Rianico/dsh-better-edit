@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises";
 
 import { getText, setupIntegrationTest, useTestHome, withTempFile } from "../support/fixtures.js";
 import { applyEdit, canon, lineHashes, resEdit, type HTEdit } from "../../src/hashline/index.js";
-import { initHasher } from "../../src/hashline/hasher.js";
+import { initHasher } from "../../src/hashline/hash-assign.js";
 import {
   ANCHOR_PREFIX_REMEDY,
   buildNeverServedEditHint,
@@ -14,8 +14,8 @@ import {
  * FU-5 (§4.7 conformance): the applied-bytes warn tiers beside the 0-matched
  * write-through (#63 / ADR-0025). The write-through KEEPS writing — upstream
  * conformance is the WARNING behavior, not a new refusal. Upstream referents:
- * `pi-better-edit@b92e0ec:src/hashline/served-guard.ts:202,279` and the stages
- * at `src/hashline/apply.ts:403-427`.
+ * `pi-better-edit@b92e0ec:src/hashline/served-guard.ts:202,279` and the stages at
+ * `pi-better-edit@b92e0ec:src/hashline/apply.ts:403-427` → local `anchor-pipeline.ts:applyEdit`.
  *
  * FU-R (upstream `never-served-soft-hint.test.ts`): the never-served count travels
  * as structured data and the batch engine renders ONE counted hint per call; the

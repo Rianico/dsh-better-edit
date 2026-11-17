@@ -1,7 +1,7 @@
 import { beforeAll, describe, expect, it, vi } from "vitest";
 import { AnchorSpaceExhaustedError, lineHashesPure } from "../../src/hashline/hash-assign.js";
 import type { ServedPersistence } from "../../src/hash-store.js";
-import { initHasher } from "../../src/hashline/hasher.js";
+import { initHasher } from "../../src/hashline/hash-assign.js";
 import { applyOne } from "../../src/mutation/engine.js";
 
 /**

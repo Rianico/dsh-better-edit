@@ -11,7 +11,7 @@ import {
   type LeaseSpanSource,
 } from "../../src/hashline/index.js";
 import { DomainError } from "../../src/domain-errors.js";
-import { initHasher } from "../../src/hashline/hasher.js";
+import { initHasher } from "../../src/hashline/hash-assign.js";
 import {
   loadHashStore,
   shutdownHashStore,

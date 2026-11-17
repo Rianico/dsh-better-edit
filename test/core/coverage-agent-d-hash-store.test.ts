@@ -17,7 +17,7 @@ import { getWritableTempRoot } from "../support/fixtures.js";
 import { contentChecksum } from "../../src/hashline/hash-assign.js";
 import { splitLines } from "../../src/utils.js";
 import { vi } from "vitest";
-import { initHasher } from "../../src/hashline/hasher.js";
+import { initHasher } from "../../src/hashline/hash-assign.js";
 
 beforeAll(async () => {
   await initHasher();

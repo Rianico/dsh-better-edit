@@ -13,8 +13,6 @@
  *
  * Public surface:
  *   execute(io, items, {sessionKey, exec, sandbox, signal}) → string  — deep seam: ONE interface
- *   resolveDisplayPath(path, cwd) → string                            — path adapter
- *   snapshotIdFor(io, absolutePath, signal) → string | undefined      — snapshot bookkeeping
  *   persistUndoAndWrite(opts) → void                                  — transaction (exported for tests)
  *
  * Depth: small interface (execute) with large implementation — locality and leverage.
@@ -32,9 +30,7 @@ import type { FsSandboxController } from "./sandbox.js";
 
 import { formatError } from "./domain-errors.js";
 import { canon } from "./hashline/hash-assign.js";
-import { fileSnap } from "./file-view.js";
 import type { LineEnding } from "./edit-diff.js";
-import { toCwd } from "./paths.js";
 import { recordServedTruncated, retireAnchors } from "./session-view.js";
 import { abortIf, splitLines } from "./utils.js";
 import { runFileEdits } from "./mutation/engine.js";
@@ -46,28 +42,6 @@ import type { BatchSection } from "./edit-response.js";
 import { getEncodingState, prepareForSave } from "./file-encoding-state.js";
 import type { FileEncodingState } from "./file-encoding-state.js";
 import { loadConfig } from "./store-config.js";
-
-/** Resolve the display path a caller names against the session cwd. */
-export function resolveDisplayPath(path: string, cwd: string): string {
-  return toCwd(path, cwd);
-}
-
-/** Snapshot bookkeeping for noop/success results (best-effort). */
-export async function snapshotIdFor(
-  io: FileIO,
-  absolutePath: string,
-  signal?: AbortSignal,
-): Promise<string | undefined> {
-  try {
-    return await io.statVersion(absolutePath, signal);
-  } catch {
-    try {
-      return (await fileSnap(absolutePath)).snapshotId;
-    } catch {
-      return undefined;
-    }
-  }
-}
 
 // Engine helpers are private to Mutation — not re-exported.
 

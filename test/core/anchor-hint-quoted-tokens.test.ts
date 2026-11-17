@@ -18,7 +18,7 @@
 import { describe, expect, it, beforeAll } from "vitest";
 import { DomainError } from "../../src/domain-errors.js";
 import { parseHashRef, resEdit } from "../../src/hashline/anchor-pipeline.js";
-import { initHasher } from "../../src/hashline/hasher.js";
+import { initHasher } from "../../src/hashline/hash-assign.js";
 
 /**
  * The only anchor-shaped literals a refusal may quote: the examples the messages themselves
