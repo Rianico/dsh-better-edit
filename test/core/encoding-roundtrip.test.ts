@@ -448,7 +448,6 @@ describe("transaction — the round-trip verdict precedes every write", () => {
             sandbox: makeTestSandbox(),
             sandboxPolicy: undefined,
             undoUnavailableMessage: () => "[E_UNDO_UNAVAILABLE] unreachable",
-            restoreUnwrittenUndos: false,
           }),
         ).rejects.toThrow(/E_ENCODING_UNWRITABLE[\s\S]*normalizeToUtf8/);
       });

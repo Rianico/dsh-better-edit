@@ -14,6 +14,7 @@ All notable changes to this project will be documented in this file.
 ### Bug Fixes
 
 * **install:** claim tools synchronously in `agent/created` turn, isolate per-step failures, and reclaim contested entries on collision (#123) (#131)
+* **mutation:** restore the undo row of every file a failed write never wrote, so a multi-item edit's failure no longer leaves `undo_last_edit` reporting `E_UNDO_STALE "modified"` for the tool's own failed write (ADR-0034).
 
 ### Code Refactoring
 

@@ -93,7 +93,6 @@ interface PersistWriteOptions {
   sandboxPolicy: SandboxExecutionPolicy | undefined;
   signal?: AbortSignal;
   undoUnavailableMessage: (displayPath: string) => string;
-  restoreUnwrittenUndos: boolean;
 }
 
 export async function persistUndoAndWrite(opts: PersistWriteOptions): Promise<void> {
@@ -177,30 +176,20 @@ export async function persistUndoAndWrite(opts: PersistWriteOptions): Promise<vo
         console.error("Failed to restore undo entry after write failure:", e);
       }
     }
-    if (opts.restoreUnwrittenUndos) {
-      for (const u of undos) {
-        if (written.includes(u)) continue;
-        try {
-          await u.restore();
-        } catch (e) {
-          console.error("Failed to restore undo entry after write failure:", e);
-        }
+    // ADR-0034: the transaction is the one authority for these rows. A row `saveUndo` persisted for
+    // a file this write never reached describes content that is not on disk; leaving it there makes
+    // the next `undo_last_edit` compare the real file against a phantom and report `E_UNDO_STALE
+    // "modified"` — blaming an external write for the tool's own failed write.
+    for (const u of undos) {
+      if (written.includes(u)) continue;
+      try {
+        await u.restore();
+      } catch (e) {
+        console.error("Failed to restore undo entry after write failure:", e);
       }
     }
     throw opts.sandbox.mapError(error, opts.sandboxPolicy);
   }
-}
-
-async function commitSingle(
-  opts: Omit<PersistWriteOptions, "restoreUnwrittenUndos">,
-): Promise<void> {
-  return persistUndoAndWrite({ ...opts, restoreUnwrittenUndos: true });
-}
-
-async function commitBatch(
-  opts: Omit<PersistWriteOptions, "restoreUnwrittenUndos">,
-): Promise<void> {
-  return persistUndoAndWrite({ ...opts, restoreUnwrittenUndos: false });
 }
 
 // --- Deep seam: unified mutation API (one interface, thin adapters) ---
@@ -301,25 +290,26 @@ export async function execute(opts: {
 
   const isSingleCall = items.length === 1 && fileResult.appliedCount + fileResult.noopCount === 1;
 
+  // Both branches commit exactly this one file, so both name it the same way.
+  const commitFile: UndoWriteFile = {
+    absolutePath: fileResult.absolutePath,
+    displayPath: fileResult.displayPath,
+    originalNormalized: fileResult.originalNormalized,
+    bom: fileResult.bom,
+    originalEnding: fileResult.originalEnding,
+    originalHashes: fileResult.originalHashes,
+    result: fileResult.result,
+  };
+
   if (isSingleCall) {
     if (fileResult.appliedCount === 0) {
       const built = buildBatchResult([toSection()]);
       const serveLanded = await recordIfNeeded(built);
       return withServeNotice(built.content[0]!.text, serveLanded);
     }
-    await commitSingle({
+    await persistUndoAndWrite({
       io,
-      files: [
-        {
-          absolutePath: fileResult.absolutePath,
-          displayPath: fileResult.displayPath,
-          originalNormalized: fileResult.originalNormalized,
-          bom: fileResult.bom,
-          originalEnding: fileResult.originalEnding,
-          originalHashes: fileResult.originalHashes,
-          result: fileResult.result,
-        },
-      ],
+      files: [commitFile],
       exec,
       sandbox,
       sandboxPolicy,
@@ -336,19 +326,9 @@ export async function execute(opts: {
   if (fileResult.appliedCount === 0 && fileResult.noopCount > 0) {
     // all noops — no commit
   } else if (fileResult.appliedCount > 0) {
-    await commitBatch({
+    await persistUndoAndWrite({
       io,
-      files: [
-        {
-          absolutePath: fileResult.absolutePath,
-          displayPath: fileResult.displayPath,
-          originalNormalized: fileResult.originalNormalized,
-          bom: fileResult.bom,
-          originalEnding: fileResult.originalEnding,
-          originalHashes: fileResult.originalHashes,
-          result: fileResult.result,
-        },
-      ],
+      files: [commitFile],
       exec,
       sandbox,
       sandboxPolicy,
