@@ -198,6 +198,17 @@ function createHost(options: {
     warnCalls,
     async settled() {
       await Promise.all(effects);
+      // `read` registers synchronously inside the effect; the preset-gated
+      // tools and the guidance sections land from a detached async install IIFE
+      // (Rianico/dsh-better-edit#123), which the effect promise no longer covers.
+      // The guidance sections are the install's last step, so their arrival
+      // marks install completion.
+      const deadline = Date.now() + 2000;
+      while (sections.length === 0 && Date.now() < deadline) {
+        await new Promise((resolve) => setTimeout(resolve, 1));
+      }
+      // Drain a final microtask/macrotask turn for trailing handlers.
+      await new Promise((resolve) => setTimeout(resolve, 0));
     },
   };
 }

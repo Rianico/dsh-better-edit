@@ -23,10 +23,16 @@ import { FsSandboxController } from "./sandbox.js";
 import { buildReadTool } from "./tool-read.js";
 import { buildEditTool } from "./tool-edit.js";
 import { buildStrReplaceEditorTool } from "./tool-str-replace-editor.js";
-import { registerUndoTool } from "./tool-undo.js";
+import { buildUndoTool } from "./tool-undo.js";
 import { registerWriteHook } from "./write-hook.js";
 import { createSelfHealWatcher } from "./self-heal.js";
-import { resolveToolset, sectionsForToolset } from "./preset-toolset.js";
+import {
+  resolveToolset,
+  sectionsForToolset,
+  UNCONDITIONAL_TOOLSET,
+  type HashlineToolset,
+} from "./preset-toolset.js";
+import { registerWithReclaim } from "./reclaim.js";
 import { initHasher } from "./hashline/hash-assign.js";
 import {
   composeSections,
@@ -129,62 +135,210 @@ async function resolveAgentSections(rootCtx: Context, agent: Agent): Promise<Sec
 }
 
 function installAgentTools(rootCtx: Context, agent: Agent): void {
-  agent.ctx.effect(async () => {
+  agent.ctx.effect(() => {
+    let disposed = false;
+    const disposers: Array<() => void> = [];
+    const registerDisposer = (dispose: (() => void) | undefined): void => {
+      if (!dispose) return;
+      if (disposed) {
+        try {
+          dispose();
+        } catch {
+          // A registration that lost the teardown race is still released.
+        }
+        return;
+      }
+      disposers.push(dispose);
+    };
+
     // `fs` is host-plane: use the plugin's own context (covered by
     // inject) rather than the agent's scoped one, whose fiber chain does
     // not declare it. The session's live directory still reaches the bridge
     // per call via `execCwd` (the `workingDirectory` service, falling back to
     // `exec.agent.session.header.cwd`).
-    // The composed preset's own tool policy decides which mutating tools
-    // this agent gets; `read` is unconditional (Rianico/dsh-better-edit#110).
-    const toolset = await resolveToolset(rootCtx, agent.ctx);
-    const io = ctxFsIO(rootCtx.fs as FileSystem, rootCtx);
-    const disposers: Array<() => void> = [];
-    const sandbox = new FsSandboxController(rootCtx);
-    // Keep owned definitions by reference for self-heal identity check. An
-    // absent definition is also the watcher's "never heal this" signal, so the
-    // heal set and the installed set cannot drift apart.
-    const hashReadDef = buildReadTool(io);
-    disposers.push(agent.ctx.tools.register(hashReadDef));
-    const hashEditDef = toolset.edit ? buildEditTool(io, sandbox) : undefined;
-    if (hashEditDef !== undefined) disposers.push(agent.ctx.tools.register(hashEditDef));
-    // Governed shadow of the preset's built-in str_replace_editor
-    // (ADR-0015): identical contract, encoding-governed mutations. Only a
-    // preset that composed the built-in earns the shadow.
-    const hashStrReplaceDef = toolset.strReplaceEditor
-      ? buildStrReplaceEditorTool(io, sandbox)
-      : undefined;
-    if (hashStrReplaceDef !== undefined) {
-      disposers.push(agent.ctx.tools.register(hashStrReplaceDef));
-    }
-    if (toolset.undo) disposers.push(registerUndoTool(rootCtx, agent.ctx, io, sandbox));
-    // The hook guards the preset's own built-in `write` and auto-reads after it.
-    if (toolset.writeHook) disposers.push(registerWriteHook(rootCtx, agent.ctx, io));
-
     const toolsSvc = rootCtx.get("tools");
-    disposers.push(
-      createSelfHealWatcher({
-        agentId: agent.id,
-        rootCtx,
-        agent,
-        agentCtx: agent.ctx,
-        toolsSvc,
-        hashReadDef,
-        hashEditDef,
-        hashStrReplaceDef,
-      }),
-    );
-    // Shadow the preset's built-in tool guidance with the hashline
-    // contract. Same section names on the agent's own layer win over the
-    // preset's; text and order come from the per-preset resolution, with the
-    // harness's canonical tool slot as the default order.
-    const sections = sectionsForToolset(await resolveAgentSections(rootCtx, agent), toolset);
-    for (const section of sections) {
-      disposers.push(agent.ctx.systemPrompt.section(section));
+    const io = ctxFsIO(rootCtx.fs as FileSystem, rootCtx);
+    const sandbox = new FsSandboxController(rootCtx);
+
+    // Step 1: `read` is unconditional (Rianico/dsh-better-edit#110) and is
+    // claimed synchronously inside `agent/created`, before any eager peer can
+    // take the name. The owned definition stays in this closure: self-heal
+    // verifies identity against it and must never read `layer.get("read")`,
+    // which would ratify an intruder.
+    const hashReadDef = buildReadTool(io);
+    try {
+      registerDisposer(
+        registerWithReclaim({
+          toolsSvc,
+          agent,
+          agentCtx: agent.ctx,
+          name: "read",
+          def: hashReadDef,
+          logger: rootCtx.logger,
+        }),
+      );
+    } catch (error) {
+      rootCtx.logger.warn(
+        `dsh-better-edit: failed to install synchronous read tool: ${error instanceof Error ? error.message : String(error)} (#123)`,
+      );
     }
+
+    // The composed preset's own tool policy decides which mutating tools this
+    // agent gets. `agentPresets.acquireScope` is async in dsh 0.2.x, so these
+    // registrations land after the first microtask; the guarded reclaim in
+    // `registerWithReclaim` wins ownership back from peers that claimed a name
+    // first.
+    (async () => {
+      let toolset: HashlineToolset;
+      try {
+        toolset = await resolveToolset(rootCtx, agent.ctx);
+      } catch (error) {
+        rootCtx.logger.warn(
+          `dsh-better-edit: resolveToolset failed, using default: ${error instanceof Error ? error.message : String(error)} (#123)`,
+        );
+        toolset = UNCONDITIONAL_TOOLSET;
+      }
+      if (disposed) return;
+
+      // Step 2: `edit`. Build and register are isolated: a factory fault must
+      // not cost the later tools or the guidance sections.
+      let hashEditDef: unknown;
+      if (toolset.edit) {
+        try {
+          hashEditDef = buildEditTool(io, sandbox);
+          registerDisposer(
+            registerWithReclaim({
+              toolsSvc,
+              agent,
+              agentCtx: agent.ctx,
+              name: "edit",
+              def: hashEditDef,
+              logger: rootCtx.logger,
+            }),
+          );
+        } catch (error) {
+          rootCtx.logger.warn(
+            `dsh-better-edit: failed to build/register edit: ${error instanceof Error ? error.message : String(error)} (#123)`,
+          );
+        }
+      }
+      if (disposed) return;
+
+      // Step 3: governed shadow of the preset's built-in str_replace_editor
+      // (ADR-0015): identical contract, encoding-governed mutations. Only a
+      // preset that composed the built-in earns the shadow.
+      let hashStrReplaceDef: unknown;
+      if (toolset.strReplaceEditor) {
+        try {
+          hashStrReplaceDef = buildStrReplaceEditorTool(io, sandbox);
+          registerDisposer(
+            registerWithReclaim({
+              toolsSvc,
+              agent,
+              agentCtx: agent.ctx,
+              name: "str_replace_editor",
+              def: hashStrReplaceDef,
+              logger: rootCtx.logger,
+            }),
+          );
+        } catch (error) {
+          rootCtx.logger.warn(
+            `dsh-better-edit: failed to build/register str_replace_editor: ${error instanceof Error ? error.message : String(error)} (#123)`,
+          );
+        }
+      }
+      if (disposed) return;
+
+      // Step 4: `undo_last_edit`, built by the arity-pinned factory and routed
+      // through the same guarded reclaim (issue #123).
+      if (toolset.undo) {
+        try {
+          const hashUndoDef = buildUndoTool(io, sandbox);
+          registerDisposer(
+            registerWithReclaim({
+              toolsSvc,
+              agent,
+              agentCtx: agent.ctx,
+              name: "undo_last_edit",
+              def: hashUndoDef,
+              logger: rootCtx.logger,
+            }),
+          );
+        } catch (error) {
+          rootCtx.logger.warn(
+            `dsh-better-edit: failed to register undo tool: ${error instanceof Error ? error.message : String(error)} (#123)`,
+          );
+        }
+      }
+      if (disposed) return;
+
+      // Step 5: the write hook guards the preset's own built-in `write` and
+      // auto-reads after it. It attaches event listeners rather than naming a
+      // tool, so it carries no collision surface and needs no reclaim.
+      if (toolset.writeHook) {
+        try {
+          registerDisposer(registerWriteHook(rootCtx, agent.ctx, io));
+        } catch (error) {
+          rootCtx.logger.warn(
+            `dsh-better-edit: failed to register write hook: ${error instanceof Error ? error.message : String(error)} (#123)`,
+          );
+        }
+      }
+      if (disposed) return;
+
+      // Step 6: self-heal receives the exact definitions installed above, so
+      // the heal set can never drift from the installed set.
+      try {
+        registerDisposer(
+          createSelfHealWatcher({
+            agentId: agent.id,
+            rootCtx,
+            agent,
+            agentCtx: agent.ctx,
+            toolsSvc,
+            hashReadDef,
+            hashEditDef,
+            hashStrReplaceDef,
+          }),
+        );
+      } catch (error) {
+        rootCtx.logger.warn(
+          `dsh-better-edit: failed to initialize self-heal watcher: ${error instanceof Error ? error.message : String(error)} (#123)`,
+        );
+      }
+      if (disposed) return;
+
+      // Step 7: shadow the preset's built-in tool guidance with the hashline
+      // contract. Same section names on the agent's own layer win over the
+      // preset's; text and order come from the per-preset resolution, with the
+      // harness's canonical tool slot as the default order.
+      try {
+        const sections = sectionsForToolset(await resolveAgentSections(rootCtx, agent), toolset);
+        if (disposed) return;
+        for (const section of sections) {
+          registerDisposer(agent.ctx.systemPrompt.section(section));
+        }
+      } catch (error) {
+        rootCtx.logger.warn(
+          `dsh-better-edit: failed to register system prompt guidance: ${error instanceof Error ? error.message : String(error)} (#123)`,
+        );
+      }
+    })().catch((error) => {
+      rootCtx.logger.warn(
+        `dsh-better-edit: unhandled async install failure: ${error instanceof Error ? error.message : String(error)} (#123)`,
+      );
+    });
 
     return () => {
-      for (const dispose of disposers) dispose();
+      disposed = true;
+      for (const dispose of disposers) {
+        try {
+          dispose();
+        } catch {
+          // Best-effort teardown: one failing disposer must not strand the rest.
+        }
+      }
+      disposers.length = 0;
     };
   });
 }
