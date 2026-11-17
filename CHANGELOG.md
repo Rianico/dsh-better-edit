@@ -22,6 +22,7 @@ All notable changes to this project will be documented in this file.
 
 * **dead-code:** retire the duplicate-name shims and the dead FileView sub-graph — `edit-engine`, `preview-controller`, the five `file-view` re-export shims, and the `mutation.ts` deprecated re-export block go, and `SUPPORTED_ENCODINGS` becomes the one encoding roster (ADR-0033).
 * **dead-code:** retire the four `register*Tool` bypasses, the stray `tests/` tree (unique cases ported into `test/`), the duplicate guidance barrel and the `paths.ts → store/index.ts` barrel edge; `pnpm run build` now cleans `lib/` first, so a stale module cannot ride the output.
+* **hashline:** extract the served-evidence verdict into `served-evidence.ts` — one entry point (`verifyServedRange`), one row renderer behind `fmtServedRows`/`fmtRegion`, one `[... N more — …]` frame — and cut both import cycles the mixed seam held: `store-lifecycle` types its store face structurally and `EditMode` moves to a leaf, leaving only `file-view ↔ fs-bridge` (ADR-0037).
 
 ## [1.2.4] - 2026-11-17
 

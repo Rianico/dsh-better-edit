@@ -86,7 +86,7 @@ Makes `shift==rebind` loud only when `changed` overlaps target, not when exterio
 >
 > **Tombstone (T4 CP1-r2, F6) — this blockquote described four arms that no longer exist.**
 > It used to say the `Retry with these anchors (no read needed)` hint survives on the
-> non-`reread` arms: served-length mismatch (`src/hashline/anchor-pipeline.ts:802` at
+> non-`reread` arms: served-length mismatch (`src/hashline/served-evidence.ts:verifyRebasedSpan` — `:802` at
 > `3f4aca6`), a line whose bytes differ from what was served (`:883`), and every
 > `E_UNSERVED_RANGE` (`:775`/`:790`) — and that those echo rows are "the current file's
 > anchors". **The second half was right; the first is now history.** T4's F1–F3 set

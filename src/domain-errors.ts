@@ -973,10 +973,14 @@ export const DECLARATION_ONLY_FIELDS: Readonly<Record<string, AllowlistEntry>> =
  *
  * | ported upstream diagnostic | upstream producer (pi-better-edit@b92e0ec) | local producer |
  * |---|---|---|
- * | `E_FOREIGN_ANCHOR` | `lease-resolve.ts:116` | `anchor-pipeline.ts` (`throwUnknownOrForeign`, boundary placement) |
- * | `E_UNKNOWN_ANCHOR` | `lease-resolve.ts:118`, `served-verification.ts:745` | `anchor-pipeline.ts` (boundary placement, pre-gate) |
- * | `E_UNVERIFIED_RANGE` | `lease-resolve.ts:186`, `served-verification.ts:187` | `anchor-pipeline.ts` (pre-gate stale-boundary arm) |
- * | `E_TARGET_LOST` | `served-verification.ts:170`, `lease-resolve.ts:196` | `anchor-pipeline.ts` (pre-gate stale-boundary arm) |
+ * | `E_FOREIGN_ANCHOR` | `lease-resolve.ts:116` | `served-evidence.ts` (`throwUnknownOrForeign`, boundary placement) |
+ * | `E_UNKNOWN_ANCHOR` | `lease-resolve.ts:118`, `served-verification.ts:745` | `served-evidence.ts` (boundary placement, pre-gate) |
+ * | `E_UNVERIFIED_RANGE` | `lease-resolve.ts:186`, `served-verification.ts:187` | `served-evidence.ts` (pre-gate stale-boundary arm) |
+ * | `E_TARGET_LOST` | `served-verification.ts:170`, `lease-resolve.ts:196` | `served-evidence.ts` (pre-gate stale-boundary arm) |
+ *
+ * The upstream column is scoped to the upstream tree (`pi-better-edit@b92e0ec`): its
+ * `served-verification.ts` never existed downstream, so those cites never named a local
+ * file. The local column did move — the four arms live in `served-evidence.ts` (ADR-0037).
  *
  * Their owner is `"upstream absorb"` and their trigger is the absorb that
  * ports the corresponding producer. When that happens, reintroduce the code

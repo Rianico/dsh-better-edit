@@ -9,8 +9,8 @@
  *
  * Public surface: _mergeServedRows, loadServed, recordServed,
  * recordServedTruncated, driftReported, markDriftReported,
- * clearDriftReported, wipeServedState, servedPositionsOf,
- * currentPositionOfDrifted, computeDrift, scanDrift, and
+ * clearDriftReported, wipeServedState, servedPositionsOf (re-exported from
+ * hashline/served-evidence), currentPositionOfDrifted, computeDrift, scanDrift, and
  * hash-store persistence delegation (ServedPersistence).
  *
  * Ownership: This file OWNS the served-merge invariant
@@ -35,9 +35,14 @@ import {
   type InternalHashStore,
 } from "./hash-store.js";
 import { SERVED_ECHO_CAP } from "./constants.js";
-import type { ServedRow, ResolvedRange } from "./hashline/anchor-pipeline.js";
-import { fmtServedRows } from "./hashline/anchor-pipeline.js";
+import type { ServedRow } from "./domain-errors.js";
+import { fmtServedRows, moreRowsHint, servedPositionsOf } from "./hashline/served-evidence.js";
+import type { ResolvedRange } from "./hashline/served-evidence.js";
 import { splitLines } from "./utils.js";
+
+// Re-exported from the served-evidence leaf (ADR-0037): the scan is pure and the
+// verifier needs it, so the seam that owns it is the evidence module.
+export { servedPositionsOf };
 
 // --- hash-store re-export (persistence note) ---
 export { loadHashStore, loadServedStore, shutdownHashStore, withStore } from "./hash-store.js";
@@ -522,14 +527,6 @@ export async function wipeServedState(sessionKey: string): Promise<void> {
   }
 }
 
-export function servedPositionsOf(served: (string | null)[], hash: string): number[] {
-  const out: number[] = [];
-  for (let i = 0; i < served.length; i++) {
-    if (served[i] === hash) out.push(i);
-  }
-  return out;
-}
-
 function nearestSurvivingPosition(
   served: (string | null)[],
   surviving: Set<string>,
@@ -749,7 +746,7 @@ export function computeDrift(input: ComputeDriftInput): DriftNoticeResult | unde
     drifted: driftedSet.has(position),
   }));
   const rowsText = fmtServedRows(rows, resultLines);
-  const moreText = unshown > 0 ? `\n[... ${unshown} more — re-read to see]` : "";
+  const moreText = unshown > 0 ? `\n${moreRowsHint(unshown, "re-read to see")}` : "";
   return {
     text: `${DRIFT_NOTICE_HEADING} ${countLabel} changed outside the range:\n${rowsText}${moreText}`,
     rows,

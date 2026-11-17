@@ -65,7 +65,7 @@ Pinned by RX3M1 (2/2: fires exactly on degrade, silent otherwise).
 **Why the seam is opt-in.** No `LeaseSpanSource` ⇒ the unconditional position check, byte-identical.
 If the **seed** read throws — `identityPositions`, `src/mutation/engine.ts:620-630` — there is no
 source and the position check stays. A **lease** read that throws inside the gate (`leaseFor`,
-`src/hashline/anchor-pipeline.ts:675`) propagates and aborts the edit: fail-closed too, but it is not a
+`src/hashline/served-evidence.ts:lineIdentityDecision`) propagates and aborts the edit: fail-closed too, but it is not a
 fallback to the position check. The **preview** route (`noPersist`) was deleted by T3h with the
 orphaned single-edit flavor, so the no-source fallback it exercised is pinned at unit level only.
 Pinned by `test/core/lease-resolve-seam.test.ts` ("is opt-in: without a lease source the position check

@@ -116,7 +116,8 @@ checkpoint that widens it. That is the affirmative reason the unconditional posi
   and passed (`mutation.ts:178`, `mutation/engine.ts:321/694/735`) but **read by nothing** — the
   position check no longer consults it. T3c is **bound** to delete it or subsume it into
   lease-derived position trust, and to resolve the `epochSnapshotId`/`curSnapshotId` interface
-  fields (`anchor-pipeline.ts:593-594`) and their `applyEdit` passthrough (`:1043-1045`).
+  fields (`served-evidence.ts`, was `:593-594`) and their `applyEdit` passthrough
+  (`served-evidence.ts:verifyServedRange`, was `:1043-1045`).
   **Anything still computed-but-unread after T3c is a blocking finding for T3c.**
 
   **Discharged in T3c.** `strictPos` and the `epochSnapshotId`/`curSnapshotId` interface fields were

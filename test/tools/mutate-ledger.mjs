@@ -405,7 +405,7 @@ const MUTANTS = {
     expected: [T6.armFlag],
     edits: [
       {
-        file: ANCHOR_PIPELINE,
+        file: "src/hashline/served-evidence.ts",
         old: "      servedBlock: echo,\n      firstOffendingLine: args.rebasedStart,",
         new: "      servedBlock: echo,\n      reread: true,\n      firstOffendingLine: args.rebasedStart,",
       },
@@ -1120,7 +1120,7 @@ const MUTANTS = {
     ],
     edits: [
       {
-        file: ANCHOR_PIPELINE,
+        file: "src/hashline/served-evidence.ts",
         old: '  return route.kind === "leased" && k !== 0 && k !== servedLen - 1;',
         new: '  return route.kind === "leased" && (k === 0 || k === servedLen - 1);',
       },
@@ -1135,7 +1135,7 @@ const MUTANTS = {
     expected: ["emits E_TARGET_LOST when the live bound shifted (one stale, one moved)"],
     edits: [
       {
-        file: ANCHOR_PIPELINE,
+        file: "src/hashline/served-evidence.ts",
         old: "    if (exactlyOneStale && survivorLiveUnshifted) {",
         new: "    if (exactlyOneStale) {",
       },

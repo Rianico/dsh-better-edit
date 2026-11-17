@@ -11,12 +11,15 @@
 
 import { EDITS_MAX_ITEMS } from "./constants.js";
 import type { ReadWindow } from "./file-view.js";
+import type { EditMode } from "./edit-mode.js";
 import { isRec, normalizeFilePath, rejectUnknownFields } from "./utils.js";
 import { DomainError } from "./domain-errors.js";
 
 // ---- request shapes --------------------------------------------------------
 
-export type EditMode = "general" | "literal";
+// Declared in the edit-mode leaf; re-exported here so the contract's consumers are
+// unchanged (ADR-0037 — the write pipeline imports the leaf, never this module).
+export type { EditMode };
 
 export type EditItem = {
   anchor_from: string;

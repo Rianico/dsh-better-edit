@@ -19,13 +19,8 @@ import { loadConfig } from "../store-config.js";
 import { canon } from "../hashline/hash-assign.js";
 import { normFromText } from "../file-view.js";
 import { scanDrift, loadServed, loadServedCanons, loadRetiredAnchors } from "../session-view.js";
-import {
-  applyEdit,
-  resEdit,
-  type HEdit,
-  type NEdit,
-  type LeaseSpanSource,
-} from "../hashline/anchor-pipeline.js";
+import { applyEdit, resEdit, type HEdit, type NEdit } from "../hashline/anchor-pipeline.js";
+import type { LeaseSpanSource } from "../hashline/served-evidence.js";
 import { lineHashes } from "../hashline/hash.js";
 import { AnchorSpaceExhaustedError, HASH_SPACE } from "../hashline/hash-assign.js";
 import { buildNeverServedEditHint } from "../hashline/served-guard.js";
@@ -96,14 +91,14 @@ async function retryLineHashesWithPromotion(
   }
 }
 import { MAX_HASH_LINES } from "../hashline/hash-assign.js";
+import { AnchorMismatchError } from "../hashline/anchor-pipeline.js";
 import {
-  AnchorMismatchError,
   ServedRejectionError,
   buildRangeEcho,
   fmtServedRows,
-  type ResolvedRange,
-  type ServedRow,
-} from "../hashline/anchor-pipeline.js";
+} from "../hashline/served-evidence.js";
+import type { ResolvedRange } from "../hashline/served-evidence.js";
+import type { ServedRow } from "../hashline/anchor-pipeline.js";
 import { DomainError, formatWarning } from "../domain-errors.js";
 import type { RangeCause } from "../domain-errors.js";
 import type { EditMode } from "../contract.js";

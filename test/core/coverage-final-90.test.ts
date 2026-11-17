@@ -103,7 +103,8 @@ describe("final90 anchor large", () => {
   });
 
   it("covers verifyServedRange and stale", async () => {
-    const { verifyServedRange, applyEdit } = await import("../../src/hashline/anchor-pipeline.js");
+    const { verifyServedRange } = await import("../../src/hashline/served-evidence.js");
+    const { applyEdit } = await import("../../src/hashline/anchor-pipeline.js");
     const { lineHashesPure } = await import("../../src/hashline/hash-assign.js");
     const content = "a\nb\nc\nd";
     const hashes = lineHashesPure(content);

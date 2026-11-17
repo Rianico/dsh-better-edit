@@ -99,7 +99,7 @@ does not re-open the boundary rule.
 
 | upstream arm                                                                                | local realization                                                                                                   | evidence                                                                                                        |
 | :------------------------------------------------------------------------------------------ | :------------------------------------------------------------------------------------------------------------------ | :-------------------------------------------------------------------------------------------------------------- |
-| `[E_UNVERIFIED_RANGE]` — rows leased, heading `Current range (fresh read):`, no hint        | `[E_STALE_RANGE]` / `[E_UNSERVED_RANGE]` payload with **non-empty** `servedRows`, rendering `Current range:` + rows | `src/hashline/anchor-pipeline.ts` (13 arms), `src/domain-errors.ts` (`staleRangeFormat`, `unservedRangeFormat`) |
+| `[E_UNVERIFIED_RANGE]` — rows leased, heading `Current range (fresh read):`, no hint        | `[E_STALE_RANGE]` / `[E_UNSERVED_RANGE]` payload with **non-empty** `servedRows`, rendering `Current range:` + rows | `src/hashline/served-evidence.ts` (13 arms), `src/domain-errors.ts` (`staleRangeFormat`, `unservedRangeFormat`) |
 | `[E_TARGET_LOST]` — grounding void, no rows, read instruction in the headline               | `[E_STALE_RANGE]` with `servedRows: []` + `servedBlock: ""`, headline carries the read instruction                  | the single local site: `src/fs-bridge.ts` F7 version-guard arm                                                  |
 | `assertLivePayload` matrix + 5 planted violations (+ 3 more added upstream later)           | `assertRegionPayload` + planted violations, local arms                                                              | `test/arch/rejection-payload-region.test.ts`                                                                    |
 | code-based disjointness                                                                     | row-count-based disjointness                                                                                        | Decision §2, §3 above                                                                                           |
@@ -243,7 +243,7 @@ collapsed. What changes and what stands:
   section's code collapse. `E_UNKNOWN_ANCHOR`, `E_FOREIGN_ANCHOR`, `E_TARGET_LOST` and
   `E_UNVERIFIED_RANGE` are now union members **with literal producers** (no declared-but-unproduced
   code — the T4 defect stays excluded, and `test/arch/domain-error-registry.test.ts` C9 asserts
-  membership + producer per code). Producers: `src/hashline/anchor-pipeline.ts`
+  membership + producer per code). Producers: `src/hashline/served-evidence.ts`
   `throwUnknownOrForeign` / `interceptLeaseBoundaries` (port of upstream
   `b92e0ec:src/hashline/lease-resolve.ts:87-200`) and the placement arm's zero-position refusal
   (upstream analogue `b92e0ec:src/hashline/served-verification.ts:729-749`).
@@ -279,7 +279,7 @@ collapsed. What changes and what stands:
      "…has no served mirror row left; the served window was truncated."
      (`b92e0ec:src/hashline/served-verification.ts:325-335`). Downstream, the anchor's zero
      mirror placement refuses first with `E_UNKNOWN_ANCHOR`
-     (`src/hashline/anchor-pipeline.ts`, the placement-arm refusal) before any leased-route
+     (`src/hashline/served-evidence.ts`, the placement-arm refusal) before any leased-route
      gate is reachable. **Verdict parity** (both reject, both fail-closed, both write
      nothing); **code mismatch** (`E_UNKNOWN_ANCHOR` vs `E_STALE_RANGE`-truncated). The fix
      is gate reachability on the leased route — a pipeline restructure, beyond the FU-4

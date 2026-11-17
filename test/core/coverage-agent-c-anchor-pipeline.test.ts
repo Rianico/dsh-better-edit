@@ -1,13 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
+import { parseHashRef, resEdit, applyEdit, parseText } from "../../src/hashline/anchor-pipeline.js";
 import {
-  parseHashRef,
-  resEdit,
-  applyEdit,
   verifyServedRange,
   buildRangeEcho,
   fmtServedRows,
-  parseText,
-} from "../../src/hashline/anchor-pipeline.js";
+} from "../../src/hashline/served-evidence.js";
 import { lineHashesPure } from "../../src/hashline/hash-assign.js";
 import { initHasher } from "../../src/hashline/hash-assign.js";
 

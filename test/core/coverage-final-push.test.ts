@@ -144,7 +144,8 @@ describe("final-push anchor-pipeline remaining", () => {
   });
 
   it("verifyServedRange and applyEdit with abort", async () => {
-    const { verifyServedRange, applyEdit } = await import("../../src/hashline/anchor-pipeline.js");
+    const { verifyServedRange } = await import("../../src/hashline/served-evidence.js");
+    const { applyEdit } = await import("../../src/hashline/anchor-pipeline.js");
     const { lineHashesPure } = await import("../../src/hashline/hash-assign.js");
     const content = "a\nb\nc";
     const hashes = lineHashesPure(content);

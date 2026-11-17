@@ -77,7 +77,8 @@ vocabulary downstream already owns, and the seam deletion would remove a live fa
 ## Evidence (decline path, commands and results)
 
 - `rg -ni tombstone src/` — before: `domain-errors.ts:73: | "tombstone"`,
-  `hashline/anchor-pipeline.ts:928` and `:1094` comments. After: **0 hits**.
+  `hashline/anchor-pipeline.ts:928` and `:1094` comments (both lines now live in
+  `hashline/served-evidence.ts`). After: **0 hits**.
 - `rg -ni "blockedHash|blocked hash|blocked-hash" src/` — **0 hits**; outside docs, the only repository mentions are the pin test itself, which must name the banned terms to ban them.
 - `rg -n "ServedVerification|verifyOrThrow|throwStaleForBlockedHash" src/` — **0 hits**: the upstream
   library-seam signal has no downstream presence by name.
