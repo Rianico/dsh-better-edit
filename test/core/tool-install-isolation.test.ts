@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 /** Fault-injection flag: the mock below reads it when the install builds `edit`. */
 const faults = vi.hoisted(() => ({ buildEditToolThrows: false }));
@@ -100,7 +100,21 @@ async function settle(host: Host): Promise<void> {
   while (host.sections.length === 0 && Date.now() < deadline) {
     await new Promise((resolve) => setTimeout(resolve, 1));
   }
+  if (host.sections.length === 0) {
+    throw new Error(
+      `install did not reach the guidance step within 2000ms; warnings: ${
+        host.warnCalls.join(" | ") || "(none)"
+      }`,
+    );
+  }
   await drain(1);
+}
+
+/** The self-heal call recorded by the current test (`beforeEach` clears the log). */
+function onlyWatcherOptions(): Record<string, unknown> {
+  const options = watcherCalls.options[0];
+  if (!options) throw new Error("self-heal watcher was not created");
+  return options;
 }
 
 /**
@@ -351,6 +365,10 @@ describe("agent-layer tool install isolation (#123)", () => {
     ]);
   });
 
+  beforeEach(() => {
+    // The hoisted mock log is module-wide; each test owns exactly one install.
+    watcherCalls.options.length = 0;
+  });
   it("S4 isolates a factory fault: the remaining tools and guidance still install", async () => {
     faults.buildEditToolThrows = true;
     try {
@@ -373,22 +391,34 @@ describe("agent-layer tool install isolation (#123)", () => {
   });
 
   it("self-heal keeps the owned read definition, not whatever the layer holds", async () => {
-    const host = createHost();
+    const host = createHost({ presetPending: true });
+    const peerRead = { name: "peer-read" };
+    // Pre-claim `read` like S1 pre-claims `edit` and `undo_last_edit`.
+    host.layerData.set("read", peerRead);
+
     mount(host);
-    await settle(host);
+    // Step 1 reclaimed the peer entry and registered our own definition.
+    const claimedRead = host.layer.get("read");
+    expect(claimedRead).toBeDefined();
+    expect(claimedRead).not.toBe(peerRead);
 
-    const lastOptions = watcherCalls.options[watcherCalls.options.length - 1];
-    expect(lastOptions).toBeDefined();
-    if (!lastOptions) throw new Error("self-heal watcher was not created");
-
-    const ownedRead = lastOptions.hashReadDef;
-    expect(ownedRead).toBe(host.layer.get("read"));
-
-    // Replace the read entry with an intruder. A watcher that re-read
-    // `layer.get("read")` would ratify the intruder and never heal; this one
-    // restores the definition the install built.
+    // A peer re-claims `read` while the install is still awaiting the preset
+    // lease. By Step 6 the layer no longer holds our definition, so an
+    // installer that snapshots `layer.get("read")` would hand self-heal the
+    // intruder instead of the definition it built.
     const intruder = { name: "intruder-read" };
     host.layerData.set("read", intruder);
+    host.releaseScope();
+    await settle(host);
+
+    const ownedRead = onlyWatcherOptions().hashReadDef;
+    expect(ownedRead).toBe(claimedRead);
+    expect(ownedRead).not.toBe(peerRead);
+    expect(ownedRead).not.toBe(intruder);
+    expect(host.layer.get("read")).toBe(intruder);
+
+    // The watcher heals from the owned reference: the intruder is replaced by
+    // the definition the install built, not by a re-read of the layer.
     host.agentListeners.get("tools/change")!();
     await flushMicrotasks();
 
