@@ -110,6 +110,7 @@ Makes `shift==rebind` loud only when `changed` overlaps target, not when exterio
 - `hash-assign.ts` removes `removedByContent`, adds `tombstone` param to `mapStableHashes`/`lineHashes`.
 - `anchor-pipeline.ts:verifyServedRange` keeps candidate enumeration, adds `tombstone` filter and `servedCanons` check, `strict` pos via automatic `changed ∩ [L,R]` (no config).
 - Tests: `hashline-stable-mapping.test.ts` "reuses first removed hash" flips to `fresh hash`; new property `identical canon after removal gets ≠ removed hash`.
+- The per-session epoch rule reaches past the served store: the noop-loop counter is now scoped per `(session, file)` for the same reason ([ADR-0039](0039-noop-counter-session-scope.md)).
 
 - Round trips: single-thread exterior drift no longer aborts; a strict/identity rejection records nothing and grants nothing (ADR-0018, T3f), says `Re-read.`, and a retry with the echoed anchors is rejected again — the `Retry with these anchors (no read needed)` hint is gone from every arm (T4 F1–F3; the four then-surviving sites are tombstoned above) while the echo rows remain the current file's anchors, so an echo-retry still rejects at the same site (CP0 G3/H1).
 

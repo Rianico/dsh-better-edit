@@ -224,11 +224,6 @@ export interface ErrorPayloadMap {
     count: number;
     batch: boolean;
     servedBlock: string;
-    /**
-     * Present on engine single rejects: the display path ("in <path>" flavor).
-     * The batch ref already names the item, so no index is needed.
-     */
-    path?: string;
   };
   E_UNSUPPORTED_FILE: {
     path: string;
@@ -532,18 +527,14 @@ function batchAbortFormat(payload: ErrorPayloadMap["E_BATCH_ABORT"]): string {
 function noopLoopFormat(payload: ErrorPayloadMap["E_NOOP_LOOP"]): string {
   // WHY batch first: the batch ref already names the item (edits[i] (path)),
   // so the batch arm renders from ref and appends the on-disk range when the
-  // engine supplies one; the path arm is the engine single-edit flavor.
+  // engine supplies one. `enforceNoopLoop` is the only producer and always
+  // passes `batch: true`; the generic arm below keeps the message defined for
+  // a non-batch payload the type still admits.
   if (payload.batch) {
     return (
       `${payload.ref}: identical edit (${payload.anchorFrom} → ${payload.anchorTo}) submitted ${payload.count}×, no changes each time. ` +
       `Range already contains this text; resend will reject the batch.` +
       (payload.servedBlock ? `\nCurrent on-disk range:\n${payload.servedBlock}` : "")
-    );
-  }
-  if (payload.path !== undefined) {
-    return (
-      `identical edit (${payload.anchorFrom} → ${payload.anchorTo} in ${payload.path}) submitted ${payload.count}×, no changes each time. ` +
-      `Range already contains this text; resend will reject. Current range:\n${payload.servedBlock}`
     );
   }
   return (

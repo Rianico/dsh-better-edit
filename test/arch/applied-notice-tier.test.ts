@@ -58,14 +58,13 @@ const COMPOSER_FILE = join(SRC_ROOT, "domain-errors.ts");
  * actionable name — rather than a bare number.
  *
  * `domain-errors.ts` holds both composers and is asserted separately as
- * `COMPOSER_FILE`; these are the four hosts that produce the `W_*` codes the
+ * `COMPOSER_FILE`; these are the three hosts that produce the `W_*` codes the
  * positive control below names. Paths are relative to `SRC_ROOT`.
  */
 const REFERENT_FILES = [
   "hashline/anchor-pipeline.ts", // W_REVERSED_ANCHORS, W_LITERAL_BYPASS, W_UNICODE_LITERAL
   "hashline/served-guard.ts", // W_SERVED_PREFIX_MISMATCH, W_NEVER_SERVED_SHAPE
   "mutation/engine.ts", // W_NOOP (batch) + the declared-limit spread
-  "noop-guard.ts", // W_NOOP (single)
 ] as const;
 
 /**

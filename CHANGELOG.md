@@ -13,6 +13,7 @@ All notable changes to this project will be documented in this file.
 
 ### Bug Fixes
 
+* **noop-guard:** scope the noop-loop counter per `(session, file)` so one session's repeated no-op can no longer reject another session's first submission of the same edit, and delete the dead `runNoopPolicy`/`runNoopPolicySync` copy of the live decision (ADR-0039).
 * **encoding:** give each file one memo identity — the encoding and auto-guess footer memos are keyed by the slash-normalized absolute path, so the dual-key writes and their three-spelling probe ladders are gone (ADR-0038).
 * **install:** claim tools synchronously in `agent/created` turn, isolate per-step failures, and reclaim contested entries on collision (#123) (#131)
 * **mutation:** restore the undo row of every file a failed write never wrote, so a multi-item edit's failure no longer leaves `undo_last_edit` reporting `E_UNDO_STALE "modified"` for the tool's own failed write (ADR-0034).

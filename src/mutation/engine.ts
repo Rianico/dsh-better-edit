@@ -888,7 +888,7 @@ export async function runFileEdits(
         item.anchor_to,
         item.replace_with,
       );
-      const count = trackNoopPayload(absolutePath, payload);
+      const count = trackNoopPayload(opts.sessionKey, absolutePath, payload);
       const notice = await enforceNoopLoop({
         anchorFrom: item.anchor_from,
         anchorTo: item.anchor_to,
@@ -929,7 +929,7 @@ export async function runFileEdits(
       );
     }
     currentHashes = applied.hashes;
-    clearNoopLoop(absolutePath);
+    clearNoopLoop(opts.sessionKey, absolutePath);
     pushAppliedWarnings(applied.anchorWarnings, applied.neverServedCount);
   }
 
