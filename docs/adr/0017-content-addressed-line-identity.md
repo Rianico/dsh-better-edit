@@ -1,7 +1,7 @@
 # ADR-0017 — Content-Addressed Line Identity
 
 Date: 2026-09-23
-Status: accepted; **superseded in part — the pairing rule by [ADR-0019](0019-lease-identity-served-span-resolution.md), the corrupt-lineage throw by [ADR-0020](0020-atomic-store-pairs-and-corrupt-lineage-repair.md); see the Amendment below**
+Status: accepted; **superseded in part — the pairing rule by [ADR-0019](0019-lease-identity-served-span-resolution.md), the corrupt-lineage throw by [ADR-0020](0020-atomic-store-pairs-and-corrupt-lineage-repair.md); see the Amendment below. The undo anchor rule is reversed in the Reversal section (2026-11-16, #111).**
 Related: `src/snapshot-store/lineage-store.ts`, `src/hash-store.ts`
 (`getSnapshot`, `buildStore`), `docs/adr/0016-store-version-flap-guard.md`
 
@@ -140,20 +140,34 @@ snapshots` / `DELETE FROM undo` that ADR-0016 left in place (pending CP4)
   recently written side keeps the whole pair alive. Splitting the pair across two
   independent per-table deletes is the F1 class this rule exists to prevent.
 
-## Named deviation (T2b-scoped): fresh anchors after undo, not same-string revival
+## Reversal (2026-11-16, #111): undo restores the pre-edit anchor strings
+
+This section replaces the withdrawn T2b-scoped deviation ("fresh anchors after undo, not
+same-string revival"). Downstream follows upstream: `read → edit → undo` revives the same
+anchor strings.
 
 - Upstream consumes `file_undo.snapshot_hash` via `anchorsForSnapshotHash`
   (`../pi-better-edit/src/edit-undo.ts:183-196`) and serves the pinned snapshot's
-  anchors, so `read → edit → undo` revives the _same_ anchor strings.
-- Our tree serves **fresh** anchors after undo: `line_lineage.anchor` is a
-  current-assignment record refreshed on adopt (CP3), and assignment is
-  retire/reservation-dependent — a snapshot keeps no anchor history. The undo
-  rehash excludes retired/reserved assignments (`removedHashes` /
-  `blockedRestoreHashes`), so a retired anchor is never resurrected.
-- Therefore the restored lines keep their pre-edit `line_id` and the undo
-  response is self-consistent, while a stale handle fails loudly
-  (`E_STALE_ANCHOR`, pinned by the CP4 undo-leases test). **Named deviation,
-  T2b-scoped** — accepted conditional on that pin.
-- Follow-up trigger: _anchor history for same-string revival_ — needed before
-  any consumer relies on pre-edit anchor strings surviving an undo (T3
-  verification or later); reference upstream `../pi-better-edit/src/edit-undo.ts:188`.
+  anchors. The old deviation minted fresh anchors instead because
+  `line_lineage.anchor` is a current-assignment record refreshed on adopt, and the
+  undo rehash excluded the pre-edit assignment's retired anchors
+  (`removedHashes`) so none could come back. That exclusion is gone.
+- **The undo row is the anchor source.** `undo.hashes` is the pre-edit file's own
+  assignment and `undo.content` is byte-identical to the content those anchors were
+  assigned to, so the restore rehash (`src/tool-undo.ts`) maps that assignment onto
+  the restored content verbatim. The superseded post-edit assignment (`currentHashes`,
+  live on the file at undo time) and the session's reserved set still block reuse:
+  revival is byte-identical restore only, never a fuzzy rebind onto different content.
+- **Retirement moves with the restore.** In the same store unit that adopts the
+  restored snapshot and retires the superseded post-edit anchors, the restored
+  assignments are un-retired (`retireAnchorsInStore` + `unretireAnchorsInStore` in
+  `src/session-view.ts`). An anchor whose line does not come back (a line the edit
+  added, or one it removed before this undo) stays retired, so the blocked-hash
+  invariant holds in both directions. The dense served rows and the adopted snapshot
+  record the restored anchors, so a chained edit works without a re-read.
+- **Pins.** `test/core/undo-anchor-restore.test.ts` (issue repro, byte/BOM/line-ending
+  identity, added-line retirement, stale post-edit handle, chained edit, persisted
+  snapshot), `test/core/undo-leases.test.ts` (revived anchor is live; superseded and
+  absent anchors stay retired), `test/core/hashline-stale-rebind.test.ts`
+  (original-anchor revival; no survivor rebind), `test/core/undo-anchor-space-exhaustion.test.ts`
+  (promotion on both the current and the restored hash pass).

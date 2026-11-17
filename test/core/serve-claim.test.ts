@@ -239,7 +239,7 @@ describe("guidance — the anchor claim is conditional on the serve", () => {
   });
 
   it("makes the undo guidance conditional", () => {
-    const line = guidanceLine(UNDO_GUIDANCE, "fresh anchors for follow-up edits");
+    const line = guidanceLine(UNDO_GUIDANCE, "original pre-edit anchors for follow-up edits");
     expect({
       namesNotRecorded: /NOT recorded as served/.test(line),
       namesReread: /[Rr]e-read/.test(line),

@@ -132,12 +132,18 @@ describe("undo commit ordering and atomicity (#98, upstream CAND-3)", () => {
       const harness = setupIntegrationTest(cwd);
       const read = await harness.readTool.execute("r1", { path: "cand3_undo_order.txt" });
       const bravo = extractHash(rowsOf(read)[1]!);
-      await harness.editTool.execute("e1", {
+      const editResult = await harness.editTool.execute("e1", {
         path: "cand3_undo_order.txt",
         anchor_from: bravo,
         anchor_to: bravo,
         replace_with: "bravo edited",
       });
+      // The diff row is `+HASH│…`; drop the marker before reading the anchor.
+      const postEditAnchor = extractHash(
+        rowsOf(editResult)
+          .find((row) => row.endsWith("│bravo edited"))!
+          .slice(1),
+      );
       expect(await readFile(path, "utf8")).toBe(EDITED);
 
       const before = await withWorkspace(cwd, () => loadAnchorReservations("test-session", path));
@@ -164,11 +170,13 @@ describe("undo commit ordering and atomicity (#98, upstream CAND-3)", () => {
       await harness.undoTool.execute("u2", { path: "cand3_undo_order.txt" });
       expect(await readFile(path, "utf8")).toBe(ORIGINAL);
       expect(await withWorkspace(cwd, () => getUndo(path))).toBeUndefined();
-      // The revert freed the post-edit hash, so it is retired by the same unit.
+      // The revert retired the superseded post-edit anchor and revived the pre-edit one,
+      // both in the same unit (ADR-0017 reversal, #111).
       const afterUndo = await withWorkspace(cwd, () =>
         loadAnchorReservations("test-session", path),
       );
-      expect(afterUndo.retiredHashes.size).toBeGreaterThan(retiredBefore.size);
+      expect(afterUndo.retiredHashes.has(postEditAnchor)).toBe(true);
+      expect(afterUndo.retiredHashes.has(bravo)).toBe(false);
     });
   });
 

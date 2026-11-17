@@ -25,7 +25,6 @@
 
 import { ALPH, HASH_LEN, HASH_SPACE, HASH_RE, canon } from "./hashline/hash-assign.js";
 import {
-  loadHashStore,
   loadServedStore,
   withStore,
   DRIFT_EPISODE_PREFIX,
@@ -124,35 +123,9 @@ function addRetiredAnchors(
     }
     retired.add(hash);
   }
-  // Persist as legacy string array for backward compat; new entries with deathPos use object form via addRetiredEntries
+  // Persist as legacy string array for backward compat; `sweepAndRetire` writes object
+  // entries (hash + deathPos) for positions the served view displaced.
   store.upsertRetiredAnchors(sessionKey, path, JSON.stringify([...retired]));
-}
-
-function addRetiredEntries(
-  store: ServedPersistence,
-  sessionKey: string,
-  path: string,
-  entries: RetiredEntry[],
-): void {
-  if (entries.length === 0) return;
-  const existing = store.getRetiredEntries(sessionKey, path);
-  const seen = new Set(existing.map((e) => e.hash));
-  for (const e of entries) {
-    if (!HASH_RE.test(e.hash)) throw new TypeError(`Invalid retired hash: ${e.hash}`);
-    if (!seen.has(e.hash)) {
-      existing.push(e);
-      seen.add(e.hash);
-    }
-  }
-  store.upsertRetiredAnchors(sessionKey, path, JSON.stringify(existing));
-}
-
-function displacedHashes(
-  current: readonly (string | null)[],
-  updated: readonly (string | null)[],
-): Set<string> {
-  const remaining = new Set(updated.filter((hash): hash is string => hash !== null));
-  return new Set(current.filter((hash): hash is string => hash !== null && !remaining.has(hash)));
 }
 
 function displacedEntries(
@@ -173,20 +146,6 @@ function displacedEntries(
 // deathPos=null = legacy/unknown position (pre-GC String[] format or migration).
 // These entries are NOT swept incrementally — retained until full-recordServed (isFullRead) or major-GC promotion clears retired.
 // Incremental hazard sweep only frees deathPos (number) whose card was re-observed; null survives partial sweeps by design (minor leak documented here) and is drained only on epoch promotion/full read.
-function sweepRetiredByPositions(
-  store: ServedPersistence,
-  sessionKey: string,
-  path: string,
-  servedPositions: ReadonlySet<number>,
-): void {
-  if (servedPositions.size === 0) return;
-  const entries = store.getRetiredEntries(sessionKey, path);
-  if (entries.length === 0) return;
-  const filtered = entries.filter((e) => e.deathPos === null || !servedPositions.has(e.deathPos));
-  if (filtered.length !== entries.length) {
-    store.upsertRetiredAnchors(sessionKey, path, JSON.stringify(filtered));
-  }
-}
 
 function sweepAndRetire(
   store: ServedPersistence,
@@ -248,6 +207,30 @@ export async function retireAnchors(
   withStore(() => {
     retireAnchorsInStore(store, sessionKey, path, additions);
   });
+}
+
+/**
+ * Caller-owned transaction: revive retired anchors inside the caller's unit.
+ *
+ * The undo restore is the one path that brings a retired assignment back: when the
+ * pre-edit line returns byte-identically, its pre-edit anchor is live again, so the
+ * retirement that the edit recorded must move with the restore (ADR-0017 reversal).
+ * Anchors not in the store's retired set are left untouched; the entry's `deathPos`
+ * does not matter — the anchor's line is back, so the whole entry goes.
+ */
+export function unretireAnchorsInStore(
+  store: ServedPersistence,
+  sessionKey: string,
+  path: string,
+  hashes: Iterable<string>,
+): void {
+  const revivals = new Set(hashes);
+  if (revivals.size === 0) return;
+  const entries = store.getRetiredEntries(sessionKey, path);
+  const kept = entries.filter((entry) => !revivals.has(entry.hash));
+  if (kept.length !== entries.length) {
+    store.upsertRetiredAnchors(sessionKey, path, JSON.stringify(kept));
+  }
 }
 
 /** Full-file context for a complete read — when present and matching `rows`, the call is a full read. */
