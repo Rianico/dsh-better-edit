@@ -11,6 +11,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.2.5] - 2026-11-18
+
 ### Bug Fixes
 
 * **noop-guard:** scope the noop-loop counter per `(session, file)` so one session's repeated no-op can no longer reject another session's first submission of the same edit, and delete the dead `runNoopPolicy`/`runNoopPolicySync` copy of the live decision (ADR-0039). (#133)
