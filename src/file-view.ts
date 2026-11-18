@@ -2,33 +2,28 @@
  * FileView — deep module owning "what the model sees".
  *
  * Single seam for normalize → hash → render → truncate → served-row
- * selection. Previously split across file-reader, read-render, truncate,
- * file-kind, validation — each shallow (interface≈implementation). Now one
- * file owns the invariant; deleting it would scatter complexity (deep).
+ * selection. Previously split across five shallow modules
+ * (interface≈implementation). Now one file owns the invariant; deleting it
+ * would scatter complexity (deep).
  *
- * Private helpers inlined from file-reader (normFromText/fileSnap),
- * read-render (fmtReadPreview), truncate (truncateHead), file-kind
- * (loadFileKindAndText), validation (valKind/valAccess).
- * Old files are shims re-exporting from this seam for compat.
+ * Private helpers inlined from the retired reader, renderer and truncate
+ * modules: normFromText/fileSnap, fmtReadPreview, truncateHead.
  *
  * Two surfaces:
- *  - `preview` (pure, no IO) — tested without filesystem
+ *  - `fmtReadPreview` (pure, no IO) — tested without filesystem
  *  - `readView` (IO) — read + normalize + render + truncate + hashes
  *
  * @module dsh-better-edit/file-view
  */
 
-import { constants } from "node:fs";
-import { open as fsOpen, stat as fsStat } from "fs/promises";
-import { access as fsAccess } from "fs/promises";
-import { fileTypeFromBuffer } from "file-type";
-import { SNIFF_BYTES, MAX_BYTES, MAX_READ_LINE_BYTES, eLargeFileMsg } from "./constants.js";
+import { stat as fsStat } from "fs/promises";
+import { MAX_READ_LINE_BYTES, eLargeFileMsg } from "./constants.js";
 import { lineHashes, fmtRegion, HASH_SEP } from "./hashline/index.js";
 import { HASH_SPACE } from "./hashline/hash-assign.js";
-import { visLines, abortIf, errCode } from "./utils.js";
+import { visLines, abortIf } from "./utils.js";
 import { DomainError } from "./domain-errors.js";
 import { detectEnding, toLF, stripBOM, type LineEnding } from "./edit-diff.js";
-import { resolveTarget, toCwd } from "./paths.js";
+import { resolveTarget } from "./paths.js";
 import type { FileIO } from "./fs-bridge.js";
 import type { ServedRow } from "./hashline/anchor-pipeline.js";
 import type { HashStore } from "./hash-store.js";
@@ -144,42 +139,6 @@ export function truncateHead(
   };
 }
 
-// --- File kind (from file-kind.ts, private) ---
-
-const IMG_TYPES = new Set<string>(["image/jpeg", "image/png", "image/gif", "image/webp"]);
-
-const TEXT_TYPES = new Set<string>([
-  "application/rtf",
-  "application/xml",
-  "application/x-ms-regedit",
-]);
-
-function detectTextBom(sample: Uint8Array): string | undefined {
-  if (
-    sample.length >= 4 &&
-    sample[0] === 0xff &&
-    sample[1] === 0xfe &&
-    sample[2] === 0x00 &&
-    sample[3] === 0x00
-  )
-    return "UTF-32LE";
-  if (
-    sample.length >= 4 &&
-    sample[0] === 0x00 &&
-    sample[1] === 0x00 &&
-    sample[2] === 0xfe &&
-    sample[3] === 0xff
-  )
-    return "UTF-32BE";
-  if (sample.length >= 2 && sample[0] === 0xff && sample[1] === 0xfe) return "UTF-16LE";
-  if (sample.length >= 2 && sample[0] === 0xfe && sample[1] === 0xff) return "UTF-16BE";
-  return undefined;
-}
-
-function isTextType(mimeType: string): boolean {
-  return mimeType.startsWith("text/") || TEXT_TYPES.has(mimeType);
-}
-
 // FU-6 (port of pi-better-edit@2334352, stat consolidation):
 // WHY: narrowing `fs.Stats` to the fields this codebase reasons about keeps `node:fs` out of the
 // WHY: domain types, so callers — tests included — can hand over a plain object, not a `Stats` fixture.
@@ -191,163 +150,7 @@ export interface FileStats {
   ctimeMs: number;
 }
 
-export interface LFileText {
-  kind: "text";
-  text: string;
-  // WHY: the load path already stat'd this path; handing the result to the caller keeps the read
-  // WHY: path at one `stat` syscall per file instead of re-stat'ing for the snapshot id.
-  stats?: FileStats;
-  hadUtf8DecodeErrors?: true;
-}
-
-export type LFile =
-  | { kind: "directory" }
-  | { kind: "image"; mimeType: string }
-  | LFileText
-  | { kind: "binary"; description: string };
-
-export interface LoadFileOptions {
-  maxLines?: number;
-  displayPath?: string;
-}
-
-export async function loadFileKindAndText(
-  filePath: string,
-  options?: LoadFileOptions,
-): Promise<LFile> {
-  const pathStat = await fsStat(filePath);
-  if (pathStat.isDirectory()) {
-    return { kind: "directory" };
-  }
-  if (!pathStat.isFile()) {
-    return {
-      kind: "binary",
-      description: "unsupported file type",
-    };
-  }
-  if (pathStat.size > MAX_BYTES) {
-    return {
-      kind: "binary",
-      description: `file exceeds ${MAX_BYTES} byte limit`,
-    };
-  }
-  const fileHandle = await fsOpen(filePath, "r");
-  try {
-    const buffer = Buffer.alloc(SNIFF_BYTES);
-    const { bytesRead } = await fileHandle.read(buffer, 0, SNIFF_BYTES, 0);
-    if (bytesRead === 0) {
-      return { kind: "text", text: "", stats: pathStat };
-    }
-    const sample = buffer.subarray(0, bytesRead);
-    const textBom = detectTextBom(sample);
-    if (textBom) {
-      return {
-        kind: "binary",
-        description: `${textBom} encoded text`,
-      };
-    }
-    const detectedMimeType = (await fileTypeFromBuffer(sample))?.mime;
-    if (detectedMimeType !== undefined && !isTextType(detectedMimeType)) {
-      if (IMG_TYPES.has(detectedMimeType)) {
-        return { kind: "image", mimeType: detectedMimeType };
-      }
-      return {
-        kind: "binary",
-        description: detectedMimeType,
-      };
-    }
-    const decoder = new TextDecoder("utf-8", { fatal: false, ignoreBOM: true });
-    let hadUtf8DecodeErrors = false;
-    let newlineCount = 0;
-    const parts: string[] = [];
-    function decodeChunk(chunk: Uint8Array, stream: boolean): string {
-      const decoded = decoder.decode(chunk, { stream });
-      if (!hadUtf8DecodeErrors && decoded.includes("\uFFFD")) {
-        hadUtf8DecodeErrors = true;
-      }
-      if (options?.maxLines !== undefined) {
-        for (let i = 0; i < decoded.length; i++) {
-          if (decoded.charCodeAt(i) === 10) newlineCount++;
-        }
-        if (newlineCount > options.maxLines) {
-          throw new Error(
-            eLargeFileMsg(options.displayPath ?? filePath, newlineCount, options.maxLines),
-          );
-        }
-      }
-      return decoded;
-    }
-    parts.push(decodeChunk(sample, true));
-    let position = bytesRead;
-    while (true) {
-      const { bytesRead: chunkBytesRead } = await fileHandle.read(buffer, 0, SNIFF_BYTES, position);
-      if (chunkBytesRead === 0) {
-        break;
-      }
-      const chunk = buffer.subarray(0, chunkBytesRead);
-      parts.push(decodeChunk(chunk, true));
-      position += chunkBytesRead;
-    }
-    parts.push(decodeChunk(new Uint8Array(0), false));
-    return {
-      kind: "text",
-      text: parts.join(""),
-      stats: pathStat,
-      ...(hadUtf8DecodeErrors ? { hadUtf8DecodeErrors: true as const } : {}),
-    };
-  } finally {
-    await fileHandle.close();
-  }
-}
-
-// --- Validation (from validation.ts, private) ---
-
-export async function valAccess(
-  absolutePath: string,
-  path: string,
-  accessMode: number = constants.R_OK,
-): Promise<void> {
-  try {
-    await fsAccess(absolutePath, accessMode);
-  } catch (error: unknown) {
-    const code = errCode(error);
-    if (code === "ENOENT") {
-      throw new DomainError("E_NOT_FOUND", { path });
-    }
-    if (code === "EACCES" || code === "EPERM") {
-      throw new DomainError("E_ACCESS", {
-        path,
-        kind: "denied",
-        access: accessMode & constants.W_OK ? "write" : "read",
-      });
-    }
-    if (code === "ELOOP") {
-      throw new DomainError("E_ACCESS", { path, kind: "symlink-loop" });
-    }
-    throw new DomainError("E_ACCESS", { path, kind: "unreachable" });
-  }
-}
-
-export function valKind(
-  file: LFile,
-  path: string,
-): asserts file is { kind: "text"; text: string; hadUtf8DecodeErrors?: true } {
-  if (file.kind === "directory") {
-    throw new DomainError("E_UNSUPPORTED_FILE", { path, kind: "directory" });
-  }
-  if (file.kind === "binary") {
-    throw new DomainError("E_UNSUPPORTED_FILE", {
-      path,
-      kind: "binary",
-      description: file.description,
-    });
-  }
-  if (file.kind === "image") {
-    throw new DomainError("E_UNSUPPORTED_FILE", { path, kind: "image" });
-  }
-}
-
-// --- File reader (from file-reader.ts, private) ---
+// --- File reader (private to this seam) ---
 
 export interface NormFile {
   absolutePath: string;
@@ -394,18 +197,6 @@ export async function fileSnap(
   };
 }
 
-export interface ReadNormOptions {
-  signal?: AbortSignal;
-  accessMode?: number;
-  preloadedFile?: LFile;
-  maxLines?: number;
-  store?: HashStore;
-  noPersist?: boolean;
-  reservedHashes?: ReadonlySet<string>;
-  retiredHashes?: ReadonlySet<string>;
-  previous?: { content: string; hashes: string[]; removedHashes?: Set<string> };
-}
-
 export async function normFromText(input: {
   absolutePath: string;
   rawText: string;
@@ -449,41 +240,7 @@ export async function normFromText(input: {
   };
 }
 
-export async function readNormFile(
-  path: string,
-  cwd: string,
-  options?: ReadNormOptions,
-): Promise<NormFile> {
-  const absolutePath = toCwd(path, cwd);
-  const resolvedPath = await resolveTarget(absolutePath);
-  const signal = options?.signal;
-  const accessMode = options?.accessMode ?? constants.R_OK;
-  abortIf(signal);
-  await valAccess(resolvedPath, path, accessMode);
-  abortIf(signal);
-  const file =
-    options?.preloadedFile ??
-    (await loadFileKindAndText(resolvedPath, {
-      maxLines: options?.maxLines,
-      displayPath: path,
-    }));
-  valKind(file, path);
-  return normFromText({
-    absolutePath: resolvedPath,
-    rawText: file.text,
-    displayPath: path,
-    signal,
-    maxLines: options?.maxLines,
-    store: options?.store,
-    noPersist: options?.noPersist,
-    reservedHashes: options?.reservedHashes,
-    retiredHashes: options?.retiredHashes,
-    hadUtf8DecodeErrors: file.hadUtf8DecodeErrors,
-    previous: options?.previous,
-  });
-}
-
-// --- Read render (from read-render.ts, private) ---
+// --- Read render (private to this seam) ---
 
 function normPosInt(value: number | undefined, name: string): number | undefined {
   if (value === undefined) return undefined;
@@ -792,7 +549,11 @@ function buildWindowSection(params: {
  * runs first appear in the request — that order is part of the request, so it is never sorted by
  * position — while every section draws on ONE shared byte/line budget so N windows cannot multiply
  * the auto-read budget by N. Rows are served only for the lines actually shown; because each
- * position belongs to exactly one run, the position record is injective by construction.
+ * position belongs to exactly one run, the union's position record is injective by construction.
+ * The record is SORTED by position but never de-duplicated: the sort is load-bearing (runs render
+ * in request order, so run order is not position order), yet a collector that dropped duplicates
+ * would mask a `mergeWindowRuns` regression — overlapping runs would collapse into one served row
+ * instead of surfacing as two for the same position.
  */
 function buildWindowedPreview(params: {
   windows: ReadWindow[];
@@ -804,7 +565,7 @@ function buildWindowedPreview(params: {
 }): { text: string; truncation?: TruncationResult; served: ServedRow[] } {
   const { windows, allLines, allHashes, totalLines, maxBytes, maxTruncLines } = params;
   const sections: string[] = [];
-  const hashByPosition = new Map<number, string>();
+  const servedRows: ServedRow[] = [];
   let truncation: TruncationResult | undefined;
   let remainingBytes = maxBytes;
   let remainingLines = maxTruncLines;
@@ -847,7 +608,7 @@ function buildWindowedPreview(params: {
       maxTruncLines: remainingLines,
     });
     sections.push(`${header}\n${built.text}`);
-    for (const row of built.served) hashByPosition.set(row.position, row.hash);
+    for (const row of built.served) servedRows.push(row);
     remainingLines -= built.text === "" ? 0 : built.text.split("\n").length;
     remainingBytes -= Buffer.byteLength(`${built.text}${header}`, "utf-8");
     if (truncation === undefined && built.truncation) truncation = built.truncation;
@@ -859,9 +620,7 @@ function buildWindowedPreview(params: {
     // WHY: a multi-window request is N discrete slices, not one stream, so the result carries no root
     // WHY: `nextOffset`: a scalar would invite `offset = nextOffset` and silently re-read a window the
     // WHY: caller never asked to continue. A truncated window says so in its own section text.
-    served: [...hashByPosition.entries()]
-      .sort((left, right) => left[0] - right[0])
-      .map(([position, hash]) => ({ position, hash })),
+    served: [...servedRows].sort((left, right) => left.position - right.position),
   };
 }
 
@@ -967,6 +726,18 @@ export interface FileView {
   absolutePath: string;
   truncation?: TruncationResult;
   nextOffset?: number;
+  /**
+   * The full-read verdict — computed HERE and nowhere else (ADR-0035).
+   *
+   * True only for an untruncated whole-file read: no `offset`, no `limit` and no requested windows
+   * (`undefined`/`[]` both mean none, per `hasRequestedWindows`), and nothing cut by the render.
+   * A page that happens to cover every line is still a page.
+   *
+   * WHY here: the request shape lives in this seam — the consumers of the verdict (session-view's
+   * `recordServed`, read-and-serve's drift clear) see only rows, and any verdict re-derived from
+   * rows says "full" for a page whose rows turn out dense.
+   */
+  fullRead: boolean;
   hadUtf8DecodeErrors: boolean;
   bom: string;
   originalEnding: LineEnding;
@@ -986,20 +757,6 @@ export interface ReadViewOpts extends PreviewOpts {
   reservedHashes?: ReadonlySet<string>;
   retiredHashes?: ReadonlySet<string>;
   previous?: { content: string; hashes: string[]; removedHashes?: Set<string> };
-}
-
-export async function preview(
-  content: string,
-  hashes: string[],
-  opts: PreviewOpts = {},
-  absolutePath?: string,
-): Promise<{
-  text: string;
-  served: ServedRow[];
-  truncation?: TruncationResult;
-  nextOffset?: number;
-}> {
-  return fmtReadPreview(content, opts, hashes, absolutePath);
 }
 
 export async function readView(
@@ -1027,6 +784,13 @@ export async function readView(
     fileHashes,
     absolutePath,
   );
+  // The ONE computation of the full-read verdict (ADR-0035): the whole file, no page request, and
+  // nothing truncated away. Consumers read `view.fullRead`; none of them re-derives it.
+  const fullRead =
+    opts.offset === undefined &&
+    opts.limit === undefined &&
+    !hasRequestedWindows(opts.windows) &&
+    !r.truncation?.truncated;
   return {
     text: r.text,
     hashes: fileHashes,
@@ -1034,6 +798,7 @@ export async function readView(
     absolutePath,
     truncation: r.truncation,
     nextOffset: r.nextOffset,
+    fullRead,
     hadUtf8DecodeErrors,
     bom,
     originalEnding,

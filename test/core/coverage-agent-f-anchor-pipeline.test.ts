@@ -3,12 +3,14 @@ import {
   parseHashRef,
   resEdit,
   applyEdit,
-  verifyServedRange,
-  buildRangeEcho,
-  fmtServedRows,
   parseText,
   findEditHashEcho,
 } from "../../src/hashline/anchor-pipeline.js";
+import {
+  verifyServedRange,
+  buildRangeEcho,
+  fmtServedRows,
+} from "../../src/hashline/served-evidence.js";
 import { lineHashesPure } from "../../src/hashline/hash-assign.js";
 
 describe("coverage-f: anchor-pipeline large file pagination", () => {

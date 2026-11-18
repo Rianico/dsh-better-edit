@@ -1,6 +1,6 @@
 import { readFile } from "node:fs/promises";
 import { beforeAll, describe, expect, it } from "vitest";
-import { initHasher } from "../../src/hashline/hasher.js";
+import { initHasher } from "../../src/hashline/hash-assign.js";
 import { loadHashStore, type InternalHashStore } from "../../src/hash-store.js";
 import { localIO, type FileIO } from "../../src/fs-bridge.js";
 import { withWorkspace } from "../../src/workspace-context.js";

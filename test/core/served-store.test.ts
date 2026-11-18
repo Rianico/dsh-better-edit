@@ -3,13 +3,20 @@ import { mkdtemp, mkdir, readdir, rm, writeFile } from "fs/promises";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
-import { loadHashStore, loadServedStore, shutdownHashStore } from "../../src/hash-store.js";
+import {
+  loadHashStore,
+  loadServedStore,
+  shutdownHashStore,
+  type RetiredEntry,
+} from "../../src/hash-store.js";
 import { DomainError } from "../../src/domain-errors.js";
 import {
   _mergeServedRows,
+  loadAnchorReservations,
   loadServed,
   recordServed,
   recordServedTruncated,
+  retireAnchors,
   driftReported,
   markDriftReported,
   clearDriftReported,
@@ -17,7 +24,8 @@ import {
   servedPositionsOf,
 } from "../../src/session-view.js";
 import { HASH_STORE_VERSION, SERVED_TTL_MS } from "../../src/constants.js";
-import { initHasher, contentChecksum } from "../../src/hashline/hasher.js";
+import { initHasher, contentChecksum } from "../../src/hashline/hash-assign.js";
+import { HASH_SPACE, idxToHash, lineHashesPure } from "../../src/hashline/hash-assign.js";
 import { getWritableTempRoot } from "../support/fixtures.js";
 import { saveUndo } from "../../src/undo-edit.js";
 
@@ -122,6 +130,311 @@ describe("served state — record semantics", () => {
       ]);
       shutdownHashStore();
       expect(await loadServed("sessionA", "/p.ts")).toEqual(["abc", null, "def"]);
+    });
+  });
+});
+
+describe("served state — incremental hazard sweep", () => {
+  it("sweeps the retired entries a partial serve re-observed at their death position", async () => {
+    await withTempHome(async () => {
+      const sessionKey = "sess-hazard-1";
+      const path = "/tmp/hazard-file.txt";
+      const N = 20;
+      const content = Array.from({ length: N }, (_, i) => `line ${i}`).join("\n");
+      const realHashes = lineHashesPure(content);
+      await recordServed(
+        sessionKey,
+        path,
+        realHashes.map((h, i) => ({ position: i, hash: h })),
+        N,
+        {
+          hashes: realHashes,
+          canons: Array.from({ length: N }, (_, i) => `line${i}`),
+          // Setup is the whole file (every hash, in order): a full-read serve.
+          fullRead: true,
+        },
+      );
+      const toRetire = realHashes.slice(0, 6);
+      await retireAnchors(sessionKey, path, toRetire);
+      const newContent = Array.from({ length: N }, (_, i) =>
+        i < 6 ? `changed ${i}` : `line ${i}`,
+      ).join("\n");
+      const newHashes = lineHashesPure(newContent);
+      const store = await loadServedStore();
+      const entries: RetiredEntry[] = toRetire.map((h, idx) => ({ hash: h, deathPos: idx }));
+      store.clearRetiredAnchors(sessionKey, path);
+      store.upsertRetiredAnchors(sessionKey, path, JSON.stringify(entries));
+      const before = store.getRetiredEntries(sessionKey, path);
+      expect(before.length).toBe(6);
+      const rows = newHashes.slice(0, 6).map((h, i) => ({ position: i, hash: h }));
+      await recordServed(sessionKey, path, rows, N, {
+        hashes: newHashes,
+        canons: Array.from({ length: N }, (_, i) => (i < 6 ? `changed${i}` : `line${i}`)),
+        // The cell's subject: the first six lines, a genuine page — the sweep is what may
+        // touch the hazard state here, not the full-read clear.
+        fullRead: false,
+      });
+      const after = store.getRetiredEntries(sessionKey, path);
+      expect(after.length).toBe(0);
+    });
+  });
+
+  it("an appending retirement keeps an existing entry's death position, and the sweep still frees it", async () => {
+    await withTempHome(async () => {
+      const sessionKey = "sess-append-deathpos-1";
+      const path = "/tmp/append-deathpos-file.txt";
+      const N = 6;
+      const content = Array.from({ length: N }, (_, i) => `line ${i}`).join("\n");
+      const hashes = lineHashesPure(content);
+      const store = await loadServedStore();
+      // Seed the column the way the sweep writes it — object entries carrying a real
+      // death position — plus the hazard card that entitles a serve re-observing
+      // position 2 to free `AAA` incrementally.
+      store.clearRetiredAnchors(sessionKey, path);
+      store.upsertRetiredAnchors(sessionKey, path, JSON.stringify([{ hash: "AAA", deathPos: 2 }]));
+      store.upsertCards(sessionKey, path, JSON.stringify([2]));
+
+      // The production appending writer (the edit path's retirement).
+      await retireAnchors(sessionKey, path, ["BBB"]);
+
+      const afterAppend = store.getRetiredEntries(sessionKey, path);
+      expect(afterAppend).toEqual([
+        { hash: "AAA", deathPos: 2 },
+        { hash: "BBB", deathPos: null },
+      ]);
+
+      // A genuinely partial serve re-observing position 2: card 2 is already tracked, so
+      // the sweep must free the entry that still knows where it died.
+      await recordServed(sessionKey, path, [{ position: 2, hash: hashes[2]! }], N, {
+        hashes,
+        canons: Array.from({ length: N }, (_, i) => `line${i}`),
+        fullRead: false,
+      });
+      const afterSweep = store.getRetiredEntries(sessionKey, path);
+      expect(afterSweep.map((entry) => entry.hash)).toEqual(["BBB"]);
+    });
+  });
+
+  it("keeps deathPos=null retired entries through a partial sweep and clears them on a full serve", async () => {
+    await withTempHome(async () => {
+      const sessionKey = "sess-minus1-1";
+      const path = "/tmp/minus1-file.txt";
+      const N = 10;
+      const content = Array.from({ length: N }, (_, i) => `line ${i}`).join("\n");
+      const hashes = lineHashesPure(content);
+      await recordServed(
+        sessionKey,
+        path,
+        hashes.map((h, i) => ({ position: i, hash: h })),
+        N,
+        // The whole file, so the seeding serve is a full read.
+        { hashes, canons: Array.from({ length: N }, (_, i) => `line${i}`), fullRead: true },
+      );
+      const store = await loadServedStore();
+      const mixed: RetiredEntry[] = [
+        { hash: hashes[0]!, deathPos: null },
+        { hash: hashes[1]!, deathPos: null },
+        { hash: hashes[2]!, deathPos: 2 },
+        { hash: hashes[3]!, deathPos: 3 },
+        { hash: hashes[4]!, deathPos: 4 },
+      ];
+      store.clearRetiredAnchors(sessionKey, path);
+      store.upsertRetiredAnchors(sessionKey, path, JSON.stringify(mixed));
+      const newHashes = lineHashesPure(content);
+      const rows = [2, 3].map((i) => ({ position: i, hash: newHashes[i]! }));
+      await recordServed(sessionKey, path, rows, N, {
+        hashes: newHashes,
+        canons: Array.from({ length: N }, (_, i) => `line${i}`),
+        // Rows 2-3 of ten: the partial branch the cell is named for.
+        fullRead: false,
+      });
+      const afterPartial = store.getRetiredEntries(sessionKey, path);
+      const afterHashes = new Set(afterPartial.map((e) => e.hash));
+      expect(afterHashes.has(hashes[0]!)).toBe(true);
+      expect(afterHashes.has(hashes[1]!)).toBe(true);
+      expect(afterHashes.has(hashes[2]!)).toBe(false);
+      expect(afterHashes.has(hashes[3]!)).toBe(false);
+      expect(afterHashes.has(hashes[4]!)).toBe(true);
+      const fullRows = newHashes.map((h, i) => ({ position: i, hash: h }));
+      await recordServed(sessionKey, path, fullRows, N, {
+        hashes: newHashes,
+        canons: Array.from({ length: N }, (_, i) => `line${i}`),
+        // "…and clears them on a full serve": the cell's second half is the full read.
+        fullRead: true,
+      });
+      const afterFull = store.getRetiredEntries(sessionKey, path);
+      expect(afterFull.length).toBe(0);
+    });
+  });
+
+  it("sweeps paged serves death position by death position and tracks them as cards", async () => {
+    await withTempHome(async () => {
+      const sessionKey = "sess-cards-paged-1";
+      const path = "/tmp/cards-paged-file.txt";
+      const N = 1000;
+      const content = Array.from({ length: N }, (_, i) => `line ${i}`).join("\n");
+      const hashes = lineHashesPure(content);
+      await recordServed(
+        sessionKey,
+        path,
+        hashes.map((h, i) => ({ position: i, hash: h })),
+        N,
+        // Seeding serve: the whole 1000-line file, so a full read.
+        { hashes, canons: Array.from({ length: N }, (_, i) => `line${i}`), fullRead: true },
+      );
+      const store = await loadServedStore();
+      const retired: RetiredEntry[] = Array.from({ length: N }, (_, i) => ({
+        hash: idxToHash((90000 + i) % HASH_SPACE),
+        deathPos: i,
+      }));
+      store.clearRetiredAnchors(sessionKey, path);
+      store.upsertRetiredAnchors(sessionKey, path, JSON.stringify(retired));
+      try {
+        store.clearCards(sessionKey, path);
+      } catch {}
+      const before = store.getRetiredEntries(sessionKey, path);
+      expect(before.length).toBe(N);
+      const cardsBefore = store.getCards(sessionKey, path);
+      expect(cardsBefore.size).toBe(0);
+      const rowsFirst = Array.from({ length: 500 }, (_, i) => ({ position: i, hash: hashes[i]! }));
+      await recordServed(sessionKey, path, rowsFirst, N, {
+        hashes,
+        canons: Array.from({ length: N }, (_, i) => `line${i}`),
+        // First half of a paged walk: the sweep, not the full-read clear.
+        fullRead: false,
+      });
+      const afterFirst = store.getRetiredEntries(sessionKey, path);
+      expect(afterFirst.length).toBe(500);
+      const remainingDeathPos = new Set(afterFirst.map((e) => e.deathPos));
+      for (let i = 0; i < 500; i++) expect(remainingDeathPos.has(i)).toBe(false);
+      for (let i = 500; i < 1000; i++) expect(remainingDeathPos.has(i)).toBe(true);
+      const cardsAfterFirst = store.getCards(sessionKey, path);
+      expect(cardsAfterFirst.size).toBe(500);
+      for (let i = 0; i < 500; i++) expect(cardsAfterFirst.has(i)).toBe(true);
+      const rowsSecond = Array.from({ length: 500 }, (_, i) => ({
+        position: 500 + i,
+        hash: hashes[500 + i]!,
+      }));
+      await recordServed(sessionKey, path, rowsSecond, N, {
+        hashes,
+        canons: Array.from({ length: N }, (_, i) => `line${i}`),
+        // Second half of the same paged walk.
+        fullRead: false,
+      });
+      const afterSecond = store.getRetiredEntries(sessionKey, path);
+      expect(afterSecond.length).toBe(0);
+      const cardsAfterSecond = store.getCards(sessionKey, path);
+      expect(cardsAfterSecond.size).toBe(1000);
+      for (let i = 0; i < 1000; i++) expect(cardsAfterSecond.has(i)).toBe(true);
+      const fullRows = hashes.map((h, i) => ({ position: i, hash: h }));
+      await recordServed(sessionKey, path, fullRows, N, {
+        hashes,
+        canons: Array.from({ length: N }, (_, i) => `line${i}`),
+        // The walk's terminal full read: this is the serve that clears cards and retired.
+        fullRead: true,
+      });
+      const cardsAfterFull = store.getCards(sessionKey, path);
+      expect(cardsAfterFull.size).toBe(0);
+      const retiredAfterFull = store.getRetiredEntries(sessionKey, path);
+      expect(retiredAfterFull.length).toBe(0);
+    });
+  });
+});
+
+describe("served state — retired-anchor writer contract", () => {
+  function readServedRow(
+    home: string,
+    sessionKey: string,
+    path: string,
+  ): { retired: string | null; updated_at: number } {
+    const db = new DatabaseSync(sqlitePath(home), { defensive: false } as any);
+    const row = db
+      .prepare("SELECT retired, updated_at FROM served WHERE session_id = ? AND path = ?")
+      .get(sessionKey, path) as { retired: string | null; updated_at: number } | undefined;
+    db.close();
+    if (!row) throw new Error(`no served row for ${sessionKey}:${path}`);
+    return row;
+  }
+
+  it("rejects an invalid retired hash before it reads or writes the column", async () => {
+    // WHY the assertion is what it is: ADR-0036 decision 3 says an invalid hash is rejected
+    // "whether or not the hash is new", but the "even when already known" half is
+    // UNCONSTRUCTIBLE as a black-box case here — `isValidRetiredEntry` and
+    // `coerceRetiredEntry` (src/hash-store.ts) both require `HASH_RE`, so the store can never
+    // hold an invalid hash that a caller could then re-present as "known". What the ordering
+    // guarantees observably is exactly what this cell pins: an invalid argument aborts the
+    // call before any read or write, because the validation loop in `addRetiredAnchors`
+    // precedes its `getRetiredEntries` read.
+    await withTempHome(async (home) => {
+      const sessionKey = "sess-invalid-hash-1";
+      const path = "/tmp/invalid-hash-file.txt";
+      const store = await loadServedStore();
+      const seeded = JSON.stringify([{ hash: "AAA", deathPos: 2 }]);
+      store.upsertRetiredAnchors(sessionKey, path, seeded);
+      expect(readServedRow(home, sessionKey, path).retired).toBe(seeded);
+
+      // The READ half of the ordering claim, pinned directly: `addRetiredAnchors` validates the
+      // whole batch before its `getRetiredEntries` read, so a rejected batch never reaches the
+      // column. `loadHashStore` is memoized per store path, so this is the very object the call
+      // under test reaches.
+      const readSpy = vi.spyOn(store, "getRetiredEntries");
+
+      // A lone invalid hash aborts the call …
+      await expect(retireAnchors(sessionKey, path, ["bad-hash!"])).rejects.toThrow(
+        /Invalid retired hash/,
+      );
+      // … before the column is read at all …
+      expect(readSpy).not.toHaveBeenCalled();
+      // … and nothing was written: the column is byte-identical.
+      expect(readServedRow(home, sessionKey, path).retired).toBe(seeded);
+
+      // The sharper form: a VALID new hash followed by an invalid one. A writer that appended
+      // as it walked the batch would leave `BBB` behind; the validation loop covers the whole
+      // batch first, so the reject leaves the column byte-identical — no partial append.
+      await expect(retireAnchors(sessionKey, path, ["BBB", "bad-hash!"])).rejects.toThrow(
+        /Invalid retired hash/,
+      );
+      expect(readSpy).not.toHaveBeenCalled();
+      expect(readServedRow(home, sessionKey, path).retired).toBe(seeded);
+      readSpy.mockRestore();
+      expect(store.getRetiredEntries(sessionKey, path)).toEqual([{ hash: "AAA", deathPos: 2 }]);
+
+      // … and the seam the two claims above lean on is LIVE: a valid retirement does read the
+      // column. Without this control the `not.toHaveBeenCalled` claims would also pass against a
+      // spy that observes nothing (e.g. a store facade that stopped being the memoized object).
+      const liveSpy = vi.spyOn(store, "getRetiredEntries");
+      await retireAnchors(sessionKey, path, ["CCC"]);
+      expect(liveSpy).toHaveBeenCalled();
+      liveSpy.mockRestore();
+    });
+  });
+
+  it("re-retiring a known hash leaves the row untouched, and that no-write is refutable", async () => {
+    await withTempHome(async (home) => {
+      const sessionKey = "sess-idempotent-retire-1";
+      const path = "/tmp/idempotent-retire-file.txt";
+      const store = await loadServedStore();
+      await retireAnchors(sessionKey, path, ["AAA"]);
+      const seeded = readServedRow(home, sessionKey, path);
+      expect(JSON.parse(seeded.retired as string)).toEqual([{ hash: "AAA", deathPos: null }]);
+
+      // Same hash, after the clock has demonstrably moved: idempotent retirement is the
+      // writer's decision not to upsert, so the row's stamp and column must both stay put.
+      await new Promise((r) => setTimeout(r, 5));
+      await retireAnchors(sessionKey, path, ["AAA"]);
+      const afterRepeat = readServedRow(home, sessionKey, path);
+      expect(afterRepeat.updated_at).toBe(seeded.updated_at);
+      expect(afterRepeat.retired).toBe(seeded.retired);
+
+      // POSITIVE CONTROL — the assertion above can fail. Upserting that very same column
+      // directly, after another few ms, DOES move `updated_at`: the DB clock resolves finer
+      // than the gap this cell measures, so the unchanged stamp is the writer's no-write and
+      // not a clock artefact.
+      await new Promise((r) => setTimeout(r, 5));
+      store.upsertRetiredAnchors(sessionKey, path, afterRepeat.retired as string);
+      const afterControl = readServedRow(home, sessionKey, path);
+      expect(afterControl.updated_at).toBeGreaterThan(afterRepeat.updated_at);
+      expect(afterControl.retired).toBe(afterRepeat.retired);
     });
   });
 });
@@ -241,6 +554,49 @@ describe("served state — session isolation", () => {
     await withTempHome(async () => {
       await recordServed("sessionA", "/p.ts", [{ position: 0, hash: "abc" }]);
       expect(await loadServed("sessionB", "/p.ts")).toEqual([]);
+    });
+  });
+
+  it("keeps one path's retired set disjoint from a second session's", async () => {
+    await withTempHome(async () => {
+      const path = "/proj/file.ts";
+      await recordServed("sessionA", path, [{ position: 0, hash: "AAA" }], 1, {
+        hashes: ["AAA"],
+        canons: ["a"],
+        // A one-line file served whole; the cell asserts reservations, not serve shape.
+        fullRead: true,
+      });
+      const store = await loadServedStore();
+      store.upsertRetiredAnchors("sessionA", path, JSON.stringify([{ hash: "BBB", deathPos: 0 }]));
+      await recordServed("sessionB", path, [{ position: 0, hash: "CCC" }], 1, {
+        hashes: ["CCC"],
+        canons: ["c"],
+        // Same one-line whole-file serve, second session.
+        fullRead: true,
+      });
+      store.upsertRetiredAnchors("sessionB", path, JSON.stringify([{ hash: "DDD", deathPos: 0 }]));
+      const resA = store.getAnchorReservations("sessionA", path);
+      const resB = store.getAnchorReservations("sessionB", path);
+      const svResA = await loadAnchorReservations("sessionA", path);
+      const svResB = await loadAnchorReservations("sessionB", path);
+      expect(resA.reservedHashes.has("AAA")).toBe(true);
+      expect(resA.reservedHashes.has("BBB")).toBe(true);
+      expect(resA.reservedHashes.has("CCC")).toBe(false);
+      expect(resA.reservedHashes.has("DDD")).toBe(false);
+      expect(resA.retiredHashes.has("BBB")).toBe(true);
+      expect(resA.retiredHashes.has("DDD")).toBe(false);
+      expect(resB.reservedHashes.has("CCC")).toBe(true);
+      expect(resB.reservedHashes.has("DDD")).toBe(true);
+      expect(resB.reservedHashes.has("AAA")).toBe(false);
+      expect(resB.reservedHashes.has("BBB")).toBe(false);
+      expect(resB.retiredHashes.has("DDD")).toBe(true);
+      expect(resB.retiredHashes.has("BBB")).toBe(false);
+      expect(svResA.reservedHashes.has("AAA")).toBe(true);
+      expect(svResA.reservedHashes.has("BBB")).toBe(true);
+      expect(svResA.reservedHashes.has("CCC")).toBe(false);
+      expect(svResB.reservedHashes.has("CCC")).toBe(true);
+      expect(svResB.reservedHashes.has("DDD")).toBe(true);
+      expect(svResB.reservedHashes.has("AAA")).toBe(false);
     });
   });
 });

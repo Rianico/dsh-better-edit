@@ -151,26 +151,11 @@ describe("coverage-agent-g file-view", () => {
     expect(r4.truncated).toBe(true);
   });
 
-  it("loadFileKindAndText branches", async () => {
-    const { loadFileKindAndText } = await import("../../src/file-view.js");
+  it("fileSnap, normFromText and fmtReadPreview branches", async () => {
     const dir = await mkdtemp(join(await getWritableTempRoot(), "fv-"));
     try {
-      expect((await loadFileKindAndText(dir)).kind).toBe("directory");
       const empty = join(dir, "empty.txt");
       await writeFile(empty, "", "utf-8");
-      expect((await loadFileKindAndText(empty)).kind).toBe("text");
-      const big = join(dir, "big.txt");
-      await writeFile(big, "x".repeat(600 * 1024), "utf-8");
-      const bigRes = await loadFileKindAndText(big);
-      expect(["binary", "text"].includes(bigRes.kind)).toBe(true);
-      const bin = join(dir, "bin.dat");
-      await writeFile(bin, Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
-      const binRes = await loadFileKindAndText(bin);
-      expect(["binary", "image", "text"].includes(binRes.kind)).toBe(true);
-      const badUtf8 = join(dir, "bad.txt");
-      await writeFile(badUtf8, Buffer.from([0xff, 0xff, 0x61]));
-      const badRes: any = await loadFileKindAndText(badUtf8);
-      expect(["text", "binary"].includes(badRes.kind)).toBe(true);
       const { fileSnap } = await import("../../src/file-view.js");
       const snap = await fileSnap(empty);
       expect(snap.snapshotId).toContain("v2|");
@@ -183,19 +168,10 @@ describe("coverage-agent-g file-view", () => {
           maxLines: 10,
         }),
       ).rejects.toThrow(/E_LARGE_FILE/);
-      const { valAccess } = await import("../../src/file-view.js");
-      await expect(valAccess("/nope/path", "/nope/path")).rejects.toThrow(/E_NOT_FOUND/);
-      const { valKind } = await import("../../src/file-view.js");
-      expect(() => valKind({ kind: "directory" } as any, "p")).toThrow(/directory/);
-      expect(() => valKind({ kind: "binary", description: "x" } as any, "p")).toThrow(/binary/);
-      expect(() => valKind({ kind: "image", mimeType: "image/png" } as any, "p")).toThrow(/image/);
       const { fmtReadPreview } = await import("../../src/file-view.js");
       const manyLines = Array.from({ length: 30 }, (_, i) => `line ${i}`).join("\n");
       const r = await fmtReadPreview(manyLines, { offset: 5, limit: 5 }, undefined, empty);
       expect(r.served.length).toBe(5);
-      const { preview } = await import("../../src/file-view.js");
-      const pv = await preview("a\nb", ["h1", "h2"], {});
-      expect(pv.text).toContain("h1");
     } finally {
       await rm(dir, { recursive: true, force: true });
     }

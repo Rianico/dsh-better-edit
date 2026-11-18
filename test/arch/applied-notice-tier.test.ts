@@ -51,10 +51,21 @@ type ScanSource = { file: string; text: string };
 const COMPOSER_FILE = join(SRC_ROOT, "domain-errors.ts");
 
 /**
- * Floor, not a pin: a growing `src/` keeps passing, an emptied walk (wrong root,
- * broken recursion) fails. Today: 66 `.ts` files under `src/`.
+ * Per-target, never a count: a count changes with every deletion, so it asserts
+ * the tree's SIZE (and rots on edits unrelated to this scan) instead of the
+ * walk's REACH. Naming the producer hosts makes the assertion the same fact the
+ * scan depends on, and a misrooted walk REDs with the missing file's path — an
+ * actionable name — rather than a bare number.
+ *
+ * `domain-errors.ts` holds both composers and is asserted separately as
+ * `COMPOSER_FILE`; these are the three hosts that produce the `W_*` codes the
+ * positive control below names. Paths are relative to `SRC_ROOT`.
  */
-const MIN_SOURCE_FILES = 66;
+const REFERENT_FILES = [
+  "hashline/anchor-pipeline.ts", // W_REVERSED_ANCHORS, W_LITERAL_BYPASS, W_UNICODE_LITERAL
+  "hashline/served-guard.ts", // W_SERVED_PREFIX_MISMATCH, W_NEVER_SERVED_SHAPE
+  "mutation/engine.ts", // W_NOOP (batch) + the declared-limit spread
+] as const;
 
 /**
  * The forbidden shapes, each named in the failure so a RED is actionable.
@@ -121,12 +132,13 @@ function offendersOf(text: string): string[] {
 describe("applied-notice tier: no [E_*] header on an applied notice (#115)", () => {
   it("the live src/ tree never composes an error header into the applied-notice channel", () => {
     const sources = liveSources();
+    const files = sources.map((source) => source.file);
     // Non-vacuity: an emptied or misrooted walk would pass every scan below.
-    expect(sources.length, "the src/ walk is not empty").toBeGreaterThanOrEqual(MIN_SOURCE_FILES);
-    expect(
-      sources.map((source) => source.file),
-      "the walk visits the composer",
-    ).toContain(COMPOSER_FILE);
+    expect(sources.length, "the src/ walk is not empty").toBeGreaterThan(0);
+    expect(files, "the walk visits the composer").toContain(COMPOSER_FILE);
+    for (const rel of REFERENT_FILES) {
+      expect(files, `the walk reaches ${rel}`).toContain(join(SRC_ROOT, rel));
+    }
 
     const offenders = appliedNoticeViolations(sources);
     expect(

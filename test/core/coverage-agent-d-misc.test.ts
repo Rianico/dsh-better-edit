@@ -21,7 +21,7 @@ import {
 } from "../../src/store-config.js";
 import { lineHashesPure } from "../../src/hashline/hash-assign.js";
 import { lineHashes } from "../../src/hashline/hash.js";
-import { initHasher } from "../../src/hashline/hasher.js";
+import { initHasher } from "../../src/hashline/hash-assign.js";
 import { HASH_RE } from "../../src/hashline/hash-assign.js";
 
 describe("coverage-agent-d canonical-path", () => {

@@ -1,16 +1,19 @@
+import { readFile } from "node:fs/promises";
 import { describe, expect, it, vi } from "vitest";
+import { localIO, type FileIO } from "../../src/fs-bridge.js";
+import { extractHash, getText, setupIntegrationTest, withTempFile } from "../support/fixtures.js";
 import {
   collectRemovedHashes,
   countLineChanges,
   applyOne,
   enforceNoopLoop,
-  persistUndoAndWrite,
-} from "../../src/edit-engine.js";
+} from "../../src/mutation/engine.js";
+import { persistUndoAndWrite } from "../../src/mutation.js";
 import { lineHashesPure } from "../../src/hashline/hash-assign.js";
 import { initHasher } from "../../src/hashline/hash-assign.js";
 import * as undoMod from "../../src/undo-edit.js";
 
-describe("coverage: edit-engine collectRemovedHashes / countLineChanges", () => {
+describe("coverage: mutation engine collectRemovedHashes / countLineChanges", () => {
   it("collectRemovedHashes handles found and not-found hashes", () => {
     const hashes = ["aaa", "bbb", "ccc", "ddd"];
     const edit: any = { hash_bounds: [{ hash: "bbb" }, { hash: "ccc" }], content_lines: ["x"] };
@@ -63,7 +66,7 @@ describe("coverage: edit-engine collectRemovedHashes / countLineChanges", () => 
   });
 });
 
-describe("coverage: edit-engine applyOne", () => {
+describe("coverage: mutation engine applyOne", () => {
   it("applies pre-resolved edit", async () => {
     await initHasher();
     const content = "a\nb\nc";
@@ -170,7 +173,7 @@ describe("coverage: edit-engine applyOne", () => {
   });
 });
 
-describe("coverage: edit-engine enforceNoopLoop", () => {
+describe("coverage: mutation engine enforceNoopLoop", () => {
   it("batch: throws at threshold and notice at 2", async () => {
     const { NOOP_LOOP_THRESHOLD } = await import("../../src/constants.js");
     await expect(
@@ -248,7 +251,7 @@ describe("coverage: edit-engine enforceNoopLoop", () => {
   });
 });
 
-describe("coverage: edit-engine persistUndoAndWrite", () => {
+describe("coverage: mutation engine persistUndoAndWrite", () => {
   it("throws undo unavailable and restores previous undos", async () => {
     const saveSpy = vi
       .spyOn(undoMod, "saveUndo")
@@ -284,7 +287,6 @@ describe("coverage: edit-engine persistUndoAndWrite", () => {
         sandbox,
         sandboxPolicy: undefined,
         undoUnavailableMessage: (p) => `[E_UNDO_UNAVAILABLE] ${p}`,
-        restoreUnwrittenUndos: false,
       }),
     ).rejects.toThrow(/E_UNDO_UNAVAILABLE/);
     saveSpy.mockRestore();
@@ -331,7 +333,6 @@ describe("coverage: edit-engine persistUndoAndWrite", () => {
         sandbox,
         sandboxPolicy: undefined,
         undoUnavailableMessage: (p) => `undo ${p}`,
-        restoreUnwrittenUndos: false,
       }),
     ).rejects.toThrow(/disk full/);
     // first file was written then restored via second writeText call for restore + restore undo
@@ -363,14 +364,15 @@ describe("coverage: edit-engine persistUndoAndWrite", () => {
         sandboxPolicy: undefined,
         signal: undefined,
         undoUnavailableMessage: () => "x",
-        restoreUnwrittenUndos: false,
       }),
     ).resolves.toBeUndefined();
     expect(io.writeText).toHaveBeenCalledTimes(1);
     saveSpy.mockRestore();
   });
 
-  it("restoreUnwrittenUndos cleans up when requested", async () => {
+  // ADR-0034: a write failure restores the undo rows of the files it never wrote. The transaction
+  // owns that decision — the arity of the request must not enter into it.
+  it("restores the unwritten undo rows on a failed write (arity must not decide)", async () => {
     const r1 = vi.fn(async () => {});
     const r2 = vi.fn(async () => {});
     const saveSpy = vi
@@ -405,11 +407,80 @@ describe("coverage: edit-engine persistUndoAndWrite", () => {
         sandbox,
         sandboxPolicy: undefined,
         undoUnavailableMessage: () => "x",
-        restoreUnwrittenUndos: true,
       }),
     ).rejects.toThrow();
-    // r2 should have been called as unwritten cleanup
+    // r2 is the undo row of file 2, which was never written — it must be restored.
     expect(r2).toHaveBeenCalled();
     saveSpy.mockRestore();
+  });
+});
+
+/**
+ * A failed multi-item write must leave the undo history as it was.
+ *
+ * `execute` branches on item arity, but both branches commit exactly one file through the same
+ * transaction. ADR-0034 makes that transaction the one authority for the undo rows: a write that
+ * fails restores the row `saveUndo` already persisted for every file it never wrote, so the row
+ * whose `resultContent` never reached the disk cannot survive. Before ADR-0034 the batch branch
+ * kept it, and the next `undo_last_edit` compared the on-disk file with that phantom content and
+ * reported `E_UNDO_STALE {"reason":"modified"}`, blaming an external write for the tool's own
+ * failed write and silently losing the previous edit's undo.
+ */
+describe("mutation transaction — a failed multi-item write leaves undo history intact", () => {
+  it("keeps the previous edit's undo row when a multi-item write fails", async () => {
+    const initial = "one\ntwo\nthree\n";
+    const afterFirstEdit = "one\nTWO\nthree\n";
+    await withTempFile("failed-batch-undo.txt", initial, async ({ cwd, path }) => {
+      const base = localIO();
+      let failWrites = false;
+      const io: FileIO = {
+        ...base,
+        async writeText(absolutePath, content, signal, exec, sandboxPolicy) {
+          if (failWrites) throw new Error("disk full");
+          return base.writeText(absolutePath, content, signal, exec, sandboxPolicy);
+        },
+      };
+      const { readTool, editTool, undoTool } = setupIntegrationTest(cwd, io);
+      const anchorOf = (served: { content: Array<{ text?: string }> }, rowText: string): string => {
+        const row = getText(served)
+          .split("\n")
+          .find((line) => line.endsWith(`│${rowText}`));
+        if (row === undefined) throw new Error(`read did not serve a row for ${rowText}`);
+        return extractHash(row);
+      };
+
+      // The previous edit — its undo row is the authority that must survive the failure.
+      const served = await readTool.execute("read-1", { path: "failed-batch-undo.txt" });
+      const two = anchorOf(served, "two");
+      await editTool.execute("edit-1", {
+        file: "failed-batch-undo.txt",
+        edits: [{ anchor_from: two, anchor_to: two, replace_with: "TWO" }],
+      });
+      expect(await readFile(path, "utf-8")).toBe(afterFirstEdit);
+
+      // A two-item edit takes the batch branch (`items.length > 1`) and its write fails.
+      const reServed = await readTool.execute("read-2", { path: "failed-batch-undo.txt" });
+      const one = anchorOf(reServed, "one");
+      const three = anchorOf(reServed, "three");
+      failWrites = true;
+      await expect(
+        editTool.execute("edit-2", {
+          file: "failed-batch-undo.txt",
+          edits: [
+            { anchor_from: one, anchor_to: one, replace_with: "ONE" },
+            { anchor_from: three, anchor_to: three, replace_with: "THREE" },
+          ],
+        }),
+      ).rejects.toThrow(/disk full/);
+      // The failed edit wrote nothing.
+      expect(await readFile(path, "utf-8")).toBe(afterFirstEdit);
+
+      failWrites = false;
+      const undone = await undoTool.execute("undo_last_edit", { path: "failed-batch-undo.txt" });
+      // It must not report the previous edit as externally modified.
+      expect(getText(undone)).not.toContain("E_UNDO_STALE");
+      // It must revert edit #1, which proves edit #1's undo row was still the authority.
+      expect(await readFile(path, "utf-8")).toBe(initial);
+    });
   });
 });

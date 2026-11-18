@@ -15,12 +15,22 @@ import { readdir, rm, stat } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { resolveDshHome } from "@deepseek-ai/dsh-home-paths";
-import { hashStorePath, loadConfig } from "./paths.js";
+import { loadConfig } from "./store-config.js";
 import { workspaceCwd } from "./workspace-context.js";
 import { errCode, splitLines } from "./utils.js";
 import { HASH_STORE_BUSY_TIMEOUT, SERVED_TTL_MS } from "./constants.js";
-import type { HashStore } from "./hash-store.js";
 import { reportVacuum } from "./snapshot-store/index.js";
+import type { VacuumResult } from "./snapshot-store/index.js";
+
+/**
+ * The store face `onStoreOpen` calls, typed structurally: the handle is a leaf here, and
+ * importing the store's own type re-closes the `hash-store ↔ store-lifecycle` cycle.
+ */
+interface OpenStoreFace {
+  pruneUndoOlderThan(ts: number): void;
+  pruneMissing(): Promise<void>;
+  vacuumSnapshots(): VacuumResult;
+}
 
 // ---- throttling state (owned here) ----
 let lastPruneMsByStore = new Map<string, number>();
@@ -217,7 +227,7 @@ export async function runCentralJanitorIfDue(): Promise<void> {
 export async function onStoreOpen(
   storePath: string,
   stmts: { servedPruneOlderThan: (ts: number) => void },
-  store: HashStore,
+  store: OpenStoreFace,
 ): Promise<void> {
   handleGitPollution(storePath);
 

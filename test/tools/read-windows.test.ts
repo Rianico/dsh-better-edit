@@ -5,9 +5,10 @@ import { fmtReadPreview, MAX_READ_WINDOWS } from "../../src/file-view.js";
 import { buildReadTool } from "../../src/tool-read.js";
 import { readAndServe } from "../../src/read-and-serve.js";
 import { localIO } from "../../src/fs-bridge.js";
+import { loadHashStore, type InternalHashStore } from "../../src/hash-store.js";
 import { driftReported, markDriftReported } from "../../src/session-view.js";
 import { sessionKeyFor, withWorkspace } from "../../src/workspace-context.js";
-import { initHasher } from "../../src/hashline/hasher.js";
+import { initHasher } from "../../src/hashline/hash-assign.js";
 import {
   extractHash,
   getText,
@@ -54,6 +55,29 @@ function rowsOf(text: string): string[] {
 function anchorsByLine(text: string): Map<string, string> {
   const rows = text.split("\n").filter((line) => /^[A-Za-z0-9]{3}│/.test(line));
   return new Map(rows.map((row) => [row.split("│")[1]!, extractHash(row)]));
+}
+
+async function internalStore(): Promise<InternalHashStore> {
+  return (await loadHashStore()) as InternalHashStore;
+}
+
+/**
+ * Seed the three things only a full read owns: a retired anchor at an unknown death position
+ * (`deathPos: null` — the shape no partial sweep may drain), a hazard card, and a canon array
+ * longer than the file (a full read replaces it wholesale; a preserve path merges in place and
+ * keeps the length, so 20 sentinels against 12 lines make an overwrite observable).
+ */
+async function seedFullReadOwned(sessionKey: string, path: string): Promise<void> {
+  const store = await internalStore();
+  store.clearRetiredAnchors(sessionKey, path);
+  store.upsertRetiredAnchors(sessionKey, path, JSON.stringify([{ hash: "ZZZ", deathPos: null }]));
+  store.clearCards(sessionKey, path);
+  store.upsertCards(sessionKey, path, JSON.stringify([999]));
+  store.upsertServedCanons(
+    sessionKey,
+    path,
+    JSON.stringify(Array.from({ length: 20 }, () => "JUNK")),
+  );
 }
 
 describe("fmtReadPreview — windows", () => {
@@ -502,6 +526,32 @@ describe("read tool — windows", () => {
       });
       expect(sparse.served.map((row) => row.position)).toEqual([0, 1, 10, 11]);
       expect(await driftReported(sessionKey, path)).toEqual(new Set(["abc"]));
+
+      // The drift clear is only ONE of the effects a full read owns. `windows: []` falls back to
+      // the plain full-read contract, so the retired anchors, the hazard cards and the served
+      // canon array go with it — the whole contract, from the same rule.
+      const store = await internalStore();
+      await seedFullReadOwned(sessionKey, path);
+      await readAndServe(localIO(), "empty-windows.ts", cwd, { sessionKey, windows: [] });
+      expect(store.getRetiredEntries(sessionKey, path)).toEqual([]);
+      expect([...store.getCards(sessionKey, path)]).toEqual([]);
+      expect(store.getServedCanons(sessionKey, path)).toHaveLength(12);
+
+      // A non-empty `windows` request that happens to cover the whole file is still a window, not
+      // "the" whole-file read: it must not clear the hazard state or overwrite the canon array
+      // just because the rows it served turned out dense.
+      await seedFullReadOwned(sessionKey, path);
+      const whole = await readAndServe(localIO(), "empty-windows.ts", cwd, {
+        sessionKey,
+        windows: [{ offset: 1, limit: 12 }],
+      });
+      // The premise: this request really did serve every line of the file.
+      expect(whole.served.map((row) => row.position)).toEqual([
+        0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11,
+      ]);
+      expect(store.getRetiredEntries(sessionKey, path).map((entry) => entry.hash)).toContain("ZZZ");
+      expect([...store.getCards(sessionKey, path)]).toContain(999);
+      expect(store.getServedCanons(sessionKey, path)).toHaveLength(20);
     });
   });
 

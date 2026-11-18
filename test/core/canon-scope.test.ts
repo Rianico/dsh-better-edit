@@ -11,7 +11,7 @@ import {
   ServedRejectionError,
 } from "../../src/hashline/index.js";
 import { xxh32 } from "../../src/hashline/hash-assign.js";
-import { initHasher } from "../../src/hashline/hasher.js";
+import { initHasher } from "../../src/hashline/hash-assign.js";
 import { shutdownHashStore } from "../../src/hash-store.js";
 import { loadServedCanons, recordServed } from "../../src/session-view.js";
 import { getWritableTempRoot } from "../support/fixtures.js";
@@ -197,7 +197,14 @@ describe("canon scope is file-local, never process-global (#149 class)", () => {
           { position: 2, hash: fileHashes[2]! },
         ],
         3,
-        { hashes: fileHashes, canons: fileLines.map((line) => canon(line)) },
+        {
+          hashes: fileHashes,
+          canons: fileLines.map((line) => canon(line)),
+          // A partial serve by construction: the middle row is a stale anchor, so these rows are
+          // not the dense mirror of `fileHashes` and the cell asserts the partial branch's
+          // per-row canon lookup (index 1 records `null`).
+          fullRead: false,
+        },
       );
 
       const canons = await loadServedCanons("t3a-canon-scope", "/b.ts");

@@ -4,12 +4,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import iconv from "iconv-lite";
 import { setupIntegrationTest, withTempFile, getText } from "../support/fixtures.js";
-import {
-  clearEncodingState,
-  clearAutoGuessFooter,
-  getEncodingState,
-  getAutoGuessFooter,
-} from "../../src/fs-bridge.js";
+import { clearEncodingState, clearAutoGuessFooter, getEncodingState } from "../../src/fs-bridge.js";
 import { _resetConfigCache } from "../../src/store-config.js";
 
 function setAutoGuessEnv(enabled: boolean) {
@@ -83,12 +78,6 @@ describe("coverage-agent-e fs-bridge", () => {
       // should auto-decode without E_UNSUPPORTED_FILE, and set memo
       expect(txt).not.toMatch(/\[E_UNSUPPORTED_FILE\]/);
       expect(txt.length).toBeGreaterThan(5);
-      // footer may be present for mid-confidence
-      const footer =
-        getAutoGuessFooter(`tk:${join(cwd, "gbk2.txt")}`) ??
-        getAutoGuessFooter(join(cwd, "gbk2.txt"));
-      // footer is optional; just ensure no throw
-      expect(true).toBe(true);
     });
   });
 
@@ -225,7 +214,7 @@ describe("coverage-agent-e fs-bridge", () => {
     const io = ctxFsIO(fakeFs, fakeCtx);
     const txt = await io.readText("/abs/gbk2.txt");
     expect(txt).toContain("你好");
-    expect(getEncodingState("tk:/abs/gbk2.txt")).toBeDefined();
+    expect(getEncodingState("/abs/gbk2.txt")).toBeDefined();
     delete process.env.DSH_BETTER_EDIT_AUTO_GUESS_ENCODING;
     _resetConfigCache();
   });

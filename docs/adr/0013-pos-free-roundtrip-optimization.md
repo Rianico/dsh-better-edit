@@ -9,7 +9,7 @@ accepted; **partially superseded by [ADR-0018](0018-exact-position-served-span-v
 - **§1 (epoch not pos) — dead.** The epoch pin (`served.snapshotId`, `loadEpochSnapshotId`, its writer and readers) was deleted in T3c CP1-r1 (`6272e09`) as write-only state; position trust now comes from line identity, not from an epoch comparison. Backing: `rg -n 'strictPos|EpochSnapshotId|epochSnapshotId|curSnapshotId' src/ test/ tests/` → 0 hits.
 - **§2 (tombstone / allocation invariant) — survives.**
 - **§3 (concurrency fallback) — never shipped in dsh, now removed.** The automatic `changed ∩ [L,R]` strictness existed only as the unread `strictPos`; ADR-0018 measured that the position check was already unconditional.
-- **§4 (non-overlapping forever is pos-free) — the outcome is restored via identity**: exterior drift no longer aborts a non-overlapping edit, by a stronger instrument rather than by dropping the position check. Backing: `tests/51-epoch-strict.test.ts` and `test/core/lease-resolve-seam.test.ts` (a benign shift applies at its rebased coordinate, asserting the exact resulting bytes).
+- **§4 (non-overlapping forever is pos-free) — the outcome is restored via identity**: exterior drift no longer aborts a non-overlapping edit, by a stronger instrument rather than by dropping the position check. Backing: `test/core/lease-resolve-seam.test.ts` (a benign shift applies at its rebased coordinate, asserting the exact resulting bytes).
 
 This ADR's `## Considered Options` rejected "strict pos always" for its re-read tax, which is what ADR-0018 shipped; ADR-0019 removes that tax on the benign-shift route. See ADR-0018's "Behaviour change" for the measured cost and for the routes that are unchanged.
 
@@ -86,7 +86,7 @@ Makes `shift==rebind` loud only when `changed` overlaps target, not when exterio
 >
 > **Tombstone (T4 CP1-r2, F6) — this blockquote described four arms that no longer exist.**
 > It used to say the `Retry with these anchors (no read needed)` hint survives on the
-> non-`reread` arms: served-length mismatch (`src/hashline/anchor-pipeline.ts:802` at
+> non-`reread` arms: served-length mismatch (`src/hashline/served-evidence.ts:verifyRebasedSpan` — `:802` at
 > `3f4aca6`), a line whose bytes differ from what was served (`:883`), and every
 > `E_UNSERVED_RANGE` (`:775`/`:790`) — and that those echo rows are "the current file's
 > anchors". **The second half was right; the first is now history.** T4's F1–F3 set
@@ -110,13 +110,14 @@ Makes `shift==rebind` loud only when `changed` overlaps target, not when exterio
 - `hash-assign.ts` removes `removedByContent`, adds `tombstone` param to `mapStableHashes`/`lineHashes`.
 - `anchor-pipeline.ts:verifyServedRange` keeps candidate enumeration, adds `tombstone` filter and `servedCanons` check, `strict` pos via automatic `changed ∩ [L,R]` (no config).
 - Tests: `hashline-stable-mapping.test.ts` "reuses first removed hash" flips to `fresh hash`; new property `identical canon after removal gets ≠ removed hash`.
+- The per-session epoch rule reaches past the served store: the noop-loop counter is now scoped per `(session, file)` for the same reason ([ADR-0039](0039-noop-counter-session-scope.md)).
 
 - Round trips: single-thread exterior drift no longer aborts; a strict/identity rejection records nothing and grants nothing (ADR-0018, T3f), says `Re-read.`, and a retry with the echoed anchors is rejected again — the `Retry with these anchors (no read needed)` hint is gone from every arm (T4 F1–F3; the four then-surviving sites are tombstoned above) while the echo rows remain the current file's anchors, so an echo-retry still rejects at the same site (CP0 G3/H1).
 
 ## T4 reconciliation — the two accepted ADRs disagreed; the measurement chose this one
 
-[ADR-0018](0018-exact-position-served-span-verification.md):167-168 asserted _"The recovery is
-the re-read the message already instructs."_ The blockquote above asserted the opposite for
+ADR-0018 (at its own text, lines 167-168 at the time of this reconciliation) asserted:
+"The recovery is the re-read the message already instructs." The blockquote above asserted the opposite for
 four arms: the hint survived, and the echo rows were "the current file's anchors" — i.e. a
 retry looked on offer. Both could not be true at `3f4aca6`. Measured through the real tools at
 that revision (CP0 G3 → `SR@802`, H1 → `SR@790`): the echo-retry is **rejected

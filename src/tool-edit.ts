@@ -6,7 +6,6 @@
  * @module dsh-better-edit/tool-edit
  */
 
-import type { Context } from "@deepseek-ai/cordis";
 import { defineTool } from "@deepseek-ai/dsh-tools";
 import { normalizeRequest as normReq, assertEditRequest } from "./contract.js";
 import { abortIf } from "./utils.js";
@@ -17,7 +16,7 @@ import type { FileIO } from "./fs-bridge.js";
 import { execCwd, execSessionKey } from "./workspace-context.js";
 import type { FsSandboxController, FsEscalationArgs } from "./sandbox.js";
 import { withWorkspace } from "./workspace-context.js";
-import type { PreparedItem } from "./edit-engine.js";
+import type { PreparedItem } from "./mutation/engine.js";
 
 /**
  * E_UNKNOWN producer: the edit tool boundary is where raw unexpected errors
@@ -123,13 +122,4 @@ export function buildEditTool(io: FileIO, sandbox: FsSandboxController) {
       });
     },
   });
-}
-
-export function registerEditTool(
-  _rootCtx: Context,
-  agentCtx: Context,
-  io: FileIO,
-  sandbox: FsSandboxController,
-): () => void {
-  return agentCtx.tools.register(buildEditTool(io, sandbox));
 }

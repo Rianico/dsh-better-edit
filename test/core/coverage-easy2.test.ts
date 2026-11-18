@@ -118,14 +118,6 @@ describe("easy2 hash-store", () => {
   });
 });
 
-describe("easy2 edit-engine", () => {
-  it("edit-engine helpers", async () => {
-    const mod: any = await import("../../src/edit-engine.js");
-    expect(mod).toBeDefined();
-    expect(typeof mod.applyOne === "function" || typeof mod.runFileEdits === "function").toBe(true);
-  });
-});
-
 describe("easy2 guidance materialize", () => {
   it("materialize branches", async () => {
     const mod: any = await import("../../src/guidance/materialize.js");

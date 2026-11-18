@@ -144,7 +144,8 @@ describe("final-push anchor-pipeline remaining", () => {
   });
 
   it("verifyServedRange and applyEdit with abort", async () => {
-    const { verifyServedRange, applyEdit } = await import("../../src/hashline/anchor-pipeline.js");
+    const { verifyServedRange } = await import("../../src/hashline/served-evidence.js");
+    const { applyEdit } = await import("../../src/hashline/anchor-pipeline.js");
     const { lineHashesPure } = await import("../../src/hashline/hash-assign.js");
     const content = "a\nb\nc";
     const hashes = lineHashesPure(content);
@@ -185,34 +186,16 @@ describe("final-push store-lifecycle and mutation branches", () => {
     await mod.onSessionStart();
     expect(true).toBe(true);
   });
-  it("mutation noop policy edge cases", async () => {
-    const { trackNoopPayload, clearNoopLoop, noopPayloadKey } =
-      await import("../../src/mutation.js");
-    const { runNoopPolicySync } = await import("../../src/noop-guard.js");
-    const base = {
-      absolutePath: "/tmp/a.txt",
-      anchorFrom: "abc",
-      anchorTo: "def",
-      replaceWith: "hi",
-      ref: "abc→def",
-      batch: false,
-      range: { startLine: 1, endLine: 2 },
-      hashes: ["abc"],
-      lines: ["hi"],
-      sessionKey: "test",
-    };
-    clearNoopLoop(base.absolutePath);
-    let r = runNoopPolicySync(base, 1);
-    expect(r.action).toBe("proceed");
-    r = runNoopPolicySync(base, 2);
-    expect(r.action).toBe("warn");
-    r = runNoopPolicySync({ ...base, batch: true }, 2);
-    expect(r.action).toBe("warn");
-    r = runNoopPolicySync(base, 10);
-    expect(r.action).toBe("reject");
-    clearNoopLoop(base.absolutePath);
-    expect(trackNoopPayload(base.absolutePath, JSON.stringify(["a", "b", "c"]))).toBe(1);
-    clearNoopLoop(base.absolutePath);
+  it("noop counter primitives round-trip while the policy copy is gone", async () => {
+    const { trackNoopPayload, clearNoopLoop } = await import("../../src/noop-guard.js");
+    const sessionKey = "final-push-session";
+    const absolutePath = "/tmp/a.txt";
+    const payload = JSON.stringify([absolutePath, "a", "b", "c"]);
+    clearNoopLoop(sessionKey, absolutePath);
+    expect(trackNoopPayload(sessionKey, absolutePath, payload)).toBe(1);
+    clearNoopLoop(sessionKey, absolutePath);
+    expect(trackNoopPayload(sessionKey, absolutePath, payload)).toBe(1);
+    clearNoopLoop(sessionKey, absolutePath);
   });
 });
 

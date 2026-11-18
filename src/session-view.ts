@@ -9,8 +9,8 @@
  *
  * Public surface: _mergeServedRows, loadServed, recordServed,
  * recordServedTruncated, driftReported, markDriftReported,
- * clearDriftReported, wipeServedState, servedPositionsOf,
- * currentPositionOfDrifted, computeDrift, scanDrift, and
+ * clearDriftReported, wipeServedState, servedPositionsOf (re-exported from
+ * hashline/served-evidence), currentPositionOfDrifted, computeDrift, scanDrift, and
  * hash-store persistence delegation (ServedPersistence).
  *
  * Ownership: This file OWNS the served-merge invariant
@@ -35,9 +35,14 @@ import {
   type InternalHashStore,
 } from "./hash-store.js";
 import { SERVED_ECHO_CAP } from "./constants.js";
-import type { ServedRow, ResolvedRange } from "./hashline/anchor-pipeline.js";
-import { fmtServedRows } from "./hashline/anchor-pipeline.js";
+import type { ServedRow } from "./domain-errors.js";
+import { fmtServedRows, moreRowsHint, servedPositionsOf } from "./hashline/served-evidence.js";
+import type { ResolvedRange } from "./hashline/served-evidence.js";
 import { splitLines } from "./utils.js";
+
+// Re-exported from the served-evidence leaf (ADR-0037): the scan is pure and the
+// verifier needs it, so the seam that owns it is the evidence module.
+export { servedPositionsOf };
 
 // --- hash-store re-export (persistence note) ---
 export { loadHashStore, loadServedStore, shutdownHashStore, withStore } from "./hash-store.js";
@@ -116,16 +121,30 @@ function addRetiredAnchors(
 ): void {
   const additions = [...hashes];
   if (additions.length === 0) return;
-  const retired = store.getRetiredAnchors(sessionKey, path);
+  // Contract first, dedupe second: an invalid hash is rejected whether or not it is new.
   for (const hash of additions) {
     if (!HASH_RE.test(hash)) {
       throw new TypeError(`Invalid retired hash: ${hash}`);
     }
-    retired.add(hash);
   }
-  // Persist as legacy string array for backward compat; `sweepAndRetire` writes object
-  // entries (hash + deathPos) for positions the served view displaced.
-  store.upsertRetiredAnchors(sessionKey, path, JSON.stringify([...retired]));
+  // WHY (ADR-0036): ONE writer, ONE serialization. `sweepAndRetire` and
+  // `unretireAnchorsInStore` read and write `RetiredEntry[]`; this appender is the third
+  // writer of the same column, so it must too — an appended entry carries `deathPos: null`
+  // (unknown position) while every existing entry keeps its own death position. Writing
+  // bare strings here rewrote the whole column into the shape `parseRetiredJson` coerces to
+  // `deathPos: null`, which no incremental sweep can free (accumulation until a full read).
+  // `store.getRetiredAnchors` stays the READ-side projection and is not used for writing.
+  const existing = store.getRetiredEntries(sessionKey, path);
+  const known = new Set(existing.map((entry) => entry.hash));
+  const appended: RetiredEntry[] = [];
+  for (const hash of additions) {
+    if (known.has(hash)) continue;
+    known.add(hash);
+    appended.push({ hash, deathPos: null });
+  }
+  // Idempotent retirement must not bump the row.
+  if (appended.length === 0) return;
+  store.upsertRetiredAnchors(sessionKey, path, JSON.stringify([...existing, ...appended]));
 }
 
 function displacedEntries(
@@ -144,7 +163,8 @@ function displacedEntries(
 }
 
 // deathPos=null = legacy/unknown position (pre-GC String[] format or migration).
-// These entries are NOT swept incrementally — retained until full-recordServed (isFullRead) or major-GC promotion clears retired.
+// These entries are NOT swept incrementally — retained until a full-read serve (the `fullRead`
+// verdict) or major-GC promotion clears retired.
 // Incremental hazard sweep only frees deathPos (number) whose card was re-observed; null survives partial sweeps by design (minor leak documented here) and is drained only on epoch promotion/full read.
 
 function sweepAndRetire(
@@ -233,16 +253,53 @@ export function unretireAnchorsInStore(
   }
 }
 
-/** Full-file context for a complete read — when present and matching `rows`, the call is a full read. */
-export interface FullReadContext {
+/**
+ * Serve context: what the read showed of the file, plus the full-read verdict the read computed.
+ *
+ * `fullRead` is the ONE authority (ADR-0035). It is `FileView.fullRead` — a fact about the read
+ * REQUEST (no `offset`, no `limit`, no requested windows, no truncation) — and never a fact about
+ * the `rows` this call happens to carry: a page whose rows cover every line is still a page.
+ */
+export interface ServeContext {
   hashes: readonly string[];
   canons?: readonly (string | null)[];
   /**
    * Full content the hashes were computed from. When present (with `hashes`),
    * recordServed also materializes-or-adopts the serve snapshot and grants
-   * leases for `rows` as-is through the store's single transaction.
+   * leases for `rows` as-is through the store's single transaction — for a page too: a shown
+   * anchor must stay editable, so the grant is not a full-read effect.
    */
   content?: string;
+  /**
+   * True only for an untruncated whole-file read with no page request — gates the three hazard/
+   * cache effects a full read owns (retired anchors, hazard cards, the whole canon array).
+   * Nothing else: the lease grant below is unconditional, and `recordServedTruncated` has no
+   * verdict at all.
+   */
+  fullRead: boolean;
+}
+
+/**
+ * Assertion about FileView, never a decision (ADR-0035): a full-read verdict must arrive with a
+ * dense mirror — `rows` covering every hash of the file, in order, hash for hash. Rows that fall
+ * short of that were served by a read that also claims to have shown the whole file; the two
+ * cannot both be right, so the disagreement is reported with the path and the counts, and the
+ * verdict still decides (a warning must not silently become a second authority).
+ */
+function warnOnNonDenseFullReadMirror(
+  path: string,
+  rows: readonly ServedEntry[],
+  full: ServeContext,
+): void {
+  const dense =
+    rows.length === full.hashes.length &&
+    rows.every((row, index) => row.position === index && row.hash === full.hashes[index]);
+  if (dense) return;
+  console.warn(
+    `dsh-better-edit: full read of ${path} served a non-dense mirror (${rows.length} row(s) for ` +
+      `${full.hashes.length} hash(es)) — proceeding on the full-read verdict; FileView.served ` +
+      `disagrees with FileView.hashes.`,
+  );
 }
 
 /** Serve-snapshot context for lease granting: content parallel to `hashes`. */
@@ -282,22 +339,27 @@ function grantServeLeases(
  * `false` means the write rolled back and no lease was granted, so the caller must not advertise
  * the rows' anchors as usable: that is a partial failure of the caller's operation, not a failed
  * operation. The best-effort contract is unchanged — this never throws.
+ *
+ * The context's `fullRead` verdict — not the shape of `rows` — decides whether this serve also
+ * performs the full-read effects (clearing retired anchors and hazard cards, overwriting the whole
+ * canon array); everything else here belongs to every serve alike (ADR-0035).
  */
 export async function recordServed(
   sessionKey: string,
   path: string,
   rows: ServedEntry[],
   lineCount?: number,
-  full?: FullReadContext,
+  full?: ServeContext,
 ): Promise<boolean> {
   // Nothing to record, so nothing can fail: vacuously landed.
   if (rows.length === 0) return true;
   try {
     const store = await loadServedStore();
-    const isFullRead =
-      full !== undefined &&
-      rows.length === full.hashes.length &&
-      rows.every((row, index) => row.position === index && row.hash === full.hashes[index]);
+    // The verdict is the caller's, not ours (ADR-0035): FileView knows the request shape, this
+    // seam only sees rows. The density check that used to decide here is the assertion below —
+    // it reports a FileView/rows disagreement and then gets out of the verdict's way.
+    const isFullRead = full?.fullRead === true;
+    if (isFullRead && full !== undefined) warnOnNonDenseFullReadMirror(path, rows, full);
     withStore(() => {
       const current = store.getServed(sessionKey, path);
       const updated = _mergeServedRows(
@@ -336,6 +398,11 @@ export async function recordServed(
         sweepAndRetire(store, sessionKey, path, current, updated, rows);
       }
       // Pair #6: the lease grant and the `served` row it derives from are ONE unit.
+      //
+      // WHY the grant is NOT gated on the full-read verdict (ADR-0035): a served anchor is
+      // editable only through its lease, and a lease is stamped with the snapshot it belongs to,
+      // so a page still commits the content it showed. Gate this and a displayed anchor becomes
+      // uneditable (`E_UNKNOWN_ANCHOR` on page-then-edit, 12 cells across 7 files).
       grantServeLeases(store, sessionKey, path, rows, full?.hashes, full?.content);
     });
     return true;
@@ -458,14 +525,6 @@ export async function wipeServedState(sessionKey: string): Promise<void> {
   } catch (error) {
     console.error("Failed to wipe served state:", error);
   }
-}
-
-export function servedPositionsOf(served: (string | null)[], hash: string): number[] {
-  const out: number[] = [];
-  for (let i = 0; i < served.length; i++) {
-    if (served[i] === hash) out.push(i);
-  }
-  return out;
 }
 
 function nearestSurvivingPosition(
@@ -687,7 +746,7 @@ export function computeDrift(input: ComputeDriftInput): DriftNoticeResult | unde
     drifted: driftedSet.has(position),
   }));
   const rowsText = fmtServedRows(rows, resultLines);
-  const moreText = unshown > 0 ? `\n[... ${unshown} more — re-read to see]` : "";
+  const moreText = unshown > 0 ? `\n${moreRowsHint(unshown, "re-read to see")}` : "";
   return {
     text: `${DRIFT_NOTICE_HEADING} ${countLabel} changed outside the range:\n${rowsText}${moreText}`,
     rows,

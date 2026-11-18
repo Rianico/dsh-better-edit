@@ -1,12 +1,12 @@
 import { readFile } from "node:fs/promises";
 import { beforeAll, describe, expect, it, vi } from "vitest";
 import { AnchorSpaceExhaustedError } from "../../src/hashline/hash-assign.js";
-import { initHasher } from "../../src/hashline/hasher.js";
+import { initHasher } from "../../src/hashline/hash-assign.js";
 import { extractHash, getText, setupIntegrationTest, withTempFile } from "../support/fixtures.js";
 
 /**
  * R1 finding 4: the undo path rehashes the current and restored files, and anchor-space
- * exhaustion there must map like the edit path (`isAnchorSpaceExhausted` →
+ * exhaustion there must map like the edit path (`isPromotableAnchorSpaceExhaustion` →
  * `retryLineHashesWithPromotion` → typed `E_LARGE_FILE` hash-space) — promote (clear retired) and
  * retry once, then refuse with the typed capacity error rather than a raw probe error.
  *

@@ -17,26 +17,14 @@ import { loadHashStore, type HashStore, type InternalHashStore } from "../hash-s
 import type { LineEnding } from "../edit-diff.js";
 import { loadConfig } from "../store-config.js";
 import { canon } from "../hashline/hash-assign.js";
-import { normFromText } from "../file-reader.js";
+import { normFromText } from "../file-view.js";
 import { scanDrift, loadServed, loadServedCanons, loadRetiredAnchors } from "../session-view.js";
-import {
-  applyEdit,
-  resEdit,
-  type HEdit,
-  type NEdit,
-  type LeaseSpanSource,
-} from "../hashline/anchor-pipeline.js";
+import { applyEdit, resEdit, type HEdit, type NEdit } from "../hashline/anchor-pipeline.js";
+import type { LeaseSpanSource } from "../hashline/served-evidence.js";
 import { lineHashes } from "../hashline/hash.js";
-import { AnchorSpaceExhaustedError, HASH_SPACE } from "../hashline/hash-assign.js";
+import { HASH_SPACE, isPromotableAnchorSpaceExhaustion } from "../hashline/hash-assign.js";
 import { buildNeverServedEditHint } from "../hashline/served-guard.js";
 import { encodingHintAtVersion } from "../file-encoding-state.js";
-
-function isAnchorSpaceExhausted(e: unknown): boolean {
-  return (
-    e instanceof AnchorSpaceExhaustedError ||
-    (e instanceof Error && e.message.includes("probing failed over"))
-  );
-}
 
 function promotionWarning(retiredSize: number, servedLen: number): string {
   // Soft promotion notice: plain non-header text (no [E_] code, no audience).
@@ -90,20 +78,20 @@ async function retryLineHashesWithPromotion(
   try {
     return await fn(recomputed, new Set<string>());
   } catch (e2: unknown) {
-    if (isAnchorSpaceExhausted(e2))
+    if (isPromotableAnchorSpaceExhaustion(e2))
       throw new DomainError("E_LARGE_FILE", { limitKind: "hash-space", limit: HASH_SPACE });
     throw e2;
   }
 }
 import { MAX_HASH_LINES } from "../hashline/hash-assign.js";
+import { AnchorMismatchError } from "../hashline/anchor-pipeline.js";
 import {
-  AnchorMismatchError,
   ServedRejectionError,
   buildRangeEcho,
   fmtServedRows,
-  type ResolvedRange,
-  type ServedRow,
-} from "../hashline/anchor-pipeline.js";
+} from "../hashline/served-evidence.js";
+import type { ResolvedRange } from "../hashline/served-evidence.js";
+import type { ServedRow } from "../hashline/anchor-pipeline.js";
 import { DomainError, formatWarning } from "../domain-errors.js";
 import type { RangeCause } from "../domain-errors.js";
 import type { EditMode } from "../contract.js";
@@ -323,7 +311,7 @@ export async function applyOne(
         retiredForHash,
       );
     } catch (e: unknown) {
-      if (!isAnchorSpaceExhausted(e)) throw e;
+      if (!isPromotableAnchorSpaceExhaustion(e)) throw e;
       resultHashes = await retryLineHashesWithPromotion(
         input.sessionKey,
         input.absolutePath,
@@ -893,7 +881,7 @@ export async function runFileEdits(
         item.anchor_to,
         item.replace_with,
       );
-      const count = trackNoopPayload(absolutePath, payload);
+      const count = trackNoopPayload(opts.sessionKey, absolutePath, payload);
       const notice = await enforceNoopLoop({
         anchorFrom: item.anchor_from,
         anchorTo: item.anchor_to,
@@ -934,7 +922,7 @@ export async function runFileEdits(
       );
     }
     currentHashes = applied.hashes;
-    clearNoopLoop(absolutePath);
+    clearNoopLoop(opts.sessionKey, absolutePath);
     pushAppliedWarnings(applied.anchorWarnings, applied.neverServedCount);
   }
 
@@ -960,7 +948,7 @@ export async function runFileEdits(
         perSessionRetired,
       );
     } catch (e: unknown) {
-      if (!isAnchorSpaceExhausted(e)) throw e;
+      if (!isPromotableAnchorSpaceExhaustion(e)) throw e;
       resultHashes = await retryLineHashesWithPromotion(
         opts.sessionKey,
         absolutePath,

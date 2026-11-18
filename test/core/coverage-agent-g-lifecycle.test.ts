@@ -20,7 +20,6 @@ describe("coverage-agent-g lifecycle", () => {
     const storePath = join(ws, ".dsh_better_edit", "hash-store.sqlite");
     await mkdir(join(ws, ".dsh_better_edit"), { recursive: true });
     // mock loadConfig to return workspace + autoGitignore true
-    const pathsMod = await import("../../src/paths.js");
     const storeCfgMod = await import("../../src/store-config.js");
     const spyLoad = vi.spyOn(storeCfgMod, "loadConfig").mockReturnValue({
       storeDir: "workspace",

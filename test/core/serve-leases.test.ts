@@ -6,7 +6,7 @@ import { loadServed, recordServed, recordServedTruncated } from "../../src/sessi
 import { loadHashStore, upsertSnapshotFor, type InternalHashStore } from "../../src/hash-store.js";
 import { sessionKeyFor, withWorkspace } from "../../src/workspace-context.js";
 import { extractHash, getText, setupIntegrationTest, withTempFile } from "../support/fixtures.js";
-import { initHasher } from "../../src/hashline/hasher.js";
+import { initHasher } from "../../src/hashline/hash-assign.js";
 import {
   canon,
   canonDigest,
@@ -157,10 +157,13 @@ describe("serve leases — bind to the named snapshot, never latest", () => {
       await recordServed(sessionKey, path, fullRows(v1hashes), 3, {
         hashes: v1hashes,
         content: v1,
+        // Every hash of v1, in order: the whole file served.
+        fullRead: true,
       });
       await recordServed(sessionKey, path, fullRows(v2hashes), 3, {
         hashes: v2hashes,
         content: v2,
+        fullRead: true,
       });
       // v2's commit retired v1-beta's line (absent from v2's lineage).
       expect(store.leaseFor(sessionKey, path, v1hashes[1]!)?.retiredAt).not.toBeNull();
@@ -168,6 +171,8 @@ describe("serve leases — bind to the named snapshot, never latest", () => {
       await recordServed(sessionKey, path, fullRows(v1hashes), 3, {
         hashes: v1hashes,
         content: v1,
+        // Every hash of v1, in order: the whole file served.
+        fullRead: true,
       });
       expect(store.leaseFor(sessionKey, path, v1hashes[1]!)?.retiredAt).toBeNull();
       // Re-serve v1 rows under a fresh session: adopt + grant must bind v1's
@@ -177,6 +182,7 @@ describe("serve leases — bind to the named snapshot, never latest", () => {
       await recordServed(reSession, path, fullRows(v1hashes), 3, {
         hashes: v1hashes,
         content: v1,
+        fullRead: true,
       });
       const lease = store.leaseFor(reSession, path, v1hashes[1]!);
       expect(lease).toBeDefined();

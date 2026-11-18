@@ -405,7 +405,7 @@ const MUTANTS = {
     expected: [T6.armFlag],
     edits: [
       {
-        file: ANCHOR_PIPELINE,
+        file: "src/hashline/served-evidence.ts",
         old: "      servedBlock: echo,\n      firstOffendingLine: args.rebasedStart,",
         new: "      servedBlock: echo,\n      reread: true,\n      firstOffendingLine: args.rebasedStart,",
       },
@@ -500,7 +500,8 @@ const MUTANTS = {
     ],
   },
   // M7 retired here: its subject was re-adding `E_TARGET_LOST` as a union member with no
-  // producer and no deferral — FU-4 ports the code WITH a producer (anchor-pipeline.ts:703),
+  // producer and no deferral — FU-4 ports the code WITH a producer
+  // (src/hashline/served-evidence.ts, `interceptLeaseBoundaries`),
   // so the scenario no longer exists. Re-anchoring it to a fictional member would duplicate
   // M14 (declared-without-registry-entry); the unproduced-member guard stays pinned by
   // T4R3.forward's own cell.
@@ -1104,6 +1105,8 @@ const MUTANTS = {
   RX1M1: {
     what: "invert the leased route's interior-hole rule in `acceptsInteriorHole` — boundaries accepted, holes rejected (the RX-1 flip-test, made durable)",
     scope: null, // full suite
+    // `acceptsInteriorHole` lives in src/hashline/served-evidence.ts (the seam split, ADR-0037), not
+    // in anchor-pipeline.ts — the `file:` below names the module these comments describe.
     // Measured at the RX-1 commit: the RED set is exactly the interior-hole family — the gate's
     // accept/boundary arms and the end-to-end hole cell (lease-resolve-seam), the C2 leased-route
     // truth (range-family-retry-truth), the three conjunction cells (served-evidence-route), and
@@ -1120,7 +1123,7 @@ const MUTANTS = {
     ],
     edits: [
       {
-        file: ANCHOR_PIPELINE,
+        file: "src/hashline/served-evidence.ts",
         old: '  return route.kind === "leased" && k !== 0 && k !== servedLen - 1;',
         new: '  return route.kind === "leased" && (k === 0 || k === servedLen - 1);',
       },
@@ -1135,7 +1138,7 @@ const MUTANTS = {
     expected: ["emits E_TARGET_LOST when the live bound shifted (one stale, one moved)"],
     edits: [
       {
-        file: ANCHOR_PIPELINE,
+        file: "src/hashline/served-evidence.ts",
         old: "    if (exactlyOneStale && survivorLiveUnshifted) {",
         new: "    if (exactlyOneStale) {",
       },

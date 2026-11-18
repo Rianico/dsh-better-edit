@@ -143,15 +143,3 @@ describe("extra undo-edit", () => {
     await rm(dir, { recursive: true, force: true });
   });
 });
-
-describe("extra file-view", () => {
-  it("covers loadFileKindAndText binary", async () => {
-    const { loadFileKindAndText } = await import("../../src/file-view.js");
-    const dir = await mkdtemp(join(await getWritableTempRoot(), "extra-fv-"));
-    const bin = join(dir, "bin.dat");
-    await writeFile(bin, Buffer.from([0x89, 0x50, 0x4e, 0x47]));
-    const res = await loadFileKindAndText(bin);
-    expect(["binary", "image", "text"].includes(res.kind)).toBe(true);
-    await rm(dir, { recursive: true, force: true });
-  });
-});

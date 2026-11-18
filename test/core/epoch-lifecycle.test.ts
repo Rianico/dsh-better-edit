@@ -1,18 +1,37 @@
 import { describe, expect, it, beforeAll } from "vitest";
-import { readAndServe } from "../../src/read-and-serve.js";
+import { readAndServe, type ReadAndServeOptions } from "../../src/read-and-serve.js";
 import { localIO } from "../../src/fs-bridge.js";
 import { loadHashStore, type InternalHashStore } from "../../src/hash-store.js";
 import { snapshotHashFor } from "../../src/snapshot-store/lineage-store.js";
 import { markDriftReported, driftReported } from "../../src/session-view.js";
 import { sessionKeyFor } from "../../src/workspace-context.js";
 import { withTempFile } from "../support/fixtures.js";
-import { initHasher } from "../../src/hashline/hasher.js";
+import { initHasher } from "../../src/hashline/hash-assign.js";
 
 beforeAll(async () => {
   await initHasher();
 });
 async function internalStore(): Promise<InternalHashStore> {
   return (await loadHashStore()) as InternalHashStore;
+}
+
+/**
+ * Seed the three things only a full read owns, so a read that clears them is observable: a
+ * retired anchor at an unknown death position (`deathPos: null` — the shape no partial sweep may
+ * drain), a hazard card, and a canon array longer than the file (a full read replaces it
+ * wholesale, a preserve path merges in place and keeps the length).
+ */
+async function seedFullReadOwned(sessionKey: string, path: string): Promise<void> {
+  const store = await internalStore();
+  store.clearRetiredAnchors(sessionKey, path);
+  store.upsertRetiredAnchors(sessionKey, path, JSON.stringify([{ hash: "ZZZ", deathPos: null }]));
+  store.clearCards(sessionKey, path);
+  store.upsertCards(sessionKey, path, JSON.stringify([999]));
+  store.upsertServedCanons(
+    sessionKey,
+    path,
+    JSON.stringify(Array.from({ length: 10 }, () => "JUNK")),
+  );
 }
 describe("epoch lifecycle belongs to full reads (#69)", () => {
   it("partial read merges window rows but preserves drift-reported", async () => {
@@ -41,7 +60,7 @@ describe("epoch lifecycle belongs to full reads (#69)", () => {
     });
   });
 
-  it("serve leases stamp the served snapshot hash and a windowed read does not re-stamp it", async () => {
+  it("a windowed read leaves the lease identity and the hazard state alone", async () => {
     await withTempFile("e.txt", "one\ntwo\nthree\nfour", async ({ cwd, path }) => {
       const sessionKey = sessionKeyFor("t4-epoch-successor");
       const content = "one\ntwo\nthree\nfour";
@@ -58,19 +77,46 @@ describe("epoch lifecycle belongs to full reads (#69)", () => {
       expect(lease?.snapshotHash).toBe(snapshotHashFor(content));
       expect(lease?.lineNumber).toBe(2);
 
-      // A WINDOWED read serves part of the file. The lease it re-grants must keep the
-      // served snapshot's hash — not a window-scoped one — and the served line number.
-      const windowed = await readAndServe(localIO(), "e.txt", cwd, {
-        sessionKey,
-        offset: 1,
-        limit: 2,
-      });
-      expect(windowed.served.map((row) => row.hash)).toContain(anchor);
+      // Between the full read and the windowed reads, seed what only a full read owns. Without
+      // these sentinels the cell could not fail: both reads derive the same `snapshotHash`
+      // (content-addressed, and the file is untouched here), so nothing observable was asserted
+      // about the windowed read's side effects. Three shapes, none of them a plain read: a
+      // genuinely partial page (the preserve branch) and two windows that cover the whole file
+      // (the shapes a read-*shape* verdict alone would call "full").
+      const shapes: { label: string; options: Omit<ReadAndServeOptions, "sessionKey"> }[] = [
+        { label: "{offset: 1, limit: 2}", options: { offset: 1, limit: 2 } },
+        { label: "{offset: 1, limit: 4}", options: { offset: 1, limit: 4 } },
+        {
+          label: "{windows: [{offset: 1, limit: 4}]}",
+          options: { windows: [{ offset: 1, limit: 4 }] },
+        },
+      ];
 
-      const after = store.leaseFor(sessionKey, path, anchor);
-      expect(after).toBeDefined();
-      expect(after?.snapshotHash).toBe(snapshotHashFor(content));
-      expect(after?.lineNumber).toBe(2);
+      for (const { label, options } of shapes) {
+        await seedFullReadOwned(sessionKey, path);
+        const windowed = await readAndServe(localIO(), "e.txt", cwd, { sessionKey, ...options });
+        // Line 2 is inside every shape above; the read really does serve the served snapshot.
+        const servedLine2 = windowed.served.find((row) => row.position === 1)!;
+
+        // The lease identity of the row the window served: still defined, stamped with the
+        // served snapshot's hash — not a window-scoped one — and still the served line number.
+        // (Asserted on the row's own anchor, not on the baseline full read's: with hazard
+        // reservations present the anchor assignment may move, and a baseline-anchor lookup
+        // would silently read the old, untouched lease row — the over-claim this cell used to
+        // make.)
+        const after = store.leaseFor(sessionKey, path, servedLine2.hash);
+        expect(after, label).toBeDefined();
+        expect(after?.snapshotHash, label).toBe(snapshotHashFor(content));
+        expect(after?.lineNumber, label).toBe(2);
+
+        // The hazard state: no windowed read touches it.
+        expect(
+          store.getRetiredEntries(sessionKey, path).map((entry) => entry.hash),
+          label,
+        ).toContain("ZZZ");
+        expect([...store.getCards(sessionKey, path)], label).toContain(999);
+        expect(store.getServedCanons(sessionKey, path).length, label).toBe(10);
+      }
     });
   });
   it("a windowed-shaped read is never a full read: huge limit and exact-count limit (T3a/T3c)", async () => {

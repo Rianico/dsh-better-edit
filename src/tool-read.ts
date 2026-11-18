@@ -6,13 +6,12 @@
  * @module dsh-better-edit/tool-read
  */
 
-import type { Context } from "@deepseek-ai/cordis";
 import { defineTool } from "@deepseek-ai/dsh-tools";
 import { normalizeRequest as normReq, assertReadRequest, pathSchema } from "./contract.js";
 
 import { readAndServe } from "./read-and-serve.js";
 import { READ_DESCRIPTION } from "./prompts.js";
-import { normalizeEncoding } from "./encoding.js";
+import { normalizeEncoding, SUPPORTED_ENCODINGS_LABEL } from "./encoding.js";
 import { DomainError } from "./domain-errors.js";
 import { MAX_READ_WINDOWS } from "./file-view.js";
 
@@ -91,7 +90,7 @@ export function buildReadTool(io: FileIO) {
           const norm = normalizeEncoding(String(encoding));
           if (!norm)
             throw new DomainError("E_BAD_PAYLOAD", {
-              message: `Unknown encoding: ${String(encoding)}. Supported: utf8, gbk, big5, shift_jis, euc-kr, windows-1251, iso-8859-1`,
+              message: `Unknown encoding: ${String(encoding)}. Supported: ${SUPPORTED_ENCODINGS_LABEL}`,
             });
         }
         const canonical = normReq(args);
@@ -115,11 +114,4 @@ export function buildReadTool(io: FileIO) {
       });
     },
   });
-}
-
-/**
- * Register the hashline tool on the calling agent’s scope (own layer).
- */
-export function registerReadTool(_rootCtx: Context, agentCtx: Context, io: FileIO): () => void {
-  return agentCtx.tools.register(buildReadTool(io));
 }

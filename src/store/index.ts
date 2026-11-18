@@ -1,24 +1,26 @@
 /**
- * Store — deep module owning tenancy + lifecycle + path resolution.
+ * Store — seam VIEW over tenancy + lifecycle + path resolution.
  *
- * Single seam that answers "which store, where, and is it open?"
- * Tenancy (where DB lives) and lifecycle (central GC + row TTL + WAL)
- * are private details of this seam; hash-store keeps only schema +
- * row-family domain logic and imports path resolution from here.
- * StoreConfig remains the config complement seam but its path is
- * resolved via this Store seam.
+ * Single seam that answers "which store, where, and is it open?" for its
+ * consumers. This file owns no behaviour: every export below is a re-export
+ * of code owned by a leaf module.
+ *
+ * Ownership direction, stated once and not to be inverted:
+ * `store-config` → `store-tenancy` → this barrel, and `hash-store` → this
+ * barrel. The leaves hold the code — `store-tenancy` resolves where the DB
+ * lives and imports `loadConfig` FROM `store-config`, which resolves its own
+ * path through `resolveDshHome` — while this file is the view they surface
+ * through.
  *
  * YAGNI-gated: DB plumbing (openDb/buildStore/quarantine/busy-retry/
  * WAL/legacy JSON migration) stays in hash-store for now and is
  * re-exported here for testability without importing domain helpers
- * — full plumbing move is deferred to avoid contract risk. Old
- * store-tenancy/store-lifecycle files are kept as compat shims
- * re-exporting from this seam (reversible).
+ * — full plumbing move is deferred to avoid contract risk.
  *
  * @module dsh-better-edit/store
  */
 
-// Tenancy — re-export as seam ownership (private details, public via Store)
+// Tenancy — re-exported from its owner (`store-tenancy`), surfaced here
 export {
   tenancyFor,
   configDir,
@@ -31,7 +33,7 @@ export {
 } from "../store-tenancy.js";
 export type { Tenancy, StoreConfig } from "../store-tenancy.js";
 
-// Lifecycle — re-export as seam ownership
+// Lifecycle — re-exported from its owner (`store-lifecycle`)
 export {
   onStoreOpen,
   onAppStart,
@@ -40,9 +42,6 @@ export {
   runCentralJanitorIfDue,
   _resetLifecycleForTests,
 } from "../store-lifecycle.js";
-
-// StoreConfig path helper — canonical Store seam entry for config consumers
-export { loadConfig as loadStoreConfig } from "../store-config.js";
 
 // Hash-store plumbing re-exported for testability without domain coupling
 // (future: move openDb/buildStore/quarantine/busy-retry here)

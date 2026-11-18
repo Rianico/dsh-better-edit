@@ -1,6 +1,6 @@
 import { readFile } from "node:fs/promises";
 import { describe, expect, it, beforeAll } from "vitest";
-import { initHasher } from "../../src/hashline/hasher.js";
+import { initHasher } from "../../src/hashline/hash-assign.js";
 import { canonDigest } from "../../src/hashline/hash-assign.js";
 import { snapshotHashFor } from "../../src/snapshot-store/lineage-store.js";
 import { loadHashStore, type InternalHashStore } from "../../src/hash-store.js";

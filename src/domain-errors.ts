@@ -224,11 +224,6 @@ export interface ErrorPayloadMap {
     count: number;
     batch: boolean;
     servedBlock: string;
-    /**
-     * Present on engine single rejects: the display path ("in <path>" flavor).
-     * The batch ref already names the item, so no index is needed.
-     */
-    path?: string;
   };
   E_UNSUPPORTED_FILE: {
     path: string;
@@ -532,18 +527,14 @@ function batchAbortFormat(payload: ErrorPayloadMap["E_BATCH_ABORT"]): string {
 function noopLoopFormat(payload: ErrorPayloadMap["E_NOOP_LOOP"]): string {
   // WHY batch first: the batch ref already names the item (edits[i] (path)),
   // so the batch arm renders from ref and appends the on-disk range when the
-  // engine supplies one; the path arm is the engine single-edit flavor.
+  // engine supplies one. `enforceNoopLoop` is the only producer and always
+  // passes `batch: true`; the generic arm below keeps the message defined for
+  // a non-batch payload the type still admits.
   if (payload.batch) {
     return (
       `${payload.ref}: identical edit (${payload.anchorFrom} → ${payload.anchorTo}) submitted ${payload.count}×, no changes each time. ` +
       `Range already contains this text; resend will reject the batch.` +
       (payload.servedBlock ? `\nCurrent on-disk range:\n${payload.servedBlock}` : "")
-    );
-  }
-  if (payload.path !== undefined) {
-    return (
-      `identical edit (${payload.anchorFrom} → ${payload.anchorTo} in ${payload.path}) submitted ${payload.count}×, no changes each time. ` +
-      `Range already contains this text; resend will reject. Current range:\n${payload.servedBlock}`
     );
   }
   return (
@@ -973,10 +964,14 @@ export const DECLARATION_ONLY_FIELDS: Readonly<Record<string, AllowlistEntry>> =
  *
  * | ported upstream diagnostic | upstream producer (pi-better-edit@b92e0ec) | local producer |
  * |---|---|---|
- * | `E_FOREIGN_ANCHOR` | `lease-resolve.ts:116` | `anchor-pipeline.ts` (`throwUnknownOrForeign`, boundary placement) |
- * | `E_UNKNOWN_ANCHOR` | `lease-resolve.ts:118`, `served-verification.ts:745` | `anchor-pipeline.ts` (boundary placement, pre-gate) |
- * | `E_UNVERIFIED_RANGE` | `lease-resolve.ts:186`, `served-verification.ts:187` | `anchor-pipeline.ts` (pre-gate stale-boundary arm) |
- * | `E_TARGET_LOST` | `served-verification.ts:170`, `lease-resolve.ts:196` | `anchor-pipeline.ts` (pre-gate stale-boundary arm) |
+ * | `E_FOREIGN_ANCHOR` | `lease-resolve.ts:116` | `served-evidence.ts` (`throwUnknownOrForeign`, boundary placement) |
+ * | `E_UNKNOWN_ANCHOR` | `lease-resolve.ts:118`, `served-verification.ts:745` | `served-evidence.ts` (boundary placement, pre-gate) |
+ * | `E_UNVERIFIED_RANGE` | `lease-resolve.ts:186`, `served-verification.ts:187` | `served-evidence.ts` (pre-gate stale-boundary arm) |
+ * | `E_TARGET_LOST` | `served-verification.ts:170`, `lease-resolve.ts:196` | `served-evidence.ts` (pre-gate stale-boundary arm) |
+ *
+ * The upstream column is scoped to the upstream tree (`pi-better-edit@b92e0ec`): its
+ * `served-verification.ts` never existed downstream, so those cites never named a local
+ * file. The local column did move — the four arms live in `served-evidence.ts` (ADR-0037).
  *
  * Their owner is `"upstream absorb"` and their trigger is the absorb that
  * ports the corresponding producer. When that happens, reintroduce the code

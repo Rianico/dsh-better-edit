@@ -1,42 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { join } from "node:path";
 import { getWritableTempRoot } from "../support/fixtures.js";
-
-describe("coverage-agent-g mutation", () => {
-  it("resolveDisplayPath", async () => {
-    const { resolveDisplayPath } = await import("../../src/mutation.js");
-    expect(resolveDisplayPath("a/b.txt", "/cwd")).toBe(resolve("/cwd", "a/b.txt"));
-    expect(resolveDisplayPath("/abs/x", "/cwd")).toBe("/abs/x");
-  });
-
-  it("snapshotIdFor: statVersion success, fallback, undefined", async () => {
-    const { snapshotIdFor } = await import("../../src/mutation.js");
-    const dir = await mkdtemp(join(await getWritableTempRoot(), "mut-snap-g-"));
-    const fp = join(dir, "f.txt");
-    await writeFile(fp, "hello\n", "utf-8");
-    const ioOk: any = { statVersion: async () => "v1" };
-    expect(await snapshotIdFor(ioOk, fp)).toBe("v1");
-    const ioFail: any = {
-      statVersion: async () => {
-        throw new Error("fail");
-      },
-    };
-    const id2 = await snapshotIdFor(ioFail, fp);
-    expect(typeof id2).toBe("string");
-    const id3 = await snapshotIdFor(ioFail, join(dir, "nope-" + Math.random()));
-    expect(id3).toBeUndefined();
-    await rm(dir, { recursive: true, force: true });
-  });
-
-  it("execute branches", async () => {
-    const mod: any = await import("../../src/mutation.js");
-    expect(mod.execute).toBeDefined();
-    expect(mod.applySequence).toBeDefined();
-    expect(mod.commit).toBeDefined();
-    expect(true).toBe(true);
-  });
-});
 
 describe("coverage-agent-g sandbox", () => {
   it("constructor branches", async () => {

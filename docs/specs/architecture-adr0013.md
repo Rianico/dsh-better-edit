@@ -40,13 +40,14 @@ Frameworks/Drivers → Interface Adapters → Use Cases → Entities
 
 ### 2.3 Interface Adapters
 
-| Adapter             | Role                                                                                                                           | File                                        |
-| ------------------- | ------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------- |
-| `FileView`          | normalize → hash → render → truncate → `served` selection                                                                      | `src/file-view.ts`                          |
-| `HashPersistence`   | `HashSnapshotIO` (`get/upsert`) — port for Entities                                                                            | `src/hashline/hash.ts`                      |
-| `ServedPersistence` | `ServedPersistence` (`getServed`, `getAnchorReservations`, `getRetiredAnchors`, `upsertRetiredAnchors`, `clearRetiredAnchors`) | `src/hash-store.ts`, `src/session-view.ts`  |
-| `MutationEngine`    | `applyOne`, `runFileEdits`, `persistUndoAndWrite`                                                                              | `src/mutation/engine.ts`, `src/mutation.ts` |
-| `AnchorPipeline`    | `resEdit → swapReversed → stripBare → stripDiff → valEdit → verifyServed → resToSpan` (sealed seam)                            | `src/hashline/anchor-pipeline.ts`           |
+| Adapter             | Role                                                                                                                                          | File                                        |
+| ------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------- |
+| `FileView`          | normalize → hash → render → truncate → `served` selection                                                                                     | `src/file-view.ts`                          |
+| `HashPersistence`   | `HashSnapshotIO` (`get/upsert`) — port for Entities                                                                                           | `src/hashline/hash.ts`                      |
+| `ServedPersistence` | `ServedPersistence` (`getServed`, `getAnchorReservations`, `getRetiredAnchors`, `upsertRetiredAnchors`, `clearRetiredAnchors`)                | `src/hash-store.ts`, `src/session-view.ts`  |
+| `MutationEngine`    | `applyOne`, `runFileEdits`, `persistUndoAndWrite`                                                                                             | `src/mutation/engine.ts`, `src/mutation.ts` |
+| `AnchorPipeline`    | `resEdit → swapReversed → stripBare → stripDiff → valEdit → resToSpan` (sealed seam; imports the verify seam, never re-exports it)            | `src/hashline/anchor-pipeline.ts`           |
+| `ServedEvidence`    | `verifyServedRange` → `verifyRebasedSpan` / `interceptLeaseBoundaries`, the rejection echo, `servedPositionsOf` (serve/verify seam, ADR-0037) | `src/hashline/served-evidence.ts`           |
 
 ### 2.4 Frameworks/Drivers (outermost)
 
@@ -69,6 +70,7 @@ graph TD
     SV["SessionView<br/>session-view.ts"]
     ME["MutationEngine<br/>mutation/engine.ts"]
     AP["AnchorPipeline<br/>anchor-pipeline.ts"]
+    SE["ServedEvidence<br/>served-evidence.ts"]
     HP["HashPersistence<br/>hash.ts"]
   end
 
@@ -91,7 +93,8 @@ graph TD
   FV --> SV
   ME --> VSR
   ME --> ALLOC
-  AP --> VSR
+  AP --> SE
+  SE --> VSR
   SV --> HS
   HP --> HS
   VSR --> SM

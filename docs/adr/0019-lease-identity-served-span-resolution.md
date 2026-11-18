@@ -36,7 +36,7 @@ and the tombstone path, not from resolution.
 - **Benign shift** — the intended line's content is unchanged, its position moved → resolves →
   applies. Pinned by `test/core/lease-resolve-seam.test.ts` ("applies a benign exterior insert above
   the served span", "applies a benign exterior delete above the served span") and by
-  `tests/51-epoch-strict.test.ts` ("applies at the rebased coordinate after an exterior insert"),
+  `test/core/lease-resolve-seam.test.ts` ("applies at the rebased coordinate after an exterior insert"),
   which asserts the exact resulting bytes.
 - **Look-alike rebind** — the intended line was deleted and another line holds its bytes → its
   `line_id` is absent from the current lineage → reject `E_STALE_RANGE`, no write. Pinned by
@@ -65,7 +65,7 @@ Pinned by RX3M1 (2/2: fires exactly on degrade, silent otherwise).
 **Why the seam is opt-in.** No `LeaseSpanSource` ⇒ the unconditional position check, byte-identical.
 If the **seed** read throws — `identityPositions`, `src/mutation/engine.ts:620-630` — there is no
 source and the position check stays. A **lease** read that throws inside the gate (`leaseFor`,
-`src/hashline/anchor-pipeline.ts:675`) propagates and aborts the edit: fail-closed too, but it is not a
+`src/hashline/served-evidence.ts:lineIdentityDecision`) propagates and aborts the edit: fail-closed too, but it is not a
 fallback to the position check. The **preview** route (`noPersist`) was deleted by T3h with the
 orphaned single-edit flavor, so the no-source fallback it exercised is pinned at unit level only.
 Pinned by `test/core/lease-resolve-seam.test.ts` ("is opt-in: without a lease source the position check

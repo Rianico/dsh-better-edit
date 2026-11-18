@@ -140,7 +140,8 @@ describe("batch aggregation", () => {
   // forwards the one item's cause untouched, `batchAbortForMany` (:579-622) promotes it exactly
   // when every failing item agrees. These cells pin the three stages through the deleted-twin
   // geometry (see test/core/deleted-twin-anchor.test.ts): the boundary interception's
-  // `E_TARGET_LOST` (`cause: "retirement"`, src/hashline/anchor-pipeline.ts:713-718) is the
+  // `E_TARGET_LOST` (`cause: "retirement"`, src/hashline/served-evidence.ts,
+  // `interceptLeaseBoundaries`) is the
   // diagnosis this route surfaces; the position-check arms are cause-free by design.
   // The envelope's `.code` stays `E_BATCH_ABORT`: the local batch family keeps the header-code
   // coupling that upstream's plain-Error wrapper has no analogue for (retained deviation,

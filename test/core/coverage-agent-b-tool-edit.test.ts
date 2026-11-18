@@ -117,25 +117,4 @@ describe("tool-edit coverage", () => {
       ).rejects.toThrow();
     });
   });
-
-  it("registerEditTool registers and disposes", async () => {
-    const { Context } = await import("@deepseek-ai/cordis");
-    // shallow smoke: build and register on a dummy agent ctx
-    const io = localIO();
-    const sandbox = new FsSandboxController({
-      fs: { sandboxMode: undefined },
-      get: () => undefined,
-    } as never);
-    // Use a real Context if available, else skip
-    try {
-      const root = new (Context as any)();
-      const agent = new (Context as any)();
-      const { registerEditTool } = await import("../../src/tool-edit.js");
-      const dispose = registerEditTool(root, agent, io, sandbox);
-      expect(typeof dispose).toBe("function");
-      dispose();
-    } catch {
-      /* cordis may need setup, ignore */
-    }
-  });
 });

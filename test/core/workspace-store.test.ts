@@ -11,11 +11,11 @@ import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { withWorkspace, workspaceCwd } from "../../src/workspace-context.js";
-import { hashStorePath } from "../../src/paths.js";
+import { hashStorePath } from "../../src/store-tenancy.js";
 import { loadHashStore, shutdownHashStore } from "../../src/hash-store.js";
 import { recordServed, loadServed } from "../../src/session-view.js";
 import { lineHashes } from "../../src/hashline/index.js";
-import { initHasher } from "../../src/hashline/hasher.js";
+import { initHasher } from "../../src/hashline/hash-assign.js";
 
 function tempWorkspace(prefix: string): string {
   return mkdtempSync(join(tmpdir(), prefix));
@@ -60,7 +60,7 @@ describe("workspace context", () => {
   it("resolves the store file under <workspace>/.dsh_better_edit when storeDir=workspace", async () => {
     const cwd = tempWorkspace("dsh-ws-path-");
     await withEnv({ DSH_BETTER_EDIT_STORE_DIR: "workspace" }, async () => {
-      const { _resetConfigCache } = await import("../../src/paths.js");
+      const { _resetConfigCache } = await import("../../src/store-config.js");
       _resetConfigCache();
       try {
         expect(hashStorePath(cwd)).toBe(join(cwd, ".dsh_better_edit", "hash-store.sqlite"));
@@ -69,7 +69,7 @@ describe("workspace context", () => {
         });
         expect(existsSync(join(cwd, ".dsh_better_edit", "hash-store.sqlite"))).toBe(true);
       } finally {
-        const { _resetConfigCache: r } = await import("../../src/paths.js");
+        const { _resetConfigCache: r } = await import("../../src/store-config.js");
         r();
         shutdownHashStore();
         rmSync(cwd, { recursive: true, force: true });
@@ -81,7 +81,8 @@ describe("workspace context", () => {
     const cwd = tempWorkspace("dsh-ws-path-");
     const tmpHome = mkdtempSync(join(tmpdir(), "dsh-home-"));
     await withEnv({ DSH_BETTER_EDIT_STORE_DIR: undefined, DSH_HOME: tmpHome }, async () => {
-      const { _resetConfigCache, hashStorePath: hsp } = await import("../../src/paths.js");
+      const { _resetConfigCache } = await import("../../src/store-config.js");
+      const { hashStorePath: hsp } = await import("../../src/store-tenancy.js");
       _resetConfigCache();
       try {
         const p = hsp(cwd);
@@ -92,7 +93,7 @@ describe("workspace context", () => {
         });
         expect(existsSync(p)).toBe(true);
       } finally {
-        const { _resetConfigCache: r } = await import("../../src/paths.js");
+        const { _resetConfigCache: r } = await import("../../src/store-config.js");
         r();
         shutdownHashStore();
         rmSync(cwd, { recursive: true, force: true });

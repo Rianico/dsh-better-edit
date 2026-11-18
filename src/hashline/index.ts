@@ -26,8 +26,8 @@ export {
 
 export { lineHashes } from "./hash.js";
 
-export { parseHashRef, parseText } from "./parse.js";
-export type { Anchor } from "./parse.js";
+export { parseHashRef, parseText } from "./anchor-pipeline.js";
+export type { Anchor } from "./anchor-pipeline.js";
 
 export { resEdit } from "./anchor-pipeline.js";
 export type { HEdit, HTEdit, NEdit } from "./anchor-pipeline.js";
@@ -37,19 +37,21 @@ export {
   fmtRegion,
   changedRange,
   buildIdx,
-  ServedRejectionError,
   AnchorMismatchError,
   EditHashEchoError,
   findEditHashEcho,
   isAnchorMismatch,
+} from "./anchor-pipeline.js";
+export type { ServedRow } from "./anchor-pipeline.js";
+
+// Read-side served evidence (ADR-0037) — re-exported here so the barrel stays the one
+// external surface; `ServedRow` keeps coming from anchor-pipeline's domain-errors re-export.
+export {
+  ServedRejectionError,
   verifyServedRange,
   verifyRebasedSpan,
   buildRangeEcho,
   fmtServedRows,
-} from "./anchor-pipeline.js";
-export type {
-  ServedRow,
-  ResolvedRange,
-  LeaseSpanSource,
-  LeaseIdentityView,
-} from "./anchor-pipeline.js";
+  moreRowsHint,
+} from "./served-evidence.js";
+export type { ResolvedRange, LeaseSpanSource, LeaseIdentityView } from "./served-evidence.js";

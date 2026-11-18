@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { join, dirname, resolve } from "node:path";
 import { defaultDshHome } from "@deepseek-ai/dsh-home-paths";
-import { configDir, hashStorePath, hashStoreDir } from "../../src/paths.js";
+import { configDir, hashStorePath, hashStoreDir } from "../../src/store-tenancy.js";
 
 describe("configDir", () => {
   it("returns the store dir under the default DSH home when DSH_HOME is unset", () => {
@@ -65,7 +65,7 @@ describe("store tenancy — central default", () => {
       if (v === undefined) delete process.env[k];
       else process.env[k] = v;
     }
-    const { _resetConfigCache } = await import("../../src/paths.js");
+    const { _resetConfigCache } = await import("../../src/store-config.js");
     _resetConfigCache();
     try {
       await fn();
@@ -74,7 +74,7 @@ describe("store tenancy — central default", () => {
         if (v === undefined) delete process.env[k];
         else process.env[k] = v;
       }
-      const { _resetConfigCache: r } = await import("../../src/paths.js");
+      const { _resetConfigCache: r } = await import("../../src/store-config.js");
       r();
     }
   }
@@ -87,7 +87,7 @@ describe("store tenancy — central default", () => {
         DSH_HOME: "/tmp/dsh-home-test",
       },
       async () => {
-        const { configDir } = await import("../../src/paths.js");
+        const { configDir } = await import("../../src/store-tenancy.js");
         const dir = configDir("/ws/my-app");
         expect(
           dir.startsWith(
@@ -101,14 +101,14 @@ describe("store tenancy — central default", () => {
 
   it("env workspace overrides to legacy .dsh_better_edit", async () => {
     await withCleanEnv({ DSH_BETTER_EDIT_STORE_DIR: "workspace" }, async () => {
-      const { configDir } = await import("../../src/paths.js");
+      const { configDir } = await import("../../src/store-tenancy.js");
       expect(configDir("/ws/my-app")).toBe(join(resolve("/ws/my-app"), ".dsh_better_edit"));
     });
   });
 
   it("env custom abs path uses hash suffix", async () => {
     await withCleanEnv({ DSH_BETTER_EDIT_STORE_DIR: "/custom/store" }, async () => {
-      const { configDir } = await import("../../src/paths.js");
+      const { configDir } = await import("../../src/store-tenancy.js");
       const dir = configDir("/ws/my-app");
       expect(dirname(dir)).toBe(join("/custom/store"));
       expect(dir.slice(-8)).toMatch(/^[0-9a-f]{8}$/);
@@ -124,7 +124,7 @@ describe("store tenancy — central default", () => {
       async () => {
         const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
         try {
-          const { configDir } = await import("../../src/paths.js");
+          const { configDir } = await import("../../src/store-tenancy.js");
           const dir = configDir("/ws/my-app");
           expect(dir).toContain("runtime");
           expect(warn).toHaveBeenCalled();
@@ -137,11 +137,11 @@ describe("store tenancy — central default", () => {
 
   it("DSH_BETTER_EDIT_AUTO_GITIGNORE true|false case-insensitive", async () => {
     await withCleanEnv({ DSH_BETTER_EDIT_AUTO_GITIGNORE: "TRUE" }, async () => {
-      const { loadConfig } = await import("../../src/paths.js");
+      const { loadConfig } = await import("../../src/store-config.js");
       expect(loadConfig().autoGitignore).toBe(true);
     });
     await withCleanEnv({ DSH_BETTER_EDIT_AUTO_GITIGNORE: "False" }, async () => {
-      const { loadConfig } = await import("../../src/paths.js");
+      const { loadConfig } = await import("../../src/store-config.js");
       expect(loadConfig().autoGitignore).toBe(false);
     });
   });
