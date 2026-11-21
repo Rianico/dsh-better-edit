@@ -18,7 +18,7 @@ ADR-0002 made the anchor canon strip every ASCII whitespace run (`[ \t\r\n]`, gl
 
 Formatter tolerance is kept only where a formatter moves edges: a pure re-indent and a trailing-whitespace strip still fold. This is a deliberate narrowing: an interior reformat (`foo( a, b )` vs `foo(a,b)`) now rejects too, because a token-boundary special case would reintroduce a lexical predicate `canon` cannot own.
 
-Snapshot keys carry `CANON_VERSION` first (`${CANON_VERSION}:${checksum}` in `src/snapshot-store/index.ts` and `snapshotHashFor` in `src/snapshot-store/lineage-store.ts`), so pre-v4 rows are inert cache misses rebuilt on the next read. No schema migration; in-flight anchors rotate once.
+Snapshot keys carry both invalidation axes (`${CANON_VERSION}:${ANCHOR_GENERATION}:${checksum}` in `src/snapshot-store/index.ts` and `snapshotHashFor` in `src/snapshot-store/lineage-store.ts`; the generation axis arrives with [ADR-0041](0041-anchor-identity-from-raw-bytes.md)), so pre-v4 rows are inert cache misses rebuilt on the next read. No schema migration; in-flight anchors rotate once.
 
 ## Consequences
 

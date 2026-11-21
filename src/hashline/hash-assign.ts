@@ -177,7 +177,7 @@ export const CANON_VERSION = 4;
  * canonicalised line.
  *
  * It covers exactly the pieces that decide WHICH 3-char spelling a raw line derives:
- * (1) the `(path, content)` seeding (`xxh32(line)` -> base index); (2) the width and space
+ * (1) the content seeding (`xxh32(line)` -> base index); (2) the width and space
  * (`HASH_LEN`, `ALPH`, `HASH_SPACE`); (3) the probe stride (`HASH_PROBE_STRIDE`). Bump it whenever any
  * of those change.
  *
