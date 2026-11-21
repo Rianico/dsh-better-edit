@@ -14,6 +14,8 @@ All notable changes to this project will be documented in this file.
 ### Bug Fixes
 
 * **str-replace-editor:** make `create` create-or-fail end to end — the tool now hands the provider `{ kind: "createIfAbsent" }` and the local backend opens the target exclusively, so a competitor's file created inside the stat→write window is never overwritten, and both paths reject with `E_FILE_EXISTS`. (#136)
+* **canon:** narrow the canon to trim-only over the frozen 28-code-point whitespace class and bump `CANON_VERSION` to 4, so an external writer's interior whitespace change — inside a string literal too, `"a b"` -> `"ab"` — retires the lease and the edit rejects instead of overwriting those bytes with a success report; re-indents and trailing-whitespace strips still fold, while an interior operator reformat now rejects deliberately (ADR-0040). (#139)
+* **anchors:** derive anchors from the line's raw materialized bytes and introduce `ANCHOR_GENERATION = 2`, so a canon-equal sibling no longer shares a derivation base and a canon-unchanged edit serves the line's own anchor instead of a probe spelling; `canon` is now alignment-only, survivor pairing stays canon-keyed so edge-whitespace formatter churn still keeps a held anchor valid, and the undo gate plus an open-time sweep reclaim pre-change anchor-bearing state (ADR-0041; ADR-0002 derivation half and ADR-0017's schema-only boundary amended). (#139)
 
 ## [1.2.5] - 2026-11-18
 

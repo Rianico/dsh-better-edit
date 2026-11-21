@@ -23,8 +23,16 @@ import { hashStorePath } from "./store-tenancy.js";
 import { onStoreOpen, setStoresGetter } from "./store-lifecycle.js";
 import { workspaceCwd } from "./workspace-context.js";
 import { errCode, splitLines } from "./utils.js";
-import { initHasher, HASH_CLASS, HASH_RE } from "./hashline/hash-assign.js";
-import { HASH_STORE_VERSION, HASH_STORE_BUSY_TIMEOUT, SERVED_TTL_MS } from "./constants.js";
+import {
+  initHasher,
+  HASH_CLASS,
+  HASH_RE,
+  CANON_VERSION,
+  ANCHOR_GENERATION,
+} from "./hashline/hash-assign.js";
+// `SERVED_TTL_MS` was imported but never read here (the served-TTL prune lives in
+// `store-lifecycle`), so the import carries only what this module uses.
+import { HASH_STORE_VERSION, HASH_STORE_BUSY_TIMEOUT } from "./constants.js";
 import { DomainError } from "./domain-errors.js";
 import {
   createSnapshotStore,
@@ -406,9 +414,15 @@ function addColumnIfMissing(db: DatabaseSync, table: string, column: string, typ
       throw new Error(`Refused schema backfill for non-identifier: ${identifier}`);
     }
   }
-  const columns = db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[];
+  // Parameterized: `pragma_table_info` is a table-valued function, so the table name is a VALUE.
+  const columns = db.prepare("SELECT name FROM pragma_table_info(?)").all(table) as {
+    name: string;
+  }[];
   if (!columns.some((entry) => entry.name === column)) {
-    db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${type}`);
+    // SAFETY: DDL identifiers cannot be bind parameters; every value below already passed
+    // SCHEMA_IDENTIFIER_RE (`[A-Za-z_][A-Za-z0-9_]*`), and all callers pass literals — invariant
+    // owned by this function, see the docblock above.
+    db.exec("ALTER TABLE " + table + " ADD COLUMN " + column + " " + type);
   }
 }
 
@@ -540,6 +554,83 @@ function migrateForward(db: DatabaseSync, storePath: string): void {
   }
 }
 
+/**
+ * `meta` key carrying the identity axes the store's anchor-bearing rows were minted under.
+ * Value shape: `${CANON_VERSION}:${ANCHOR_GENERATION}` — the prefix every snapshot key starts with.
+ */
+const ANCHOR_STAMP_KEY = "anchor_generation";
+
+/** The current identity axes as the stamp value (also the prefix of every snapshot key). */
+function anchorStamp(): string {
+  return `${CANON_VERSION}:${ANCHOR_GENERATION}`;
+}
+
+/**
+ * The open-time reclaim of anchor-bearing state minted under a foreign identity generation (#138).
+ *
+ * Runs AFTER `migrateForward` and the `served.retired` backfill, and never inside the migration
+ * transaction: this is key-prefix housekeeping, not a schema step, and it must stay idempotent on
+ * every open. There is NO schema change and NO per-row generation column — every row family that
+ * carries anchors is keyed by a snapshot key, so "not under the current prefix" IS the marker.
+ *
+ * One `BEGIN IMMEDIATE`, one unit: a crash between two deletes would otherwise leave a lease
+ * pointing at a snapshot that no longer exists (or lineage without its snapshot row) — exactly the
+ * inconsistencies the v7 substrate commits atomically elsewhere.
+ *
+ * WHY `served` is cleared wholesale: those rows hold anchors and canons but no key, so a foreign
+ * generation is indistinguishable from the current one without a marker column — which would need a
+ * migration. The stamp decides for the whole family; the next read re-serves and re-records.
+ *
+ * WHY the undo pair is deleted as ONE logical row: `undo` and `file_undo` are two halves of one
+ * record (pair-atomic, the same rule `writeUndoPair`/`pruneUndoOlderThan` hold), so the pair is
+ * reclaimed by its key side and the legacy side follows by path — never one half alone.
+ *
+ * pi-lens note (`sql-injection` probes `db.exec`/`db.prepare` for template substitutions): every
+ * pattern below is a BOUND parameter, not interpolated text, and the stamp itself is built only
+ * from the numeric `CANON_VERSION`/`ANCHOR_GENERATION` constants — no caller data reaches the SQL,
+ * which is strictly stronger than the identifier allowlist `addColumnIfMissing` relies on.
+ */
+function sweepForeignAnchorGeneration(db: DatabaseSync): void {
+  const stamp = anchorStamp();
+  const stamped = db.prepare("SELECT value FROM meta WHERE key = ?").get(ANCHOR_STAMP_KEY) as
+    | { value?: string }
+    | undefined;
+  // Idempotent: the stamp is the whole contract, so a stamped store is a no-op on every later open.
+  if (stamped?.value === stamp) return;
+  const prefix = `${stamp}:%`;
+  let sweepOpen = false;
+  try {
+    db.exec("BEGIN IMMEDIATE");
+    sweepOpen = true;
+    db.prepare("DELETE FROM snapshots WHERE checksum NOT LIKE ?").run(prefix);
+    db.prepare("DELETE FROM file_snapshots WHERE snapshot_hash NOT LIKE ?").run(prefix);
+    // Lineage follows its snapshot: an FK-off opener leaves the rows behind, so delete them here.
+    db.prepare(
+      "DELETE FROM line_lineage WHERE snapshot_id NOT IN (SELECT snapshot_id FROM file_snapshots)",
+    ).run();
+    db.prepare("DELETE FROM served_leases WHERE served_snapshot_hash NOT LIKE ?").run(prefix);
+    db.prepare("DELETE FROM served").run();
+    db.prepare("DELETE FROM file_undo WHERE snapshot_hash IS NULL OR snapshot_hash NOT LIKE ?").run(
+      prefix,
+    );
+    db.prepare("DELETE FROM undo WHERE path NOT IN (SELECT path FROM file_undo)").run();
+    db.prepare(
+      "INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+    ).run(ANCHOR_STAMP_KEY, stamp);
+    db.exec("COMMIT");
+    sweepOpen = false;
+  } catch (error) {
+    if (sweepOpen) {
+      try {
+        db.exec("ROLLBACK");
+      } catch (rollbackError) {
+        console.warn(rollbackError);
+      }
+    }
+    throw error;
+  }
+}
+
 function buildStore(db: DatabaseSync, storePath: string): { db: DatabaseSync; stmts: Prepared } {
   const stored = storedVersion(db);
   assertNotNewer(stored, storePath);
@@ -554,9 +645,13 @@ function buildStore(db: DatabaseSync, storePath: string): { db: DatabaseSync; st
   }[];
   if (!currentServedColumns.some((column) => column.name === "retired")) {
     // Single idempotent ALTER needs no transaction: ALTER TABLE is atomic, and an
-    // upgrade must never destroy snapshot/undo rows (ADR-0017 retires the wipe).
+    // upgrade must never destroy rows for SCHEMA reasons (ADR-0017 retires the wipe). The one
+    // row-reclaim an upgrade does run is key-scoped, never wholesale: see the sweep below.
     db.exec("ALTER TABLE served ADD COLUMN retired TEXT");
   }
+  // AFTER the migration and the column backfill, in its own unit: key-prefix reclaim of anchor-bearing
+  // rows minted under a foreign ANCHOR_GENERATION (no schema change — see the sweep's own docblock).
+  sweepForeignAnchorGeneration(db);
   const allStmt = db.prepare(
     "SELECT path FROM snapshots UNION SELECT path FROM undo UNION SELECT path FROM served UNION SELECT path FROM file_undo UNION SELECT path FROM file_snapshots UNION SELECT path FROM line_id_counters UNION SELECT file_path FROM served_leases",
   );

@@ -2,7 +2,8 @@
  * HashAssign — deep module owning hash assignment.
  *
  * Owns the `HASH_SPACE = 62^3` allocation invariant: every line gets a unique
- * 3-char anchor derived from canonicalized content via xxHash + probe-stride.
+ * 3-char anchor derived from its RAW bytes via xxHash + probe-stride (#138);
+ * `canon` is the alignment/verification digest, never the identity function.
  * Previously split across alphabet.ts (ALPH), hasher.ts (xxh32), pure.ts
  * (lineHashesPure/mapStableHashes), hash.ts (lineHashes persistence).
  * Now one file owns the triad — ALPH/xxh32/hashAt are private to this seam.
@@ -155,14 +156,63 @@ export const HL_PREFIX_PLUS_RE = new RegExp(`^\\+${HASH_CLASS}│`);
 export const HL_PREFIX_MINUS_RE = new RegExp(`^-(?:${HASH_CLASS}│| {${ANCHOR_LEN}}│)`);
 export const HL_BARE_PREFIX_RE = new RegExp(`^\\s*(${HASH_CLASS})│`);
 
-export const CANON_VERSION = 2;
+/**
+ * CANON_VERSION 4 (issue #135): the canon is trim-only. It strips ONE leading and ONE trailing run of
+ * the frozen 28-code-point whitespace class below and never an interior run, so intra-line whitespace
+ * is significant: a foreign writer that rewrites whitespace inside a line — inside a string literal
+ * too, `"a b"` -> `"ab"` — changes the canon, `canonDigest` no longer reproduces the digest the lease
+ * recorded, pairing breaks and the edit rejects fail-closed.
+ * Prior versions: v2 stripped every ASCII whitespace run anywhere in the line (docs/adr/0002), which
+ * folded `"a b"` into `"ab"` and let a stale anchor overwrite the other writer's bytes.
+ * Snapshot keys carry both axes (`${CANON_VERSION}:${ANCHOR_GENERATION}:${checksum}`), so pre-v4 rows
+ * are inert cache misses rebuilt on the next read — no migration needed.
+ */
+export const CANON_VERSION = 4;
 
-const CANON_RE = /[ \t\r\n]+/g;
+/**
+ * ANCHOR_GENERATION 2 — the anchor-derivation generation (ticket #138, the downstream port of
+ * upstream `a14fbc7` / ADR-0013). Downstream introduces the axis at generation 2 for parity with
+ * upstream, so the number means the same thing on both sides: generation 2 seeds anchor identity on
+ * the line's RAW bytes, where generation 1 (and every pre-generation-2 row) seeded it on the
+ * canonicalised line.
+ *
+ * It covers exactly the pieces that decide WHICH 3-char spelling a raw line derives:
+ * (1) the content seeding (`xxh32(line)` -> base index); (2) the width and space
+ * (`HASH_LEN`, `ALPH`, `HASH_SPACE`); (3) the probe stride (`HASH_PROBE_STRIDE`). Bump it whenever any
+ * of those change.
+ *
+ * WHY a second axis beside CANON_VERSION: cache keys carry both
+ * (`${CANON_VERSION}:${ANCHOR_GENERATION}:${checksum}`), so a canon-only change misses the cache
+ * without invalidating anchor-bearing state, while a generation change invalidates that state — the
+ * `hash-store` open-time sweep and the undo gate both read this same prefix.
+ */
+export const ANCHOR_GENERATION = 2;
+
+/** The frozen 28-code-point whitespace class (ADR-0002, extended by ADR-0040). */
+const CANON_CODE_POINTS = [
+  0x0009, 0x000a, 0x000b, 0x000c, 0x000d, 0x0020, 0x0085, 0x00a0, 0x1680, 0x2000, 0x2001, 0x2002,
+  0x2003, 0x2004, 0x2005, 0x2006, 0x2007, 0x2008, 0x2009, 0x200a, 0x2028, 0x2029, 0x202f, 0x205f,
+  0x3000, 0x200e, 0x200f, 0xfeff,
+] as const;
+const CANON_CLASS = CANON_CODE_POINTS.map((cp) => `\\u${cp.toString(16).padStart(4, "0")}`).join(
+  "",
+);
+/**
+ * Anchored and trim-only (issue #135): each class matches one run at an EDGE, never an interior one.
+ * The old unanchored global class stripped interior runs, folding `"a b"` into `"ab"`.
+ */
+const CANON_LEAD_RE = new RegExp(`^[${CANON_CLASS}]+`);
+const CANON_TRAIL_RE = new RegExp(`[${CANON_CLASS}]+$`);
 
 export function canon(line: string): string {
-  return line.replace(CANON_RE, "");
+  return line.replace(CANON_LEAD_RE, "").replace(CANON_TRAIL_RE, "");
 }
-/** Single definition of served_leases.canon_hash / line_lineage.canon_hash (CP2). */
+/**
+ * Single definition of `served_leases.canon_hash` / `line_lineage.canon_hash` (CP2): the
+ * ALIGNMENT and VERIFICATION digest — "is this the same line after a reformat?" — and never anchor
+ * identity. `lineHashesPure`/`mapStableHashes` seed on raw bytes (#138), so a canon-equal rewrite
+ * keeps pairing while the anchor rotates with the bytes.
+ */
 export function canonDigest(line: string): string {
   return String(xxh32(canon(line)));
 }
@@ -216,11 +266,12 @@ export function lineHashesPure(
   const used = new Uint32Array(BITSET_WORDS);
   for (const hash of reservedHashes) markHashUsed(used, hash);
   const hint = { value: 0 };
-  const canonCache = new Map<string, string>();
   try {
     for (let i = 0; i < lines.length; i++) {
-      const c = getCanon(canonCache, lines[i]!);
-      const baseIdx = (xxh32(c) >>> 14) % HASH_SPACE;
+      // WHY raw: identity is the line's own bytes (#138 / ADR-0013). The canon folds the edge
+      // whitespace class, so a canon-seeded base cannot tell two canon-equal lines apart and falls
+      // back to its positional probe — the sibling-dependent spelling #138 closes.
+      const baseIdx = (xxh32(lines[i]!) >>> 14) % HASH_SPACE;
       const h = assignHash(used, baseIdx, hint);
       hashes[i] = h;
     }
@@ -335,8 +386,11 @@ export function mapStableHashes(
   try {
     for (let i = 0; i < newLines.length; i++) {
       if (newHashes[i]) continue;
-      const c = getCanon(canonCache, newLines[i]!);
-      const baseIdx = (xxh32(c) >>> 14) % HASH_SPACE;
+      // WHY raw (deliberate divergence from upstream's pairing): the SURVIVOR index above stays
+      // canon-keyed so formatter tolerance is unchanged — a re-indented untouched line still inherits
+      // its anchor — while a FRESH allocation keys on the raw line, so the anchor a written line gets
+      // is the one its own bytes derive (#138).
+      const baseIdx = (xxh32(newLines[i]!) >>> 14) % HASH_SPACE;
       const h = assignHash(used, baseIdx, hint);
       newHashes[i] = h;
     }

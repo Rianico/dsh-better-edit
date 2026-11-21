@@ -4,7 +4,7 @@ Date: 2026-08-20 (adapted for dsh-better-edit from pi-better-edit)
 
 ## Status
 
-accepted (adapted for dsh-better-edit — same hashline algorithm; tool layer is dsh plugin API)
+accepted (adapted for dsh-better-edit — same hashline algorithm; tool layer is dsh plugin API; the caveat below is superseded for interior positions by [ADR-0040](0040-canon-v4-trim-only.md), and the derivation half of the strip is superseded by [ADR-0041](0041-anchor-identity-from-raw-bytes.md))
 
 ## Context
 
@@ -27,3 +27,11 @@ We decided the anchor is computed from the line with ASCII whitespace (`[ \t\r\n
 - The snapshot cache keys on the raw whole-file checksum, which is unchanged; a canon version must participate in snapshot-cache invalidation so pre-change cached hashes are not served as valid after upgrade.
 - In-flight anchors rotate once at upgrade (all served rows re-derive); per-session served state is short-lived (cleared at session start / TTL-swept), so no migration is needed — only snapshot-cache invalidation.
 - The linter-only assumption is load-bearing: if a human or other agent can edit files concurrently, a whitespace-only semantic change becomes invisible. The ADR documents that boundary; a future workflow change revisits the fingerprint option.
+
+## Amendment (#135, 2026-11-21) — the caveat's benign premise failed; the canon is trim-only
+
+The "Caveat (verified)" bullet above is superseded for interior positions: whitespace inside a line is no longer stripped from the canon, so `const s = "x y"` and `const s = "xy"` no longer canonicalize identically and a whitespace-only change inside a literal is visible to verification. [ADR-0040](0040-canon-v4-trim-only.md) narrows the canon to one leading and one trailing run of the frozen 28-code-point whitespace class (`CANON_VERSION = 4`) and records the issue #135 data-loss path that retired the linter-only premise. The edge behaviour this ADR decided (re-indent and trailing-whitespace tolerance) still holds; the trim class widens from ASCII-only to the frozen 28 code points at the edges; and `func(a, b)` versus `func(a,b)` no longer pair, so the survivor/removed-hash consequence above is superseded too.
+
+## Amendment (#138, 2026-11-21) — the strip becomes alignment-only; identity moves to raw bytes
+
+[ADR-0041](0041-anchor-identity-from-raw-bytes.md) moves anchor identity off this decision's stripped canon: `lineHashesPure` and `mapStableHashes`' fresh allocation now seed on the line's raw materialized bytes (`ANCHOR_GENERATION = 2`), so "the anchor is computed from the line with ASCII/class whitespace removed" no longer describes derivation. The strip survives as `canon`, the alignment and verification digest, and survivor pairing stays canon-keyed so edge-whitespace formatter tolerance is unchanged. The consequences below about survivor reuse keying on the stripped canon still hold for pairing; the identity consequence does not.

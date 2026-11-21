@@ -646,7 +646,19 @@ export function verifyServedRange(args: {
     // The leased route's `null` skip is `checksPosition`'s decision (the identity gate already
     // adjudicated the hole); the mirror route's holes rejected in the scan above.
     if (!checksPosition(route, served[from + k])) continue;
-    if (served[from + k] !== fileHashes[startLine - 1 + k]) {
+    // The served anchor must still name this line. #138 split identity from alignment: anchors key on
+    // the RAW line, so an external formatter's edge-whitespace rewrite rotates the anchor at an
+    // unchanged served position while the CANON still names the same line — the tolerance this
+    // equality used to carry implicitly (anchors were canon-derived, so equal anchor ⇔ equal canon).
+    // Compare the canon directly: a canon change still rejects here, and a missing canon record
+    // (`servedCanons` absent, a pre-canon serve) keeps the strict anchor equality — fail closed.
+    const sameAnchor = served[from + k] === fileHashes[startLine - 1 + k];
+    const servedCanonAt = servedCanons?.[from + k];
+    const currentCanon = canon(fileLines[startLine - 1 + k] ?? "");
+    if (
+      !sameAnchor &&
+      (servedCanonAt === undefined || servedCanonAt === null || servedCanonAt !== currentCanon)
+    ) {
       const offendingLine = startLine + k;
       throw new ServedRejectionError({
         code: "E_STALE_RANGE",

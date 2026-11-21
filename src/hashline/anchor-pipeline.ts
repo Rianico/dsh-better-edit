@@ -30,6 +30,7 @@ import {
   ANCHOR_LEN,
   ALPH_RE,
   lineHashesPure,
+  canon,
 } from "./hash-assign.js";
 import { NEW_CONTENT_NOT_STRING_MSG, NEW_CONTENT_BODY } from "../constants.js";
 import { DomainError, formatWarning, numericAnchorNote } from "../domain-errors.js";
@@ -372,6 +373,52 @@ function swapReversedRanges(edit: HEdit, fileHashes: string[], warnings: string[
   return { ...edit, hash_bounds: [endRef, startRef] as [Anchor, Anchor] };
 }
 
+/**
+ * The lease-backed anchor fallback for a line whose BYTES moved but whose CANON did not (#138).
+ *
+ * WHY it exists: anchor identity now keys on the raw line, so an external formatter's re-indent
+ * rotates the anchor the current file derives — yet the anchor the model holds still names the same
+ * line. The lease remembers the `line_id`, `positionsByIdentity` rebases that id onto the current
+ * buffer (canon-keyed pairing), and the canon recorded for that served anchor is the evidence.
+ *
+ * WHY it cannot widen identity: a byte change that moves the CANON (an interior rewrite, a token
+ * merged onto the line) fails the canon comparison and declines, so the stale-anchor refusal and
+ * every fail-closed case keep their verdict. An ambiguous serve of the same anchor, a retired lease,
+ * a missing lease and an out-of-range rebase all decline the same way.
+ *
+ * WHY the fallback is `not_found`-only: an AMBIGUOUS anchor found twice in the file is never
+ * resolved through a lease — ambiguity stays a refusal.
+ */
+function leaseAnchorLineResolver(args: {
+  leaseSource: LeaseSpanSource | undefined;
+  served: (string | null)[] | undefined;
+  servedCanons: (string | null)[] | undefined;
+  fileLines: string[];
+}): ((hash: string) => number | undefined) | undefined {
+  const { leaseSource, served, servedCanons, fileLines } = args;
+  if (leaseSource === undefined || served === undefined) return undefined;
+  return (hash: string): number | undefined => {
+    let servedIndex = -1;
+    for (let i = 0; i < served.length; i++) {
+      if (served[i] !== hash) continue;
+      // Served twice: the anchor does not name ONE line, so nothing may be inferred from a lease.
+      if (servedIndex >= 0) return undefined;
+      servedIndex = i;
+    }
+    if (servedIndex < 0) return undefined;
+    const servedCanon = servedCanons?.[servedIndex];
+    if (servedCanon === null || servedCanon === undefined) return undefined;
+    const lease = leaseSource.leaseFor(hash);
+    if (lease === undefined || lease.retiredAt !== null) return undefined;
+    const line = leaseSource.rebasedLineOf(lease.lineId);
+    if (line === undefined || line < 1 || line > fileLines.length) return undefined;
+    // The canon decides "same line after a reformat": equal canon → the reformat case; different
+    // canon → a different line, and the caller's stale-anchor refusal stands.
+    if (canon(fileLines[line - 1]!) !== servedCanon) return undefined;
+    return line;
+  };
+}
+
 /** @internal — private to anchor-pipeline seam */
 function valEdit(
   edit: HEdit,
@@ -379,6 +426,7 @@ function valEdit(
   fileHashes: string[],
   _warnings: string[],
   signal: AbortSignal | undefined,
+  resolveFromLease?: (hash: string) => number | undefined,
 ): {
   resolved: RHEdit | undefined;
   mismatches: HMismatch[];
@@ -397,6 +445,12 @@ function valEdit(
   const tryResolve = (ref: Anchor): RAnchor | undefined => {
     const result = resAnchorFromMap(ref, hashIndex);
     if ("kind" in result) {
+      if (result.kind === "not_found") {
+        const leasedLine = resolveFromLease?.(ref.hash);
+        if (leasedLine !== undefined) {
+          return { line: leasedLine, hash: ref.hash, hashMatched: true };
+        }
+      }
       mismatches.push(result);
       return undefined;
     }
@@ -674,12 +728,21 @@ export function applyEdit(
     }
   }
 
+  // The lease-backed fallback for a held anchor whose bytes moved but whose canon did not (#138).
+  // Built once per call: it is only consulted for an anchor the file's own hashes do not carry.
+  const resolveFromLease = leaseAnchorLineResolver({
+    leaseSource,
+    served,
+    servedCanons,
+    fileLines: lineIndex.fileLines,
+  });
   const { resolved: initialResolved, mismatches } = valEdit(
     prefixFixed,
     lineIndex.fileLines,
     fileHashes,
     warnings,
     signal,
+    resolveFromLease,
   );
   if (mismatches.length || !initialResolved) {
     const { headline, servedBlock, servedRows } = fmtMismatchWithServes(

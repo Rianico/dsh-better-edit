@@ -56,7 +56,7 @@ Hashline 用两个哈希代替旧文本——**编辑 token 减少 31%**（多�
 > **亮点——诚实且可衡量：**
 >
 > - **自愈而非静默。** 外部编辑永不被覆盖——过期范围被拒绝并以全新 `HASH│content` 重发重试；孤儿 served 条目无需全量重读即可自愈（ADR-0008）。Fail-closed，而非自动合并。
-> - **格式化容忍。** ASCII 空白不敏感锚点在 `prettier`/`black`/`eslint --fix` 之间存活（`formatOnSave`、监听、CI）。仅限 linter 场景——字符串内的空白不区分（ADR-0005）。
+> - **格式化容忍（仅限边缘）。** 锚点由行的原始字节派生（行首与行尾的空白计入身份）；边缘空白的格式化容忍来自 canon 配对与租约，所以纯缩进变化和行尾空白清理能在 `prettier`/`black`/`eslint --fix` 之间存活（`formatOnSave`、监听、CI），只是锚点拼写随字节旋转。行内空白（含字符串字面量）显著，`"a b"` 与 `"ab"` 是两行——改写它会退役租约并 fail-closed 拒绝（ADR-0002，ADR-0040/ADR-0041 修订）。
 > - **链式与批量，无重读仪式。** 未受影响行的锚点保持有效；diff/回显/拒绝行即视为已提供。`edit` 最多 32 个同文件编辑原子执行（`[E_BATCH_ABORT]`），相比 `str_replace` 信封约 -40%。
 > - **读守卫。** 从未展示过的行永不被编辑——`[E_UNSERVED_RANGE]`/`[E_UNVERIFIED_RANGE]`/`[E_STALE_ANCHOR]` 在写入前拒绝，随后 `reject-and-serve`。
 > - **更少往返。** 实测：同样外部漂移重构，OMP 封装需 6 次调用，hashline 仅 3 次；信封 vs `str_replace` 的节省是稳定值—— upstream 电池可复现（算法相同）。

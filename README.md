@@ -56,11 +56,11 @@
 
 File editing is the #1 point of failure for autonomous agents. Traditional tools break down in three distinct ways:
 
-| Fatal Trap in Traditional Tools | Why It Breaks Agents                                                                                                             | How `dsh-better-edit` Solves It                                                                                                                |
-| ------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
-| **`str_replace` Token Bleed**   | Must re-type 30+ lines of unchanged code just to change 1 line ($O(S+R)$), burning expensive output tokens (billed ~5–6× input). | **$O(R)$ Payloads**: Sends only two 3-char hashes (`anchor_from`, `anchor_to`) + replacement. Cuts output tokens by 40–60%.                    |
-| **Line-Number Coordinate Rot**  | Inserting 1 line shifts all line numbers below it. Agents suffer off-by-one errors or must repeatedly re-read the file.          | **Position-Independent Anchors**: Line hashes follow content, not line coordinates. Exterior shifts auto-rebase cleanly.                       |
-| **Silent Miswrites & Drift**    | Duplicate lines match the wrong function; external formatters (Prettier) or git updates cause blind overwrites or fatal errors.  | **Content-Addressed Line Verification**: Unique anchors via coprime probing; format-tolerant whitespace hashing; fail-closed reject-and-serve. |
+| Fatal Trap in Traditional Tools | Why It Breaks Agents                                                                                                             | How `dsh-better-edit` Solves It                                                                                                                                                                                 |
+| ------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **`str_replace` Token Bleed**   | Must re-type 30+ lines of unchanged code just to change 1 line ($O(S+R)$), burning expensive output tokens (billed ~5–6× input). | **$O(R)$ Payloads**: Sends only two 3-char hashes (`anchor_from`, `anchor_to`) + replacement. Cuts output tokens by 40–60%.                                                                                     |
+| **Line-Number Coordinate Rot**  | Inserting 1 line shifts all line numbers below it. Agents suffer off-by-one errors or must repeatedly re-read the file.          | **Position-Independent Anchors**: Line hashes follow content, not line coordinates. Exterior shifts auto-rebase cleanly.                                                                                        |
+| **Silent Miswrites & Drift**    | Duplicate lines match the wrong function; external formatters (Prettier) or git updates cause blind overwrites or fatal errors.  | **Content-Addressed Line Verification**: anchors derive from raw line bytes, unique via coprime probing; a re-indent survives through the lease; interior whitespace significant; fail-closed reject-and-serve. |
 
 ---
 
@@ -75,7 +75,7 @@ File editing is the #1 point of failure for autonomous agents. Traditional tools
 
 ### 2. 🛡️ Resistance to External Writes (Drift & Concurrency)
 
-- **Auto-Formatter Immunity**: Strips ASCII whitespace before hashing. Prettier, Black, and ESLint format-on-save passes never rotate anchors.
+- **Edge-Whitespace Tolerance**: Anchors derive from the line's raw bytes; the alignment digest trims one leading and one trailing whitespace run. A re-indent or trailing-space strip keeps the held anchor valid through the lease (the spelling rotates with the bytes, the lease does not); interior whitespace — inside string literals too — is significant, and a change to it rejects fail-closed.
 - **Exterior Shift Auto-Rebase**: External edits, git checkouts, or background processes outside the edit span rebase seamlessly without agent intervention.
 - **Fail-Closed Reject-and-Serve**: Contested interior spans fail closed without disk corruption and immediately return fresh on-disk rows in the error (`[E_STALE_RANGE]`, `[E_UNSERVED_RANGE]`) — recovering in **exactly 1 turn**.
 - **Session-Keyed Leases**: Leases are isolated per session, preventing cross-agent race conditions or state pollution.
@@ -184,7 +184,7 @@ Env overrides yaml (`DSH_BETTER_EDIT_STORE_DIR`, `DSH_BETTER_EDIT_AUTO_GITIGNORE
 
 **Verified against what was served.** Every resolved line checked against `read`/diff/rejection rows. Stale or unseen → `[E_STALE_RANGE]`/`[E_UNSERVED_RANGE]` + fresh `HASH│content`, retry needs no `read`. Session-scoped — sub-agent serves never validate main edits.
 
-**Content-addressed.** `canon(line)` strips ASCII whitespace, `xxh32 → 62³=238,328` anchors. Re-inserting identical text keeps its hash; `prettier`/`eslint --fix` between edits doesn't invalidate. Unique by bitset probing — `}`/`import` repeats never collide; cap `238,328` lines (`[E_LARGE_FILE]`).
+**Content-addressed.** The anchor is `xxh32` over the line's raw bytes → `62³=238,328` anchors, while `canon(line)` — one leading and one trailing whitespace run trimmed — is the alignment digest that pairs snapshots and verifies served evidence. Re-inserting identical text keeps its hash; a re-indent or trailing-space pass between edits rotates the spelling but not the lease, so the held anchor keeps working. Interior whitespace is significant — `"a b"` and `"ab"` are different lines, even inside a string literal. Unique by bitset probing — `}`/`import` repeats never collide; cap `238,328` lines (`[E_LARGE_FILE]`).
 
 **No loop, no ritual.** No-op → `No changes made`; same no-op ×3 → `[E_NOOP_LOOP]`. Diff/echo/rejection rows count as serves — `read` is recovery, not ritual.
 
@@ -257,16 +257,16 @@ Single stochastic run, `opencode-go/gpt-5.6-luna` high. [Artifact](https://githu
 
 ## Comparison
 
-|                    | **dsh-better-edit**  | @oh-my-pi/hashline  | `str_replace` |
-| ------------------ | -------------------- | ------------------- | ------------- |
-| Address            | `HASH│` 3-char canon | `[path#tag]` + line | text match    |
-| Whitespace-insen.  | ✅                   | ~ n/a               | ❌            |
-| Duplicate lines    | ✅ unique            | ~ pos               | ❌ first      |
-| Verified vs served | ✅ every line        | ~ file tag          | ❌            |
-| Blind edit         | ✅ reject            | ~                   | ❌            |
-| Batch atomic       | ✅                   | ✅                  | ❌            |
-| Undo               | ✅                   | ❌                  | ❌            |
-| Battery            | 23/23                | 10/10               | —             |
+|                    | **dsh-better-edit** | @oh-my-pi/hashline  | `str_replace` |
+| ------------------ | ------------------- | ------------------- | ------------- |
+| Address            | `HASH│` 3-char hash | `[path#tag]` + line | text match    |
+| Whitespace-tol.    | ✅ lease            | ~ n/a               | ❌            |
+| Duplicate lines    | ✅ unique           | ~ pos               | ❌ first      |
+| Verified vs served | ✅ every line       | ~ file tag          | ❌            |
+| Blind edit         | ✅ reject           | ~                   | ❌            |
+| Batch atomic       | ✅                  | ✅                  | ❌            |
+| Undo               | ✅                  | ❌                  | ❌            |
+| Battery            | 23/23               | 10/10               | —             |
 
 `~` partial, `—` n/a. Same lineage — patch library vs dsh tool pair; pick by seam.
 
@@ -276,7 +276,7 @@ Single stochastic run, `opencode-go/gpt-5.6-luna` high. [Artifact](https://githu
 
 ## How Anchors Work
 
-`canon(line)` strips ASCII whitespace → `xxHash32` → `A-Za-z0-9` 3-char (62³). Stable across `prettier`; Unicode/strings stay significant except ASCII whitespace inside strings (linter-only). `stride=62²+62+1` probes bitset → unique; cap `238,328`. Store `hash-store.sqlite` per workspace (central, honoring `XDG_CONFIG_HOME`); 7-day served TTL, janitor `storeMaxAgeS/LRU` + `wal_checkpoint`.
+The ANCHOR derives from the line's RAW bytes → `xxHash32` → `A-Za-z0-9` 3-char (62³), so it moves when the bytes move. `canon(line)` — one leading and one trailing whitespace run trimmed — is the ALIGNMENT digest: snapshot pairing and served verification compare it. Edge whitespace is therefore free for the LEASE — a re-indent or trailing strip between edits survives because pairing and verification read the canon and the lease tracks the line id — while interior whitespace is significant, including inside strings, so an intra-literal rewrite rejects (`[E_STALE_ANCHOR]`) instead of overwriting the other writer's bytes. `stride=62²+62+1` probes bitset → unique; cap `238,328`. Store `hash-store.sqlite` per workspace (central, honoring `XDG_CONFIG_HOME`); 7-day served TTL, janitor `storeMaxAgeS/LRU` + `wal_checkpoint`.
 
 ## How It Replaces Built-ins
 
