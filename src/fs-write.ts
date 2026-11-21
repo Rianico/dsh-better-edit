@@ -3,6 +3,7 @@ import { mkdir, open, readdir, rename, rm, stat, writeFile } from "fs/promises";
 import { dirname, join } from "node:path";
 import { errCode } from "./utils.js";
 import { resolveTarget } from "./paths.js";
+import { DomainError } from "./domain-errors.js";
 
 const TEMP_PREFIX = ".tmp-";
 const TEMP_UUID_RE = /^\.tmp-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
@@ -46,7 +47,66 @@ async function syncDir(dir: string): Promise<void> {
   }
 }
 
-export async function writeAtomic(path: string, content: string): Promise<void> {
+/** Per-call write mode for {@link writeAtomic}. */
+export interface WriteAtomicOptions {
+  /**
+   * Create the target or fail — never rename over an existing file. The guard
+   * is `O_EXCL` on the target itself, so a file that appears after the caller
+   * looked (a competitor's create) is refused with `E_FILE_EXISTS` instead of
+   * being overwritten. Omitted/`false` keeps the unconditional write.
+   */
+  readonly exclusive?: boolean;
+}
+
+/**
+ * Create-or-fail without rename-over: `wx` is `O_CREAT | O_EXCL`, so the
+ * target itself is the exclusivity token — the pre-check that decided to write
+ * cannot race the publication. The partially created target is removed only
+ * when this call created it (`open` succeeded), never a pre-existing file.
+ */
+async function writeExclusive(path: string, content: string): Promise<void> {
+  const targetPath = await resolveTarget(path);
+  const dir = dirname(targetPath);
+  await mkdir(dir, { recursive: true });
+  let handle: Awaited<ReturnType<typeof open>>;
+  try {
+    handle = await open(targetPath, "wx", 0o600);
+  } catch (error: unknown) {
+    if (errCode(error) === "EEXIST") {
+      throw new DomainError("E_FILE_EXISTS", { path: targetPath });
+    }
+    throw error;
+  }
+  try {
+    await handle.writeFile(content, "utf-8");
+    await handle.sync();
+  } catch (error: unknown) {
+    try {
+      await handle.close();
+    } catch (closeError: unknown) {
+      console.error("[fs-write] failed to close partially created file", closeError);
+    }
+    try {
+      await rm(targetPath, { force: true });
+    } catch (cleanupError: unknown) {
+      console.error("[fs-write] failed to remove partially created file", cleanupError);
+    }
+    throw error;
+  }
+  await handle.close();
+  await syncDir(dir);
+}
+
+export async function writeAtomic(
+  path: string,
+  content: string,
+  options?: WriteAtomicOptions,
+): Promise<void> {
+  if (options?.exclusive === true) {
+    await writeExclusive(path, content);
+    return;
+  }
+
   const targetPath = await resolveTarget(path);
 
   let existingStats: Awaited<ReturnType<typeof stat>> | null = null;

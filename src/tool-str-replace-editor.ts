@@ -25,7 +25,7 @@
 import { defineTool } from "@deepseek-ai/dsh-tools";
 import type { ToolExecution } from "@deepseek-ai/dsh-tools";
 import type { FsEscalationArgs, FsSandboxController } from "./sandbox.js";
-import type { FileIO } from "./fs-bridge.js";
+import type { FileIO, WriteGuard } from "./fs-bridge.js";
 import { getAutoGuessFooter } from "./fs-bridge.js";
 import {
   encodingHintAtVersion,
@@ -143,10 +143,11 @@ async function writeGoverned(
   content: string,
   args: FsEscalationArgs,
   exec: ToolExecution,
+  guard?: WriteGuard,
 ): Promise<void> {
   const policy = await sandbox.resolvePolicy("str_replace_editor", args, exec);
   try {
-    await io.writeText(absolutePath, content, exec.signal, exec, policy);
+    await io.writeText(absolutePath, content, exec.signal, exec, policy, guard);
   } catch (error) {
     throw sandbox.mapError(error, policy);
   }
@@ -283,13 +284,19 @@ export function buildStrReplaceEditorTool(io: FileIO, sandbox: FsSandboxControll
 
         if (cmd === "create") {
           const fileText = requireString(rec, "file_text");
+          // The stat is only the early refusal (it answers before any write is
+          // attempted); the enforcement is the provider's `createIfAbsent` /
+          // the local backend's exclusive open, so a file created inside this
+          // stat→write window is refused instead of overwritten.
           const ver = await io.statVersion(absolutePath, signal);
           const exists = ver !== undefined;
           if (exists) {
             throw new DomainError("E_FILE_EXISTS", { path: rawPath });
           }
           // Governed default: UTF-8 without BOM (no memo → no BOM).
-          await writeGoverned(io, sandbox, absolutePath, fileText, rec as FsEscalationArgs, exec);
+          await writeGoverned(io, sandbox, absolutePath, fileText, rec as FsEscalationArgs, exec, {
+            createIfAbsent: true,
+          });
           try {
             const version = await io.statVersion(absolutePath, signal);
             recordOpenState(absolutePath, fileText, "utf8", false, version);

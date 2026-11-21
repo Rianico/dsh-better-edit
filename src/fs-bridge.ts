@@ -57,6 +57,17 @@ export function getAutoGuessFooterCompat(k: string): string | undefined {
   return _getAutoGuessFooter(k);
 }
 
+/**
+ * Per-call create-or-fail demand for the `create` path of `str_replace_editor`
+ * only. Every other mutator (`edit`, `insert`, `str_replace`,
+ * `undo_last_edit`) keeps today's unconditional intent, so this guard must
+ * never be defaulted on: it turns the provider write into
+ * `{ kind: "createIfAbsent" }` and the local write into an exclusive open.
+ */
+export interface WriteGuard {
+  readonly createIfAbsent: true;
+}
+
 /** Text-IO operations the hashline tools need, keyed by canonical absolute path. */
 export interface FileIO {
   /** Resolve a (possibly relative) request path against the session cwd to a canonical absolute path. */
@@ -73,6 +84,11 @@ export interface FileIO {
    * @param sandboxPolicy - the per-call sandbox mode + workspace root the
    *   confined backend checks (resolved from the session by the tool layer);
    *   omitted on an unsandboxed backend.
+   * @param guard - the create-or-fail demand of the `create` path; omitted by
+   *   every other caller, which keeps the unconditional create-or-overwrite
+   *   intent. The dsh backend turns it into the `{ kind: "createIfAbsent" }`
+   *   write intent (and reports the refusal as `E_FILE_EXISTS`), the local
+   *   backend opens the target exclusively.
    */
   writeText(
     absolutePath: string,
@@ -80,6 +96,7 @@ export interface FileIO {
     signal?: AbortSignal,
     exec?: ToolExecution,
     sandboxPolicy?: SandboxExecutionPolicy,
+    guard?: WriteGuard,
   ): Promise<void>;
   /**
    * Emit `fs/observed` (present at the current version) for a successful
@@ -280,7 +297,7 @@ export function ctxFsIO(fs: FileSystem, ctx: Context): FileIO {
         return mapFsError(error, absolutePath);
       }
     },
-    async writeText(absolutePath, content, signal, exec, sandboxPolicy) {
+    async writeText(absolutePath, content, signal, exec, sandboxPolicy, guard) {
       try {
         const target = await fs.resolve(absolutePath, {
           ...(signal === undefined ? {} : { signal }),
@@ -301,10 +318,25 @@ export function ctxFsIO(fs: FileSystem, ctx: Context): FileIO {
           displayPath: absolutePath,
         });
 
-        const intent = await ctx.waterfall("fs/write-intent", target, exec, () => undefined);
+        const intent = await ctx.waterfall("fs/write-intent", target, exec, () =>
+          guard?.createIfAbsent === true ? { kind: "createIfAbsent" as const } : undefined,
+        );
+        // Under the create guard the demand is a floor, not a default: a listener may
+        // resolve `undefined` or any other concrete kind (an observation-policy
+        // `replaceIfVersion`, say), and handing that to the provider would let a
+        // version match overwrite the competitor this guard exists to protect. A
+        // create therefore leaves this seam as `createIfAbsent` and nothing else.
+        const effectiveIntent =
+          guard?.createIfAbsent === true ? ({ kind: "createIfAbsent" } as const) : intent;
         // The provider encodes the string as UTF-8; prep.textToWrite already carries
         // the restored BOM + line endings (or the explicit normalizeToUtf8 migration).
-        const outcome = await fs.writeText(target, prep.textToWrite, intent, signal, sandboxPolicy);
+        const outcome = await fs.writeText(
+          target,
+          prep.textToWrite,
+          effectiveIntent,
+          signal,
+          sandboxPolicy,
+        );
         ctx.emit("fs/observed", target, { kind: "present", version: outcome.version }, exec);
         // Memo/bytes agreement: every write records the state of the bytes just written.
         if (prep.newState) {
@@ -315,6 +347,13 @@ export function ctxFsIO(fs: FileSystem, ctx: Context): FileIO {
           _setEncodingState(absolutePath, written);
         }
       } catch (error) {
+        // The host documents `FS_NOT_OBSERVED` from `writeText` as the
+        // `createIfAbsent`-over-existing-target rejection, so on the create
+        // path it reports the fact the caller asked about ("already exists"),
+        // not a blind replace. Every other code keeps the shared mapping.
+        if (guard?.createIfAbsent === true && errCode(error) === "FS_NOT_OBSERVED") {
+          throw new DomainError("E_FILE_EXISTS", { path: absolutePath });
+        }
         return mapFsError(error, absolutePath);
       }
     },
@@ -396,7 +435,7 @@ export function localIO(): FileIO {
         throw error;
       }
     },
-    async writeText(absolutePath, content, signal, _exec, _sandboxPolicy) {
+    async writeText(absolutePath, content, signal, _exec, _sandboxPolicy, guard) {
       signal?.throwIfAborted();
       // Drop a stale memo, then let the seam decide: it throws E_ENCODING_UNWRITABLE
       // before writeAtomic when the recorded encoding cannot round-trip (#112).
@@ -407,7 +446,11 @@ export function localIO(): FileIO {
         normalizeToUtf8: cfgL.normalizeToUtf8,
         displayPath: absolutePath,
       });
-      await writeAtomic(absolutePath, prep.textToWrite);
+      await writeAtomic(
+        absolutePath,
+        prep.textToWrite,
+        guard?.createIfAbsent === true ? { exclusive: true } : undefined,
+      );
       if (prep.newState) {
         const after = await fileSnap(absolutePath).catch(() => undefined);
         _setEncodingState(absolutePath, { ...prep.newState, version: after?.snapshotId });
