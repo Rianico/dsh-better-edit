@@ -1,20 +1,39 @@
 import { describe, expect, it } from "vitest";
-import { applyEdit, lineHashes, lineHashesPure, parseText } from "../../src/hashline/index.js";
+import {
+  applyEdit,
+  canon,
+  lineHashes,
+  lineHashesPure,
+  parseText,
+} from "../../src/hashline/index.js";
 import { splitLines } from "../../src/utils.js";
 import { useTestHome } from "../support/fixtures.js";
 const home = useTestHome();
 
 describe("strict hashline contract", () => {
-  it("strips internal ASCII whitespace when hashing (ADR-0005)", async () => {
+  it("folds edge whitespace but keeps interior ASCII whitespace significant (ADR-0002 / ADR-0040)", async () => {
     const hashes = await lineHashes("a b", home.testPath);
     const hashes2 = await lineHashes("ab", home.testPath);
-    expect(hashes[0]).toBe(hashes2[0]);
+    // v4 canon is trim-only: the interior space of `a b` survives, so the lines never pair.
+    expect(canon("  a b  ")).toBe(canon("a b"));
+    expect(canon("a b")).not.toBe(canon("ab"));
+    expect(hashes[0]).not.toBe(hashes2[0]);
   });
 
-  it("trims trailing spaces when hashing", async () => {
+  it("derives the anchor from the raw line, so an edge run rotates it (#138)", async () => {
+    const hashes = await lineHashes("  a b", home.testPath);
+    const hashes2 = await lineHashes("a b", home.testPath);
+    // The canon folds the edge run (alignment/verification evidence)...
+    expect(canon("  a b")).toBe(canon("a b"));
+    // ...while the anchor keys on the line's own bytes, so the two identities differ.
+    expect(hashes[0]).not.toBe(hashes2[0]);
+  });
+
+  it("does not trim trailing spaces out of the anchor (#138)", async () => {
     const hashes = await lineHashes("value  ", home.testPath);
     const hashes2 = await lineHashes("value", home.testPath);
-    expect(hashes[0]).toBe(hashes2[0]);
+    expect(canon("value  ")).toBe(canon("value"));
+    expect(hashes[0]).not.toBe(hashes2[0]);
   });
 
   it("preserves explicit blank trailing line in string input", () => {

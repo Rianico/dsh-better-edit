@@ -20,8 +20,11 @@ beforeAll(async () => {
   await initHasher();
 });
 
+// WHY raw: anchors derive from the line's RAW bytes (#138 / upstream ADR-0013), so the fixture's
+// collision base must use the same function the allocator uses. Every line in this fixture has no
+// edge whitespace run, so `xxh32(line) === xxh32(canon(line))` and no pinned spelling moves.
 function baseIndexOf(line: string): number {
-  return (xxh32(canon(line)) >>> 14) % HASH_SPACE;
+  return (xxh32(line) >>> 14) % HASH_SPACE;
 }
 
 function searchBase(target: number, prefix: string): string | undefined {
@@ -35,7 +38,7 @@ function searchBase(target: number, prefix: string): string | undefined {
 describe("canon scope is file-local, never process-global (#149 class)", () => {
   it("rejects E_UNSERVED_RANGE on an ambiguous boundary that file A's canon cannot decide", () => {
     const diskCanons = ["alpha", "beta", "gamma"];
-    const T = (xxh32(canon("alpha")) >>> 14) % HASH_SPACE;
+    const T = baseIndexOf("alpha");
     // Decoy and foreign share alpha's base slot but carry foreign canons that
     // match no disk line, so a poisoned lookup can never accidentally heal.
     const decoy = searchBase(T, "decoy");
@@ -151,7 +154,7 @@ describe("canon scope is file-local, never process-global (#149 class)", () => {
   });
 
   it("a serve of file B records B's own canons after file A was hashed (#149)", async () => {
-    const T = (xxh32(canon("alpha")) >>> 14) % HASH_SPACE;
+    const T = baseIndexOf("alpha");
     const decoy = searchBase(T, "decoy");
     const foreign = searchBase(T, "foreign");
     expect(decoy).toBeDefined();

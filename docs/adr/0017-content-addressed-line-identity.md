@@ -1,7 +1,7 @@
 # ADR-0017 — Content-Addressed Line Identity
 
 Date: 2026-09-23
-Status: accepted; **superseded in part — the pairing rule by [ADR-0019](0019-lease-identity-served-span-resolution.md), the corrupt-lineage throw by [ADR-0020](0020-atomic-store-pairs-and-corrupt-lineage-repair.md); see the Amendment below. The undo anchor rule is reversed in the Reversal section (2026-11-16, #111).**
+Status: accepted; **superseded in part — the pairing rule by [ADR-0019](0019-lease-identity-served-span-resolution.md), the corrupt-lineage throw by [ADR-0020](0020-atomic-store-pairs-and-corrupt-lineage-repair.md); see the Amendment below. The undo anchor rule is reversed in the Reversal section (2026-11-16, #111). The "never destroy rows" upgrade boundary is narrowed to schema-only reasons by [ADR-0041](0041-anchor-identity-from-raw-bytes.md).**
 Related: `src/snapshot-store/lineage-store.ts`, `src/hash-store.ts`
 (`getSnapshot`, `buildStore`), `docs/adr/0016-store-version-flap-guard.md`
 
@@ -171,3 +171,7 @@ anchor strings.
   absent anchors stay retired), `test/core/hashline-stale-rebind.test.ts`
   (original-anchor revival; no survivor rebind), `test/core/undo-anchor-space-exhaustion.test.ts`
   (promotion on both the current and the restored hash pass).
+
+## Amendment (#138, 2026-11-21) — the "never destroy rows" boundary is schema-only
+
+[ADR-0041](0041-anchor-identity-from-raw-bytes.md) adds `ANCHOR_GENERATION`: the open-time sweep reclaims anchor-bearing rows minted under a foreign generation (snapshots, lineage, leases, undo pairs) and clears the session `served` mirror, because those anchors denote lines this build derives differently. This does not reintroduce the retired `retired`-column wipe: no row is destroyed for a SCHEMA reason, and no schema version bump rides the change.

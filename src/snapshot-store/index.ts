@@ -11,7 +11,12 @@
  * @module dsh-better-edit/snapshot-store
  */
 import { DatabaseSync } from "node:sqlite";
-import { contentChecksum, HASH_RE, CANON_VERSION } from "../hashline/hash-assign.js";
+import {
+  contentChecksum,
+  HASH_RE,
+  CANON_VERSION,
+  ANCHOR_GENERATION,
+} from "../hashline/hash-assign.js";
 import { splitLines } from "../utils.js";
 import { withBusyRetry } from "../store-retry.js";
 
@@ -23,8 +28,14 @@ export function isValidHashList(value: unknown): value is string[] {
   return true;
 }
 
+/**
+ * The row key: BOTH identity axes plus the content checksum.
+ * Canon first (a canon-only change misses the cache without invalidating anchor-bearing state),
+ * generation second (a generation change invalidates that state — `hash-store`'s open-time sweep
+ * and the undo gate both match this prefix).
+ */
 function cacheKey(checksum: string): string {
-  return `${CANON_VERSION}:${checksum}`;
+  return `${CANON_VERSION}:${ANCHOR_GENERATION}:${checksum}`;
 }
 
 export interface SnapshotStore {

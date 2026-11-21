@@ -15,12 +15,46 @@ import { loadServed, recordServed, recordServedTruncated } from "../../src/sessi
 import { snapshotHashFor } from "../../src/snapshot-store/lineage-store.js";
 import { DomainError } from "../../src/domain-errors.js";
 import { HASH_STORE_VERSION } from "../../src/constants.js";
-import { CANON_VERSION } from "../../src/hashline/hash-assign.js";
+import { ANCHOR_GENERATION, CANON_VERSION } from "../../src/hashline/hash-assign.js";
 import { initHasher, contentChecksum } from "../../src/hashline/hash-assign.js";
 import { splitLines } from "../../src/utils.js";
 import type { UndoEntry } from "../../src/undo-edit.js";
 import { getWritableTempRoot } from "../support/fixtures.js";
 
+/**
+ * Per-table COUNT statements for the schema sweeps in this file. A table name is a SQL IDENTIFIER
+ * (SQLite has no bind parameter for one), so every statement is a complete literal in this
+ * allowlist and the callers select by key — no variable is ever interpolated into SQL.
+ */
+const COUNT_SQL = {
+  snapshots: "SELECT COUNT(*) AS n FROM snapshots",
+  undo: "SELECT COUNT(*) AS n FROM undo",
+  served: "SELECT COUNT(*) AS n FROM served",
+  file_undo: "SELECT COUNT(*) AS n FROM file_undo",
+  file_snapshots: "SELECT COUNT(*) AS n FROM file_snapshots",
+  line_lineage: "SELECT COUNT(*) AS n FROM line_lineage",
+  line_id_counters: "SELECT COUNT(*) AS n FROM line_id_counters",
+  served_leases: "SELECT COUNT(*) AS n FROM served_leases",
+} as const;
+
+type CountTable = keyof typeof COUNT_SQL;
+
+/** The two undo-side tables that carry a `path` column. */
+const COUNT_BY_PATH_SQL = {
+  undo: COUNT_SQL.undo + " WHERE path = ?",
+  file_undo: COUNT_SQL.file_undo + " WHERE path = ?",
+} as const;
+
+type CountByPathTable = keyof typeof COUNT_BY_PATH_SQL;
+
+function countRows(db: DatabaseSync, table: CountTable): number {
+  return (db.prepare(COUNT_SQL[table]).get() as { n: number }).n;
+}
+
+function countRowsByPath(db: DatabaseSync, table: CountByPathTable, path: string): number {
+  return ((db.prepare(COUNT_BY_PATH_SQL[table]).get(path) as { n: number } | undefined)?.n ??
+    0) as number;
+}
 let tmpHome: string;
 beforeAll(async () => {
   await initHasher();
@@ -240,7 +274,7 @@ describe("hash-store — concurrency (issue #10)", () => {
       second.exec("BEGIN IMMEDIATE");
       ins.run(
         "/b.ts",
-        `${CANON_VERSION}:${contentChecksum("beta\n")}`,
+        `${CANON_VERSION}:${ANCHOR_GENERATION}:${contentChecksum("beta\n")}`,
         splitLines("beta\n").length,
         JSON.stringify(["BBC"]),
         Date.now(),
@@ -452,8 +486,9 @@ describe("hash-store — schema versioning", () => {
       const db = new DatabaseSync(sqlitePath(home), {
         defensive: false,
       } as any);
+      // Parameterized: `pragma_table_info` is a table-valued function, so the table is a VALUE.
       const columns = (table: string): string[] =>
-        (db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[]).map(
+        (db.prepare("SELECT name FROM pragma_table_info(?)").all(table) as { name: string }[]).map(
           (column) => column.name,
         );
       expect(columns("snapshots")).toEqual([
@@ -728,8 +763,13 @@ describe("hash-store — schema versioning", () => {
       await loadHashStore();
       shutdownHashStore();
 
-      // Byte-identical straight after the v7 open, before any v6 write.
-      expect(readAll()).toEqual(before);
+      // #138 generation reclaim: every v6-era row is anchor-bearing under a pre-generation snapshot
+      // key (or, for `served`, under no key at all), so the open-time sweep reclaims it — a v6 anchor
+      // denotes a line this build derives differently, and replaying it would target other bytes. The
+      // SCHEMA and the v6 write path stay byte-compatible, which the cycle below asserts.
+      const reclaimed = { snapshots: [], undo: [], served: [] };
+      expect(before.snapshots.length).toBeGreaterThan(0);
+      expect(readAll()).toEqual(reclaimed);
       shutdownHashStore();
 
       const db = rawConn();
@@ -757,8 +797,10 @@ describe("hash-store — schema versioning", () => {
       db.prepare("DELETE FROM served WHERE path = ?").run("/v.ts");
       db.close();
 
+      // ...and after a full v6 write/read/delete cycle the store is back to the reclaimed baseline:
+      // the v6 writer's own key shapes still round-trip through their own statements.
       const after = readAll();
-      expect(after).toEqual(before);
+      expect(after).toEqual(reclaimed);
     });
   });
 
@@ -846,13 +888,13 @@ describe("hash-store — schema versioning", () => {
       const check = new DatabaseSync(sqlitePath(home), {
         defensive: false,
       } as any);
-      expect(check.prepare("SELECT * FROM snapshots ORDER BY path").all()).toEqual(
-        before.snapshots,
-      );
-      expect(check.prepare("SELECT * FROM undo ORDER BY path").all()).toEqual(before.undo);
-      expect(check.prepare("SELECT * FROM served ORDER BY session_id, path").all()).toEqual(
-        before.served,
-      );
+      // #138: the v6 rows are anchor-bearing and predate the identity generation, so the open-time
+      // sweep reclaims them. This test guards the SHELL (the columns and the v7 tables below), which
+      // the reclaim never touches.
+      expect(before.snapshots.length).toBeGreaterThan(0);
+      expect(check.prepare("SELECT * FROM snapshots ORDER BY path").all()).toEqual([]);
+      expect(check.prepare("SELECT * FROM undo ORDER BY path").all()).toEqual([]);
+      expect(check.prepare("SELECT * FROM served ORDER BY session_id, path").all()).toEqual([]);
       for (const table of [
         "file_snapshots",
         "line_id_counters",
@@ -860,8 +902,7 @@ describe("hash-store — schema versioning", () => {
         "file_undo",
         "served_leases",
       ]) {
-        const row = check.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get() as { n: number };
-        expect(row.n).toBe(0);
+        expect(countRows(check, table as CountTable)).toBe(0);
       }
       const servedCols = (
         check.prepare("PRAGMA table_info(served)").all() as { name: string }[]
@@ -1009,8 +1050,7 @@ describe("hash-store — schema versioning", () => {
         "file_undo",
         "served_leases",
       ]) {
-        const row = check.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get() as { n: number };
-        expect(row.n).toBe(0);
+        expect(countRows(check, table as CountTable)).toBe(0);
       }
       const version = check.prepare("SELECT value FROM meta WHERE key = 'version'").get() as
         | { value?: string }
@@ -1151,11 +1191,11 @@ describe("hash-store — schema versioning", () => {
         db.close();
         return row?.value;
       };
-      const count = (table: string): number => {
+      const count = (table: CountTable): number => {
         const db = raw();
-        const row = db.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get() as { n: number };
+        const n = countRows(db, table);
         db.close();
-        return row.n;
+        return n;
       };
       const armTrigger = (): void => {
         const db = raw();
@@ -1346,7 +1386,9 @@ describe("hash-store — pre-retired upgrade preserves rows", () => {
       const served = await loadServedStore();
       served.upsertServed("sessionB", "/q.ts", JSON.stringify(["AAA"]));
       expect(served.getServed("sessionB", "/q.ts")).toEqual(["AAA"]);
-      expect(served.getServed("sessionA", "/p.ts")).toEqual(["XYZ"]);
+      // #138: the pre-generation `served` row is reclaimed by the open — it carries anchors and
+      // canons but no key, so the stamp decides for the whole family.
+      expect(served.getServed("sessionA", "/p.ts")).toEqual([]);
       shutdownHashStore();
 
       const check = new DatabaseSync(sqlitePath(home), {
@@ -1356,8 +1398,11 @@ describe("hash-store — pre-retired upgrade preserves rows", () => {
         (column) => column.name,
       );
       expect(cols).toContain("retired");
-      expect(check.prepare("SELECT * FROM snapshots ORDER BY path").all()).toEqual(beforeSnapshots);
-      expect(check.prepare("SELECT * FROM undo ORDER BY path").all()).toEqual(beforeUndo);
+      // #138: v6 anchor-bearing rows are reclaimed; the shell columns above are the survivor.
+      expect(beforeSnapshots.length).toBeGreaterThan(0);
+      expect(beforeUndo.length).toBeGreaterThan(0);
+      expect(check.prepare("SELECT * FROM snapshots ORDER BY path").all()).toEqual([]);
+      expect(check.prepare("SELECT * FROM undo ORDER BY path").all()).toEqual([]);
       check.close();
     });
   });
@@ -1816,10 +1861,7 @@ it("getFileUndo heals a shape-corrupt row and deletes the pair", async () => {
     expect(internal.getFileUndo("/shape-corrupt.ts")).toBeUndefined();
 
     const check = new DatabaseSync(sqlitePath(home));
-    const count = (table: string) =>
-      check.prepare(`SELECT COUNT(*) AS n FROM ${table} WHERE path = ?`).get("/shape-corrupt.ts")?.[
-        "n"
-      ];
+    const count = (table: CountByPathTable) => countRowsByPath(check, table, "/shape-corrupt.ts");
     expect(count("file_undo")).toBe(0);
     expect(count("undo")).toBe(0);
     check.close();
@@ -1916,8 +1958,7 @@ it("getFileUndo propagates infrastructure failures instead of healing the pair a
       // have deleted both sides here.
       failFileUndoGet = false;
       const check = new DatabaseSync(sqlitePath(home));
-      const count = (table: string) =>
-        check.prepare(`SELECT COUNT(*) AS n FROM ${table} WHERE path = ?`).get(path)?.["n"];
+      const count = (table: CountByPathTable) => countRowsByPath(check, table, path);
       const pair = { fileUndo: count("file_undo"), undo: count("undo") };
       check.close();
 
@@ -2593,7 +2634,7 @@ it("writeUndoPair rejects both-absent with a TypeError and writes no rows", asyn
 });
 
 it("deleteByPath removes only the lineage family and leaves the other families intact", async () => {
-  await withTempHome(async (home) => {
+  await withTempHome(async (_home) => {
     const internal = (await loadHashStore()) as unknown as InternalHashStore;
     const { saveUndo } = await import("../../src/undo-edit.js");
     const { snapshotHashFor } = await import("../../src/snapshot-store/lineage-store.js");

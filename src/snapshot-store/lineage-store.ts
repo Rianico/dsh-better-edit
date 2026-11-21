@@ -26,14 +26,42 @@
  * @module dsh-better-edit/snapshot-store/lineage-store
  */
 import { DatabaseSync } from "node:sqlite";
-import { CANON_VERSION, canonDigest, contentChecksum } from "../hashline/hash-assign.js";
+import {
+  CANON_VERSION,
+  ANCHOR_GENERATION,
+  canonDigest,
+  contentChecksum,
+} from "../hashline/hash-assign.js";
 import { splitLines } from "../utils.js";
 import { withBusyRetry } from "../store-retry.js";
 import { pairSnapshots } from "./pairing.js";
 import { withTransaction } from "./txn.js";
 
+/**
+ * The snapshot key `(path, snapshotHash)`: BOTH identity axes plus the content checksum, the same
+ * shape `snapshot-store`'s legacy `snapshots.checksum` row carries.
+ * Canon first, generation second — a canon-only change is a plain cache miss, a generation change
+ * invalidates anchor-bearing state (the open-time sweep and the undo gate match this prefix).
+ */
 export function snapshotHashFor(content: string): string {
-  return `${CANON_VERSION}:${contentChecksum(content)}`;
+  return `${CANON_VERSION}:${ANCHOR_GENERATION}:${contentChecksum(content)}`;
+}
+
+/**
+ * True when a persisted snapshot key was minted by the current canon+generation axes.
+ *
+ * WHY split on `:` and compare BOTH components: a prefix-only test (`hash.startsWith(canon + ":")`)
+ * accepts the retired two-part shape `<canon>:<checksum>`, whose second component is a checksum and
+ * not a generation — the check would then bless exactly the rows it exists to refuse.
+ */
+export function isCurrentGenerationSnapshotHash(hash: string | null | undefined): boolean {
+  if (hash === null || hash === undefined) return false;
+  const parts = hash.split(":");
+  return (
+    parts.length >= 3 &&
+    parts[0] === String(CANON_VERSION) &&
+    parts[1] === String(ANCHOR_GENERATION)
+  );
 }
 
 /**
@@ -231,10 +259,10 @@ function pairLineIds(prev: PrevLine[], curCanons: string[]): (number | null)[] {
  * line 1, or a `canon_hash` that disagrees with the line being adopted — or undefined when it
  * can be adopted as-is.
  *
- * The canon arm cannot be version skew: `snapshotHashFor` embeds `CANON_VERSION` in the key that
- * found this row, and `canonDigest` is deterministic for a given line, so within the adopt arm a
- * mismatch can only be corruption. Excluding it would silently inherit the corrupt row's
- * `line_id` into every future `pairLineIds` pairing.
+ * The canon arm cannot be version skew: `snapshotHashFor` embeds BOTH axes (canon + anchor
+ * generation) in the key that found this row, and `canonDigest` is deterministic for a given line,
+ * so within the adopt arm a mismatch can only be corruption. Excluding it would silently inherit the
+ * corrupt row's `line_id` into every future `pairLineIds` pairing.
  *
  * Unusable is no longer thrown: the adopt arm repairs it (see the `unusable` branch below).
  * The diagnosis is still built so the repair warning carries the precise arm, and so a future

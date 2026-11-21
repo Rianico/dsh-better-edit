@@ -20,7 +20,15 @@ The tool never names a coordinate (anchor, line, path) it has not verified again
 _Avoid_: —
 
 **anchor philosophy**:
-The project's core contract: per-line anchors are content-derived with ASCII whitespace (`[ \t\r\n]`) stripped, stable for unchanged lines and across whitespace-only formatting, and position-independent; an anchor that cannot be resolved is rejected, never fuzzy-matched or silently relocated. Byte-level detection of non-whitespace changes is unchanged — token-level edits still rotate the anchor (ADR-0002).
+The project's core contract: per-line anchors are content-derived from the line's raw materialized bytes (never the canon), stable for unchanged lines, position-independent, and unique per file via probing; edge-whitespace formatter tolerance comes from the canon-keyed lease/pairing, not from the anchor digest, so a re-indent keeps a held anchor valid while its spelling rotates; interior whitespace is significant, including inside literals; an unresolvable anchor is rejected, never fuzzy-matched (ADR-0002 amended by ADR-0040 and ADR-0041).
+
+**canon**:
+The line with one leading and one trailing run of the frozen 28-code-point whitespace class removed — the ALIGNMENT and verification form, never the anchor's derivation base. Two lines with the same canon are "the same line after a reformat"; their anchors may still differ, because the bytes differ (ADR-0002, amended by ADR-0040 and ADR-0041).
+_Avoid_: canonical text, normalized line, whitespace-insensitive line (it is not the identity)
+
+**canon digest**:
+`xxh32(canon(line))`. Pairs snapshots and verifies served evidence — "did this line survive a reformat?" — and never names anchor identity (`line_lineage.canon_hash`, `served_leases.canon_hash`).
+_Avoid_: content hash (that is the whole-file `contentChecksum`), anchor hash
 
 **anchor staleness**:
 An anchor (one line, `remove_from` or `remove_to`) that no longer resolves against the current file because the line's content changed since it was served (`hash`/`canon`/`retired` miss). The model must re-`read` for fresh anchors.

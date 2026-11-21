@@ -5,6 +5,7 @@
  */
 export {
   CANON_VERSION,
+  ANCHOR_GENERATION,
   ANCHOR_LEN,
   HASH_SEP,
   HASH_SPACE,

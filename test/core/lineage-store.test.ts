@@ -2,6 +2,7 @@ import { describe, expect, it, beforeAll, vi } from "vitest";
 import { DatabaseSync } from "node:sqlite";
 import { splitLines } from "../../src/utils.js";
 import {
+  ANCHOR_GENERATION,
   CANON_VERSION,
   canonDigest,
   contentChecksum,
@@ -55,7 +56,12 @@ describe("lineage-store — first snapshot and lineage shape", () => {
       splitLines(content).map((line) => canonDigest(line)),
     );
     expect(rows.map((row) => row.anchor)).toEqual(hashes);
-    expect(snapshotHashFor(content)).toBe(`${CANON_VERSION}:${contentChecksum(content)}`);
+    // The key carries BOTH axes: canon (the alignment/verification digest) and the anchor
+    // generation (the raw-byte seeding). A canon-only change misses the cache; a generation change
+    // invalidates anchor-bearing state.
+    expect(snapshotHashFor(content)).toBe(
+      `${CANON_VERSION}:${ANCHOR_GENERATION}:${contentChecksum(content)}`,
+    );
   });
 
   it("returns [] for an unknown snapshot", () => {
