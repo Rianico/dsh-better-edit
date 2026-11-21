@@ -321,13 +321,13 @@ export function ctxFsIO(fs: FileSystem, ctx: Context): FileIO {
         const intent = await ctx.waterfall("fs/write-intent", target, exec, () =>
           guard?.createIfAbsent === true ? { kind: "createIfAbsent" as const } : undefined,
         );
-        // A create must never reach the provider as an unconditional write:
-        // a listener that resolves `undefined` would silently turn the guard
-        // back into create-or-overwrite, so the demand is the floor.
+        // Under the create guard the demand is a floor, not a default: a listener may
+        // resolve `undefined` or any other concrete kind (an observation-policy
+        // `replaceIfVersion`, say), and handing that to the provider would let a
+        // version match overwrite the competitor this guard exists to protect. A
+        // create therefore leaves this seam as `createIfAbsent` and nothing else.
         const effectiveIntent =
-          guard?.createIfAbsent === true && intent === undefined
-            ? ({ kind: "createIfAbsent" } as const)
-            : intent;
+          guard?.createIfAbsent === true ? ({ kind: "createIfAbsent" } as const) : intent;
         // The provider encodes the string as UTF-8; prep.textToWrite already carries
         // the restored BOM + line endings (or the explicit normalizeToUtf8 migration).
         const outcome = await fs.writeText(

@@ -3,7 +3,8 @@
  * only pre-`stat`ed, then wrote unconditionally — so a competitor's file
  * created inside the stat→write window was clobbered. The promise now holds at
  * both write seams: the dsh backend hands the provider
- * `{ kind: "createIfAbsent" }` (never `undefined`) and maps its
+ * `{ kind: "createIfAbsent" }` — whatever the `fs/write-intent` waterfall
+ * resolves, that demand is the floor — and maps its
  * `FS_NOT_OBSERVED` rejection to `E_FILE_EXISTS`, the local backend opens the
  * target with `O_EXCL`. Every case here asserts the competitor wins, never
  * last-writer-wins; the last case is the control proving the guard did not
@@ -107,15 +108,19 @@ function makeRacingProvider() {
   };
 }
 
-/** The host-plane context `ctxFsIO` needs (`fs/write-intent` waterfall + `fs/observed`). */
-function makeIoCtx() {
-  // `next()` is the bridge's own fallback, exactly as cordis runs it with no listener.
+/**
+ * The host-plane context `ctxFsIO` needs (`fs/write-intent` waterfall + `fs/observed`).
+ * With no argument the stub calls `next()`, the bridge's own fallback. An argument
+ * (including an explicit `undefined`) makes it resolve that value instead, standing
+ * in for a listener that answers the waterfall.
+ */
+function makeIoCtx(...resolvedIntent: [unknown?]) {
   const waterfall = async (
     _event: string,
     _target: unknown,
     _actor: unknown,
     next: () => unknown,
-  ) => next();
+  ) => (resolvedIntent.length === 0 ? next() : resolvedIntent[0]);
   return { waterfall, emit: () => {} } as unknown as Context;
 }
 
@@ -207,6 +212,43 @@ describe("str_replace_editor create is create-or-fail", () => {
       expect(error).toMatchObject({ code: "E_FILE_EXISTS" });
       expect(provider.text(path)).toBe(COMPETITOR);
       // The demand reaches the provider: never an unconditional (undefined) write.
+      expect(provider.intents).toEqual([{ kind: "createIfAbsent" }]);
+    });
+  });
+
+  it("floor: a waterfall resolving undefined still delivers the create intent", async () => {
+    await withTempDir("sre-create-floor-undefined-", async (dir) => {
+      const path = join(dir, "floor-undefined.txt");
+      const provider = makeRacingProvider();
+      const io: FileIO = ctxFsIO(provider.fs as never, makeIoCtx(undefined));
+      const tool = buildStrReplaceEditorTool(io, noSandbox());
+
+      const error = await rejectionOf(() =>
+        tool.execute({ command: "create", path, file_text: "mine\n" }, fakeExec(dir)),
+      );
+
+      expect(error).toMatchObject({ code: "E_FILE_EXISTS" });
+      expect(provider.text(path)).toBe(COMPETITOR);
+      expect(provider.intents).toEqual([{ kind: "createIfAbsent" }]);
+    });
+  });
+
+  it("floor: a conflicting waterfall kind cannot downgrade the create intent", async () => {
+    await withTempDir("sre-create-floor-conflict-", async (dir) => {
+      const path = join(dir, "floor-conflict.txt");
+      const provider = makeRacingProvider();
+      const io: FileIO = ctxFsIO(
+        provider.fs as never,
+        makeIoCtx({ kind: "replaceIfVersion", version: "whatever" }),
+      );
+      const tool = buildStrReplaceEditorTool(io, noSandbox());
+
+      const error = await rejectionOf(() =>
+        tool.execute({ command: "create", path, file_text: "mine\n" }, fakeExec(dir)),
+      );
+
+      expect(error).toMatchObject({ code: "E_FILE_EXISTS" });
+      expect(provider.text(path)).toBe(COMPETITOR);
       expect(provider.intents).toEqual([{ kind: "createIfAbsent" }]);
     });
   });
