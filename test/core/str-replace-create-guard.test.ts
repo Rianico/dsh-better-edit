@@ -53,12 +53,14 @@ async function rejectionOf(
 
 /**
  * An in-memory `ctx.fs` double implementing the documented provider contract.
- * Its first `stat` of an absent target observes `undefined` — then a competitor
- * appears in the stat→write window — and its `writeText` honours
+ * With `interleave` left on (the default) its first `stat` of an absent target
+ * observes `undefined` — then a competitor appears in the stat→write window, so
+ * a test can watch that window; `{ interleave: false }` keeps the target absent
+ * for the whole call. Its `writeText` honours
  * `createIfAbsent` the way the host documents it: an existing target is
  * refused with `FS_NOT_OBSERVED`.
  */
-function makeRacingProvider() {
+function makeRacingProvider(options: { interleave?: boolean } = {}) {
   const files = new Map<string, { text: string; version: number }>();
   const intents: Array<{ kind?: string } | undefined> = [];
   let seq = 1;
@@ -73,7 +75,7 @@ function makeRacingProvider() {
     stat: async (target: { targetKey: string }) => {
       const key = target.targetKey;
       const observed = files.get(key);
-      if (observed === undefined && !raced) {
+      if (options.interleave !== false && observed === undefined && !raced) {
         raced = true;
         files.set(key, { text: COMPETITOR, version: seq++ });
       }
@@ -250,6 +252,42 @@ describe("str_replace_editor create is create-or-fail", () => {
       expect(error).toMatchObject({ code: "E_FILE_EXISTS" });
       expect(provider.text(path)).toBe(COMPETITOR);
       expect(provider.intents).toEqual([{ kind: "createIfAbsent" }]);
+    });
+  });
+
+  it("dispatch: the guarded create still asks fs/write-intent exactly once", async () => {
+    await withTempDir("sre-create-dispatch-", async (dir) => {
+      const path = join(dir, "dispatched.txt");
+      const provider = makeRacingProvider({ interleave: false });
+      const dispatched: string[] = [];
+      // Answers like a listener that leaves the decision to the bridge's own
+      // fallback, but records that the seam asked at all.
+      const ctx = {
+        waterfall: async (
+          event: string,
+          _target: unknown,
+          _actor: unknown,
+          next: () => unknown,
+        ) => {
+          dispatched.push(event);
+          return next();
+        },
+        emit: () => {},
+      } as unknown as Context;
+      const io: FileIO = ctxFsIO(provider.fs as never, ctx);
+      const tool = buildStrReplaceEditorTool(io, noSandbox());
+
+      const result = (await tool.execute(
+        { command: "create", path, file_text: "mine\n" },
+        fakeExec(dir),
+      )) as unknown as { text: string };
+
+      expect(result.text).toMatch(/Created/);
+      // Half 1: the guarded path still dispatches, exactly once, under that name.
+      expect(dispatched).toEqual(["fs/write-intent"]);
+      // Half 2: the delivered intent is still the create demand.
+      expect(provider.intents).toEqual([{ kind: "createIfAbsent" }]);
+      expect(provider.text(path)).toBe("mine\n");
     });
   });
 
