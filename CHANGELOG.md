@@ -11,6 +11,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.2.6] - 2026-11-21
+
 ### Bug Fixes
 
 * **str-replace-editor:** make `create` create-or-fail end to end — the tool now hands the provider `{ kind: "createIfAbsent" }` and the local backend opens the target exclusively, so a competitor's file created inside the stat→write window is never overwritten, and both paths reject with `E_FILE_EXISTS`. (#136)
