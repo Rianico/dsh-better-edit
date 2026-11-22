@@ -11,6 +11,10 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Bug Fixes
+
+* **test:** close the hash store before temp-dir removal in the encoding fixture (#140)
+
 ## [1.2.6] - 2026-11-21
 
 ### Bug Fixes
