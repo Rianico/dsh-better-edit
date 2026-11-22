@@ -26,3 +26,40 @@ jobs:
       - run: pnpm install
       - run: pnpm run audit
       - run: pnpm run verify
+
+  windows-smoke:
+    # Windows is the majority platform; this focused job is additive to `verify`
+    # (Linux stays the release gate). See ADR-0044.
+    if: github.event_name == 'push' || github.event.pull_request.draft == false
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: { fetch-depth: 0 }
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        with: { run_install: false }
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with: { node-version: 26, cache: pnpm }
+      - name: Isolate HOME, USERPROFILE and DSH_HOME
+        env:
+          SMOKE_HOME: ${{ runner.temp }}\smoke-home
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path $env:SMOKE_HOME | Out-Null
+          "HOME=$env:SMOKE_HOME" >> $env:GITHUB_ENV
+          "USERPROFILE=$env:SMOKE_HOME" >> $env:GITHUB_ENV
+          "DSH_HOME=$env:SMOKE_HOME\.dsh" >> $env:GITHUB_ENV
+      - run: pnpm install --frozen-lockfile
+      - name: Windows filesystem/editor smoke
+        # Non-vacuous subset: encoding teardown carries the #140 EBUSY class,
+        # undo restores anchors, create-guard proves O_EXCL, and hashline read/
+        # write/cleanup proves the store's open-close lifetime.
+        run: >-
+          pnpm vitest run
+          test/core/encoding-roundtrip.test.ts
+          test/core/undo-anchor-restore.test.ts
+          test/core/str-replace-create-guard.test.ts
+          test/core/read-and-serve.test.ts
+          test/core/edit-engine.e2e.test.ts
+          test/core/vacuum.test.ts
+          test/core/hash-store.test.ts

@@ -21,6 +21,10 @@ All notable changes to this project will be documented in this file.
 * **adr:** sharpen ADR-0042 referent and residual-gap wording (#159)
 * **adr:** record ADR-0042 — shifted-buffer rejections are served-or-absent (#159)
 
+### Continuous Integration
+
+* **ci:** add a focused `windows-latest` smoke job so Windows-only filesystem and resource-lifetime regressions fail before release while Linux stays the release gate — the job runs the encoding teardown that carries the #140 `EBUSY` class plus undo, create-guard and hashline read/write/cleanup (ADR-0044). (#160)
+
 ## [1.2.6] - 2026-11-21
 
 ### Bug Fixes
