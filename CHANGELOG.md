@@ -19,6 +19,7 @@ All notable changes to this project will be documented in this file.
 
 ### Documentation
 
+* **adr:** name the retired preview arm in ADR-0043 (#142)
 * state the served-vs-rowless rejection rule in both READMEs and the glossary (#142)
 * **adr:** record ADR-0043 — rejection rows are a fresh read (#142)
 * **adr:** sharpen ADR-0042 referent and residual-gap wording (#150)
