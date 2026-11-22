@@ -17,6 +17,7 @@ All notable changes to this project will be documented in this file.
 
 ### Documentation
 
+* **adr:** sharpen ADR-0042 referent and residual-gap wording (#150)
 * **adr:** record ADR-0042 — shifted-buffer rejections are served-or-absent (#150)
 
 ## [1.2.6] - 2026-11-21

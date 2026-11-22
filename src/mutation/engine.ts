@@ -598,7 +598,11 @@ function shiftedBufferInner(error: DomainError, frames: BufferFrames): string | 
       return `${rowless.message.replace(FRESH_READ_HEADING_SUFFIX_RE, "")}${note}`;
     }
     default:
-      return undefined; // no other row-carrying code reaches the loop resolver
+      // No other row-carrying code reaches the loop resolver today. One that did would escape this
+      // rewrite and be thrown from `applyOne` unwrapped — no batch envelope, and, for a
+      // buffer-derived arm, rows under a fresh-read heading. Widening that catch is a follow-up
+      // decision, not part of the #150 rule.
+      return undefined;
   }
 }
 

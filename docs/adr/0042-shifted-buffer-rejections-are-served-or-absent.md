@@ -9,6 +9,10 @@ accepted (amends [ADR-0022](0022-region-scoped-rejection-serves.md)'s reject-and
 Upstream referent: `pi-better-edit@5412d3f` — _fix(edit): walk the outline fold gate in served coordinates (#270)_. The commit postdates the absorption cursor `0b1934c` and is unabsorbed; this record states the downstream decision only.
 Downstream records: [ADR-0019](0019-lease-identity-served-span-resolution.md) (the preview/`noPersist` route was deleted, so rows from a non-persisting path are never a serve), [ADR-0020](0020-atomic-store-pairs-and-corrupt-lineage-repair.md) (the named invariant "no user-visible claim about served anchors may be emitted before a successful serve write"), `src/mutation/engine.ts` (`BufferFrames`, `namedReadSentence`, `shiftedBufferInner`, `collectAbortPart`, `enforceNoopLoop`, `baselineLineById`), `src/domain-errors.ts` (`E_NOOP_LOOP.note`), `src/prompts.ts` (`EDIT_GUIDANCE`), `test/core/issue-150-abort-echo-mixed-snapshot.test.ts`, `test/core/issue-150-noop-loop-rowless.test.ts`
 
+[ADR-0013](0013-pos-free-roundtrip-optimization.md)'s surviving §2 (tombstone/allocation) is orthogonal
+to the buffer-frame question; its round-trip option was already dispositioned by
+[ADR-0019](0019-lease-identity-served-span-resolution.md).
+
 ## Context
 
 Issue #150. A single `edit` call submits two items: item 0 rewrites line 2 (`two`) into two lines, item 1 targets the 3-line span `one..three`. Item 0 applies to the in-memory batch buffer, every coordinate below it shifts, item 1's served window grows from 3 lines to 4, and `verifyServedRange` rejects with `E_STALE_RANGE`. The batch aborts and no byte reaches disk — that half was always correct.
@@ -65,5 +69,5 @@ Upstream's third hunk is not this decision: it walks the outline-fold interior i
 - Cost: a rejection that lands after a buffer change now costs one bounded read instead of zero. The message names the exact window, so it is one turn, not a search. A rejection that lands before any item changed the buffer — the common case — is unaffected.
 - [ADR-0022](0022-region-scoped-rejection-serves.md)'s invariant is amended, not superseded: a region is a region of the current file; a region named only inside an uncommitted buffer cannot be served, and withholding its rows is the region rule applied honestly rather than an exception to it.
 - [ADR-0020](0020-atomic-store-pairs-and-corrupt-lineage-repair.md)'s invariant gains its mirror image: as no claim about served anchors may precede a successful serve write, no claim about on-disk rows may describe rows the call never wrote.
-- Residual gap (follow-up decision, not a defect in this rule): a row-carrying `DomainError` that escapes `applyOne`'s narrow catch — `E_UNVERIFIED_RANGE` is the only such code in the resolver today — would render its rows unrewritten. Widening that catch is the ticket that closes it.
+- Residual gap (follow-up decision, not a defect in this rule): a row-carrying `DomainError` that escapes `applyOne`'s narrow catch — `E_UNVERIFIED_RANGE` is the only such code in the resolver today — would escape the batch envelope unwrapped (and, for `E_UNVERIFIED_RANGE`, with buffer-derived rows under a fresh-read heading). Widening that catch is the ticket that closes it.
 - The rule is stated to the model in `EDIT_GUIDANCE` (`src/prompts.ts`) and in the README reject-and-serve bullet, so a model reading either learns that a post-buffer-change refusal is rowless before it sees one.
