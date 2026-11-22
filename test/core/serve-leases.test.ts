@@ -196,9 +196,17 @@ describe("serve leases — bind to the named snapshot, never latest", () => {
 });
 
 // ---------------------------------------------------------------------------
-// CONTRACT: a rejected edit is observably a no-op for the next read.
+// CONTRACT: a rejection never manufactures a duplicate anchor, and the refusals that
+// record nothing are observably a no-op for the next read.
 //
-// After a rejected edit (any ServedRejectionError / AnchorMismatchError /
+// ADR-0043: a rejection that shows the current file's rows records them as a serve (rows
+// + canons + snapshot + leases), so this block now pins the two arms that still record
+// nothing:
+//   - a rowless refusal (a changed batch buffer, `E_TARGET_LOST`, an unresolved anchor);
+//   - a window whose echo would repeat a hash the mirror already holds at another position
+//     (`recordRejectionRows`' all-or-nothing duplicate gate).
+//
+// For both, after the rejection (any ServedRejectionError / AnchorMismatchError /
 // E_BATCH_ABORT / E_NOOP_LOOP):
 //   (a) `loadServed` is byte-identical to its value before the rejection;
 //   (b) no lease row is granted — no key appears and every grant field
@@ -210,10 +218,12 @@ describe("serve leases — bind to the named snapshot, never latest", () => {
 // editTool). Store reads happen inside `withWorkspace(cwd)` exactly as the
 // tools do — outside it `storePathFor` resolves to a different store.
 //
-// The served-row write was the defect: `recordEchoServes` re-committed the
-// rejection's echo rows from the *current* content, leaving a stale slot that
-// the next read turned into a duplicate anchor (`f9U` twice in the twin
-// fixture). The write is gone; a rejection now records nothing.
+// WHY the duplicate arm matters: `recordEchoServes` (T3f, deleted) re-committed the
+// rejection's echo rows with no line count, no canons and no snapshot — no lease was
+// granted, the stale slot survived, and the next read turned it into a duplicate anchor
+// (`f9U` twice in the twin fixture). ADR-0043 records the window again through the full
+// serve triple, and declines the window whenever its anchors disagree with the mirror's
+// served-stable assignment — so this contract survives where the old write broke it.
 // ---------------------------------------------------------------------------
 
 const TWIN_FILE =
