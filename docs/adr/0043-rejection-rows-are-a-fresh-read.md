@@ -55,6 +55,10 @@ What stays forbidden:
 
 Property this buys: a recorded window can never create a duplicate, and a declined window leaves the mirror byte-identical.
 
+### The preview arm
+
+The historical recorder took a policy argument — `recordEchoServes(sessionKey, path, rows, policy: "live" | "preview")`, last body at `git show a11a8332:src/served-state.ts` — and the `"preview"` arm recorded nothing (`if (policy !== "live") return;`); that arm's carrier is gone, because the non-persisting edit route and its `isPreview` input were deleted by [ADR-0019](0019-lease-identity-served-span-resolution.md), and `grep -rn 'isPreview' src/` returns no match. The surviving preview class is the rendered fallback echo: a rejection that carried no rows falls back to `echoRowsForItem`'s window over the committed snapshot, whose rows are shown for upstream parity ([ADR-0042](0042-shifted-buffer-rejections-are-served-or-absent.md)) and never recorded, because no region was identified — recording them would assert a serve the refusal never proved. Pinned by the `echoRowsForItem` cell in `test/core/issue-142-rejection-rows-are-served.test.ts`.
+
 ## Considered Options
 
 - **Docs-only fix (the issue's own suggestion)** — declined. The published one-turn contract can be made true for less work than un-publishing it, and a rowless-only rewrite leaves the common case (a single-item stale range) costing a read.
