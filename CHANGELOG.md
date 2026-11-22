@@ -14,7 +14,11 @@ All notable changes to this project will be documented in this file.
 ### Bug Fixes
 
 * **test:** close the hash store before temp-dir removal in the encoding fixture (#140)
-* **edit:** make a rejection raised after an earlier item of the call already changed the batch buffer served-or-absent — it shows no rows, records none, and names the current-file lines an anchored read would serve, instead of pairing uncommitted-buffer anchors with on-disk text; the noop-loop refusal follows the same rule through a new `E_NOOP_LOOP` note. Port of upstream `5412d3f`. (#150)
+* **edit:** make changed-buffer batch rejections served-or-absent (#150)
+
+### Documentation
+
+* **adr:** record ADR-0042 — shifted-buffer rejections are served-or-absent (#150)
 
 ### Continuous Integration
 
