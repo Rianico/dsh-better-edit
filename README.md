@@ -77,7 +77,7 @@ File editing is the #1 point of failure for autonomous agents. Traditional tools
 
 - **Edge-Whitespace Tolerance**: Anchors derive from the line's raw bytes; the alignment digest trims one leading and one trailing whitespace run. A re-indent or trailing-space strip keeps the held anchor valid through the lease (the spelling rotates with the bytes, the lease does not); interior whitespace — inside string literals too — is significant, and a change to it rejects fail-closed.
 - **Exterior Shift Auto-Rebase**: External edits, git checkouts, or background processes outside the edit span rebase seamlessly without agent intervention.
-- **Fail-Closed Reject-and-Serve**: Contested interior spans fail closed without disk corruption and immediately return fresh on-disk rows in the error (`[E_STALE_RANGE]`, `[E_UNSERVED_RANGE]`) — recovering in **exactly 1 turn**. One exception keeps the report honest: a refusal raised after an earlier item of the same call already changed the temporary buffer serves no rows and instead names the current-file lines an anchored read would serve.
+- **Fail-Closed Reject-and-Serve**: Contested interior spans fail closed without disk corruption and immediately return fresh on-disk rows in the error (`[E_STALE_RANGE]`, `[E_UNSERVED_RANGE]`) — those rows are **recorded as served** (rows, canons, snapshot and leases, exactly like a `read` of those lines), so retry needs no `read`. Two exceptions keep the report honest: a refusal raised after an earlier item of the same call already changed the temporary buffer shows no rows and names the current-file lines an anchored read would serve, and a window whose echoed anchor the served mirror already holds elsewhere is not recorded and says so.
 - **Session-Keyed Leases**: Leases are isolated per session, preventing cross-agent race conditions or state pollution.
 
 ### 3. 🎯 Zero Silent Miswrites
@@ -182,11 +182,11 @@ Env overrides yaml (`DSH_BETTER_EDIT_STORE_DIR`, `DSH_BETTER_EDIT_AUTO_GITIGNORE
 
 ## Why Hashline
 
-**Verified against what was served.** Every resolved line checked against `read`/diff/rejection rows. Stale or unseen → `[E_STALE_RANGE]`/`[E_UNSERVED_RANGE]` + fresh `HASH│content`, retry needs no `read`. Session-scoped — sub-agent serves never validate main edits.
+**Verified against what was served.** Every resolved line checked against `read`/diff/rejection rows. Stale or unseen → `[E_STALE_RANGE]`/`[E_UNSERVED_RANGE]` + fresh `HASH│content` recorded as served, so the retry needs no `read`; a refusal that shows no rows (a changed batch buffer, `[E_TARGET_LOST]`, an unresolved anchor) records nothing and names the read. Session-scoped — sub-agent serves never validate main edits.
 
 **Content-addressed.** The anchor is `xxh32` over the line's raw bytes → `62³=238,328` anchors, while `canon(line)` — one leading and one trailing whitespace run trimmed — is the alignment digest that pairs snapshots and verifies served evidence. Re-inserting identical text keeps its hash; a re-indent or trailing-space pass between edits rotates the spelling but not the lease, so the held anchor keeps working. Interior whitespace is significant — `"a b"` and `"ab"` are different lines, even inside a string literal. Unique by bitset probing — `}`/`import` repeats never collide; cap `238,328` lines (`[E_LARGE_FILE]`).
 
-**No loop, no ritual.** No-op → `No changes made`; same no-op ×3 → `[E_NOOP_LOOP]`. Diff/echo/rejection rows count as serves — `read` is recovery, not ritual.
+**No loop, no ritual.** No-op → `No changes made`; same no-op ×3 → `[E_NOOP_LOOP]`. Diff and row-carrying rejection rows count as serves — only a rowless refusal names a `read`, and `read` is recovery, not ritual.
 
 ### Token economics
 
@@ -221,37 +221,37 @@ Single stochastic run, `opencode-go/gpt-5.6-luna` high. [Artifact](https://githu
 
 ### Error codes
 
-| Code                      | Meaning                                                                      | What to do                                                                  |
-| ------------------------- | ---------------------------------------------------------------------------- | --------------------------------------------------------------------------- |
-| `[E_BAD_PAYLOAD]`         | Request shape is wrong (unknown field, missing `file`, bad tuple)            | Fix the shape and resend                                                    |
-| `[E_MALFORMED_ANCHOR]`    | The anchor token is not a bare 3-char anchor (pasted block or pseudo-anchor) | Pass the bare anchor and retry                                              |
-| `[E_UNKNOWN_ANCHOR]`      | The anchor was never served for this file                                    | `read` the file for fresh anchors                                           |
-| `[E_FOREIGN_ANCHOR]`      | The anchor belongs to another file or session                                | Use anchors served for this file                                            |
-| `[E_STALE_ANCHOR]`        | The anchor no longer resolves (hash / retired / canon miss)                  | `read` for fresh anchors                                                    |
-| `[E_AMBIGUOUS_MATCH]`     | `str_replace` `old_str` matches more than once                               | Narrow `old_str`                                                            |
-| `[E_NO_MATCH]`            | `str_replace` `old_str` is absent                                            | Re-`view` and retry                                                         |
-| `[E_EMPTY_RANGE]`         | The edit would empty a non-empty file                                        | Use `write`                                                                 |
-| `[E_STALE_RANGE]`         | The served range changed on disk                                             | Apply the echoed fresh rows                                                 |
-| `[E_UNSERVED_RANGE]`      | The range contains lines that were never served                              | `read` that range                                                           |
-| `[E_UNVERIFIED_RANGE]`    | A boundary anchor could not be verified against served state                 | `read` and retry                                                            |
-| `[E_SUSPICIOUS_TEXT]`     | Replacement text carries copied `HASH│` or diff-preview markers              | Remove them and resend                                                      |
-| `[E_BLIND_REPLACE]`       | `write` / `str_replace_editor` ran before the file was observed              | `read` / `view` first                                                       |
-| `[E_TARGET_LOST]`         | The target vanished or changed identity mid-operation                        | `read` and re-target                                                        |
-| `[E_BATCH_ABORT]`         | One item failed; nothing was written                                         | Fix the item and resend the batch                                           |
-| `[E_NOOP_LOOP]`           | The same no-op edit was resubmitted                                          | Change the edit                                                             |
-| `[E_ACCESS]`              | The path is not readable or writable                                         | Fix the permission                                                          |
-| `[E_NOT_FOUND]`           | No such file                                                                 | Check the parent directory                                                  |
-| `[E_FILE_EXISTS]`         | A `create` target already exists                                             | Choose a new path                                                           |
-| `[E_UNSUPPORTED_FILE]`    | Directory, binary, or non-text file                                          | Choose a text file                                                          |
-| `[E_ENCODING_UNWRITABLE]` | The recorded encoding cannot be reproduced by a UTF-8 text write             | Set `normalizeToUtf8: true` to migrate, or edit the file outside the plugin |
-| `[E_UNSUPPORTED]`         | `str_replace_editor undo_edit` is not implemented                            | Use `undo_last_edit`                                                        |
-| `[E_BAD_COMMAND]`         | Unknown `str_replace_editor` command                                         | Use `view`, `str_replace`, `insert`, or `create`                            |
-| `[E_LARGE_FILE]`          | Above the line or anchor-space limit                                         | Use `write` or split the file                                               |
-| `[E_UNDO_STALE]`          | The file changed after the edit                                              | No undo; re-read                                                            |
-| `[E_UNDO_UNAVAILABLE]`    | Undo history could not be persisted                                          | Retry the edit                                                              |
-| `[E_UNDO_NOT_RECORDED]`   | The revert landed but the store could not record it                          | Re-read; the next undo clears the stale history                             |
-| `[E_STORE_NEWER_VERSION]` | The store was written by a newer plugin version                              | Upgrade the plugin, or point the store elsewhere                            |
-| `[E_UNKNOWN]`             | Unexpected internal error                                                    | Report it; the message is preserved                                         |
+| Code                      | Meaning                                                                      | What to do                                                                           |
+| ------------------------- | ---------------------------------------------------------------------------- | ------------------------------------------------------------------------------------ |
+| `[E_BAD_PAYLOAD]`         | Request shape is wrong (unknown field, missing `file`, bad tuple)            | Fix the shape and resend                                                             |
+| `[E_MALFORMED_ANCHOR]`    | The anchor token is not a bare 3-char anchor (pasted block or pseudo-anchor) | Pass the bare anchor and retry                                                       |
+| `[E_UNKNOWN_ANCHOR]`      | The anchor was never served for this file                                    | `read` the file for fresh anchors                                                    |
+| `[E_FOREIGN_ANCHOR]`      | The anchor belongs to another file or session                                | Use anchors served for this file                                                     |
+| `[E_STALE_ANCHOR]`        | The anchor no longer resolves (hash / retired / canon miss)                  | `read` for fresh anchors                                                             |
+| `[E_AMBIGUOUS_MATCH]`     | `str_replace` `old_str` matches more than once                               | Narrow `old_str`                                                                     |
+| `[E_NO_MATCH]`            | `str_replace` `old_str` is absent                                            | Re-`view` and retry                                                                  |
+| `[E_EMPTY_RANGE]`         | The edit would empty a non-empty file                                        | Use `write`                                                                          |
+| `[E_STALE_RANGE]`         | The served range changed on disk                                             | Apply the echoed fresh rows (recorded as served); a rowless refusal names the `read` |
+| `[E_UNSERVED_RANGE]`      | The range contains lines that were never served                              | Use the echoed rows (recorded as served); a rowless refusal names the `read`         |
+| `[E_UNVERIFIED_RANGE]`    | A boundary anchor could not be verified against served state                 | `read` and retry                                                                     |
+| `[E_SUSPICIOUS_TEXT]`     | Replacement text carries copied `HASH│` or diff-preview markers              | Remove them and resend                                                               |
+| `[E_BLIND_REPLACE]`       | `write` / `str_replace_editor` ran before the file was observed              | `read` / `view` first                                                                |
+| `[E_TARGET_LOST]`         | The target vanished or changed identity mid-operation                        | `read` and re-target                                                                 |
+| `[E_BATCH_ABORT]`         | One item failed; nothing was written                                         | Fix the item and resend the batch                                                    |
+| `[E_NOOP_LOOP]`           | The same no-op edit was resubmitted                                          | Change the edit                                                                      |
+| `[E_ACCESS]`              | The path is not readable or writable                                         | Fix the permission                                                                   |
+| `[E_NOT_FOUND]`           | No such file                                                                 | Check the parent directory                                                           |
+| `[E_FILE_EXISTS]`         | A `create` target already exists                                             | Choose a new path                                                                    |
+| `[E_UNSUPPORTED_FILE]`    | Directory, binary, or non-text file                                          | Choose a text file                                                                   |
+| `[E_ENCODING_UNWRITABLE]` | The recorded encoding cannot be reproduced by a UTF-8 text write             | Set `normalizeToUtf8: true` to migrate, or edit the file outside the plugin          |
+| `[E_UNSUPPORTED]`         | `str_replace_editor undo_edit` is not implemented                            | Use `undo_last_edit`                                                                 |
+| `[E_BAD_COMMAND]`         | Unknown `str_replace_editor` command                                         | Use `view`, `str_replace`, `insert`, or `create`                                     |
+| `[E_LARGE_FILE]`          | Above the line or anchor-space limit                                         | Use `write` or split the file                                                        |
+| `[E_UNDO_STALE]`          | The file changed after the edit                                              | No undo; re-read                                                                     |
+| `[E_UNDO_UNAVAILABLE]`    | Undo history could not be persisted                                          | Retry the edit                                                                       |
+| `[E_UNDO_NOT_RECORDED]`   | The revert landed but the store could not record it                          | Re-read; the next undo clears the stale history                                      |
+| `[E_STORE_NEWER_VERSION]` | The store was written by a newer plugin version                              | Upgrade the plugin, or point the store elsewhere                                     |
+| `[E_UNKNOWN]`             | Unexpected internal error                                                    | Report it; the message is preserved                                                  |
 
 `ERROR_REGISTRY` in `src/domain-errors.ts` is the source of truth for this table; `test/arch/error-table-vocabulary.test.ts` fails when the two disagree.
 
