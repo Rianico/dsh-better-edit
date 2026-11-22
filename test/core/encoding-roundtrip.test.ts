@@ -9,7 +9,7 @@
  * fails BEFORE any write with `E_ENCODING_UNWRITABLE`, naming the text-only write
  * limitation and the `normalizeToUtf8: true` remedy. The file is left untouched.
  */
-import { beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -21,6 +21,7 @@ import {
   prepareForSave,
 } from "../../src/file-encoding-state.js";
 import { localIO } from "../../src/fs-bridge.js";
+import { shutdownHashStore } from "../../src/hash-store.js";
 import { buildStrReplaceEditorTool } from "../../src/tool-str-replace-editor.js";
 import { saveUndo, getUndo } from "../../src/undo-edit.js";
 import { persistUndoAndWrite } from "../../src/mutation.js";
@@ -35,6 +36,43 @@ import {
   setupIntegrationTest,
   withHome,
 } from "../support/fixtures.js";
+
+/**
+ * Teardown-ordering control for the spec-local fixture. The two module stubs below
+ * delegate every production call unchanged; they only observe whether the hash store
+ * closed before the temp dir was removed, and let one pin inject a Windows-style
+ * unlink failure.
+ */
+const teardown = vi.hoisted(() => ({
+  failRmWith: undefined as Error | undefined,
+  rmTarget: undefined as string | undefined,
+  shutdownCalls: 0,
+  shutdownCallsAtRm: -1,
+}));
+
+vi.mock("node:fs/promises", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:fs/promises")>();
+  return {
+    ...actual,
+    rm: async (...args: Parameters<typeof actual.rm>) => {
+      teardown.rmTarget = String(args[0]);
+      teardown.shutdownCallsAtRm = teardown.shutdownCalls;
+      if (teardown.failRmWith !== undefined) throw teardown.failRmWith;
+      return actual.rm(...args);
+    },
+  };
+});
+
+vi.mock("../../src/hash-store.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../src/hash-store.js")>();
+  return {
+    ...actual,
+    shutdownHashStore: () => {
+      teardown.shutdownCalls += 1;
+      actual.shutdownHashStore();
+    },
+  };
+});
 
 beforeAll(async () => {
   await initHasher();
@@ -60,6 +98,24 @@ function anchorsByContent(text: string): Map<string, string> {
 async function memoFor(path: string) {
   return getEncodingState(await resolveTarget(path));
 }
+
+/**
+ * The shared `withHome` owns HOME/DSH_HOME only. On Windows `os.homedir()` — which
+ * `store-config`'s `homeBase()` falls back to when HOME is empty — reads USERPROFILE,
+ * so this spec's fixture must own that variable too. Spec-local on purpose: the
+ * shared helper's contract is not this ticket's surface.
+ */
+function withSpecHome(home: string): () => void {
+  const previousProfile = process.env.USERPROFILE;
+  const restoreShared = withHome(home);
+  process.env.USERPROFILE = home;
+  return () => {
+    restoreShared();
+    if (previousProfile === undefined) delete process.env.USERPROFILE;
+    else process.env.USERPROFILE = previousProfile;
+  };
+}
+
 /** Isolated cwd + HOME so the hash store and undo history never touch the developer's home. */
 async function withTempBytes(
   name: string,
@@ -68,7 +124,7 @@ async function withTempBytes(
 ): Promise<void> {
   const cwd = await mkdtemp(join(tmpdir(), "enc-roundtrip-"));
   const path = join(cwd, name);
-  const restoreHome = withHome(cwd);
+  const restoreHome = withSpecHome(cwd);
   try {
     await writeFile(path, bytes);
     await run({ cwd, path });
@@ -76,8 +132,15 @@ async function withTempBytes(
     clearEncodingState();
     _resetConfigCache();
     delete process.env.DSH_BETTER_EDIT_NORMALIZE_TO_UTF8;
-    await rm(cwd, { recursive: true, force: true });
-    restoreHome();
+    // Windows refuses to unlink an open `hash-store.sqlite` (EBUSY), so the store
+    // must close before the directory goes away (upstream 9937e18).
+    shutdownHashStore();
+    try {
+      await rm(cwd, { recursive: true, force: true });
+    } finally {
+      // Unconditional: a failed rm must not leak the mutated HOME/DSH_HOME.
+      restoreHome();
+    }
   }
 }
 
@@ -459,5 +522,41 @@ describe("transaction — the round-trip verdict precedes every write", () => {
         expect(await getUndo(aPath)).toBeUndefined();
       });
     });
+  });
+});
+
+describe("fixture teardown — Windows-safe ordering", () => {
+  it("closes the hash store before removing the temp dir, and restores the env when rm fails", async () => {
+    const failure = new Error("EBUSY: simulated Windows unlink of an open hash-store.sqlite");
+    const previous = {
+      HOME: process.env.HOME,
+      DSH_HOME: process.env.DSH_HOME,
+      USERPROFILE: process.env.USERPROFILE,
+    };
+    teardown.failRmWith = failure;
+    teardown.shutdownCalls = 0;
+    teardown.shutdownCallsAtRm = -1;
+    try {
+      await expect(
+        withTempBytes("teardown.txt", Buffer.from("a\n", "utf-8"), async () => {
+          // No-op body: the pin is about teardown ordering only.
+        }),
+      ).rejects.toBe(failure);
+
+      // Ordering, not luck: the store closed exactly once before rm was attempted.
+      expect(teardown.shutdownCallsAtRm).toBe(1);
+      expect(teardown.rmTarget).toMatch(/enc-roundtrip-/);
+      // A failed rm must not leak the mutated home into later tests.
+      expect(process.env.HOME).toBe(previous.HOME);
+      expect(process.env.DSH_HOME).toBe(previous.DSH_HOME);
+      expect(process.env.USERPROFILE).toBe(previous.USERPROFILE);
+    } finally {
+      teardown.failRmWith = undefined;
+      if (teardown.rmTarget !== undefined) {
+        await rm(teardown.rmTarget, { recursive: true, force: true });
+      }
+      teardown.shutdownCalls = 0;
+      teardown.shutdownCallsAtRm = -1;
+    }
   });
 });
