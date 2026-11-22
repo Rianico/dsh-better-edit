@@ -224,6 +224,11 @@ export interface ErrorPayloadMap {
     count: number;
     batch: boolean;
     servedBlock: string;
+    /**
+     * Rowless changed-buffer variant: names the withheld rows and the current-file lines a read would
+     * serve. Rendered in place of the range block (`servedBlock === ""`).
+     */
+    note?: string;
   };
   E_UNSUPPORTED_FILE: {
     path: string;
@@ -531,11 +536,12 @@ function noopLoopFormat(payload: ErrorPayloadMap["E_NOOP_LOOP"]): string {
   // passes `batch: true`; the generic arm below keeps the message defined for
   // a non-batch payload the type still admits.
   if (payload.batch) {
-    return (
+    const base =
       `${payload.ref}: identical edit (${payload.anchorFrom} → ${payload.anchorTo}) submitted ${payload.count}×, no changes each time. ` +
-      `Range already contains this text; resend will reject the batch.` +
-      (payload.servedBlock ? `\nCurrent on-disk range:\n${payload.servedBlock}` : "")
-    );
+      `Range already contains this text; resend will reject the batch.`;
+    // WHY: a changed-buffer refusal is rowless — `note` replaces the range block and says so.
+    if (payload.note !== undefined && payload.servedBlock === "") return `${base} ${payload.note}`;
+    return base + (payload.servedBlock ? `\nCurrent on-disk range:\n${payload.servedBlock}` : "");
   }
   return (
     `identical edit (${payload.anchorFrom} → ${payload.anchorTo} ${payload.ref}) submitted ${payload.count}×, no changes each time. ` +

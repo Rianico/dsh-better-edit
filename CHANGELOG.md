@@ -14,6 +14,12 @@ All notable changes to this project will be documented in this file.
 ### Bug Fixes
 
 * **test:** close the hash store before temp-dir removal in the encoding fixture (#158)
+* **edit:** make changed-buffer batch rejections served-or-absent (#159)
+
+### Documentation
+
+* **adr:** sharpen ADR-0042 referent and residual-gap wording (#159)
+* **adr:** record ADR-0042 — shifted-buffer rejections are served-or-absent (#159)
 
 ## [1.2.6] - 2026-11-21
 
