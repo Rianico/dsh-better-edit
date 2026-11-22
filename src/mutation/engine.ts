@@ -15,8 +15,6 @@
 import type { FileIO } from "../fs-bridge.js";
 import { loadHashStore, type HashStore, type InternalHashStore } from "../hash-store.js";
 import type { LineEnding } from "../edit-diff.js";
-import { loadConfig } from "../store-config.js";
-import { canon } from "../hashline/hash-assign.js";
 import { normFromText } from "../file-view.js";
 import { scanDrift, loadServed, loadServedCanons, loadRetiredAnchors } from "../session-view.js";
 import { applyEdit, resEdit, type HEdit, type NEdit } from "../hashline/anchor-pipeline.js";
@@ -25,6 +23,7 @@ import { lineHashes } from "../hashline/hash.js";
 import { HASH_SPACE, isPromotableAnchorSpaceExhaustion } from "../hashline/hash-assign.js";
 import { buildNeverServedEditHint } from "../hashline/served-guard.js";
 import { encodingHintAtVersion } from "../file-encoding-state.js";
+import { recordRejectionRows } from "./rejection-serve.js";
 
 function promotionWarning(retiredSize: number, servedLen: number): string {
   // Soft promotion notice: plain non-header text (no [E_] code, no audience).
@@ -480,6 +479,12 @@ type AbortPart = {
   echoBlock: string;
   /** Structural rows rendered without heading (unions into servedBlock). */
   fmtBlock: string;
+  /**
+   * Serve outcome for the echoed rows (ADR-0043): `true` = the rows landed as a serve;
+   * `false` = a serve was attempted and rolled back; `undefined` = no serve was attempted
+   * (no claim is made in the message).
+   */
+  rowsServed?: boolean;
   cause: RangeCause | undefined;
 };
 
@@ -608,12 +613,14 @@ function shiftedBufferInner(error: DomainError, frames: BufferFrames): string | 
 
 /**
  * Shared echo resolution for batch rejections: prefer the failure's own
- * rows, else the resolved edit's rows. The rows are rendered into the
- * envelope only — a rejection records and grants nothing.
+ * rows, else the resolved edit's rows. A row-carrying rejection from the
+ * committed on-disk snapshot RECORDS those rows as a serve (ADR-0043), so a
+ * retry with an echoed anchor resolves; a rowless refusal records nothing.
  *
  * `frames` (live batch only) makes the rejection served-or-absent once an
- * earlier item changed the working buffer: the rows are dropped, and the message
- * names the current-file lines an anchored read would serve.
+ * earlier item changed the working buffer: the rows are dropped, nothing is
+ * recorded, and the message names the current-file lines an anchored read
+ * would serve.
  */
 async function collectAbortPart(opts: {
   sessionKey: string;
@@ -644,16 +651,39 @@ async function collectAbortPart(opts: {
       };
     }
   }
+  const carriedRows = opts.error.servedRows;
   const echoRows =
-    opts.error.servedRows.length > 0
-      ? opts.error.servedRows
+    carriedRows.length > 0
+      ? carriedRows
       : opts.edit
         ? echoRowsForItem(opts.edit, opts.originalHashes)
         : undefined;
+  // ADR-0043: record ONLY when (a) no earlier item of the call changed the buffer
+  // (`frames === undefined`) and (b) the rejection itself carried the rows
+  // (`servedRows.length > 0` — the verifier identified the region from the committed
+  // snapshot). The `echoRowsForItem` fallback arm (zero-row rejection) is a rendered
+  // preview of a region nobody proved served — never recorded. `recordRejectionRows`
+  // declines a window that would duplicate an anchor already served elsewhere.
+  const rowsServed =
+    opts.frames === undefined && carriedRows.length > 0 && echoRows !== undefined
+      ? await recordRejectionRows({
+          sessionKey: opts.sessionKey,
+          absolutePath: opts.absolutePath,
+          rows: echoRows,
+          content: opts.originalNormalized,
+          hashes: opts.originalHashes,
+        })
+      : undefined;
   const originalLines = splitLines(opts.originalNormalized);
   const fmtBlock = echoRows ? fmtServedRows(echoRows, originalLines) : "";
+  const serveSentence =
+    rowsServed === true
+      ? "\nThese rows are the file's current anchors and were recorded as served — retry with them."
+      : rowsServed === false
+        ? "\nThese rows are the file's current anchors but were NOT recorded as served — re-read before retrying."
+        : "";
   const echoBlock = echoRows
-    ? ` Current on-disk range for edits[${opts.index}] (unchanged — nothing was written):\n${fmtBlock}`
+    ? ` Current on-disk range for edits[${opts.index}] (unchanged — nothing was written):\n${fmtBlock}${serveSentence}`
     : " Call read() to get fresh anchors.";
   return {
     index: opts.index,
@@ -661,6 +691,7 @@ async function collectAbortPart(opts: {
     echoRows,
     echoBlock,
     fmtBlock,
+    ...(rowsServed !== undefined ? { rowsServed } : {}),
     cause: opts.error.cause,
   };
 }

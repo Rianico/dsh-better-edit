@@ -610,7 +610,7 @@ describe("rejection payload region rule (ADR-0022)", () => {
     );
   });
 
-  it("a rejection inside a region leaves the served mirror and out-of-region slots untouched (T3f per region)", async () => {
+  it("a rejection re-serves only its region and leaves out-of-region slots untouched (ADR-0043)", async () => {
     await withTempFile(
       "region.txt",
       "alpha\nbeta\ngamma\ndelta\nepsilon\n",
@@ -644,7 +644,10 @@ describe("rejection payload region rule (ADR-0022)", () => {
         }
         expect(caught).toBeDefined();
         const after = await withWorkspace(cwd, () => loadServed("test-session", path));
-        expect(after).toEqual(before);
+        // ADR-0043: a row-carrying rejection records the window it echoed, so the mirror now
+        // holds the CURRENT file's rows at those positions instead of the pre-change ones.
+        const currentHashes = lineHashesPure("beta\nalpha\nbeta\ngamma\ndelta\nepsilon");
+        expect(after.slice(0, 2)).toEqual([currentHashes[0]!, currentHashes[1]!]);
         // Rows outside the region stay unserved.
         expect(after.slice(2).every((slot) => slot === null)).toBe(true);
       },

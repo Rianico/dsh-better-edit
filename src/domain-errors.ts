@@ -156,12 +156,12 @@ export interface ErrorPayloadMap {
     servedBlock: string;
     cause?: RangeCause;
     firstOffendingLine?: number;
-    // The echoed rows are the CURRENT file's anchors, not serves — nothing records them
-    // (`recordEchoServes` was deleted by T3f), so a retry with them rejects at the same site
-    // (measured, T4 CP0 G3/H1). T6 deleted the `reread` flag that used to say so: the flag
-    // was a constant `true` on every producer, so the payload's rows (`servedRows.length`)
-    // carry the distinction — empty means the region is unidentifiable and only a read
-    // restores it; non-empty means the rows are the named region's current anchors.
+    // The echoed rows are the CURRENT file's anchors AND a real serve: a rejection that
+    // identified the region from the committed snapshot records them (rows + canons +
+    // snapshot + leases, ADR-0043), so a retry with them resolves. The payload's rows
+    // (`servedRows.length`) carry the distinction — empty means the region is
+    // unidentifiable, nothing is recorded, and only a read of the named lines restores it;
+    // non-empty means the rows are the named region's current anchors.
   };
   E_TARGET_LOST: {
     servedLine: number;
