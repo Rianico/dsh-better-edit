@@ -13,6 +13,7 @@ All notable changes to this project will be documented in this file.
 
 ### Bug Fixes
 
+* **test:** close the hash store before temp-dir removal in the encoding fixture (#158)
 * **edit:** make changed-buffer batch rejections served-or-absent (#159)
 
 ### Documentation
