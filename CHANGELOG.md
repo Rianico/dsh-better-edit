@@ -11,6 +11,10 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Bug Fixes
+
+* **edit:** make a rejection raised after an earlier item of the call already changed the batch buffer served-or-absent — it shows no rows, records none, and names the current-file lines an anchored read would serve, instead of pairing uncommitted-buffer anchors with on-disk text; the noop-loop refusal follows the same rule through a new `E_NOOP_LOOP` note. Port of upstream `5412d3f`. (#150)
+
 ## [1.2.6] - 2026-11-21
 
 ### Bug Fixes

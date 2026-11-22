@@ -77,7 +77,7 @@ File editing is the #1 point of failure for autonomous agents. Traditional tools
 
 - **Edge-Whitespace Tolerance**: Anchors derive from the line's raw bytes; the alignment digest trims one leading and one trailing whitespace run. A re-indent or trailing-space strip keeps the held anchor valid through the lease (the spelling rotates with the bytes, the lease does not); interior whitespace — inside string literals too — is significant, and a change to it rejects fail-closed.
 - **Exterior Shift Auto-Rebase**: External edits, git checkouts, or background processes outside the edit span rebase seamlessly without agent intervention.
-- **Fail-Closed Reject-and-Serve**: Contested interior spans fail closed without disk corruption and immediately return fresh on-disk rows in the error (`[E_STALE_RANGE]`, `[E_UNSERVED_RANGE]`) — recovering in **exactly 1 turn**.
+- **Fail-Closed Reject-and-Serve**: Contested interior spans fail closed without disk corruption and immediately return fresh on-disk rows in the error (`[E_STALE_RANGE]`, `[E_UNSERVED_RANGE]`) — recovering in **exactly 1 turn**. One exception keeps the report honest: a refusal raised after an earlier item of the same call already changed the temporary buffer serves no rows and instead names the current-file lines an anchored read would serve.
 - **Session-Keyed Leases**: Leases are isolated per session, preventing cross-agent race conditions or state pollution.
 
 ### 3. 🎯 Zero Silent Miswrites
