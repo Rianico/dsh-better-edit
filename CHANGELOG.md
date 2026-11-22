@@ -19,6 +19,7 @@ All notable changes to this project will be documented in this file.
 
 ### Documentation
 
+* **agents:** record the defect-driven targeted port and refresh the freshness gate
 * **adr:** name the retired preview arm in ADR-0043 (#142)
 * state the served-vs-rowless rejection rule in both READMEs and the glossary (#142)
 * **adr:** record ADR-0043 — rejection rows are a fresh read (#142)
