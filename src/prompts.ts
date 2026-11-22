@@ -31,7 +31,7 @@ export const EDIT_GUIDANCE: ToolGuidance = {
     "`edit`: after an edit whose serve landed, the returned diff shows fresh anchors (`HASH\u2502content`) \u2014 copy new `HASH` values from there for the next edit; if the result says the rows were NOT recorded as served, re-read instead.",
     "`edit`: `anchor_from`/`anchor_to` are inclusive; batch multiple edits to the same file only when independent \u2014 they apply atomically (fail \u2192 nothing written).",
     "`edit`: `[TO MODEL]` errors (e.g. `E_STALE_*`, `E_UNSERVED_*`, `E_BAD_PAYLOAD`, `E_SUSPICIOUS_TEXT`) need a retry; a `[MODEL]`-routed warning carries an action you must take (e.g. resending a no-op rejects) \u2014 `[USER]` warnings/`drift:` notices are human-only.",
-    "`edit`: on `E_STALE_ANCHOR` re-read for fresh anchors; on `E_STALE_RANGE`/`E_UNSERVED_RANGE` the echoed rows are the file's current anchors, NOT serves — re-read before retrying.",
+    "`edit`: on `E_STALE_ANCHOR` re-read for fresh anchors; on `E_STALE_RANGE`/`E_UNSERVED_RANGE` the echoed rows are the file's current anchors, NOT serves — re-read before retrying. A refusal raised after an earlier item of the call already changed the buffer serves no rows and names the current-file lines an anchored read would serve.",
   ],
 };
 

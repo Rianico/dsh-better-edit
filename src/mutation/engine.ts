@@ -92,8 +92,8 @@ import {
 } from "../hashline/served-evidence.js";
 import type { ResolvedRange } from "../hashline/served-evidence.js";
 import type { ServedRow } from "../hashline/anchor-pipeline.js";
-import { DomainError, formatWarning } from "../domain-errors.js";
-import type { RangeCause } from "../domain-errors.js";
+import { DomainError, FRESH_READ_HEADING, formatWarning } from "../domain-errors.js";
+import type { ErrorPayloadMap, RangeCause } from "../domain-errors.js";
 import type { EditMode } from "../contract.js";
 import type { ServedPersistence } from "../hash-store.js";
 import { clearNoopLoop, noopPayloadKey, trackNoopPayload } from "../noop-guard.js";
@@ -137,6 +137,23 @@ export interface FileEditResult {
   newlyRetired: string[];
   range: ResolvedRange;
 }
+
+// ---------------------------------------------------------------------------
+// pre-batch coordinate map (rowless changed-buffer rejections)
+
+/**
+ * Maps a line of the live batch buffer to the line it occupied before the batch's first item. `undefined`
+ * means the line has no baseline — the batch created it.
+ */
+type BaselineLineOf = (bufferLine: number) => number | undefined;
+
+/** The buffer frames a rowless rejection renders in. */
+type BufferFrames = {
+  /** Buffer line → pre-batch line; `undefined` = the batch created the line. */
+  lineOf: BaselineLineOf;
+  /** False when the store gave no identity map at all: no line can be mapped, so none may be named. */
+  complete: boolean;
+};
 
 // ---------------------------------------------------------------------------
 // request / counting helpers shared by both tool paths
@@ -372,6 +389,13 @@ export interface NoopLoopOptions {
   originalNormalized: string;
   /** Batch flavor: precomputed echo rows for the failed item (may be absent). */
   echoRows?: ServedRow[];
+  /**
+   * Present once an earlier item of the live batch changed the working buffer: the noop's rows then
+   * come from an uncommitted buffer, so the refusal shows and records none.
+   */
+  frames?: BufferFrames;
+  /** The noop item's resolved range in the live buffer (same present-with-`frames` rule). */
+  range?: { startLine: number; endLine: number };
 }
 
 /**
@@ -383,10 +407,37 @@ export interface NoopLoopOptions {
 export async function enforceNoopLoop(opts: NoopLoopOptions): Promise<string | undefined> {
   const { anchorFrom, anchorTo, displayPath, index, count } = opts;
   if (count >= NOOP_LOOP_THRESHOLD) {
+    const ref = `edits[${index}] (${displayPath})`;
+    const frames = opts.frames;
+    if (frames !== undefined) {
+      // Served-or-absent (upstream `pi-better-edit@5412d3f` noop arm): rows from a buffer this call has
+      // not committed are not guaranteed current-file rows — show none, record none, grant none.
+      // Without an identity map (`complete === false`) no buffer line can be mapped to a current-file
+      // line, so the note names no line instead of claiming the rows do not exist.
+      const range = opts.range;
+      const currentLines =
+        !frames.complete || range === undefined
+          ? []
+          : [range.startLine, range.endLine]
+              .map((line) => frames.lineOf(line))
+              .filter((line): line is number => line !== undefined);
+      const note =
+        "An earlier item of this call had already changed the temporary batch buffer, so this " +
+        `rejection shows no rows and none were recorded as served. ${namedReadSentence(currentLines, frames.complete)}`;
+      throw new DomainError("E_NOOP_LOOP", {
+        ref,
+        anchorFrom,
+        anchorTo,
+        count,
+        batch: true,
+        servedBlock: "",
+        note,
+      });
+    }
     const originalLines = splitLines(opts.originalNormalized);
     const echoRows = opts.echoRows;
     throw new DomainError("E_NOOP_LOOP", {
-      ref: `edits[${index}] (${displayPath})`,
+      ref,
       anchorFrom,
       anchorTo,
       count,
@@ -432,10 +483,133 @@ type AbortPart = {
   cause: RangeCause | undefined;
 };
 
+/** Regex for the `line N` / `line N-M` headline forms the producers emit. */
+const HEADLINE_LINE_RE = /\bline (\d+)(?:-(\d+))?\b/g;
+
+/** Escapes a literal string so it can be embedded in a `RegExp` source. */
+const escapeRe = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+/** Trailing fresh-read heading on a rendered message (built from the one literal, never a copy). */
+const FRESH_READ_HEADING_SUFFIX_RE = new RegExp(`\\n${escapeRe(FRESH_READ_HEADING)}\\s*$`);
+
+/**
+ * The current-file sentence a rowless rejection owes the model: which lines an anchored read would
+ * serve. Facts only — no retry directive. Without an identity map (`complete === false`) no line can
+ * be named, so the sentence states the gap instead of claiming the rows do not exist.
+ */
+function namedReadSentence(currentLines: number[], complete: boolean): string {
+  if (!complete) {
+    return "The current-file line numbers of these rows could not be determined; re-read the file for fresh anchors.";
+  }
+  return currentLines.length > 0
+    ? `An anchored read of current-file lines ${Math.min(...currentLines)}-${Math.max(...currentLines)} would serve that range.`
+    : "None of these rows exist in the current file.";
+}
+
+/**
+ * A rejection raised inside a batch buffer that earlier items already changed, made served-or-absent
+ * (upstream `pi-better-edit@5412d3f` `shiftedBufferRejection`): its rows come from a buffer this call
+ * has not committed as the current on-disk state, so they are not guaranteed current-file rows — none
+ * are shown, none record a serve, none grant a lease. The message keeps the code and its headline,
+ * re-anchored to current-file coordinates, and names the lines an anchored read would serve.
+ * `undefined` means "no such rule applies to this code".
+ */
+function shiftedBufferInner(error: DomainError, frames: BufferFrames): string | undefined {
+  // E_UNVERIFIED_RANGE rows name served coordinates (already current-file lines); every other
+  // producer names working-buffer coordinates.
+  const rowsAreBufferCoordinates = error.code !== "E_UNVERIFIED_RANGE";
+  const toCurrentLine = (line: number): number | undefined =>
+    rowsAreBufferCoordinates ? frames.lineOf(line) : line;
+  const currentLines = error.servedRows
+    .map((row) => toCurrentLine(row.position + 1))
+    .filter((line): line is number => line !== undefined);
+  const read = namedReadSentence(currentLines, frames.complete);
+  const relabel = (text: string): string =>
+    frames.complete
+      ? text.replace(HEADLINE_LINE_RE, (whole: string, start: string, end?: string) => {
+          const s = toCurrentLine(Number(start));
+          // A buffer-created line keeps its producer text: upstream leaves the number untouched when
+          // there is no baseline, and a fabricated number would name a line that never existed.
+          if (s === undefined) return whole;
+          if (end === undefined) return `line ${s}`;
+          const e = toCurrentLine(Number(end));
+          return e === undefined ? `line ${s}` : `line ${s}-${e}`;
+        })
+      : // No identity map: no number here can be trusted, so none is printed.
+        text.replace(HEADLINE_LINE_RE, () => "a line");
+  const firstCurrent =
+    error.firstOffendingLine === undefined ? undefined : toCurrentLine(error.firstOffendingLine);
+  const note =
+    " An earlier item of this call had already changed the temporary batch buffer, so this " +
+    "rejection's rows come from an uncommitted buffer and are not guaranteed current-file rows: " +
+    `none are shown, none grant leases and none were recorded as served. ${read}`;
+  switch (error.code) {
+    case "E_STALE_RANGE": {
+      // SAFETY: switch (error.code) selects the payload shape this cast asserts.
+      const p = error.payload as ErrorPayloadMap["E_STALE_RANGE"];
+      const rowless = new DomainError("E_STALE_RANGE", {
+        ...p,
+        headline: relabel(p.headline),
+        servedRows: [],
+        servedBlock: "",
+        ...(firstCurrent !== undefined ? { firstOffendingLine: firstCurrent } : {}),
+      });
+      return `${rowless.message}${note}`;
+    }
+    case "E_STALE_ANCHOR": {
+      // SAFETY: switch (error.code) selects the payload shape this cast asserts.
+      const p = error.payload as ErrorPayloadMap["E_STALE_ANCHOR"];
+      const rowless = new DomainError("E_STALE_ANCHOR", {
+        ...p,
+        headline: relabel(p.headline),
+        servedRows: [],
+        servedBlock: "",
+      });
+      return `${rowless.message}${note}`;
+    }
+    case "E_UNSERVED_RANGE": {
+      // SAFETY: switch (error.code) selects the payload shape this cast asserts.
+      const p = error.payload as ErrorPayloadMap["E_UNSERVED_RANGE"];
+      const rowless = new DomainError("E_UNSERVED_RANGE", {
+        ...p,
+        headline: relabel(p.headline),
+        servedRows: [],
+        servedBlock: "",
+        ...(firstCurrent !== undefined ? { firstOffendingLine: firstCurrent } : {}),
+      });
+      return `${rowless.message}${note}`;
+    }
+    case "E_UNVERIFIED_RANGE": {
+      // SAFETY: switch (error.code) selects the payload shape this cast asserts.
+      const p = error.payload as ErrorPayloadMap["E_UNVERIFIED_RANGE"];
+      const rowless = new DomainError("E_UNVERIFIED_RANGE", {
+        ...p,
+        servedRows: [],
+        servedBlock: "",
+        ...(firstCurrent !== undefined ? { firstOffendingLine: firstCurrent } : {}),
+      });
+      // Its formatter always appends the fresh-read heading; a rowless arm must not dangle it.
+      // Reachability: NOT reachable from the in-loop resolver today — `applyOne` forwards only
+      // `ServedRejectionError`/`AnchorMismatchError` to `onReject` (engine.ts:294-297 in this file) and
+      // `ServedCode` excludes this code (src/hashline/served-evidence.ts:29). The arm stays because
+      // this is the only place the served-coordinate frame is written down: its rows come from
+      // `lease.servedLineNumber` (src/hashline/served-evidence.ts:277-292), i.e. served coordinates.
+      // A future widening of that catch must keep this frame rule.
+      return `${rowless.message.replace(FRESH_READ_HEADING_SUFFIX_RE, "")}${note}`;
+    }
+    default:
+      return undefined; // no other row-carrying code reaches the loop resolver
+  }
+}
+
 /**
  * Shared echo resolution for batch rejections: prefer the failure's own
  * rows, else the resolved edit's rows. The rows are rendered into the
  * envelope only — a rejection records and grants nothing.
+ *
+ * `frames` (live batch only) makes the rejection served-or-absent once an
+ * earlier item changed the working buffer: the rows are dropped, and the message
+ * names the current-file lines an anchored read would serve.
  */
 async function collectAbortPart(opts: {
   sessionKey: string;
@@ -445,7 +619,27 @@ async function collectAbortPart(opts: {
   index: number;
   originalNormalized: string;
   originalHashes: string[];
+  /** Present once an earlier item of the live batch changed the working buffer. */
+  frames?: BufferFrames;
 }): Promise<AbortPart> {
+  // WHY a zero-row rejection falls through to the row fallback instead of the served-or-absent rule:
+  // upstream (`pi-better-edit@5412d3f`) rewrites only when `servedRows.length > 0`, and the fallback
+  // renders `echoRowsForItem`'s pre-batch rows, which are self-consistent — never the mixed
+  // batch-buffer snapshot this rule exists to hide. Recorded for ADR-0042.
+  if (opts.frames !== undefined && opts.error.servedRows.length > 0) {
+    const inner = shiftedBufferInner(opts.error, opts.frames);
+    if (inner !== undefined) {
+      // Served-or-absent: no rows, no serve record, no lease — the message names the read that helps.
+      return {
+        index: opts.index,
+        inner,
+        echoRows: undefined,
+        echoBlock: " Call read() to get fresh anchors.",
+        fmtBlock: "",
+        cause: opts.error.cause,
+      };
+    }
+  }
   const echoRows =
     opts.error.servedRows.length > 0
       ? opts.error.servedRows
@@ -749,6 +943,22 @@ export async function runFileEdits(
     originalPositions === undefined
       ? undefined
       : idsFromPositions(originalPositions, splitLines(originalNormalized).length);
+  // Pre-batch line of each identity, so a rejection inside a buffer that earlier items already changed
+  // can name the current-file lines an anchored read would serve (see `shiftedBufferInner`). The map is
+  // frozen before the batch; `currentIds` is not — it advances past every applied item.
+  const baselineLineById = new Map<number, number>();
+  if (currentIds !== undefined) {
+    currentIds.forEach((id, i) => {
+      if (id !== null && id !== undefined) baselineLineById.set(id, i + 1);
+    });
+  }
+  const baselineLineOf: BaselineLineOf = (bufferLine) => {
+    const id = currentIds?.[bufferLine - 1];
+    return id === null || id === undefined ? undefined : baselineLineById.get(id);
+  };
+  // Snapshot the pre-loop coverage: `currentIds` advances past every applied item but never goes
+  // undefined → defined, so a const taken here states whether any buffer line can be mapped at all.
+  const frames: BufferFrames = { lineOf: baselineLineOf, complete: currentIds !== undefined };
   let currentContent = originalNormalized;
   let currentHashes = originalHashes;
   let appliedCount = 0;
@@ -846,6 +1056,8 @@ export async function runFileEdits(
             index: item.index,
             originalNormalized,
             originalHashes,
+            // Served-or-absent once an earlier item changed the buffer (see `shiftedBufferInner`).
+            ...(currentContent !== originalNormalized ? { frames } : {}),
           });
           throw buildBatchAbort(item.file, [part]);
         }
@@ -890,6 +1102,10 @@ export async function runFileEdits(
         count,
         originalNormalized,
         echoRows: echoRowsForItem(applied.edit, originalHashes),
+        // Same served-or-absent rule as the shifted-buffer rejections: the noop's rows come from a
+        // buffer earlier items changed, so they name current-file lines only and record nothing.
+        ...(currentContent !== originalNormalized ? { frames } : {}),
+        range: { startLine: applied.range.startLine, endLine: applied.range.endLine },
       });
       if (notice) warnings.push(notice);
       warnings.push(
