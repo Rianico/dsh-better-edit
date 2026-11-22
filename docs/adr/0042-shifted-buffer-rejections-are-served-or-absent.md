@@ -71,3 +71,10 @@ Upstream's third hunk is not this decision: it walks the outline-fold interior i
 - [ADR-0020](0020-atomic-store-pairs-and-corrupt-lineage-repair.md)'s invariant gains its mirror image: as no claim about served anchors may precede a successful serve write, no claim about on-disk rows may describe rows the call never wrote.
 - Residual gap (follow-up decision, not a defect in this rule): a row-carrying `DomainError` that escapes `applyOne`'s narrow catch — `E_UNVERIFIED_RANGE` is the only such code in the resolver today — would escape the batch envelope unwrapped (and, for `E_UNVERIFIED_RANGE`, with buffer-derived rows under a fresh-read heading). Widening that catch is the ticket that closes it.
 - The rule is stated to the model in `EDIT_GUIDANCE` (`src/prompts.ts`) and in the README reject-and-serve bullet, so a model reading either learns that a post-buffer-change refusal is rowless before it sees one.
+
+## Amendment (ADR-0043)
+
+[ADR-0043](0043-rejection-rows-are-a-fresh-read.md) reverses the no-record arm for one class of refusal and leaves this record's own arm untouched.
+
+- The §Decision sentence "No serve, lease or mirror write exists on the reject path — those writes live once, after the loop, in `src/mutation.ts`" is corrected: for a refusal that identified a window on the committed snapshot (the pre-batch echo this record's pre-pass still renders), those rows are now recorded as served — rows, canons, snapshot and leases — by `recordRejectionRows` (`src/mutation/rejection-serve.ts`), called from `collectAbortPart`. The changed-buffer arm of this record is unchanged: it stays rowless and records nothing, and `src/mutation.ts` still owns the post-loop serve write for an applied edit.
+- The declined option "Record the buffer rows as served instead" stays declined — for **buffer** rows. What ADR-0043 records is the committed snapshot's rows, never the working buffer's.

@@ -117,32 +117,48 @@ describe("range-family retry truth (T4)", () => {
         deadNoRead: false,
       });
 
-      // A retry with the anchors the envelope echoes back rejects at the same arm.
+      // ADR-0043: the echoed rows are recorded as a serve, so a retry with them now APPLIES
+      // at the current coordinates instead of rejecting at the same arm.
       const echoed = rangeBlockAnchors(first.message);
       expect(echoed).toHaveLength(5);
       const retry = await attemptEdit(harness, {
         path: "t4-g3.txt",
         edits: [[echoed[0], echoed[echoed.length - 1], "R"]],
       });
-      expect(retry.applied).toBe(false);
-      expect(retry.message).toContain("[E_STALE_RANGE]");
-      expect(retry.message).toContain(
-        "served span (4 lines) no longer matches current range (5 lines)",
-      );
-      expect(retry.message).not.toContain("Retry with these anchors");
-
-      // Control: after a real re-read the same edit applies.
-      const reread = rowAnchors(
-        getText(await harness.readTool.execute("read", { path: "t4-g3.txt" })),
-      );
-      expect(reread).toHaveLength(5);
-      const control = await attemptEdit(harness, {
-        path: "t4-g3.txt",
-        edits: [[reread[0], reread[reread.length - 1], "R"]],
-      });
-      expect(control.applied).toBe(true);
+      expect(retry.applied).toBe(true);
       expect(await readFile(path, "utf-8")).toBe("R\n");
+      expect(first.message).not.toContain("Retry with these anchors");
     });
+
+    // Control (fresh file, same geometry): a real re-read still applies.
+    await withTempFile(
+      "t4-g3-control.txt",
+      "alpha\nbeta\ngamma\ndelta\n",
+      async ({ cwd, path }) => {
+        const harness = setupIntegrationTest(cwd);
+        const served = rowAnchors(
+          getText(await harness.readTool.execute("read", { path: "t4-g3-control.txt" })),
+        );
+        expect(served).toHaveLength(4);
+        await writeFile(path, "alpha\nbeta\ninserted\ngamma\ndelta\n", "utf-8");
+        const first = await attemptEdit(harness, {
+          path: "t4-g3-control.txt",
+          edits: [[served[0], served[3], "R"]],
+        });
+        expect(first.applied).toBe(false);
+
+        const reread = rowAnchors(
+          getText(await harness.readTool.execute("read", { path: "t4-g3-control.txt" })),
+        );
+        expect(reread).toHaveLength(5);
+        const control = await attemptEdit(harness, {
+          path: "t4-g3-control.txt",
+          edits: [[reread[0], reread[reread.length - 1], "R"]],
+        });
+        expect(control.applied).toBe(true);
+        expect(await readFile(path, "utf-8")).toBe("R\n");
+      },
+    );
   });
 
   // FU-3 adopted upstream ADR-0024 decision 1: on the leased route the identity gate owns span
