@@ -325,18 +325,18 @@ export function formatPaginationHint(
 // budget-relative measurement — see buildWindowSection). Single-window behavior is unchanged
 // (pinned by read-preview tests).
 
-function oversizedWarning(oversized: { lineNumber: number }[]): {
+function oversizedLineFacts(oversized: { lineNumber: number }[]): {
   lineLabel: string;
   verb: string;
-  addresses: string;
+  pronoun: "it" | "them";
 } {
   const lineLabel =
     oversized.length === 1
       ? `Line ${oversized[0]!.lineNumber}`
       : `Lines ${oversized.map((row) => row.lineNumber).join(", ")}`;
   const verb = oversized.length === 1 ? "exceeds" : "exceed";
-  const addresses = oversized.map((row) => `${row.lineNumber}p`).join(";");
-  return { lineLabel, verb, addresses };
+  const pronoun = oversized.length === 1 ? "it" : "them";
+  return { lineLabel, verb, pronoun };
 }
 
 function buildOversizedPreview(params: {
@@ -356,15 +356,15 @@ function buildOversizedPreview(params: {
   const oversized = rowSizes.filter((row) => row.bytes > maxBytes);
   const rows = rowSizes.map((row, index) =>
     row.bytes > maxBytes
-      ? `[Line ${row.lineNumber} is ${formatSize(row.bytes)}, exceeds ${formatSize(maxBytes)}; content not shown. Use bash: sed -n '${row.lineNumber}p' <path> | head -c ${maxBytes}]`
+      ? `[Line ${row.lineNumber}: ${formatSize(row.bytes)}; not shown.]`
       : fmtRegion([selectedHashes[index]!], [selected[index]!]),
   );
   const skippedTruncation = truncateHead(rows.join("\n"), { maxBytes, maxLines: maxTruncLines });
   const shownRowCount =
     skippedTruncation.content === "" ? 0 : skippedTruncation.content.split("\n").length;
   const lastShownLine = shownRowCount > 0 ? startLine + shownRowCount - 1 : startLine - 1;
-  const { lineLabel, verb, addresses } = oversizedWarning(oversized);
-  const warning = `[${lineLabel} ${verb} ${formatSize(maxBytes)}; content not shown because hashline anchors require full lines. Inspect with bash: sed -n '${addresses}' <path> | head -c ${maxBytes}]`;
+  const { lineLabel, verb, pronoun } = oversizedLineFacts(oversized);
+  const warning = `[${lineLabel} ${verb} the ${formatSize(maxBytes)} limit; the read tool cannot show ${pronoun}.]`;
   let preview = skippedTruncation.content;
   let nextOffset: number | undefined;
   if (shownRowCount > 0 && skippedTruncation.truncated) {
@@ -490,7 +490,7 @@ function mergeWindowRuns(windows: readonly ReadWindow[], totalLines: number): Wi
  * against the shared budget actually LEFT to this window: `maxBytes`/`maxTruncLines` are the
  * caller's remaining bytes/lines, not the single-read caps. The render arm is identical while the
  * measurement is not — a 120KB line under a 200KB single-read cap is reported oversized as
- * "exceeds 80KB" once earlier windows spent the shared budget down to 80KB. A window degrades like
+ * "exceeds the 80KB limit" once earlier windows spent the shared budget down to 80KB. A window degrades like
  * the same range read alone only while the shared budget is still unspent.
  */
 function buildWindowSection(params: {

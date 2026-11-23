@@ -374,7 +374,7 @@ describe("fmtReadPreview — windows", () => {
       200,
       100,
     );
-    expect(windowed.text).toContain("exceeds 200B");
+    expect(windowed.text).toContain("exceeds the 200B limit");
     expect(windowed.text).toContain("│short two");
     // WHY: the window named lines 1-2; "use offset=3 to continue" would offer a page it never asked for.
     expect(windowed.text).not.toContain("to continue");
