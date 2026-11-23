@@ -13,6 +13,7 @@ All notable changes to this project will be documented in this file.
 
 ### Bug Fixes
 
+* **read:** report an oversized line as a fact — its size, the byte limit, and that the read tool cannot show it — instead of advising a Bash `sed`/`head` command and a path placeholder that a PowerShell-only Windows preset or a remote backend cannot run; anchors, served rows, pagination, and truncation are unchanged, and a regression test pins the absence of `bash`, `sed`, `head -c`, PowerShell, and `<path>` (#162)
 * **edit:** record a rejection's echoed current-file rows as a serve (#161)
 * **edit:** make changed-buffer batch rejections served-or-absent (#159)
 * **test:** close the hash store before temp-dir removal in the encoding fixture (#158)
