@@ -1,4 +1,4 @@
-# ADR-0045 — Diff alignment follows anchor identity, not text position
+# ADR-0048 — Diff alignment follows anchor identity, not text position
 
 Date: 2026-11-24
 
