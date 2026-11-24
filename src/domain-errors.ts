@@ -194,24 +194,28 @@ export interface ErrorPayloadMap {
     count?: number;
   };
   E_BATCH_ABORT: {
-    /** First failing item: routes the typed path and keeps the single-failure envelope byte-identical. */
+    /** First failing item: routes the typed path and is the single bullet's index when `failures` is absent. */
     index: number;
     path: string;
+    /** Items the call submitted; the verdict renders `<failed> of <total>`. */
+    total?: number;
     /** The first failing item's inner failure message (already header-bearing). */
     inner: string;
     /**
-     * Range context for the failed item: either the current on-disk range
-     * block or the "Call read()…" fallback. Empty when no range context
-     * exists (non-anchor failures) — the merge hint is omitted with it.
+     * Serve disposition for the echoed rows (ADR-0043), rendered once under the single
+     * bullet. Absent when no serve was attempted (the envelope re-renders no rows).
      */
-    echoBlock: string;
+    serveNote?: string;
     /**
      * Every failing item in order; present only when more than one failed
      * (C: one resubmission fixes every failure). Each item keeps its own
      * `[E_*]` inline in `inner`.
      */
     failures?: Array<{ index: number; inner: string }>;
-    /** Union of every failing item's rows, in item order. */
+    /**
+     * Union of every failing item's rows, in item order. Machine payload only: the formatter
+     * never re-renders rows (ADR-0046) — each inner message owns its own echo.
+     */
     servedRows: ServedRow[];
     /** Every failing item's block joined in item order ("" when none). */
     servedBlock: string;
@@ -505,29 +509,49 @@ function foreignAnchorFormat(payload: ErrorPayloadMap["E_FOREIGN_ANCHOR"]): stri
   return `${noun} ${verb} inconsistent with ${payload.path}; served for ${homes}; nothing was written.`;
 }
 
-const BATCH_ATOMICITY_TRAILER =
-  "The whole batch was rejected and NOTHING was written — no file changed and earlier items in the batch were NOT applied.";
+/** Split an already-rendered error message into its `[E_*]` token and headerless body. */
+function splitErrorHeader(inner: string): { code: string | undefined; body: string } {
+  const match = /^\[TO (?:MODEL|USER)\] (\[[EW]_[A-Z0-9_]+\]) /.exec(inner);
+  if (match === null) return { code: undefined, body: inner };
+  return { code: match[1]!, body: inner.slice(match[0].length) };
+}
 
+/** Indent every continuation line so one failure stays one list entry. */
+function indentContinuation(text: string): string {
+  return text.replace(/\n/g, "\n  ");
+}
+
+/**
+ * One failing item as a structural list entry. The inner `[TO MODEL]` audience prefix is
+ * stripped; its `[E_*]` token becomes the entry's code. Row-carrying errors keep the rows
+ * their own formatter rendered — the envelope never re-renders them.
+ */
+function batchAbortItem(index: number, path: string, inner: string): string {
+  const { code, body } = splitErrorHeader(inner);
+  const label = code === undefined ? "" : ` ${code}`;
+  return `- edits[${index}] (${path})${label}: ${indentContinuation(body)}`;
+}
+
+/**
+ * The verdict is the lead line and each failing item is one list entry, so the atomicity fact
+ * frames the payload instead of trailing it. A single failure may append its serve disposition
+ * (recorded / not recorded) as one indented sentence; rows are never re-rendered here — the
+ * inner error owns the single echo (ADR-0043).
+ */
 function batchAbortFormat(payload: ErrorPayloadMap["E_BATCH_ABORT"]): string {
-  // C: several failures name every failing item in order (one resubmission
-  // fixes them all); each item keeps its own `[E_*]` inline in `inner`.
-  if (payload.failures !== undefined && payload.failures.length > 1) {
-    const parts = payload.failures.map(
-      (f) => `edits[${f.index}] (${payload.path}) failed: ${f.inner}`,
-    );
-    return (
-      `${parts.join("; ")}\n${BATCH_ATOMICITY_TRAILER} ` +
-      "Fix the failing edits (and any later edits that depend on them), then resubmit the batch."
-    );
-  }
-  const base =
-    `edits[${payload.index}] (${payload.path}) failed: ${payload.inner}\n${payload.echoBlock.trimStart()}\n` +
-    BATCH_ATOMICITY_TRAILER;
-  // WHY: echoBlock is empty exactly when no range context exists (non-anchor
-  // WHY: failures carry no echo), and only a ranged failure can name the edit
-  // WHY: to fix — so the merge hint rides on the same condition.
-  if (!payload.echoBlock) return base;
-  return `${base} Fix the failing edit (and any later edit that depends on it), then resubmit the batch.`;
+  const failures = payload.failures ?? [{ index: payload.index, inner: payload.inner }];
+  const failed = failures.length;
+  const total = payload.total ?? failed;
+  const noun = total === 1 ? "edit" : "edits";
+  const lead = `Batch rejected: ${failed} of ${total} ${noun} failed; nothing was written.`;
+  const items = failures.map((failure) =>
+    batchAbortItem(failure.index, payload.path, failure.inner),
+  );
+  const note =
+    payload.failures === undefined && payload.serveNote !== undefined
+      ? `  ${payload.serveNote}`
+      : undefined;
+  return [lead, ...items, ...(note === undefined ? [] : [note])].join("\n");
 }
 
 function noopLoopFormat(payload: ErrorPayloadMap["E_NOOP_LOOP"]): string {

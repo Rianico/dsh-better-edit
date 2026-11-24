@@ -7,13 +7,12 @@ import { extractHash, getText, setupIntegrationTest, withTempFile } from "../sup
  * Batch aggregation (C): every rejection writes zero bytes; one resubmission
  * fixes every failure.
  *
- * C2 pin — written BEFORE the pre-pass, locking today's single-failure
- * envelope: exactly one `edits[i] (…) failed:` part, the atomicity trailer,
- * and the singular fix sentence. The aggregation must keep this envelope
- * byte-identical for the single-failure case.
+ * C2 pin — the single-failure envelope is one verdict line plus one bullet per
+ * failing item. The atomicity fact frames the payload; rows are never re-rendered
+ * at the envelope level (the inner error owns the single echo).
  */
 describe("batch aggregation", () => {
-  it("C2 pin: single failure envelope is one part plus trailer plus fix sentence", async () => {
+  it("C2 pin: single failure renders one verdict line and one bullet", async () => {
     const initial = "one\ntwo\nthree\n";
     await withTempFile("batch-single.txt", initial, async ({ cwd, path }) => {
       const { readTool, editTool } = setupIntegrationTest(cwd);
@@ -38,15 +37,15 @@ describe("batch aggregation", () => {
         message = String((error as Error).message);
       }
       expect(message).toMatch(/\[TO MODEL\] \[E_BATCH_ABORT\]/);
-      expect(message.match(/edits\[\d+\] \(batch-single\.txt\) failed:/g)).toHaveLength(1);
-      expect(message).toContain("edits[1] (batch-single.txt) failed:");
-      expect(message).toContain("[E_STALE_ANCHOR]");
-      expect(message).toContain(
-        "The whole batch was rejected and NOTHING was written — no file changed and earlier items in the batch were NOT applied.",
+      expect(message).toMatch(
+        /^\[TO MODEL\] \[E_BATCH_ABORT\] Batch rejected: 1 of 2 edits failed; nothing was written\.$/m,
       );
-      expect(message).toContain(
-        "Fix the failing edit (and any later edit that depends on it), then resubmit the batch.",
-      );
+      expect(message.match(/- edits\[\d+\] \(batch-single\.txt\) \[E_[A-Z_]+\]:/g)).toHaveLength(1);
+      expect(message).toContain("- edits[1] (batch-single.txt) [E_STALE_ANCHOR]:");
+      expect(message.match(/\[TO MODEL\]/g)).toHaveLength(1);
+      expect(message).not.toContain("The whole batch was rejected");
+      expect(message).not.toContain("Fix the failing");
+      expect(message).not.toContain("Call read() to get fresh anchors.");
       // Atomicity: the first (valid) item was not written either.
       expect(await readFile(path, "utf-8")).toBe(initial);
     });
@@ -69,16 +68,14 @@ describe("batch aggregation", () => {
       } catch (error) {
         message = String((error as Error).message);
       }
-      expect(message).toMatch(/\[TO MODEL\] \[E_BATCH_ABORT\]/);
-      expect(message).toContain("edits[0] (batch-multi.txt) failed:");
-      expect(message).toContain("edits[1] (batch-multi.txt) failed:");
-      expect(message.indexOf("edits[0]")).toBeLessThan(message.indexOf("edits[1]"));
-      expect(message).toContain(
-        "The whole batch was rejected and NOTHING was written — no file changed and earlier items in the batch were NOT applied.",
+      expect(message).toMatch(
+        /^\[TO MODEL\] \[E_BATCH_ABORT\] Batch rejected: 2 of 2 edits failed; nothing was written\.$/m,
       );
-      expect(message).toContain(
-        "Fix the failing edits (and any later edits that depend on them), then resubmit the batch.",
-      );
+      expect(message).toContain("- edits[0] (batch-multi.txt) [E_STALE_ANCHOR]:");
+      expect(message).toContain("- edits[1] (batch-multi.txt) [E_STALE_ANCHOR]:");
+      expect(message.indexOf("- edits[0]")).toBeLessThan(message.indexOf("- edits[1]"));
+      expect(message).not.toContain("The whole batch was rejected");
+      expect(message).not.toContain("Fix the failing");
       expect(await readFile(path, "utf-8")).toBe(initial);
     });
   });
@@ -100,10 +97,12 @@ describe("batch aggregation", () => {
       } catch (error) {
         message = String((error as Error).message);
       }
-      expect(message).toContain("edits[0] (batch-mixed.txt) failed:");
-      expect(message).toContain("edits[1] (batch-mixed.txt) failed:");
-      expect(message).toContain("[E_MALFORMED_ANCHOR]");
-      expect(message).toContain("[E_STALE_ANCHOR]");
+      expect(message).toMatch(
+        /^\[TO MODEL\] \[E_BATCH_ABORT\] Batch rejected: 2 of 2 edits failed; nothing was written\.$/m,
+      );
+      expect(message).toContain("- edits[0] (batch-mixed.txt) [E_MALFORMED_ANCHOR]:");
+      expect(message).toContain("- edits[1] (batch-mixed.txt) [E_STALE_ANCHOR]:");
+      expect(message.indexOf("- edits[0]")).toBeLessThan(message.indexOf("- edits[1]"));
       expect(await readFile(path, "utf-8")).toBe(initial);
     });
   });
@@ -225,8 +224,8 @@ describe("batch aggregation", () => {
             { anchor_from: firstOther, anchor_to: firstOther, replace_with: "Y" },
           ],
         });
-        expect(envelope.message).toContain("edits[0] (cause-unanimous.ts) failed:");
-        expect(envelope.message).toContain("edits[1] (cause-unanimous.ts) failed:");
+        expect(envelope.message).toContain("- edits[0] (cause-unanimous.ts) [E_TARGET_LOST]:");
+        expect(envelope.message).toContain("- edits[1] (cause-unanimous.ts) [E_TARGET_LOST]:");
         expect(envelope.cause).toBe("retirement");
         expect(envelope.details?.cause).toBe(envelope.cause);
         expect(await readFile(path, "utf-8")).toBe(PAIRS_AFTER);

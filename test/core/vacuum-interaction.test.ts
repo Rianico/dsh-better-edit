@@ -236,7 +236,7 @@ describe("vacuum — interaction with lineage, leases and the tools", () => {
         // `E_STALE_RANGE` shape this cell pinned pre-FU-4 is retired.
         expect(failure).toContain("[E_TARGET_LOST]");
         expect(failure).toContain("no longer resolves to the line identity it was served with");
-        expect(failure).toContain("NOTHING was written");
+        expect(failure).toContain("nothing was written");
         expect(failure).not.toContain("[E_STALE_RANGE]");
         expect(await readFile(path, "utf-8")).toBe(bytesBefore);
       } finally {
