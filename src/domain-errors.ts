@@ -129,7 +129,8 @@ export type DomainWarningCode =
   | "W_UNICODE_LITERAL"
   | "W_LITERAL_BYPASS"
   | "W_NOOP"
-  | "W_UNSERVED_INTERIOR";
+  | "W_UNSERVED_INTERIOR"
+  | "W_EOL_REWRITTEN";
 
 export interface ErrorPayloadMap {
   E_BAD_PAYLOAD: {
@@ -764,6 +765,20 @@ export interface WarningPayloadMap {
     line: number;
   };
   W_LITERAL_BYPASS: Record<string, never>;
+  /**
+   * An applied write normalized the file's terminators. The spellings are inlined on purpose:
+   * importing `LineEnding` (edit-diff) or `EolSource` (eol-config) here would cycle those modules
+   * back through this registry. The real guard is the call site — `formatWarning("W_EOL_REWRITTEN",
+   * { target: endingName(effectiveEnding), source: effectiveEol.source, … })` in
+   * `src/mutation/engine.ts` — where `tsc` fails if `EolSource` or `endingName` drift from these
+   * spellings.
+   */
+  W_EOL_REWRITTEN: {
+    target: "LF" | "CRLF" | "CR";
+    source: "env" | "config" | "file" | "system";
+    /** How many pre-image terminators the write re-spelled; never zero when this warning fires. */
+    changed: number;
+  };
   W_NOOP: {
     ref: string;
     anchorFrom: string;
@@ -830,6 +845,13 @@ function unservedInteriorFormat(payload: WarningPayloadMap["W_UNSERVED_INTERIOR"
   );
 }
 
+function eolRewrittenFormat(payload: WarningPayloadMap["W_EOL_REWRITTEN"]): string {
+  return (
+    `EOL normalized to ${payload.target} (${payload.source}): ` +
+    `${payload.changed} terminators changed. Undo restores normalized content.`
+  );
+}
+
 export const WARNING_REGISTRY: {
   [K in DomainWarningCode]: CodeSpec<WarningPayloadMap[K]>;
 } = {
@@ -862,6 +884,10 @@ export const WARNING_REGISTRY: {
   W_UNSERVED_INTERIOR: {
     audience: "MODEL",
     format: unservedInteriorFormat,
+  },
+  W_EOL_REWRITTEN: {
+    audience: "MODEL",
+    format: eolRewrittenFormat,
   },
 };
 

@@ -35,6 +35,12 @@ const FIXTURES: WarningFixtures = {
   W_REVERSED_ANCHORS: [{ fromHash: "aB3", toHash: "Zz9" }],
   W_UNICODE_LITERAL: [{ line: 4 }],
   W_LITERAL_BYPASS: [{}],
+  W_EOL_REWRITTEN: [
+    { target: "CRLF", source: "file", changed: 1 },
+    { target: "LF", source: "config", changed: 2 },
+    { target: "CR", source: "env", changed: 3 },
+    { target: "LF", source: "system", changed: 1 },
+  ],
   W_NOOP: [
     { ref: "edits[0] (a.txt)", anchorFrom: "aB3", anchorTo: "Zz9", batch: true, count: 2 },
     { ref: "a.txt", anchorFrom: "aB3", anchorTo: "Zz9", batch: false, count: 2, path: "a.txt" },
