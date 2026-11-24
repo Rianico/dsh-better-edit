@@ -799,6 +799,10 @@ describe("served state — schema versioning", () => {
         ending: "\n",
         hashes: ["BBB", "AAA"],
         resultContent: content,
+        // #171: the pair columns are additive and survive the unrelated upgrade backfill; the
+        // save named no effective ending, so the row carries the pre-image's own one.
+        effectiveEnding: "\n",
+        preImageMixed: 0,
       });
       store.upsertRetiredAnchors("sessionA", path, JSON.stringify(["BBB"]));
       expect(store.getRetiredAnchors("sessionA", path)).toEqual(new Set(["BBB"]));

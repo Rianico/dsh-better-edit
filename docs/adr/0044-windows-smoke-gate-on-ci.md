@@ -31,8 +31,9 @@ Upstream records the same lesson from the other direction: `18e31b8` added a `wi
 | `test/core/edit-engine.e2e.test.ts`          | hashline write and post-write evidence                                                                                    |
 | `test/core/vacuum.test.ts`                   | store cleanup and retention                                                                                               |
 | `test/core/hash-store.test.ts`               | store open/close lifetime and persistence                                                                                 |
+| `test/integration/eol-matrix.test.ts`        | EOL effective-ending matrix, incl. the `system` rung on Windows                                                           |
 
-The command is exactly `pnpm vitest run <seven files>`. There is no blanket skip and no encoding, BOM/CRLF, create-guard or stale-denial exemption. Only a privilege Windows does not grant may be narrowly guarded; this subset needs none. A future symlink-dependent case must guard the creation attempt only.
+The command is exactly `pnpm vitest run <eight files>`. There is no blanket skip and no encoding, BOM/CRLF, create-guard or stale-denial exemption. Only a privilege Windows does not grant may be narrowly guarded; this subset needs none. A future symlink-dependent case must guard the creation attempt only.
 
 ## Consequences
 

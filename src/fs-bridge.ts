@@ -41,6 +41,7 @@ import type { FileEncodingState } from "./file-encoding-state.js";
 import { codeOf, errCode } from "./utils.js";
 import { SUPPORTED_ENCODINGS_LABEL } from "./encoding.js";
 import { DomainError } from "./domain-errors.js";
+import type { LineEnding } from "./edit-diff.js";
 // Re-export file encoding state seam for backward compat (file-view, read-and-serve, tests)
 export type { FileEncodingState } from "./file-encoding-state.js";
 export {
@@ -68,6 +69,11 @@ export interface WriteGuard {
   readonly createIfAbsent: true;
 }
 
+/** The terminator this write must use, decided by the caller's pre-image resolution (#169). */
+export interface WriteTextOptions {
+  readonly lineEnding?: LineEnding;
+}
+
 /** Text-IO operations the hashline tools need, keyed by canonical absolute path. */
 export interface FileIO {
   /** Resolve a (possibly relative) request path against the session cwd to a canonical absolute path. */
@@ -89,6 +95,11 @@ export interface FileIO {
    *   intent. The dsh backend turns it into the `{ kind: "createIfAbsent" }`
    *   write intent (and reports the refusal as `E_FILE_EXISTS`), the local
    *   backend opens the target exclusively.
+   * @param options - the resolved effective terminator for this write. The seam
+   *   re-prepares the text against the memo, which still describes the OLD
+   *   ending, so a planned EOL rewrite only survives the trip when it is named
+   *   here. `write` and `str_replace_editor` never pass it: their bytes are
+   *   unchanged.
    */
   writeText(
     absolutePath: string,
@@ -97,6 +108,7 @@ export interface FileIO {
     exec?: ToolExecution,
     sandboxPolicy?: SandboxExecutionPolicy,
     guard?: WriteGuard,
+    options?: WriteTextOptions,
   ): Promise<void>;
   /**
    * Emit `fs/observed` (present at the current version) for a successful
@@ -297,7 +309,7 @@ export function ctxFsIO(fs: FileSystem, ctx: Context): FileIO {
         return mapFsError(error, absolutePath);
       }
     },
-    async writeText(absolutePath, content, signal, exec, sandboxPolicy, guard) {
+    async writeText(absolutePath, content, signal, exec, sandboxPolicy, guard, options) {
       try {
         const target = await fs.resolve(absolutePath, {
           ...(signal === undefined ? {} : { signal }),
@@ -316,6 +328,7 @@ export function ctxFsIO(fs: FileSystem, ctx: Context): FileIO {
         const prep = prepareForSave(content, existing, {
           normalizeToUtf8: cfgW.normalizeToUtf8,
           displayPath: absolutePath,
+          lineEnding: options?.lineEnding,
         });
 
         const intent = await ctx.waterfall("fs/write-intent", target, exec, () =>
@@ -435,7 +448,7 @@ export function localIO(): FileIO {
         throw error;
       }
     },
-    async writeText(absolutePath, content, signal, _exec, _sandboxPolicy, guard) {
+    async writeText(absolutePath, content, signal, _exec, _sandboxPolicy, guard, options) {
       signal?.throwIfAborted();
       // Drop a stale memo, then let the seam decide: it throws E_ENCODING_UNWRITABLE
       // before writeAtomic when the recorded encoding cannot round-trip (#112).
@@ -445,6 +458,7 @@ export function localIO(): FileIO {
       const prep = prepareForSave(content, _getEncodingState(absolutePath), {
         normalizeToUtf8: cfgL.normalizeToUtf8,
         displayPath: absolutePath,
+        lineEnding: options?.lineEnding,
       });
       await writeAtomic(
         absolutePath,

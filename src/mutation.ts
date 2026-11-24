@@ -55,6 +55,17 @@ interface UndoWriteFile {
   originalNormalized: string;
   bom: string;
   originalEnding: LineEnding;
+  /**
+   * The one terminator this write uses, resolved from the pre-image counts (#169). The forward
+   * write and its `prepareForSave` both name it: the IO seam re-prepares against a memo that still
+   * describes the old ending, so the override is what makes the rewrite reach disk.
+   */
+  effectiveEnding: LineEnding;
+  /**
+   * True when the pre-image spelled more than one terminator kind (#171). Carried to the undo pair
+   * so the revert can say it cannot restore the mixture, instead of silently flattening it.
+   */
+  preImageMixed: boolean;
   originalHashes: string[];
   result: string;
 }
@@ -88,6 +99,7 @@ export async function persistUndoAndWrite(opts: PersistWriteOptions): Promise<vo
     const prep = prepareForSave(file.result, state, {
       normalizeToUtf8,
       displayPath: file.displayPath,
+      lineEnding: file.effectiveEnding,
     });
     return { file, textToWrite: prep.textToWrite };
   });
@@ -104,6 +116,10 @@ export async function persistUndoAndWrite(opts: PersistWriteOptions): Promise<vo
       originalEnding: file.originalEnding,
       hashes: file.originalHashes,
       resultContent: file.result,
+      // #171: the pair records what this write DOES, so the revert can replay it. Both values are
+      // forwarded, never recomputed — the engine's one decode already decided them.
+      effectiveEnding: file.effectiveEnding,
+      preImageMixed: file.preImageMixed,
     });
     if (!undo.persisted) {
       for (const u of undos) {
@@ -128,6 +144,8 @@ export async function persistUndoAndWrite(opts: PersistWriteOptions): Promise<vo
         opts.signal,
         opts.exec,
         opts.sandboxPolicy,
+        undefined,
+        { lineEnding: u.file.effectiveEnding },
       );
       written.push(u);
     }
@@ -140,6 +158,18 @@ export async function persistUndoAndWrite(opts: PersistWriteOptions): Promise<vo
           undefined,
           opts.exec,
           opts.sandboxPolicy,
+          undefined,
+          // WHY: the memo now records the NEW ending (the write that failed may still have
+          // recorded it), so the rollback must name the pre-image's own ending or it would
+          // re-spell the restored bytes at the ending the edit introduced.
+          //
+          // PRE-EXISTING LIMITATION (deliberately kept here): the rollback rebuilds the bytes from
+          // `originalNormalized` + `originalEnding`, so a MIXED pre-image comes back normalized at
+          // `originalEnding` — not byte-for-byte. The ordinary undo is not a repair for that either:
+          // since #171 it restores at the EDIT's effective ending and discloses that the mixture is
+          // not restored; byte-exact mixed restoration is not implemented anywhere. The ending
+          // override above does not widen or narrow that gap.
+          { lineEnding: w.file.originalEnding },
         );
       } catch (e) {
         console.error("Failed to restore file after write failure:", e);
@@ -272,8 +302,18 @@ export async function execute(opts: {
     originalNormalized: fileResult.originalNormalized,
     bom: fileResult.bom,
     originalEnding: fileResult.originalEnding,
+    effectiveEnding: fileResult.effectiveEnding,
+    preImageMixed: fileResult.preImageMixed,
     originalHashes: fileResult.originalHashes,
     result: fileResult.result,
+  };
+
+  // WHY (#169): the EOL notice describes a write, so it is pushed only after one LANDED — an
+  // all-noop call rewrites nothing and must not claim it did. Both applied branches share this.
+  const pushEolNoticeAfterWrite = (): void => {
+    if (fileResult.eolRewriteWarning !== undefined) {
+      fileResult.warnings.push(fileResult.eolRewriteWarning);
+    }
   };
 
   if (isSingleCall) {
@@ -293,6 +333,7 @@ export async function execute(opts: {
         formatError("E_UNDO_UNAVAILABLE", { path: displayPath }),
     });
     await retireFreedAnchors();
+    pushEolNoticeAfterWrite();
     const built = buildBatchResult([toSection()]);
     const serveLanded = await recordIfNeeded(built);
     return withServeNotice(built.content[0]!.text, serveLanded);
@@ -312,6 +353,7 @@ export async function execute(opts: {
         formatError("E_UNDO_UNAVAILABLE", { path: displayPath, batch: true }),
     });
     await retireFreedAnchors();
+    pushEolNoticeAfterWrite();
   }
 
   const built = buildBatchResult([toSection()]);

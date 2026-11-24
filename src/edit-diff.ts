@@ -5,6 +5,13 @@ import type { ServedRow } from "./hashline/anchor-pipeline.js";
 
 export type LineEnding = "\r\n" | "\n" | "\r";
 
+/** Terminator counts by kind: a CRLF pair counts once, never as CR plus LF. */
+export interface LineEndingCounts {
+  readonly crlf: number;
+  readonly lf: number;
+  readonly cr: number;
+}
+
 export function detectEnding(content: string): LineEnding {
   const lfIdx = content.indexOf("\n");
   if (lfIdx === -1) {

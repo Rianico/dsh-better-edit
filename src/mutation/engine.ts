@@ -15,6 +15,12 @@
 import type { FileIO } from "../fs-bridge.js";
 import { loadHashStore, type HashStore, type InternalHashStore } from "../hash-store.js";
 import type { LineEnding } from "../edit-diff.js";
+import {
+  changedTerminatorCount,
+  endingName,
+  resolveEffectiveEolFromCounts,
+  terminatorKindsUsed,
+} from "../eol-config.js";
 import { normFromText } from "../file-view.js";
 import { scanDrift, loadServed, loadServedCanons, loadRetiredAnchors } from "../session-view.js";
 import { applyEdit, resEdit, type HEdit, type NEdit } from "../hashline/anchor-pipeline.js";
@@ -122,6 +128,15 @@ export interface FileEditResult {
   result: string;
   bom: string;
   originalEnding: LineEnding;
+  /** The one terminator this write uses, resolved from the pre-image counts (#169). */
+  effectiveEnding: LineEnding;
+  /** True when the pre-image spelled more than one terminator kind. */
+  preImageMixed: boolean;
+  /**
+   * Set when the write re-spells terminators (`changed > 0`). The Transaction pushes it onto
+   * `warnings` only AFTER the write landed: an all-noop call rewrites nothing, so it never says it did.
+   */
+  eolRewriteWarning: string | undefined;
   hadUtf8DecodeErrors: boolean;
   warnings: string[];
   originalHashes: string[];
@@ -946,6 +961,7 @@ export async function runFileEdits(
     normalized: originalNormalized,
     bom,
     originalEnding,
+    endingCounts,
     fileHashes: originalHashes,
     hadUtf8DecodeErrors,
   } = await normFromText({
@@ -957,6 +973,23 @@ export async function runFileEdits(
     reservedHashes,
     retiredHashes: perSessionRetired,
   });
+
+  // #169: ONE decode decides the whole write. The counts are the raw pre-image's terminators, so
+  // the effective ending (env > config > file's dominant > OS) and the number of terminators this
+  // write re-spells come from the same scan and cannot disagree. A file with no terminator gets
+  // the platform one, and the terminators the write INTRODUCES are not counted as changed.
+  const effectiveEol = resolveEffectiveEolFromCounts(endingCounts);
+  const effectiveEnding = effectiveEol.value;
+  const preImageMixed = terminatorKindsUsed(endingCounts) >= 2;
+  const changed = changedTerminatorCount(endingCounts, effectiveEnding);
+  const eolRewriteWarning =
+    changed > 0
+      ? formatWarning("W_EOL_REWRITTEN", {
+          target: endingName(effectiveEnding),
+          source: effectiveEol.source,
+          changed,
+        })
+      : undefined;
 
   const served = await loadServed(opts.sessionKey, absolutePath);
   const servedCanons = await loadServedCanons(opts.sessionKey, absolutePath);
@@ -1283,6 +1316,9 @@ export async function runFileEdits(
     result,
     bom,
     originalEnding,
+    effectiveEnding,
+    preImageMixed,
+    eolRewriteWarning,
     hadUtf8DecodeErrors,
     warnings,
     originalHashes,

@@ -52,8 +52,9 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - name: Windows filesystem/editor smoke
         # Non-vacuous subset: encoding teardown carries the #140 EBUSY class,
-        # undo restores anchors, create-guard proves O_EXCL, and hashline read/
-        # write/cleanup proves the store's open-close lifetime.
+        # undo restores anchors, create-guard proves O_EXCL, hashline read/
+        # write/cleanup proves the store's open-close lifetime, and the EOL
+        # matrix proves the `system` rung lands on this platform's ending.
         run: >-
           pnpm vitest run
           test/core/encoding-roundtrip.test.ts
@@ -63,3 +64,4 @@ jobs:
           test/core/edit-engine.e2e.test.ts
           test/core/vacuum.test.ts
           test/core/hash-store.test.ts
+          test/integration/eol-matrix.test.ts

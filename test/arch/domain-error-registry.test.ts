@@ -9,6 +9,7 @@ import {
   DEFERRED_PRODUCERS,
   ERROR_REGISTRY,
   WARNING_REGISTRY,
+  formatReadWarning,
   isDomainErrorCode,
   isDomainWarningCode,
 } from "../../src/domain-errors.js";
@@ -19,6 +20,7 @@ import {
   namesInCode,
   producedCodes,
   producedCodesInText,
+  producedReadCodes,
   stripComments,
   unionMembers,
   firedWarnings,
@@ -147,6 +149,8 @@ function dataHalf(map: Readonly<Record<string, { owner: string; trigger: { text:
 interface RegistryFindings {
   files: string[];
   produced: Set<string>;
+  /** Read-tier producers (`formatReadWarning("<CODE>"`), a separate referent from `produced`. */
+  readProduced: Set<string>;
   undeclaredProducers: string[];
   rawHeaders: string[];
 }
@@ -160,10 +164,14 @@ function registryFindings(srcRoot: string): RegistryFindings {
   const registryFile = join(srcRoot, "domain-errors.ts");
   const registrySource = readFileSync(registryFile, "utf-8");
   const produced = producedCodes(files);
+  const readProduced = producedReadCodes(files);
   const deferred = new Set(Object.keys(DEFERRED_PRODUCERS));
   const members = [
     ...unionMembers(registrySource, "DomainErrorCode"),
     ...unionMembers(registrySource, "DomainWarningCode"),
+    // The read tier is a separate vocabulary with its own producer (`formatReadWarning`), so it
+    // joins the totality check here rather than being silently outside it.
+    ...unionMembers(registrySource, "ReadWarningCode"),
   ];
   const rawHeaders: string[] = [];
   for (const file of files) {
@@ -173,7 +181,10 @@ function registryFindings(srcRoot: string): RegistryFindings {
   return {
     files,
     produced,
-    undeclaredProducers: members.filter((c) => !produced.has(c) && !deferred.has(c)),
+    readProduced,
+    undeclaredProducers: members.filter(
+      (c) => !produced.has(c) && !readProduced.has(c) && !deferred.has(c),
+    ),
     rawHeaders,
   };
 }
@@ -366,6 +377,24 @@ describe("arch: domain-error registry", () => {
         `${code} is produced but not a declared union member`,
       ).toBe(true);
     }
+    // The read tier's own referent: a `formatReadWarning("<CODE>"` producer must name a member
+    // of `ReadWarningCode` — the applied unions above cannot vouch for it.
+    const readMembers = unionMembers(registrySource, "ReadWarningCode");
+    for (const code of producedReadCodes(files)) {
+      expect(
+        readMembers.includes(code),
+        `${code} is produced by formatReadWarning but not a declared ReadWarningCode member`,
+      ).toBe(true);
+    }
+  });
+
+  // The read tier's totality cell. It is a SEPARATE oracle from the applied one above on purpose:
+  // `producedCodes`/`firedWarnings` stay applied-only, so a read-tier code can never satisfy the
+  // applied tier's "every declared W_* fires" cell (test/arch/applied-notice-tier.test.ts).
+  it("read-tier totality: every declared read warning is produced by formatReadWarning", () => {
+    const readMembers = unionMembers(registrySource, "ReadWarningCode");
+    expect(readMembers).toEqual(["W_MIXED_EOL"]);
+    expect([...producedReadCodes(files)].sort()).toEqual([...readMembers].sort());
   });
 
   // C15 (G4): the other direction — every declared union member (and every
@@ -390,6 +419,21 @@ describe("arch: domain-error registry", () => {
   it("header uniqueness: no raw [E_*]/[W_*] literal outside domain-errors.ts", () => {
     const offenders = registryFindings(SRC_ROOT).rawHeaders;
     expect(offenders, `raw headers in: ${offenders.join(", ")}`).toEqual([]);
+  });
+
+  // The read tier's header shape is bare `[<CODE>]` — no audience. A read notice reports state
+  // observed before any write, so there is no actor to address; the applied tier's
+  // `[<AUDIENCE>] [<CODE>]` prefix is exactly what must NOT appear here.
+  it("read-tier header carries no audience prefix", () => {
+    const rendered = formatReadWarning("W_MIXED_EOL", {
+      crlf: 1,
+      lf: 1,
+      cr: 0,
+      target: "LF",
+      source: "file",
+    });
+    expect(rendered.startsWith("[W_MIXED_EOL] ")).toBe(true);
+    expect(rendered).not.toMatch(/\[(?:MODEL|USER)\]/);
   });
 
   it("remedy eligibility: the remedy-free codes carry no remedy", () => {

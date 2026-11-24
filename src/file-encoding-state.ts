@@ -408,6 +408,12 @@ export interface EncodeForSaveOptions {
   currentVersion?: string | undefined;
   /** Model-facing path for the round-trip refusal. */
   displayPath?: string;
+  /**
+   * The one terminator this write must use (#169), resolved by the caller from the pre-image.
+   * It outranks the memo — the IO seam re-prepares the text against a memo that still describes
+   * the OLD ending, so without this override a planned rewrite would be undone on the way out.
+   */
+  lineEnding?: LineEnding;
 }
 
 /** Shared UTF-8 BOM marker — single source for the BOM round-trip seam.
@@ -468,21 +474,43 @@ export function prepareForSave(
     if (!hintFaithful)
       throw new DomainError("E_ENCODING_UNWRITABLE", { path: displayPath, encoding: norm });
     const hasBOM = norm === "utf8bom";
-    const lineEnding: LineEnding = existingState?.lineEnding ?? detectEnding(content);
-    // Caller writes `content` as a UTF-8 string; record what the next read detects.
+    const lineEnding: LineEnding =
+      opts.lineEnding ?? existingState?.lineEnding ?? detectEnding(content);
+    // The bytes must agree with the memo. Without an override the caller's own text is written
+    // verbatim (unchanged behaviour); with one, the text is re-spelled at that ending so the
+    // recorded `lineEnding` describes what was actually written.
+    const textToWrite =
+      opts.lineEnding !== undefined ? restoreEndings(toLF(content), opts.lineEnding) : content;
+    // Caller writes `textToWrite` as a UTF-8 string; record what the next read detects.
     return {
-      textToWrite: content,
+      textToWrite,
       newState: { encoding: norm, hasBOM, lineEnding, version: undefined },
     };
   }
 
   if (!existingState) {
-    // New file, no memo: UTF-8, caller's own line endings.
+    // New file, no memo: UTF-8, caller's own line endings. A requested ending still gets applied —
+    // that is the resolved effective EOL the caller computed, and the memo must describe the bytes
+    // it just wrote or the next read would detect a different ending (#169).
+    if (opts.lineEnding !== undefined) {
+      const textToWrite = restoreEndings(toLF(content), opts.lineEnding);
+      const hasBOM = textToWrite.startsWith(UTF8_BOM);
+      return {
+        textToWrite,
+        newState: {
+          encoding: hasBOM ? "utf8bom" : "utf8",
+          hasBOM,
+          lineEnding: opts.lineEnding,
+          version: undefined,
+        },
+      };
+    }
     return { textToWrite: content };
   }
 
   const recorded = existingState.encoding;
-  const lineEnding: LineEnding = existingState.lineEnding ?? detectEnding(content);
+  const lineEnding: LineEnding =
+    opts.lineEnding ?? existingState.lineEnding ?? detectEnding(content);
 
   if (recorded !== "utf8" && recorded !== "utf8bom") {
     const body = restoreEndings(toLF(content), lineEnding);

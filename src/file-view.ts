@@ -22,7 +22,14 @@ import { lineHashes, fmtRegion, HASH_SEP } from "./hashline/index.js";
 import { HASH_SPACE } from "./hashline/hash-assign.js";
 import { visLines, abortIf } from "./utils.js";
 import { DomainError } from "./domain-errors.js";
-import { detectEnding, toLF, stripBOM, type LineEnding } from "./edit-diff.js";
+import {
+  detectEnding,
+  toLF,
+  stripBOM,
+  type LineEnding,
+  type LineEndingCounts,
+} from "./edit-diff.js";
+import { countLineEndings } from "./eol-config.js";
 import { resolveTarget } from "./paths.js";
 import type { FileIO } from "./fs-bridge.js";
 import type { ServedRow } from "./hashline/anchor-pipeline.js";
@@ -157,6 +164,11 @@ export interface NormFile {
   normalized: string;
   bom: string;
   originalEnding: LineEnding;
+  /**
+   * The RAW pre-image's terminators, counted once where the bytes are decoded. One decode feeds
+   * both the effective-ending choice and the rewrite count, so the two can never disagree (#169).
+   */
+  endingCounts: LineEndingCounts;
   fileHashes: string[];
   hadUtf8DecodeErrors: boolean;
 }
@@ -214,6 +226,7 @@ export async function normFromText(input: {
   abortIf(signal);
   const { bom, text: rawContent } = stripBOM(input.rawText);
   const originalEnding = detectEnding(rawContent);
+  const endingCounts = countLineEndings(rawContent);
   const normalized = toLF(rawContent);
   if (input.maxLines !== undefined) {
     const lineCount = visLines(normalized).length;
@@ -235,6 +248,7 @@ export async function normFromText(input: {
     normalized,
     bom,
     originalEnding,
+    endingCounts,
     fileHashes,
     hadUtf8DecodeErrors: input.hadUtf8DecodeErrors === true,
   };
@@ -741,6 +755,12 @@ export interface FileView {
   hadUtf8DecodeErrors: boolean;
   bom: string;
   originalEnding: LineEnding;
+  /**
+   * The RAW pre-image's terminator counts, carried out of `normFromText` where the bytes are
+   * decoded (#169). Whole-file by construction, so a page or a window reports the same counts as
+   * a full read; the read tier's mixed-EOL notice is derived from them, never re-counted.
+   */
+  endingCounts: LineEndingCounts;
   normalized: string;
 }
 
@@ -768,16 +788,17 @@ export async function readView(
   const { signal } = opts;
   const absolutePath = await io.resolve(path, cwd, signal);
   const rawText = await io.readText(absolutePath, signal, opts.encoding);
-  const { normalized, fileHashes, hadUtf8DecodeErrors, bom, originalEnding } = await normFromText({
-    absolutePath,
-    rawText,
-    displayPath: path,
-    signal,
-    maxLines: MAX_HASH_LINES,
-    reservedHashes: opts.reservedHashes,
-    retiredHashes: opts.retiredHashes,
-    previous: opts.previous,
-  });
+  const { normalized, fileHashes, hadUtf8DecodeErrors, bom, originalEnding, endingCounts } =
+    await normFromText({
+      absolutePath,
+      rawText,
+      displayPath: path,
+      signal,
+      maxLines: MAX_HASH_LINES,
+      reservedHashes: opts.reservedHashes,
+      retiredHashes: opts.retiredHashes,
+      previous: opts.previous,
+    });
   const r = await fmtReadPreview(
     normalized,
     { offset: opts.offset, limit: opts.limit, windows: opts.windows },
@@ -802,6 +823,7 @@ export async function readView(
     hadUtf8DecodeErrors,
     bom,
     originalEnding,
+    endingCounts,
     normalized,
   };
 }

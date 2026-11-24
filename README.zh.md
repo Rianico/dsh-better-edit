@@ -135,6 +135,7 @@ kQm│}
 storeDir: central # 存储位置："central"（默认，位于 $DSH_HOME/.../runtime/<name>-<hash8>/）| "workspace"（旧版 <ws>/.dsh_better_edit/）| "/abs/path"（自定义根目录）
 autoGitignore: false # 仅 workspace：当 .git 存在但 .gitignore 缺少 .dsh_better_edit/ 时，true = 自动追加 ".dsh_better_edit/"，false = 仅告警一次
 spanMode: hint # hint | strict——strict 拒绝被替换却从未提供的内部行
+eol: AUTO # 行尾：AUTO（沿用文件主导行尾）| LF | CRLF | CR
 undo_ttl_s: 604800 # 撤销历史 TTL（秒）；-1 = 永久保留（默认 604800 = 7 天）
 storeMaxAgeS: 2592000 # central 清理：runtime/<name>-<hash8>/ 目录最大闲置时长（秒），超时后被清理（默认 2592000 = 30 天）
 storeMaxTotalBytes: 524288000 # central 清理：runtime/ 下总字节数上限，超限后按 LRU 清理（默认 524288000 = 500 MB)
@@ -149,9 +150,12 @@ Env 覆盖 yaml（`env > yaml > central`），非法回退到 `central` 并告�
 DSH_BETTER_EDIT_STORE_DIR=central|workspace|/abs
 DSH_BETTER_EDIT_AUTO_GITIGNORE=true|false  # 大小写不敏感
 DSH_BETTER_EDIT_SPAN_MODE=hint|strict
+DSH_BETTER_EDIT_EOL=AUTO|LF|CRLF|CR          # 大小写不敏感
 ```
 
 `spanMode` 不提供按调用覆盖；策略归 profile 所有。详见 [ADR-0045](docs/adr/0045-strict-span-mode.md)。
+
+**行尾。** 每次 `edit` 只写**一种**生效行尾：优先 `DSH_BETTER_EDIT_EOL`，其次上面配置里的 `eol`，其次文件的主导行尾（平局依次取 LF、CRLF、CR），最后才是系统行尾（Windows `\r\n`，其他 `\n`）。`AUTO` 沿用文件主导行尾，`LF`/`CRLF`/`CR` 强制指定。混合行尾的文件会在读取时说明——`[W_MIXED_EOL] Mixed EOL: 2 CRLF, 1 LF. All edits normalize to CRLF (file).`——而真正改写了行尾的编辑会报告 `[MODEL] [W_EOL_REWRITTEN] EOL normalized to CRLF (file): 1 terminators changed. Undo restores normalized content.`；`undo_last_edit` 在同一个生效行尾上恢复，并在编辑前是混合行尾时明确说明混合已无法还原。
 
 旧的 `<workspace>/.dsh_better_edit/` 在首次以 central 打开时一次性拷贝；`runtime/<name>-<hash8>/` 可通过 `ls` 查看，带 `.wsPath` 旁路文件。工作区身份跟随会话的**实时**工作目录（`working_directory` 工具），而不是会话创建时的目录。生命周期详见 `docs/specs/issue-24-store-tenancy.md`（janitor `mtime>storeMaxAgeS` 后 LRU、WAL checkpoint、`undo` TTL）。
 
@@ -200,6 +204,8 @@ $DSH_HOME/plugins/dsh-better-edit/<preset>/<section>.md
 **正确性。** 解析出的编辑范围会与已提供状态核对：两个边界锚点必须仍然有效；边界有效时，`hint` 允许跨过从未提供的**内部**行（diff 用空栏、并以 `[W_UNSERVED_INTERIOR]` 披露），`strict` 则在**写入任何内容之前**拒绝该内部行。过期、歧义或未解析的范围会在写入前被硬性拒绝，并把当前范围以全新锚点的形式回显（reject-and-serve）——这些行会**记录为已提供**（行、canon、快照与租约，与对这些行做一次 `read` 等价），因此重试无需 `read`。两个例外如实说明：在同一调用中已有条目改动了临时缓冲区之后才发生的拒绝不显示任何行，只指名一次锚定读取会提供哪些当前文件行；若回显的锚点已被 served 镜像在别处占用，该窗口不予记录并在消息中说明。
 
 **面向 Agent 的现代编辑范式。** 内容地址锚点与行号无关：编辑文件的一部分，其余行的哈希保持不变，因此连续编辑无需重新读取。模型按行**是什么**来定位，而不是按它之前在第几行。
+
+**持久撤销。** `undo_last_edit` 在**生效行尾**（effective EOL）上恢复上一次编辑前的内容：BOM、原始锚点一并恢复，重启后依然有效。编辑前的**混合行尾不会被恢复**——撤销只写一种行尾，并在响应中说明这一事实。
 
 ### 对比
 
@@ -274,7 +280,7 @@ token 基准测试衡量的是模型发出的负载——它假设模型每次�
 | ---------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `read`           | 以 `HASH│内容` 形式返回文件。参数：`offset`（1 起始）、`limit`。分页输出以 `[Showing lines N-M of T. Use offset=… to continue.]` 结尾。超过 200KB 的行显示为标记并附 `sed` 提示——哈希锚点需要完整行。                                              |
 | `edit`           | `{file, edits:[[from,to,text]]}`（也接受命名对象；`path`/`file_path` 别名会被折叠），`""` 删除，原子 ≤32，先校验后写入。单条目编辑一个范围；多条目对同一文件原子批量（最多 32）。对每个包含范围内已提供的每一行校验，reject-and-serve 返回新锚点。 |
-| `undo_last_edit` | `{ path }` 撤销该文件上一次 hashline 编辑，仅当文件仍与存储的编辑后内容一致时生效；重启后依然有效。                                                                                                                                                |
+| `undo_last_edit` | `{ path }` 撤销该文件上一次 hashline 编辑：在**生效行尾**上恢复编辑前的内容（连同 BOM 与原始锚点），仅当文件仍与存储的编辑后内容一致时生效；若编辑前是混合行尾，响应会说明混合未被还原；重启后依然有效。                                           |
 
 内置 `write` 仍用于整文件替换。执行前，插件只会在候选行以同一会话、规范路径及行位置所提供的精确 `HASH│` 锚点开头时拒绝；文件保持不变，并提示仅用文件正文重试。插件不会泛化地剥离类似哈希的文本。
 

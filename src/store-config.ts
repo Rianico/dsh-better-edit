@@ -14,6 +14,29 @@ import { errCode } from "./utils.js";
 import { SUPPORTED_ENCODINGS } from "./encoding.js";
 import { parseSpanMode, SPAN_MODE_DEFAULT, SPAN_MODE_ENV_VAR } from "./span-mode.js";
 
+// ---- eol vocabulary (single source of truth for the `eol` setting) ----
+
+/** Environment override for the `eol` setting; must match the resolver's rung. */
+export const EOL_ENV_VAR = "DSH_BETTER_EDIT_EOL";
+
+/** The `eol` setting's enum: a forced terminator, or `AUTO` = keep the file's dominant one. */
+export const EOL_SETTINGS = ["AUTO", "LF", "CRLF", "CR"] as const;
+export type EolSetting = (typeof EOL_SETTINGS)[number];
+/** The setting an unconfigured session gets: keep the file's own dominant terminator. */
+export const EOL_DEFAULT: EolSetting = "AUTO";
+
+/** Runtime guard for values arriving from the config file and the environment. */
+export function isEolSetting(value: unknown): value is EolSetting {
+  return typeof value === "string" && EOL_SETTINGS.some((setting) => setting === value);
+}
+
+/** Env spellings are case-insensitive (`crlf` -> `CRLF`); empty or out-of-enum -> `undefined`. */
+export function parseEnvEolSetting(raw: string | undefined): EolSetting | undefined {
+  if (raw === undefined) return undefined;
+  const candidate = raw.trim().toUpperCase();
+  return isEolSetting(candidate) ? candidate : undefined;
+}
+
 // ---- helpers (pure, no IO) ----
 
 function homeBase(): string {
@@ -102,6 +125,7 @@ const StoreConfigSchema = z.object({
   undo_ttl_s: z.number().int().min(-1).default(604800), // undo history TTL in seconds; -1 = keep forever (default 604800 = 7 days)
   storeMaxAgeS: z.number().int().min(1).default(2592000), // central janitor: max idle age in seconds before evicting runtime/<name>-<hash8>/ (default 2592000 = 30 days)
   storeMaxTotalBytes: z.number().int().min(0).default(524288000), // central janitor: max total bytes under runtime/ before LRU eviction (default 524288000 = 500 MB)
+  eol: z.enum(EOL_SETTINGS).default(EOL_DEFAULT), // line ending a write uses: AUTO (keep the file's dominant terminator) | LF | CRLF | CR
 });
 
 export type StoreConfig = z.infer<typeof StoreConfigSchema>;
@@ -117,6 +141,7 @@ let cachedEnvAutoGuessEncoding: string | undefined;
 let cachedEnvNormalizeToUtf8: string | undefined;
 let cachedEnvSupportedEncodings: string | undefined;
 let cachedEnvSpanMode: string | undefined;
+let cachedEnvEol: string | undefined;
 
 function configYamlPath(): string {
   return join(resolveDshHome(), "plugins", "dsh-better-edit", "config.yaml");
@@ -145,6 +170,9 @@ supportedEncodings: [${SUPPORTED_ENCODINGS.join(", ")}]
 
 # served-span policy for edit payloads: "hint" (default) | "strict"
 spanMode: hint
+
+# line ending a write uses: AUTO = keep the file's dominant terminator | LF | CRLF | CR
+eol: AUTO
 
 # undo history TTL in seconds; -1 = keep forever (default 604800 = 7 days)
 undo_ttl_s: 604800
@@ -304,6 +332,16 @@ function fsAdapter(): Partial<StoreConfig> {
         console.warn(`dsh-better-edit: supportedEncodings "${parsed.supportedEncodings}" invalid`);
       else out.supportedEncodings = arr;
     }
+    if (parsed.eol !== undefined) {
+      // file values are verbatim — a lowercase `lf` is outside the enum and is not accepted
+      if (isEolSetting(parsed.eol)) {
+        out.eol = parsed.eol;
+      } else {
+        console.warn(
+          `dsh-better-edit: eol "${parsed.eol}" invalid — expected AUTO|LF|CRLF|CR, fallback to AUTO`,
+        );
+      }
+    }
     if (parsed.storeMaxTotalBytes !== undefined) {
       const n = Number(parsed.storeMaxTotalBytes);
       const res = z.number().int().min(0).safeParse(n);
@@ -394,6 +432,17 @@ function envAdapter(base: StoreConfig): Partial<StoreConfig> {
       out.spanMode = mode;
     }
   }
+  const envEol = process.env[EOL_ENV_VAR];
+  if (envEol !== undefined) {
+    const setting = parseEnvEolSetting(envEol);
+    if (setting === undefined) {
+      console.warn(
+        `dsh-better-edit: ${EOL_ENV_VAR} "${envEol}" invalid — expected AUTO|LF|CRLF|CR, fallback to ${base.eol}`,
+      );
+    } else {
+      out.eol = setting;
+    }
+  }
   return out;
 }
 
@@ -412,6 +461,7 @@ function complementMissingFieldsSync(yamlPath: string, yamlPartial: Partial<Stor
   if (yamlPartial.storeMaxAgeS === undefined) missingLines.push("storeMaxAgeS: 2592000");
   if (yamlPartial.storeMaxTotalBytes === undefined)
     missingLines.push("storeMaxTotalBytes: 524288000");
+  if (yamlPartial.eol === undefined) missingLines.push("eol: AUTO");
   if (missingLines.length === 0) return;
   try {
     // Ensure we don't duplicate if file was concurrently complemented — re-read raw keys.
@@ -445,6 +495,7 @@ export function loadConfig(): StoreConfig {
   const envSup = process.env.DSH_BETTER_EDIT_SUPPORTED_ENCODINGS;
   const envAuto = process.env.DSH_BETTER_EDIT_AUTO_GITIGNORE;
   const envSpanMode = process.env[SPAN_MODE_ENV_VAR];
+  const envEol = process.env[EOL_ENV_VAR];
 
   if (
     cachedConfig !== undefined &&
@@ -455,7 +506,8 @@ export function loadConfig(): StoreConfig {
     cachedEnvAutoGuessEncoding === envGuess &&
     cachedEnvNormalizeToUtf8 === envNorm &&
     cachedEnvSupportedEncodings === envSup &&
-    cachedEnvSpanMode === envSpanMode
+    cachedEnvSpanMode === envSpanMode &&
+    cachedEnvEol === envEol
   ) {
     return cachedConfig;
   }
@@ -494,6 +546,7 @@ export function loadConfig(): StoreConfig {
   cachedEnvNormalizeToUtf8 = envNorm;
   cachedEnvSupportedEncodings = envSup;
   cachedEnvSpanMode = envSpanMode;
+  cachedEnvEol = envEol;
   return cfg;
 }
 
@@ -508,4 +561,5 @@ export function _resetConfigCache(): void {
   cachedEnvNormalizeToUtf8 = undefined;
   cachedEnvSupportedEncodings = undefined;
   cachedEnvSpanMode = undefined;
+  cachedEnvEol = undefined;
 }

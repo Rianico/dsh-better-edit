@@ -85,7 +85,7 @@ File editing is the #1 point of failure for autonomous agents. Traditional tools
 - **Decoupled Line Identity**: Lines are verified against served snapshot lineage, not ephemeral line coordinates.
 - **Collision-Free Anchors**: Coprime bitset probing ensures duplicate lines in a file receive distinct, unambiguous 3-character hashes.
 - **No Heuristic Guessing**: Retires fuzzy matching. If an anchor cannot be unambiguously resolved, it fails closed safely.
-- **Persisted Undo**: `undo_last_edit` restores exact file content, BOM, line endings, and original anchors, persisting across session restarts.
+- **Persisted Undo**: `undo_last_edit` restores the previous content at the **effective EOL** (BOM and original anchors too, persisting across session restarts). A pre-edit mixture of line endings is **not** restored — the revert writes one ending and says so.
 
 ---
 
@@ -174,12 +174,15 @@ Tenancy and prompt guidance declare once, read at `agent/created`, no code chang
 storeDir: central # central | workspace | /abs
 autoGitignore: false
 spanMode: hint # hint | strict — strict refuses a replaced interior line this session never served
+eol: AUTO # AUTO | LF | CRLF | CR
 undo_ttl_s: 604800 # 7d, -1 forever
 storeMaxAgeS: 2592000 # 30d janitor
 storeMaxTotalBytes: 524288000 # 500 MB LRU
 ```
 
-Env overrides yaml (`DSH_BETTER_EDIT_STORE_DIR`, `DSH_BETTER_EDIT_AUTO_GITIGNORE`, `DSH_BETTER_EDIT_SPAN_MODE=hint|strict`). `spanMode` has no per-call override — the profile owns the policy. See [ADR-0045](docs/adr/0045-strict-span-mode.md).
+Env overrides yaml (`DSH_BETTER_EDIT_STORE_DIR`, `DSH_BETTER_EDIT_AUTO_GITIGNORE`, `DSH_BETTER_EDIT_SPAN_MODE=hint|strict`, `DSH_BETTER_EDIT_EOL`). `spanMode` has no per-call override — the profile owns the policy. See [ADR-0045](docs/adr/0045-strict-span-mode.md).
+
+**Line endings** — every `edit` writes **one** effective EOL: `DSH_BETTER_EDIT_EOL` if set, else `eol` from the config above, else the file's dominant terminator (ties: LF, CRLF, CR), else the system one (`\r\n` on Windows, `\n` elsewhere). `AUTO` keeps the file's dominant ending; `LF`/`CRLF`/`CR` force it. A file that mixes endings says so on read — `[W_MIXED_EOL] Mixed EOL: 2 CRLF, 1 LF. All edits normalize to CRLF (file).` — and an edit that re-spells terminators reports `[MODEL] [W_EOL_REWRITTEN] EOL normalized to CRLF (file): 1 terminators changed. Undo restores normalized content.` `undo_last_edit` restores at that same effective EOL and names it when a pre-edit mixture could not come back.
 
 **Guidance per preset** — `tool:read` / `tool:edit` / `tool:undo_last_edit` are plain markdown per preset at `$DSH_HOME/plugins/dsh-better-edit/<preset>/<section>.md`. The default order is the harness's own tool slot (`systemPrompt.getSectionOrder`: `1100` read, `1300` edit, `1310` undo), so a band change upstream moves the sections with it; front-matter pins a custom order. The seeded roster is the shipped presets — `standard`, `ptc`, `minimal`, `cordis`. Delete or empty a file → default re-seeds at next boot; keep a `---` fence to blank on purpose.
 
@@ -218,7 +221,7 @@ Single stochastic run, `opencode-go/gpt-5.6-luna` high. [Artifact](https://githu
 | `read`           | `HASH│content` with `offset`/`limit`; `[Showing N-M of T]` paging; `>200KB` lines show marker                                      |
 | `read_skill`     | Plain text, no hashes, no serves — editing after it needs a serve                                                                  |
 | `edit`           | `{file, edits:[[from,to,text]]}` (named objects too; `path`/`file_path` aliases fold), `""` deletes, atomic ≤32, verify-then-write |
-| `undo_last_edit` | `{path}` restores last edit (BOM/line endings/anchors), persisted                                                                  |
+| `undo_last_edit` | `{path}` restores last edit at its effective EOL (BOM/anchors too), names a lost mixture, persisted                                |
 
 `write` stays, but refuses an exact `HASH│` echo for same `session/path/line` before dispatch.
 

@@ -15,9 +15,24 @@ All notable changes to this project will be documented in this file.
 
 * **edit:** add an opt-in `spanMode: hint|strict` served-span policy (`DSH_BETTER_EDIT_SPAN_MODE`, default `hint`). `strict` refuses an edit whose leased span replaces an interior line this session never served — before any write, with a rowless `[E_UNSERVED_RANGE]` that counts the replaced span and lists the unserved file lines; default `hint` still accepts and now discloses via a blank diff gutter and one `[W_UNSERVED_INTERIOR]` applied warning, removing the false blanket-refusal promise (ADR-0045, closes #141). (#173)
 
+* **eol:** resolve one effective line ending per write from a four-rung ladder — `DSH_BETTER_EDIT_EOL` > the new `eol` config (`AUTO` | `LF` | `CRLF` | `CR`, default `AUTO`) > the file's dominant terminator (whole-file; ties prefer LF, then CRLF, then CR) > the system ending (`\r\n` on Windows, `\n` elsewhere) — from terminator counts taken once at decode, so a file with no terminator gets the platform one and a forced rung names its own source (ADR-0047). (#175)
+* **read:** append a bare `[W_MIXED_EOL]` notice — whole-file counts in CRLF/LF/CR order and the ending the next edit will use — after the rows of a read whose pre-image spells more than one terminator kind, so the mixture is disclosed before the first write collapses it; the notice is chrome, never a served row or an anchor (ADR-0047). (#175)
+
 ### Bug Fixes
 
 * **edit:** render `E_BATCH_ABORT` as one verdict line plus one bullet per failing item, stop re-echoing served rows, and state the failure count against the submitted total (#174)
+
+* **edit:** write every edit at one resolved effective EOL and disclose the rewrite with `[MODEL] [W_EOL_REWRITTEN] ... N terminators changed. Undo restores normalized content.` only after the write landed, so a mixed file no longer loses its mixture silently while the bytes it kept are re-spelled at the new ending; a terminator a new line introduces is not counted, and `write`/`str_replace_editor` bytes are unchanged (ADR-0047). (#175)
+* **undo:** restore the pre-edit content at the ending the EDIT wrote, compare staleness against that same ending, and say `Restored at <ending>; the pre-edit mixture is not restored.` when the pre-image was mixed — the record gains `effective_ending` + `pre_image_mixed` on both undo halves as additive nullable columns (idempotent ALTER, no version bump), and an old row falls back to `ending` and never claims a mixture (ADR-0047). (#175)
+
+### Documentation
+
+* **adr:** record ADR-0047 — EOL normalization, normalized undo and the `eol` config, with the upstream `aa10e61`/ADR-0019 §1–§4 referent and the downstream deviations named. (#175)
+* **readme:** replace the "exact line endings" undo promise with the effective-EOL contract, document `eol`/`DSH_BETTER_EDIT_EOL`, and state the `[W_MIXED_EOL]`/`[W_EOL_REWRITTEN]` disclosures in both READMEs and the glossary. (#175)
+
+### Tests
+
+* **eol:** drive the public `read`/`edit`/`undo_last_edit` tools over the end-to-end matrix — three mixed majorities, three uniform endings, a zero-terminator file (the `system` rung), and the `env` > `config` > `file` precedence on one mixed fixture — pinning the read notice, post-edit bytes, applied warning, post-undo bytes and undo mixture clause per case. (#175)
 
 ## [1.2.7] - 2026-11-24
 
