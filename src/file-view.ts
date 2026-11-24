@@ -755,6 +755,12 @@ export interface FileView {
   hadUtf8DecodeErrors: boolean;
   bom: string;
   originalEnding: LineEnding;
+  /**
+   * The RAW pre-image's terminator counts, carried out of `normFromText` where the bytes are
+   * decoded (#169). Whole-file by construction, so a page or a window reports the same counts as
+   * a full read; the read tier's mixed-EOL notice is derived from them, never re-counted.
+   */
+  endingCounts: LineEndingCounts;
   normalized: string;
 }
 
@@ -782,16 +788,17 @@ export async function readView(
   const { signal } = opts;
   const absolutePath = await io.resolve(path, cwd, signal);
   const rawText = await io.readText(absolutePath, signal, opts.encoding);
-  const { normalized, fileHashes, hadUtf8DecodeErrors, bom, originalEnding } = await normFromText({
-    absolutePath,
-    rawText,
-    displayPath: path,
-    signal,
-    maxLines: MAX_HASH_LINES,
-    reservedHashes: opts.reservedHashes,
-    retiredHashes: opts.retiredHashes,
-    previous: opts.previous,
-  });
+  const { normalized, fileHashes, hadUtf8DecodeErrors, bom, originalEnding, endingCounts } =
+    await normFromText({
+      absolutePath,
+      rawText,
+      displayPath: path,
+      signal,
+      maxLines: MAX_HASH_LINES,
+      reservedHashes: opts.reservedHashes,
+      retiredHashes: opts.retiredHashes,
+      previous: opts.previous,
+    });
   const r = await fmtReadPreview(
     normalized,
     { offset: opts.offset, limit: opts.limit, windows: opts.windows },
@@ -816,6 +823,7 @@ export async function readView(
     hadUtf8DecodeErrors,
     bom,
     originalEnding,
+    endingCounts,
     normalized,
   };
 }

@@ -256,8 +256,11 @@ export function unionMembers(source: string, name: string): string[] {
 }
 
 /**
- * The 8 producer positions. Only registry-call positions are matched, which is
- * what keeps errno codes out by construction.
+ * The 8 APPLIED-tier producer positions. Only registry-call positions are matched, which is
+ * what keeps errno codes out by construction. The read tier has its own pattern below
+ * (`READ_PRODUCER_PATTERNS`), deliberately NOT merged into this list: `firedWarnings` and
+ * `PRODUCER_PATTERNS` are the applied tier's referent, and a read-tier code must never count as
+ * an applied-tier firing (nor the reverse).
  */
 export const PRODUCER_PATTERNS: Array<{ re: RegExp; code: (m: RegExpMatchArray) => string }> = [
   { re: new RegExp(`new\\s+DomainError\\(\\s*${QUOTED_CODE}`, "g"), code: (m) => m[1]! },
@@ -274,6 +277,17 @@ export const PRODUCER_PATTERNS: Array<{ re: RegExp; code: (m: RegExpMatchArray) 
 ];
 
 /**
+ * The read tier's producer position: `formatReadWarning("<CODE>"`. Separate from
+ * `PRODUCER_PATTERNS` on purpose — the applied tier's scans (`producedCodes`, `firedWarnings`,
+ * `test/arch/applied-notice-tier.test.ts`) compare against `WARNING_REGISTRY`, and a read-tier
+ * code appearing there would claim a firing the applied tier never had.
+ */
+export const READ_PRODUCER_PATTERNS: Array<{
+  re: RegExp;
+  code: (m: RegExpMatchArray) => string;
+}> = [{ re: new RegExp(`formatReadWarning\\(\\s*${QUOTED_CODE}`, "g"), code: (m) => m[1]! }];
+
+/**
  * Producer codes in one text. Comments are stripped first — a producer-shaped
  * line inside a comment is prose, not a producer (G1).
  */
@@ -287,11 +301,31 @@ export function producedCodesInText(text: string): string[] {
   return found;
 }
 
+/** Read-tier producer codes in one text, under the same comment-stripping rule. */
+export function producedReadCodesInText(text: string): string[] {
+  const bare = stripComments(text);
+  const found: string[] = [];
+  for (const { re, code } of READ_PRODUCER_PATTERNS) {
+    re.lastIndex = 0;
+    for (const m of bare.matchAll(re)) found.push(code(m));
+  }
+  return found;
+}
+
 /** Producer codes across files. */
 export function producedCodes(files: string[]): Set<string> {
   const found = new Set<string>();
   for (const file of files) {
     for (const code of producedCodesInText(readFileSync(file, "utf-8"))) found.add(code);
+  }
+  return found;
+}
+
+/** Read-tier producer codes across files. */
+export function producedReadCodes(files: string[]): Set<string> {
+  const found = new Set<string>();
+  for (const file of files) {
+    for (const code of producedReadCodesInText(readFileSync(file, "utf-8"))) found.add(code);
   }
   return found;
 }

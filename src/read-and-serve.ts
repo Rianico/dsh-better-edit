@@ -14,6 +14,8 @@ import { canon } from "./hashline/hash-assign.js";
 import { splitLines } from "./utils.js";
 import { getAutoGuessFooter } from "./fs-bridge.js";
 import { HASH_SPACE, isPromotableAnchorSpaceExhaustion } from "./hashline/hash-assign.js";
+import { formatReadWarning } from "./domain-errors.js";
+import { endingName, resolveEffectiveEolFromCounts, terminatorKindsUsed } from "./eol-config.js";
 import {
   recordServed,
   clearDriftReported,
@@ -25,6 +27,7 @@ import { loadServedStore } from "./hash-store.js";
 import type { FileIO } from "./fs-bridge.js";
 import type { ReadWindow } from "./file-view.js";
 import type { ServedRow } from "./hashline/anchor-pipeline.js";
+import type { LineEndingCounts } from "./edit-diff.js";
 
 /** Appended when the file had non-UTF-8 bytes; editing rewrites it as UTF-8. */
 export const UTF8_REWRITE_NOTE =
@@ -38,6 +41,29 @@ export const UTF8_REWRITE_NOTE =
 const SERVE_NOT_RECORDED_NOTE =
   "WARNING: the rows above were NOT recorded as served — their `HASH│` anchors are NOT " +
   "usable for editing. Re-read the file to re-sync before editing.";
+
+/**
+ * The read tier's mixed-EOL notice, or `undefined` when the pre-image spells one terminator kind
+ * (or none).
+ *
+ * Counts are the RAW pre-image's, so the notice is whole-file by construction: `normFromText`
+ * counts once where the bytes are decoded, and `offset`/`limit`/`windows` only decide which rows
+ * render. The target is the ending the NEXT write will use, resolved by the same ladder that
+ * decides the write itself (`env` > `config` > the file's dominant terminator > the OS) — so the
+ * notice and the applied `[W_EOL_REWRITTEN]` can never name different rungs.
+ *
+ * CHROME, not content: this string is appended to `text` only. It is never a served row and never
+ * enters `view.text`, so it cannot be mistaken for file content or for an anchor.
+ */
+function mixedEolWarning(counts: LineEndingCounts): string | undefined {
+  if (terminatorKindsUsed(counts) < 2) return undefined;
+  const effective = resolveEffectiveEolFromCounts(counts);
+  return formatReadWarning("W_MIXED_EOL", {
+    ...counts,
+    target: endingName(effective.value),
+    source: effective.source,
+  });
+}
 
 export interface ReadAndServeOptions {
   encoding?: string;
@@ -216,7 +242,11 @@ export async function readAndServe(
   // The serve write is a second unit: a fault there must not fail the read, but it does decide
   // whether the anchors above are usable — so the claim is downgraded in the one channel both
   // consumers render.
-  const text = servedLanded ? baseText : `${baseText}\n\n${SERVE_NOT_RECORDED_NOTE}`;
+  const withServeNote = servedLanded ? baseText : `${baseText}\n\n${SERVE_NOT_RECORDED_NOTE}`;
+  // LAST: the mixed-EOL notice closes the read. It is chrome (never a served row, never part of
+  // `view.text`), and one call appends it once whatever the page or window shape was.
+  const readWarning = mixedEolWarning(view.endingCounts);
+  const text = readWarning === undefined ? withServeNote : `${withServeNote}\n\n${readWarning}`;
   return {
     text,
     served: view.served,
