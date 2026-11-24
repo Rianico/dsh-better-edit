@@ -92,13 +92,18 @@ export function buildEditTool(io: FileIO, sandbox: FsSandboxController) {
           // #117: a null/absent file is rejected at admission (assertEditRequest);
           // the retired anchor-inference arm never resolves one here.
           const resolvedFile = req.file;
-          const sandboxPolicy = await sandbox.resolvePolicy(
-            "edit",
-            // SAFETY: `resolvePolicy` reads only sandbox_permissions/justification;
-            // the file/edits fields are legacy context it ignores.
-            { file: resolvedFile, edits: req.edits } as unknown as FsEscalationArgs,
-            exec,
-          );
+          const dryRun = req.dry_run === true;
+          // WHY (#145): a preview writes nothing, so it resolves no write policy — that would ask for
+          // a permission the call cannot use, and a refusal would mask a pure preview behind it.
+          const sandboxPolicy = dryRun
+            ? undefined
+            : await sandbox.resolvePolicy(
+                "edit",
+                // SAFETY: `resolvePolicy` reads only sandbox_permissions/justification;
+                // the file/edits fields are legacy context it ignores.
+                { file: resolvedFile, edits: req.edits } as unknown as FsEscalationArgs,
+                exec,
+              );
 
           abortIf(signal);
           const items: PreparedItem[] = [];
@@ -116,7 +121,7 @@ export function buildEditTool(io: FileIO, sandbox: FsSandboxController) {
           }
 
           // Deep seam: one interface, all lifecycle branching concentrates in Mutation
-          return execute({ io, items, sessionKey, signal, exec, sandbox, sandboxPolicy });
+          return execute({ io, items, sessionKey, signal, exec, sandbox, sandboxPolicy, dryRun });
         } catch (error: unknown) {
           throw wrapUnexpected(error, exec.signal);
         }

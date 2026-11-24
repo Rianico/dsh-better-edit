@@ -264,7 +264,9 @@ function diffParts(
  * - collapse invariant: a middle gap smaller than 2×context renders whole (#166/#172);
  *   at context 0 every non-empty middle gap collapses to a single counted untouched
  *   marker (#170); bare ` ...` appears only at leading/trailing edges; added spans are never collapsed.
- * - servedRows mirror exactly the rendered context/addition rows (position + hash).
+ * - servedRows mirror exactly the rendered context/addition rows (position + hash). A `dryRun`
+ *   records none and blanks its added gutters, because a run that commits nothing serves nothing;
+ *   its context rows keep their real anchors, which the session already holds.
  * - unservedRemovedLines names, ascending and in ORIGINAL coordinates, every removed row whose
  *   pre-batch `served` slot was `null` — the session never read that line, so the row renders the
  *   empty gutter instead of an anchor. A `null` fold-hidden line counts toward the marker's
@@ -279,6 +281,7 @@ export function genDiff(
   newContentHashes?: string[],
   oldContentHashes?: string[],
   served?: readonly (string | null)[],
+  dryRun = false,
 ): {
   diff: string;
   firstChangedLine: number | undefined;
@@ -306,7 +309,9 @@ export function genDiff(
       if (firstChangedLine === undefined) firstChangedLine = newLineNum;
       if (part.added) {
         for (let k = 0; k < displayLines.length; k++) {
-          const hash = effectiveNewHashes[newLineNum - 1];
+          // WHY (#145): a dry run's added row has no identity the session could honour, so it
+          // prints the empty gutter and records no served row.
+          const hash = dryRun ? undefined : effectiveNewHashes[newLineNum - 1];
           output.push(fmtDiffLine("+", displayLines[k]!, hash));
           if (hash !== undefined) {
             servedRows.push({ position: newLineNum - 1, hash });
@@ -360,7 +365,9 @@ export function genDiff(
         }
         const hash = effectiveNewHashes[newLineNum - 1];
         output.push(fmtDiffLine(" ", line, hash));
-        if (hash !== undefined) {
+        // A dry run serves nothing, so it publishes no row — the printed anchor above still
+        // describes the unchanged line the session already holds.
+        if (hash !== undefined && !dryRun) {
           servedRows.push({ position: newLineNum - 1, hash });
         }
         newLineNum++;

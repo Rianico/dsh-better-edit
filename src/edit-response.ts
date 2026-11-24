@@ -18,6 +18,8 @@ export type EditDetails = {
   servedByPath?: Array<{ path: string; servedRows: ServedRow[] }>;
   warnings?: string[];
   driftNotice?: string;
+  /** A dry run: the diff is hypothetical and no anchor was served. */
+  dryRun?: boolean;
 };
 type TResult = {
   content: Array<{ type: "text"; text: string }>;
@@ -179,7 +181,7 @@ export type BatchSection = {
 
 export type BatchDetails = EditDetails;
 
-export function buildBatchResult(sections: BatchSection[]): TResult {
+export function buildBatchResult(sections: BatchSection[], dryRun = false): TResult {
   const totalEdits = sections.reduce((n, s) => n + s.appliedCount + s.noopCount, 0);
   const appliedFiles = sections.filter((s) => s.appliedCount > 0);
   const appliedTotal = appliedFiles.reduce((n, s) => n + s.appliedCount, 0);
@@ -199,6 +201,7 @@ export function buildBatchResult(sections: BatchSection[]): TResult {
       s.resultHashes,
       s.originalHashes,
       s.served,
+      dryRun,
     );
     diffBySection.set(s, diffResult);
     const unserved = diffResult.unservedRemovedLines;
@@ -237,6 +240,7 @@ export function buildBatchResult(sections: BatchSection[]): TResult {
           warningsCount: warnings.length,
         }),
         ...(warnings.length > 0 ? { warnings } : {}),
+        ...(dryRun ? { dryRun: true } : {}),
         ...(driftNotice === undefined ? {} : { driftNotice }),
       },
     };
@@ -251,7 +255,9 @@ export function buildBatchResult(sections: BatchSection[]): TResult {
     for (let i = 0; i < s.resultHashes.length; i++) {
       denseRows.push({ position: i, hash: s.resultHashes[i]! });
     }
-    if (denseRows.length > 0) {
+    // WHY (#145): a dry run commits nothing, so every anchor in its diff would name bytes that never
+    // landed. Publishing none keeps a lease from being minted from the hypothetical result.
+    if (!dryRun && denseRows.length > 0) {
       servedByPath.push({ path: s.path, servedRows: denseRows });
     }
   }
@@ -279,6 +285,7 @@ export function buildBatchResult(sections: BatchSection[]): TResult {
         removedLines,
       }),
       ...(warnings.length > 0 ? { warnings } : {}),
+      ...(dryRun ? { dryRun: true } : {}),
       servedRows: servedByPath.flatMap((e) => e.servedRows),
       servedByPath,
       ...(driftNotice === undefined ? {} : { driftNotice }),

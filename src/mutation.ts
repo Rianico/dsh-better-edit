@@ -217,10 +217,15 @@ export async function execute(opts: {
   exec: ToolExecution;
   sandbox: FsSandboxController;
   sandboxPolicy: SandboxExecutionPolicy | undefined;
+  /**
+   * Preview only (#145): the run reads, validates and renders, and commits nothing — no byte write,
+   * no undo row, no anchor retirement, and no serve/lease for rows that were never written.
+   */
+  dryRun?: boolean;
 }): Promise<string> {
-  const { io, items, sessionKey, signal, exec, sandbox, sandboxPolicy } = opts;
+  const { io, items, sessionKey, signal, exec, sandbox, sandboxPolicy, dryRun = false } = opts;
 
-  const fileResult = await runFileEdits(io, items, { signal, sessionKey });
+  const fileResult = await runFileEdits(io, items, { signal, sessionKey, dryRun });
 
   const toSection = (): BatchSection => ({
     path: fileResult.displayPath,
@@ -265,6 +270,12 @@ export async function execute(opts: {
     // Nothing to record, so nothing can fail: vacuously landed.
     return true;
   };
+
+  // WHY (#145): a dry run writes no bytes, so there is no serve to publish and no lease to mint from
+  // the hypothetical rows. It counts as landed by construction — nothing was attempted that could
+  // fail — so the preview never carries the "NOT recorded as served" warning.
+  const publishServe = async (built: ReturnType<typeof buildBatchResult>): Promise<boolean> =>
+    dryRun ? true : recordIfNeeded(built);
 
   // WHY (#98, port of upstream CAND-3): the apply phase reports the anchors its edits freed, and
   // this is where they are retired — after the write transaction landed. Retiring them inside the
@@ -318,45 +329,53 @@ export async function execute(opts: {
 
   if (isSingleCall) {
     if (fileResult.appliedCount === 0) {
-      const built = buildBatchResult([toSection()]);
-      const serveLanded = await recordIfNeeded(built);
+      const built = buildBatchResult([toSection()], dryRun);
+      const serveLanded = await publishServe(built);
       return withServeNotice(built.content[0]!.text, serveLanded);
     }
-    await persistUndoAndWrite({
-      io,
-      files: [commitFile],
-      exec,
-      sandbox,
-      sandboxPolicy,
-      signal,
-      undoUnavailableMessage: (displayPath) =>
-        formatError("E_UNDO_UNAVAILABLE", { path: displayPath }),
-    });
-    await retireFreedAnchors();
-    pushEolNoticeAfterWrite();
-    const built = buildBatchResult([toSection()]);
-    const serveLanded = await recordIfNeeded(built);
+    // WHY (#145): all three steps describe a write. A dry run performs none of them, or the preview
+    // would leave an undo row, a retired anchor set, and an EOL notice for bytes that never landed.
+    if (!dryRun) {
+      await persistUndoAndWrite({
+        io,
+        files: [commitFile],
+        exec,
+        sandbox,
+        sandboxPolicy,
+        signal,
+        undoUnavailableMessage: (displayPath) =>
+          formatError("E_UNDO_UNAVAILABLE", { path: displayPath }),
+      });
+      await retireFreedAnchors();
+      pushEolNoticeAfterWrite();
+    }
+
+    const built = buildBatchResult([toSection()], dryRun);
+    const serveLanded = await publishServe(built);
     return withServeNotice(built.content[0]!.text, serveLanded);
   }
 
   if (fileResult.appliedCount === 0 && fileResult.noopCount > 0) {
     // all noops — no commit
   } else if (fileResult.appliedCount > 0) {
-    await persistUndoAndWrite({
-      io,
-      files: [commitFile],
-      exec,
-      sandbox,
-      sandboxPolicy,
-      signal,
-      undoUnavailableMessage: (displayPath) =>
-        formatError("E_UNDO_UNAVAILABLE", { path: displayPath, batch: true }),
-    });
-    await retireFreedAnchors();
-    pushEolNoticeAfterWrite();
+    // Same gate as the single-call branch above: a dry run commits nothing, so it retires nothing.
+    if (!dryRun) {
+      await persistUndoAndWrite({
+        io,
+        files: [commitFile],
+        exec,
+        sandbox,
+        sandboxPolicy,
+        signal,
+        undoUnavailableMessage: (displayPath) =>
+          formatError("E_UNDO_UNAVAILABLE", { path: displayPath, batch: true }),
+      });
+      await retireFreedAnchors();
+      pushEolNoticeAfterWrite();
+    }
   }
 
-  const built = buildBatchResult([toSection()]);
-  const serveLanded = await recordIfNeeded(built);
+  const built = buildBatchResult([toSection()], dryRun);
+  const serveLanded = await publishServe(built);
   return withServeNotice(built.content[0]!.text, serveLanded);
 }
