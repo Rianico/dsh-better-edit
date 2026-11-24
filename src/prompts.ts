@@ -32,6 +32,7 @@ export const EDIT_GUIDANCE: ToolGuidance = {
     "`edit`: `anchor_from`/`anchor_to` are inclusive; batch multiple edits to the same file only when independent \u2014 they apply atomically (fail \u2192 nothing written).",
     "`edit`: `[TO MODEL]` errors (e.g. `E_STALE_*`, `E_UNSERVED_*`, `E_BAD_PAYLOAD`, `E_SUSPICIOUS_TEXT`) need a retry; a `[MODEL]`-routed warning carries an action you must take (e.g. resending a no-op rejects) \u2014 `[USER]` warnings/`drift:` notices are human-only.",
     "`edit`: on `E_STALE_ANCHOR` re-read for fresh anchors; rows echoed by `E_STALE_RANGE`/`E_UNSERVED_RANGE` are the file's current anchors AND are recorded as served, so retry with them directly. A refusal that shows no rows (a buffer-changed item, `E_TARGET_LOST`, an unresolved anchor) records nothing and names the read to perform; if a result says the rows were NOT recorded as served, re-read.",
+    "`edit`: `dry_run: true` previews a complex multi-range or high-value change without writing \u2014 the reply is the would-be diff (added rows print the blank gutter, so it grants no new anchors) with a `[DRY RUN]` header and no undo row; use it when asked or when the change is risky, not routinely, because it doubles the turns.",
   ],
 };
 

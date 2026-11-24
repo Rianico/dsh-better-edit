@@ -227,7 +227,11 @@ export function buildBatchResult(sections: BatchSection[], dryRun = false): TRes
     .join("\n\n");
 
   if (allNoop) {
-    const text = `No changes made. All ${totalEdits} edit(s) in the batch produced identical content.\nClassification: noop${warnBlock(warnings)}`;
+    // WHY (#145 T3): metrics keep the live vocabulary ("applied"/"noop") because it names the
+    // outcome the bytes WOULD have; only the header and `details.dryRun` mark that nothing was written.
+    const text = dryRun
+      ? `[DRY RUN] No changes would be made. All ${totalEdits} edit(s) in the batch would produce identical content.\nClassification: noop${warnBlock(warnings)}`
+      : `No changes made. All ${totalEdits} edit(s) in the batch produced identical content.\nClassification: noop${warnBlock(warnings)}`;
     return {
       content: [{ type: "text", text }],
       details: {
@@ -240,7 +244,9 @@ export function buildBatchResult(sections: BatchSection[], dryRun = false): TRes
           warningsCount: warnings.length,
         }),
         ...(warnings.length > 0 ? { warnings } : {}),
-        ...(dryRun ? { dryRun: true } : {}),
+        // WHY (#145 T3): a preview served no row, so it says so with the same empty arrays an applied
+        // preview publishes; an absent field would read as "not projected", not as "served nothing".
+        ...(dryRun ? { dryRun: true, servedRows: [], servedByPath: [] } : {}),
         ...(driftNotice === undefined ? {} : { driftNotice }),
       },
     };
@@ -263,11 +269,19 @@ export function buildBatchResult(sections: BatchSection[], dryRun = false): TRes
   }
   const diff = diffParts.join("\n\n");
 
-  const lineSummary =
-    addedLines > 0 || removedLines > 0
-      ? ` Added ${addedLines} line(s), removed ${removedLines} line(s).`
-      : "";
-  const summary = `Successfully edited ${appliedFiles.length} file(s) — ${appliedTotal} of ${totalEdits} edit(s) applied${noopTotal > 0 ? ` (${noopTotal} noop)` : ""}.${lineSummary}`;
+  const countsChanged = addedLines > 0 || removedLines > 0;
+  const lineSummary = countsChanged
+    ? ` Added ${addedLines} line(s), removed ${removedLines} line(s).`
+    : "";
+  // WHY (#145 T3): the dry clause is hypothetical — a preview added and removed nothing.
+  const dryLineSummary = countsChanged
+    ? ` Would add ${addedLines} line(s), remove ${removedLines} line(s).`
+    : "";
+  // WHY (#145 T3): metrics keep the live vocabulary ("applied"/"noop") because it names the outcome
+  // the bytes WOULD have; only the `[DRY RUN]` header and `details.dryRun` mark that nothing was written.
+  const summary = dryRun
+    ? `[DRY RUN] Validated ${appliedFiles.length} file(s) — ${appliedTotal} of ${totalEdits} edit(s) would be applied${noopTotal > 0 ? ` (${noopTotal} noop)` : ""}.${dryLineSummary}`
+    : `Successfully edited ${appliedFiles.length} file(s) — ${appliedTotal} of ${totalEdits} edit(s) applied${noopTotal > 0 ? ` (${noopTotal} noop)` : ""}.${lineSummary}`;
   const baseText = `${summary}${warnBlock(warnings)}`;
   const diffSection = formatDiffCard(diff);
   const text = `${baseText}${diffSection}`;

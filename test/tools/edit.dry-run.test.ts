@@ -179,6 +179,33 @@ describe("edit dry_run — zero persistence", () => {
     ).toBeGreaterThan(0);
     expect(live.details.servedByPath!.length).toBeGreaterThan(0);
     expect("dryRun" in live.details, "a live edit publishes no dryRun marker").toBe(false);
+
+    // An all-noop batch answers with its own text (never a diff), so the header and the empty serve
+    // arrays are the only signals a reader gets that the batch was a preview.
+    const noopSection: BatchSection = {
+      ...section,
+      result: original,
+      resultHashes: served,
+      appliedCount: 0,
+      noopCount: 1,
+      totalAddedLines: 0,
+      totalRemovedLines: 0,
+    };
+
+    const noopPreview = buildBatchResult([noopSection], true);
+    expect(noopPreview.details.dryRun, "an all-noop preview is marked hypothetical").toBe(true);
+    expect(noopPreview.details.servedRows, "an all-noop preview serves nothing").toEqual([]);
+    expect(noopPreview.details.servedByPath, "an all-noop preview names no file").toEqual([]);
+    expect(
+      getText(noopPreview).split("\n")[0],
+      "the all-noop preview leads with the dry-run header",
+    ).toMatch(/^\[DRY RUN\] No changes would be made\./);
+
+    const noopLive = buildBatchResult([noopSection]);
+    expect(getText(noopLive), "the live noop control keeps its tense").toContain(
+      "No changes made.",
+    );
+    expect("dryRun" in noopLive.details, "a live noop publishes no dryRun marker").toBe(false);
   });
 
   it("keeps the live path writing and serving its rows", async () => {
@@ -387,6 +414,37 @@ describe("edit dry_run — fail-closed parity with the live path", () => {
     expect(dry.bytes).toBe("a\nDRIFTED\nc\n");
     expect(live.bytes).toBe("a\nDRIFTED\nc\n");
     expect(dry.served, "the refusal records the same real rows in both modes").toBe(live.served);
+  });
+
+  it("a row-echoing refusal serves and records the same rows in both modes", async () => {
+    const echoed = new RegExp(`^\\s*([A-Za-z0-9]{${ANCHOR_LEN}})${HASH_SEP}external$`, "m");
+    const { dry, live } = await parityRun({
+      name: "t.txt",
+      content: "left\nmiddle\nright\n",
+      build: async ({ harness, path }) => {
+        const served = await servedRows(harness, "t.txt");
+        // Step 3 of the #142 repro: the interior row goes stale on disk, so the span rejects.
+        await writeFile(path, "left\nexternal\nright\n", "utf-8");
+        return {
+          file: "t.txt",
+          edits: [{ anchor_from: served[0]!.hash, anchor_to: served[2]!.hash, replace_with: "R" }],
+        };
+      },
+    });
+
+    expect(dry.message, "a stale range is refused, not previewed").toContain("[E_STALE_RANGE]");
+    expect(dry.message, "the dry run answers the live refusal verbatim").toBe(live.message);
+    expect(dry.message, "the refusal echoes the current file's rows").toMatch(echoed);
+    expect(dry.message, "a refusal must never carry a partial diff").not.toContain("```diff");
+    expect(dry.bytes).toBe("left\nexternal\nright\n");
+    expect(live.bytes).toBe("left\nexternal\nright\n");
+    // ADR-0043: the echoed rows describe the current file, so both modes record them as served.
+    expect(dry.served, "the dry refusal records the same real rows as the live one").toBe(
+      live.served,
+    );
+    expect(dry.served, "the echoed row is recorded as served").toContain(
+      `"${echoed.exec(dry.message)![1]!}"`,
+    );
   });
 
   it("a never-served anchor fails with the same code and writes nothing in both modes", async () => {

@@ -19,6 +19,7 @@ All notable changes to this project will be documented in this file.
 * **read:** append a bare `[W_MIXED_EOL]` notice — whole-file counts in CRLF/LF/CR order and the ending the next edit will use — after the rows of a read whose pre-image spells more than one terminator kind, so the mixture is disclosed before the first write collapses it; the notice is chrome, never a served row or an anchor (ADR-0047). (#175)
 * **edit:** admit an optional `dry_run` boolean on the `edit` payload — absent or `null` normalizes to `false` and a non-boolean is refused at admission — the contract half of the read-only preview flag (upstream `56047a3`, #145). (#183)
 * **edit:** make `dry_run: true` a read-only preview of `edit` — the would-be diff is answered, while no bytes are written, no undo row is appended, and the noop-loop counter stays untouched; nothing derived from the hypothetical result is published — no served rows or leases for that result, no anchor snapshot persisted for it, and the drift scan neither records nor retires — while a refusal's reject-and-serve rows describe the current file and stay recorded; added rows print the blank gutter, context rows keep their real anchors, and the live path is unchanged (upstream `56047a3`, #145). (#184)
+* **edit:** lead a `dry_run` answer with a `[DRY RUN]` header and "would be applied"/"would be made" wording, and set `details.dryRun` on the result, so a preview can never be mistaken for a committed edit; metrics keep the applied/noop vocabulary because it names the outcome the bytes would have had (ADR-0049, upstream `56047a3`, #145). (#185)
 
 ### Bug Fixes
 
@@ -33,6 +34,7 @@ All notable changes to this project will be documented in this file.
 * **adr:** record ADR-0047 — EOL normalization, normalized undo and the `eol` config, with the upstream `aa10e61`/ADR-0019 §1–§4 referent and the downstream deviations named. (#175)
 * **readme:** replace the "exact line endings" undo promise with the effective-EOL contract, document `eol`/`DSH_BETTER_EDIT_EOL`, and state the `[W_MIXED_EOL]`/`[W_EOL_REWRITTEN]` disclosures in both READMEs and the glossary. (#175)
 * **adr:** record ADR-0048 — diff alignment follows anchor identity (#176)
+* **edit:** document `dry_run` in the model guidance — when to preview (complex multi-range or high-risk, not routinely), that added rows print a blank gutter and grant no new anchors, and that a preview costs an extra turn — and record ADR-0049 covering admission, execution and the serve rulings. The seeded `<preset>/edit.md` guidance is written once and never re-rendered on upgrade, so an existing install sees the new bullet only after resetting that file to blank. (#185)
 
 ### Tests
 
