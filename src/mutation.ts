@@ -61,6 +61,11 @@ interface UndoWriteFile {
    * describes the old ending, so the override is what makes the rewrite reach disk.
    */
   effectiveEnding: LineEnding;
+  /**
+   * True when the pre-image spelled more than one terminator kind (#171). Carried to the undo pair
+   * so the revert can say it cannot restore the mixture, instead of silently flattening it.
+   */
+  preImageMixed: boolean;
   originalHashes: string[];
   result: string;
 }
@@ -111,6 +116,10 @@ export async function persistUndoAndWrite(opts: PersistWriteOptions): Promise<vo
       originalEnding: file.originalEnding,
       hashes: file.originalHashes,
       resultContent: file.result,
+      // #171: the pair records what this write DOES, so the revert can replay it. Both values are
+      // forwarded, never recomputed — the engine's one decode already decided them.
+      effectiveEnding: file.effectiveEnding,
+      preImageMixed: file.preImageMixed,
     });
     if (!undo.persisted) {
       for (const u of undos) {
@@ -156,8 +165,10 @@ export async function persistUndoAndWrite(opts: PersistWriteOptions): Promise<vo
           //
           // PRE-EXISTING LIMITATION (deliberately kept here): the rollback rebuilds the bytes from
           // `originalNormalized` + `originalEnding`, so a MIXED pre-image comes back normalized at
-          // `originalEnding` — not byte-for-byte. Exact mixed restoration is the undo ticket (#171),
-          // not this one; the ending override above does not widen or narrow that gap.
+          // `originalEnding` — not byte-for-byte. The ordinary undo is not a repair for that either:
+          // since #171 it restores at the EDIT's effective ending and discloses that the mixture is
+          // not restored; byte-exact mixed restoration is not implemented anywhere. The ending
+          // override above does not widen or narrow that gap.
           { lineEnding: w.file.originalEnding },
         );
       } catch (e) {
@@ -292,6 +303,7 @@ export async function execute(opts: {
     bom: fileResult.bom,
     originalEnding: fileResult.originalEnding,
     effectiveEnding: fileResult.effectiveEnding,
+    preImageMixed: fileResult.preImageMixed,
     originalHashes: fileResult.originalHashes,
     result: fileResult.result,
   };

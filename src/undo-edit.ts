@@ -31,6 +31,9 @@ async function writeUndo(path: string, entry: UndoRecord): Promise<void> {
     hashes: entry.hashes,
     resultContent: entry.resultContent,
     snapshotHash: snapshotHashFor(entry.content),
+    // Same pair property on both halves (#171): the store falls back to `ending` when absent.
+    effectiveEnding: entry.effectiveEnding,
+    preImageMixed: entry.preImageMixed,
   });
 }
 
@@ -46,6 +49,22 @@ export interface UndoEntry {
   originalEnding: LineEnding;
   hashes: string[];
   resultContent: string;
+  /**
+   * The one terminator the edit wrote (#171). Absent = "not recorded" (or a pre-#171 caller), in
+   * which case the revert falls back to `originalEnding`. Do not default it here: the fallback is
+   * the reader's job (`getUndo`), so the writer never claims an ending the edit did not use.
+   */
+  effectiveEnding?: LineEnding;
+  /** True when the pre-image spelled more than one terminator kind, so the revert cannot restore it. */
+  preImageMixed?: boolean;
+}
+
+/**
+ * A stored ending narrowed to the type the restore can spell: anything else (including NULL from a
+ * pre-#171 row) is "not recorded" and falls back to `originalEnding` at the call site.
+ */
+function knownEnding(value: string | null | undefined): LineEnding | undefined {
+  return value === "\r\n" || value === "\n" || value === "\r" ? value : undefined;
 }
 
 /**
@@ -70,6 +89,11 @@ export async function saveUndo(
       ending: entry.originalEnding,
       hashes: entry.hashes,
       resultContent: entry.resultContent,
+      // #171: both halves record the edit's own ending and mixture flag. `=== true` reads an absent
+      // flag as 0 rather than storing undefined: the store coalesces absent to 0 anyway, so this is
+      // the same value without the nested ternary.
+      effectiveEnding: entry.effectiveEnding,
+      preImageMixed: entry.preImageMixed === true ? 1 : 0,
     });
   } catch (error) {
     console.error("Failed to persist undo entry:", error);
@@ -118,6 +142,11 @@ export async function getUndo(path: string): Promise<UndoEntry | undefined> {
       content: record.content,
       bom: record.bom,
       originalEnding,
+      // #171: the revert restores at the ending the EDIT used. A row written before the column
+      // existed carries null here and falls back to the pre-image's own ending — the old behaviour,
+      // never an invented mixture.
+      effectiveEnding: knownEnding(record.effectiveEnding) ?? originalEnding,
+      preImageMixed: record.preImageMixed === 1,
       hashes: record.hashes,
       resultContent: record.resultContent,
     };

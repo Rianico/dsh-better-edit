@@ -35,6 +35,7 @@ import type { FsSandboxController, FsEscalationArgs } from "./sandbox.js";
 import { withWorkspace } from "./workspace-context.js";
 import { encodingHintAtVersion, getEncodingState, prepareForSave } from "./file-encoding-state.js";
 import { loadConfig } from "./store-config.js";
+import { endingName } from "./eol-config.js";
 
 /**
  * Anchor-space exhaustion guard mirrored from the edit path (`retryLineHashesWithPromotion` in
@@ -106,6 +107,11 @@ export function buildUndoTool(io: FileIO, sandbox: FsSandboxController) {
         if (!undo) {
           return `No undo history for ${path}. There is no previous edit to revert.`;
         }
+        // #171: the edit wrote ONE ending (`effectiveEnding`); `originalEnding` is the pre-image's
+        // `detectEnding` answer, which for a mixed pre-image is neither what the edit wrote nor what
+        // the file holds now. Staleness and the restore both use the ending the edit used, or a
+        // perfectly intact file would read as externally modified.
+        const effectiveEnding = undo.effectiveEnding ?? undo.originalEnding;
 
         let currentRaw: string;
         try {
@@ -122,7 +128,7 @@ export function buildUndoTool(io: FileIO, sandbox: FsSandboxController) {
           }
           throw error;
         }
-        if (currentRaw !== undo.bom + restoreEndings(undo.resultContent, undo.originalEnding)) {
+        if (currentRaw !== undo.bom + restoreEndings(undo.resultContent, effectiveEnding)) {
           await clearUndo(absolutePath);
           return formatError("E_UNDO_STALE", { path, reason: "modified" });
         }
@@ -238,10 +244,24 @@ export function buildUndoTool(io: FileIO, sandbox: FsSandboxController) {
         const prepared = prepareForSave(undo.content, recorded, {
           normalizeToUtf8: loadConfig().normalizeToUtf8,
           displayPath: path,
+          // #171: the memo still describes the PRE-edit bytes (its `lineEnding` is the pre-image's),
+          // so the resolved ending has to be named or the restore would be re-spelled at the wrong
+          // one. The same option rides the write below: the IO seam re-prepares against that memo.
+          lineEnding: effectiveEnding,
         });
 
         try {
-          await io.writeText(absolutePath, prepared.textToWrite, signal, exec, sandboxPolicy);
+          await io.writeText(
+            absolutePath,
+            prepared.textToWrite,
+            signal,
+            exec,
+            sandboxPolicy,
+            undefined,
+            {
+              lineEnding: effectiveEnding,
+            },
+          );
         } catch (error) {
           throw sandbox.mapError(error, sandboxPolicy);
         }
@@ -280,6 +300,14 @@ export function buildUndoTool(io: FileIO, sandbox: FsSandboxController) {
         if (linesAddedByEdit > 0 || linesRemovedByEdit > 0) {
           parts.push(
             `Removed ${linesAddedByEdit} line(s) that were added and restored ${linesRemovedByEdit} line(s) that were removed.`,
+          );
+        }
+        // #171: a mixed pre-image cannot come back as it was — the revert writes ONE ending. Saying
+        // so is the disclosure; saying nothing would claim the mixture was restored. Uniform rows
+        // push nothing: the bytes are identical to the pre-edit file.
+        if (undo.preImageMixed) {
+          parts.push(
+            `Restored at ${endingName(effectiveEnding)}; the pre-edit mixture is not restored.`,
           );
         }
         // The serve write is a SECOND unit, deliberately outside the committed pair: a fault
