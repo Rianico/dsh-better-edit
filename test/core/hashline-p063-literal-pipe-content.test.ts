@@ -145,12 +145,9 @@ describe("P0-63 — literal HASH│-shaped replacement content must write throug
       expect(error, "a real served-echo replacement must be rejected").toBeDefined();
       const message = error instanceof Error ? error.message : String(error);
       expect(message).toMatch(/E_SUSPICIOUS_TEXT/);
-      // P3 remediation (acceptance criterion 2, pinned here at the reject arm): the
-      // denial must state the blast radius honestly — whole batch rejected, nothing
-      // written (wording as actually observed in the round-3 run).
-      expect(message, "rejection must state whole-batch rejection").toMatch(
-        /whole batch was rejected/i,
-      );
+      // The verdict states the blast radius honestly — batch rejected, nothing
+      // written — in the structural lead line.
+      expect(message, "rejection must state batch rejection").toMatch(/Batch rejected:/);
       expect(message, "rejection must state nothing was written").toMatch(/nothing was written/i);
       // Nothing written: the file is byte-identical to the source.
       expect(await readFile(path, "utf-8")).toBe(SOURCE);

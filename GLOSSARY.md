@@ -46,7 +46,7 @@ A contiguous interval of lines; the technical word used when verification compar
 _Avoid_: hunk
 
 **served span**:
-The contiguous run of served hashes between the two boundary anchors' served positions — the served-state reconstruction of the model's view of a range.
+The contiguous run of served hashes between the two boundary anchors' served positions — the served-state reconstruction of the model's view of a range. The two boundary anchors pin the span's extent, not the model's view of its interior: a leased span may cross unserved interior lines (ADR-0045).
 
 **served range**:
 The model-facing word for the `served span` — the span between `remove_from` and `remove_to` as the model saw it. Alias to `served span` for glossary search.
@@ -57,7 +57,15 @@ The condition where the `served range` (span between anchors) cannot be reconcil
 _Avoid_: range staleness (use `served range` for span)
 
 **never-served**:
-An interior line with no entry in the served record — the model was never shown that line. Reported as `[E_UNSERVED_RANGE]`; the response serves the current range so the model can retry.
+An interior line with no entry in the served record — the model was never shown that line. `hint` span mode accepts it and discloses the replaced interior (`[W_UNSERVED_INTERIOR]`, blank diff gutter); `strict` refuses the edit before any write with a rowless `[E_UNSERVED_RANGE]` naming the unserved file lines (ADR-0045).
+
+**unserved interior**:
+A `never-served` line strictly inside a resolved range. `hint` tolerates it and discloses the replacement; `strict` refuses a span that replaces one before any write (ADR-0045).
+_Avoid_: stale interior (staleness is a failed reconciliation, not a missing serve)
+
+**span mode**:
+The per-profile served-span policy: `hint` (default) accepts a leased span across unserved interior lines and discloses them, `strict` refuses such a span before any write. Configured by `spanMode` in `config.yaml` or `DSH_BETTER_EDIT_SPAN_MODE`; never a per-call argument (ADR-0045).
+_Avoid_: strict mode (name the axis: span mode)
 
 ### File Encoding
 
@@ -80,6 +88,22 @@ _Avoid_: auto-detect
 **config complement**:
 When `config.yaml` is missing keys (e.g. after an upgrade adds `autoGuessEncoding`), `loadConfig()` complements the file with defaults (appends `key: default` lines, best-effort, preserving existing content) so the file stays complete without manual edit.
 _Avoid_: manual migration
+
+**effective EOL**:
+The one terminator an `edit` writes for the whole file, resolved from the raw pre-image's terminator counts by the `EOL source ladder` and used for every line the write lands on — including untouched lines, which are re-spelled with the rest. It is also what `undo_last_edit` restores at: a revert writes ONE ending, so a pre-edit mixture cannot come back and the response says so (ADR-0047).
+_Avoid_: target ending, normalized ending
+
+**EOL source ladder**:
+The four rungs deciding an `effective EOL`, in precedence order: `env` (`DSH_BETTER_EDIT_EOL`) > `config` (the `eol` key in `config.yaml`) > `file` (the pre-image's most frequent terminator kind — whole file, ties prefer LF, then CRLF, then CR) > `system` (`\r\n` on `win32`, `\n` elsewhere, and only when the file spells no terminator). `AUTO` is a value, not a rung: spelled at `env` or `config` it continues down the ladder, and a valid `env` value stops it either way. A forced `LF`/`CRLF`/`CR` names its own rung and stops. One resolver feeds both the read notice and the applied warning, so they can never name different rungs.
+_Avoid_: precedence chain (unnamed), dominant ending (one rung's answer, not the ladder)
+
+**W_EOL_REWRITTEN**:
+The applied-tier `[MODEL]` warning that an applied write re-spelled at least one pre-image terminator: `EOL normalized to <target> (<source>): N terminators changed. Undo restores normalized content.` `N` counts pre-image terminators at a kind other than the target — a kept terminator counts zero, and a terminator a NEW line introduces was never in the pre-image and is never counted. Pushed only after the write landed, so an all-noop call never claims it; it fires for a forced rung re-spelling a UNIFORM file too, where the read stays silent.
+_Avoid_: EOL warning (unnamed), line-ending notice
+
+**W_MIXED_EOL**:
+The read-tier notice that the pre-image it just served spells more than one terminator kind — the last cheap moment to learn that the first edit will collapse it. Bare `[<CODE>]` header with NO audience prefix (a read reports observed state; nothing has been written and nobody is addressed), appended as chrome after the read's rows and notes: `Mixed EOL: <n> CRLF, <n> LF, <n> CR. All edits normalize to <target> (<source>).` Counts are whole-file, taken once at decode, so `offset`/`limit`/`windows` change which rows render and never the counts; a kind with a zero count is omitted (never spelled `0`); the order is fixed CRLF, LF, CR. Never a served row, never file content, never an anchor.
+_Avoid_: mixed EOL warning (it carries no audience), drift notice (that reports a change on disk, this reports the bytes as served)
 
 **manual override**:
 The status-bar-equivalent escape hatch: `read({encoding})` re-interprets bytes on disk (`Reopen with Encoding`) and `write({encoding})` transcodes the buffer on save (`Save with Encoding`). The agent-facing surface for correcting a `detection error` without corrupting disk.

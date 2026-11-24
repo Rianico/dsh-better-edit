@@ -23,9 +23,9 @@ import { getText, makeTag, setupIntegrationTest, withTempFile } from "../support
  *   b. control: a `read` before retrying still works;
  *   c. a changed-buffer refusal (ADR-0042's served-or-absent arm, i150 geometry) is rowless
  *      and records nothing — served rows and grants stay byte-identical;
- *   d. the rowless rejection that falls back to `echoRowsForItem` (a never-served anchor in a
- *      windowed-served file) still SHOWS preview rows and records nothing — this is the
- *      rendered-preview arm cell c does not reach;
+ *   d. the rowless rejection that resolves no rows (`E_UNKNOWN_ANCHOR` against a
+ *      windowed-served file) renders no preview and records nothing — the envelope
+ *      never invents a serve (ADR-0043);
  *   e. a rolled-back serve write makes no claim: the message says the rows could NOT be
  *      recorded and the echoed anchor is unusable.
  */
@@ -130,7 +130,7 @@ describe("issue #142 — a rejection's echoed rows are recorded as served", () =
       });
       expect(rejection.applied).toBe(false);
       expect(rejection.message).toContain("[E_STALE_RANGE]");
-      expect(rejection.message).toContain("Current on-disk range for edits[0]");
+      expect(rejection.message).toMatch(/- edits\[0\] \(i142-repro\.txt\) \[E_STALE_RANGE\]:/);
       expect(rejection.message).toContain("recorded as served");
       expect(await readFile(path, "utf-8")).toBe("left\nexternal\nright\n");
 
@@ -207,14 +207,14 @@ describe("issue #142 — a rejection's echoed rows are recorded as served", () =
     });
   });
 
-  it("the zero-row fallback renders preview rows but records nothing", async () => {
+  it("the zero-row fallback renders no preview and records nothing", async () => {
     const content = "alpha\nbeta\ngamma\ndelta\n";
     await withTempFile("i142-preview.txt", content, async ({ cwd, path }) => {
       const harness = setupIntegrationTest(cwd);
       const fullKey = sessionKeyFor(harness.sessionKey);
       // Serve lines 3-4 only: `alpha` is a real anchor of the current file that this
-      // session never served, so the rejection carries no rows and the echo falls back
-      // to `echoRowsForItem`'s rendered preview.
+      // session never served, so the rejection carries no rows. The envelope renders
+      // no preview for a rowless rejection (the inner message names the read).
       const window = getText(
         await harness.readTool.execute("read", { path: "i142-preview.txt", offset: 3, limit: 2 }),
       );
@@ -230,15 +230,11 @@ describe("issue #142 — a rejection's echoed rows are recorded as served", () =
       expect(attempt.applied).toBe(false);
       expect(attempt.message).toContain("[E_BATCH_ABORT]");
       expect(attempt.message).toContain("[E_UNKNOWN_ANCHOR]");
-      // The preview IS shown (upstream parity, ADR-0042) …
-      expect(attempt.message).toContain("Current on-disk range for edits[0]");
-      expect(rowPairs(attempt.message).map(([, text]) => text)).toEqual([
-        "alpha",
-        "beta",
-        "gamma",
-        "delta",
-      ]);
-      // … but a rendered preview is never a serve (ADR-0043).
+      // A rowless rejection renders no preview rows at all.
+      expect(attempt.message).not.toContain("Current range:");
+      expect(attempt.message).not.toContain("Current on-disk range");
+      expect(rowPairs(attempt.message)).toEqual([]);
+      // A rowless rejection is never a serve (ADR-0043).
       expect(attempt.message).not.toContain("recorded as served");
       expect(await servedAt(cwd, fullKey, path)).toEqual(servedBefore);
     });
@@ -324,7 +320,7 @@ describe("issue #142 — a rejection's echoed rows are recorded as served", () =
         edits: [[beta, beta, "BETA"]],
       });
       expect(rejection.applied).toBe(false);
-      expect(rejection.message).toContain("Current on-disk range for edits[0]");
+      expect(rejection.message).toMatch(/- edits\[0\] \(i142-dup\.txt\) \[E_STALE_RANGE\]:/);
       expect(rejection.message).toContain("were NOT recorded as served");
       expect(rejection.message).not.toContain("were recorded as served");
       expect(rejection.message).toContain("re-read");

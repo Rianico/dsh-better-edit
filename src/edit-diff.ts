@@ -5,6 +5,13 @@ import type { ServedRow } from "./hashline/anchor-pipeline.js";
 
 export type LineEnding = "\r\n" | "\n" | "\r";
 
+/** Terminator counts by kind: a CRLF pair counts once, never as CR plus LF. */
+export interface LineEndingCounts {
+  readonly crlf: number;
+  readonly lf: number;
+  readonly cr: number;
+}
+
 export function detectEnding(content: string): LineEnding {
   const lfIdx = content.indexOf("\n");
   if (lfIdx === -1) {
@@ -45,27 +52,45 @@ function formatRemovedLines(
   displayLines: string[],
   oldContentHashes: string[] | undefined,
   oldLineNum: number,
-): { rows: string[]; nextOldLineNum: number } {
+  served: readonly (string | null)[] | undefined,
+): { rows: string[]; nextOldLineNum: number; unservedRemovedLines: number[] } {
   const rows: string[] = [];
+  const unservedRemovedLines: number[] = [];
   let cursor = oldLineNum;
   const emit = (line: string): void => {
-    const hash = oldContentHashes?.[cursor - 1];
+    // WHY (#144 T3): a `null` slot proves the session never read this old line, so the row shows
+    // WHY: the empty gutter instead of an anchor the model must not treat as served. An
+    // WHY: `undefined` slot is a truncated mirror (the lease outlives it), not evidence of a miss,
+    // WHY: so that row keeps its anchor.
+    const unserved = served?.[cursor - 1] === null;
+    if (unserved) unservedRemovedLines.push(cursor);
+    const hash = unserved ? undefined : oldContentHashes?.[cursor - 1];
     rows.push(fmtDiffLine("-", line, hash));
     cursor++;
   };
   if (displayLines.length <= DIFF_REMOVED_CAP) {
     for (const line of displayLines) emit(line);
-    return { rows, nextOldLineNum: cursor };
+    return { rows, nextOldLineNum: cursor, unservedRemovedLines };
   }
   const omitted = displayLines.length - DIFF_REMOVED_EDGE * 2;
   for (const line of displayLines.slice(0, DIFF_REMOVED_EDGE)) emit(line);
+  // WHY (#144 T3): hidden rows never render, so their unserved lines ride on the marker — a fold
+  // WHY: must not be the one place a replaced interior nobody read goes undisclosed.
+  let hiddenUnserved = 0;
+  for (let line = cursor; line < cursor + omitted; line++) {
+    if (served?.[line - 1] === null) {
+      hiddenUnserved++;
+      unservedRemovedLines.push(line);
+    }
+  }
   // WHY: ADR-0024/D3 — the model sees the deletion's head, tail, and exact size; the hidden rows
   // WHY: still advance the cursor so every later row keeps its exact old line number and hash.
   // WHY: #169 — the marker's count is the exact deleted span and uses the unified `lines deleted` diction.
-  rows.push(` - ... [${omitted} lines deleted] ...`);
+  const unservedSuffix = hiddenUnserved > 0 ? ` (${hiddenUnserved} unserved)` : "";
+  rows.push(` - ... [${omitted} lines deleted]${unservedSuffix} ...`);
   cursor += omitted;
   for (const line of displayLines.slice(-DIFF_REMOVED_EDGE)) emit(line);
-  return { rows, nextOldLineNum: cursor };
+  return { rows, nextOldLineNum: cursor, unservedRemovedLines };
 }
 
 /** The renderer's own line split: `split("\n")` with the trailing empty element dropped. */
@@ -240,6 +265,12 @@ function diffParts(
  *   at context 0 every non-empty middle gap collapses to a single counted untouched
  *   marker (#170); bare ` ...` appears only at leading/trailing edges; added spans are never collapsed.
  * - servedRows mirror exactly the rendered context/addition rows (position + hash).
+ * - unservedRemovedLines names, ascending and in ORIGINAL coordinates, every removed row whose
+ *   pre-batch `served` slot was `null` — the session never read that line, so the row renders the
+ *   empty gutter instead of an anchor. A `null` fold-hidden line counts toward the marker's
+ *   ` (N unserved)` suffix and the returned list alike, so the count is independent of the cap.
+ *   An `undefined` slot is a truncated mirror (the lease outlives it) and keeps its anchor; with
+ *   no `served` mirror at all the projection is unchanged and the list is empty.
  */
 export function genDiff(
   oldContent: string,
@@ -247,16 +278,19 @@ export function genDiff(
   contextLines = 2,
   newContentHashes?: string[],
   oldContentHashes?: string[],
+  served?: readonly (string | null)[],
 ): {
   diff: string;
   firstChangedLine: number | undefined;
   servedRows: ServedRow[];
+  unservedRemovedLines: number[];
 } {
   const effectiveNewHashes = newContentHashes ?? lineHashesPure(newContent);
 
   const parts = diffParts(oldContent, newContent, oldContentHashes, newContentHashes);
   const output: string[] = [];
   const servedRows: ServedRow[] = [];
+  const unservedRemovedLines: number[] = [];
   let newLineNum = 1;
   let oldLineNum = 1;
   let lastWasChange = false;
@@ -280,8 +314,9 @@ export function genDiff(
           newLineNum++;
         }
       } else {
-        const removed = formatRemovedLines(displayLines, oldContentHashes, oldLineNum);
+        const removed = formatRemovedLines(displayLines, oldContentHashes, oldLineNum, served);
         for (const row of removed.rows) output.push(row);
+        unservedRemovedLines.push(...removed.unservedRemovedLines);
         oldLineNum = removed.nextOldLineNum;
       }
       lastWasChange = true;
@@ -338,5 +373,5 @@ export function genDiff(
     lastWasChange = false;
   }
 
-  return { diff: output.join("\n"), firstChangedLine, servedRows };
+  return { diff: output.join("\n"), firstChangedLine, servedRows, unservedRemovedLines };
 }

@@ -498,6 +498,8 @@ describe("hash-store — schema versioning", () => {
         "hashes",
         "updated_at",
       ]);
+      // #171: `undo` gained the effective-ending pair; the shell is still complete (every column
+      // the released v6 build prepares against is here, plus the additive pair).
       expect(columns("undo")).toEqual([
         "path",
         "content",
@@ -505,6 +507,8 @@ describe("hash-store — schema versioning", () => {
         "ending",
         "hashes",
         "result_content",
+        "effective_ending",
+        "pre_image_mixed",
         "updated_at",
       ]);
       expect(columns("served")).toEqual([
@@ -1908,9 +1912,10 @@ it("getFileUndo propagates infrastructure failures instead of healing the pair a
     // `FROM file_undo WHERE path = ?` substring — that also matches the DELETE at `:579` and the
     // test-local COUNT/updated_at queries, so a future `.run` fault-injection would silently
     // break the delete. A column-list change stops this matching and fails the test on `threw`:
-    // loud, not silently inert.
+    // loud, not silently inert. (#171 added the effective-ending pair to the list; the canary did
+    // its job and is re-anchored here.)
     const fileUndoGetSql =
-      /^SELECT content, bom, ending, hashes, result_content, snapshot_hash, updated_at FROM file_undo WHERE path = \?$/;
+      /^SELECT content, bom, ending, hashes, result_content, snapshot_hash, updated_at, effective_ending, pre_image_mixed FROM file_undo WHERE path = \?$/;
     let failFileUndoGet = false;
     const busy = () => Object.assign(new Error("database is locked"), { errcode: 5 });
     const prepareSpy = vi.spyOn(DatabaseSync.prototype, "prepare").mockImplementation(function (
@@ -2595,6 +2600,8 @@ it("reopen janitor keeps the pair when the v7 side is newer than the TTL", async
       resultContent: "b\n",
       snapshotHash: snapshotHashFor("a\n"),
       updatedAt: youngStamp,
+      effectiveEnding: "\n",
+      preImageMixed: 0,
     });
   });
 });

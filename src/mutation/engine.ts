@@ -15,6 +15,12 @@
 import type { FileIO } from "../fs-bridge.js";
 import { loadHashStore, type HashStore, type InternalHashStore } from "../hash-store.js";
 import type { LineEnding } from "../edit-diff.js";
+import {
+  changedTerminatorCount,
+  endingName,
+  resolveEffectiveEolFromCounts,
+  terminatorKindsUsed,
+} from "../eol-config.js";
 import { normFromText } from "../file-view.js";
 import { scanDrift, loadServed, loadServedCanons, loadRetiredAnchors } from "../session-view.js";
 import { applyEdit, resEdit, type HEdit, type NEdit } from "../hashline/anchor-pipeline.js";
@@ -23,6 +29,8 @@ import { lineHashes } from "../hashline/hash.js";
 import { HASH_SPACE, isPromotableAnchorSpaceExhaustion } from "../hashline/hash-assign.js";
 import { buildNeverServedEditHint } from "../hashline/served-guard.js";
 import { encodingHintAtVersion } from "../file-encoding-state.js";
+import { loadConfig } from "../store-config.js";
+import type { SpanMode } from "../span-mode.js";
 import { recordRejectionRows } from "./rejection-serve.js";
 
 function promotionWarning(retiredSize: number, servedLen: number): string {
@@ -120,6 +128,15 @@ export interface FileEditResult {
   result: string;
   bom: string;
   originalEnding: LineEnding;
+  /** The one terminator this write uses, resolved from the pre-image counts (#169). */
+  effectiveEnding: LineEnding;
+  /** True when the pre-image spelled more than one terminator kind. */
+  preImageMixed: boolean;
+  /**
+   * Set when the write re-spells terminators (`changed > 0`). The Transaction pushes it onto
+   * `warnings` only AFTER the write landed: an all-noop call rewrites nothing, so it never says it did.
+   */
+  eolRewriteWarning: string | undefined;
   hadUtf8DecodeErrors: boolean;
   warnings: string[];
   originalHashes: string[];
@@ -129,6 +146,11 @@ export interface FileEditResult {
   totalAddedLines: number;
   totalRemovedLines: number;
   driftNotice: string | undefined;
+  /**
+   * The pre-batch served mirror in ORIGINAL coordinates, present only in hint mode. The diff uses
+   * it to blank anchors for rows the session never read; strict refuses those rows before a diff.
+   */
+  served?: readonly (string | null)[];
   /**
    * Anchors this edit freed, to be retired by the caller AFTER the write lands (upstream
    * CAND-3, #98). This phase only reports them; it must never commit them.
@@ -227,6 +249,8 @@ export interface ApplyOneInput {
    * position check; absent => the unconditional position check (preview/no-store).
    */
   leaseSource?: LeaseSpanSource;
+  /** Served-span policy resolved once by the batch for this file ("hint" default). */
+  spanMode?: SpanMode;
   sessionKey?: string;
   /** Pre-resolved edit (single path keeps resEdit before IO for error order). */
   edit?: HEdit;
@@ -296,6 +320,7 @@ export async function applyOne(
       retiredForApply,
       input.mode,
       input.leaseSource,
+      input.spanMode,
     );
   } catch (error) {
     if (error instanceof AnchorMismatchError || error instanceof ServedRejectionError) {
@@ -475,8 +500,8 @@ type AbortPart = {
   /** The item's full failure message (already header-bearing, own `[E_*]` inline). */
   inner: string;
   echoRows: ServedRow[] | undefined;
-  /** Message fragment: ranged block or the read fallback (single envelopes). */
-  echoBlock: string;
+  /** Serve disposition for the carried rows (ADR-0043); absent when no serve was attempted. */
+  serveNote?: string;
   /** Structural rows rendered without heading (unions into servedBlock). */
   fmtBlock: string;
   /**
@@ -645,7 +670,6 @@ async function collectAbortPart(opts: {
         index: opts.index,
         inner,
         echoRows: undefined,
-        echoBlock: " Call read() to get fresh anchors.",
         fmtBlock: "",
         cause: opts.error.cause,
       };
@@ -676,20 +700,17 @@ async function collectAbortPart(opts: {
       : undefined;
   const originalLines = splitLines(opts.originalNormalized);
   const fmtBlock = echoRows ? fmtServedRows(echoRows, originalLines) : "";
-  const serveSentence =
+  const serveNote =
     rowsServed === true
-      ? "\nThese rows are the file's current anchors and were recorded as served — retry with them."
+      ? "These rows are the file's current anchors and were recorded as served — retry with them."
       : rowsServed === false
-        ? "\nThese rows are the file's current anchors but were NOT recorded as served — re-read before retrying."
-        : "";
-  const echoBlock = echoRows
-    ? ` Current on-disk range for edits[${opts.index}] (unchanged — nothing was written):\n${fmtBlock}${serveSentence}`
-    : " Call read() to get fresh anchors.";
+        ? "These rows are the file's current anchors but were NOT recorded as served — re-read before retrying."
+        : undefined;
   return {
     index: opts.index,
     inner: opts.error.message,
     echoRows,
-    echoBlock,
+    serveNote,
     fmtBlock,
     ...(rowsServed !== undefined ? { rowsServed } : {}),
     cause: opts.error.cause,
@@ -697,14 +718,20 @@ async function collectAbortPart(opts: {
 }
 
 /**
- * One aggregated E_BATCH_ABORT for every failing item (C). A single part
- * renders byte-identically to the legacy single-failure envelope; several
- * parts name every failing item in order with the plural fix sentence.
- * `code` routes the typed path via the first item; servedRows unions every
- * part's rows; servedBlock joins every part's block; cause/details ride
- * only on unanimous diagnosis (DomainError builds details from cause).
+ * One aggregated E_BATCH_ABORT for every failing item (C). `total` is the
+ * call's submitted item count, so the verdict can say `<failed> of <total>`;
+ * several parts add the `failures` list (one bullet each, in order) and a
+ * single part may add its serve disposition (`serveNote`). `code` routes the
+ * typed path via the first item; servedRows unions every part's rows;
+ * servedBlock joins every part's block (machine payload — the formatter only
+ * renders each inner message's own echo); cause/details ride only on
+ * unanimous diagnosis (DomainError builds details from cause).
  */
-function buildBatchAbort(file: string, parts: AbortPart[]): DomainError<"E_BATCH_ABORT"> {
+function buildBatchAbort(
+  file: string,
+  parts: AbortPart[],
+  total: number,
+): DomainError<"E_BATCH_ABORT"> {
   const first = parts[0]!;
   const rows: ServedRow[] = [];
   const blocks: string[] = [];
@@ -716,7 +743,8 @@ function buildBatchAbort(file: string, parts: AbortPart[]): DomainError<"E_BATCH
     index: first.index,
     path: file,
     inner: first.inner,
-    echoBlock: first.echoBlock,
+    total,
+    ...(parts.length === 1 && first.serveNote !== undefined ? { serveNote: first.serveNote } : {}),
     servedRows: rows,
     servedBlock: blocks.join("\n"),
   };
@@ -917,6 +945,9 @@ export async function runFileEdits(
   const first = items[0]!;
   abortIf(opts.signal);
   const absolutePath = first.absolutePath;
+  // Served-span policy: one read per file edit; every item in this file shares it, so a
+  // config edit mid-batch cannot split the batch's policy.
+  const spanMode = loadConfig().spanMode;
   const perSessionRetired = await loadRetiredAnchors(opts.sessionKey, absolutePath);
   const reservedHashes = new Set(perSessionRetired);
   // Issue #112: the mutating re-read consumes the encoding recorded by `read`,
@@ -930,6 +961,7 @@ export async function runFileEdits(
     normalized: originalNormalized,
     bom,
     originalEnding,
+    endingCounts,
     fileHashes: originalHashes,
     hadUtf8DecodeErrors,
   } = await normFromText({
@@ -941,6 +973,23 @@ export async function runFileEdits(
     reservedHashes,
     retiredHashes: perSessionRetired,
   });
+
+  // #169: ONE decode decides the whole write. The counts are the raw pre-image's terminators, so
+  // the effective ending (env > config > file's dominant > OS) and the number of terminators this
+  // write re-spells come from the same scan and cannot disagree. A file with no terminator gets
+  // the platform one, and the terminators the write INTRODUCES are not counted as changed.
+  const effectiveEol = resolveEffectiveEolFromCounts(endingCounts);
+  const effectiveEnding = effectiveEol.value;
+  const preImageMixed = terminatorKindsUsed(endingCounts) >= 2;
+  const changed = changedTerminatorCount(endingCounts, effectiveEnding);
+  const eolRewriteWarning =
+    changed > 0
+      ? formatWarning("W_EOL_REWRITTEN", {
+          target: endingName(effectiveEnding),
+          source: effectiveEol.source,
+          changed,
+        })
+      : undefined;
 
   const served = await loadServed(opts.sessionKey, absolutePath);
   const servedCanons = await loadServedCanons(opts.sessionKey, absolutePath);
@@ -1034,6 +1083,7 @@ export async function runFileEdits(
         perSessionRetired,
         item.mode,
         originalLeaseSource,
+        spanMode,
       );
     } catch (error) {
       if (!(error instanceof DomainError)) throw error;
@@ -1050,7 +1100,7 @@ export async function runFileEdits(
       );
     }
   }
-  if (preParts.length > 0) throw buildBatchAbort(first.file, preParts);
+  if (preParts.length > 0) throw buildBatchAbort(first.file, preParts, items.length);
 
   for (const item of items) {
     abortIf(opts.signal);
@@ -1079,6 +1129,7 @@ export async function runFileEdits(
         retired: new Set([...perSessionRetired, ...Array.from(newlyRetired)]),
         mode: item.mode,
         leaseSource,
+        spanMode,
       },
       async (error, edit) => {
         // In-loop (state-dependent) failures keep single-failure envelopes.
@@ -1094,19 +1145,22 @@ export async function runFileEdits(
             // Served-or-absent once an earlier item changed the buffer (see `shiftedBufferInner`).
             ...(currentContent !== originalNormalized ? { frames } : {}),
           });
-          throw buildBatchAbort(item.file, [part]);
+          throw buildBatchAbort(item.file, [part], items.length);
         }
         const message = error instanceof Error ? error.message : String(error);
-        throw buildBatchAbort(item.file, [
-          {
-            index: item.index,
-            inner: message,
-            echoRows: undefined,
-            echoBlock: "",
-            fmtBlock: "",
-            cause: undefined,
-          },
-        ]);
+        throw buildBatchAbort(
+          item.file,
+          [
+            {
+              index: item.index,
+              inner: message,
+              echoRows: undefined,
+              fmtBlock: "",
+              cause: undefined,
+            },
+          ],
+          items.length,
+        );
       },
     );
 
@@ -1262,6 +1316,9 @@ export async function runFileEdits(
     result,
     bom,
     originalEnding,
+    effectiveEnding,
+    preImageMixed,
+    eolRewriteWarning,
     hadUtf8DecodeErrors,
     warnings,
     originalHashes,
@@ -1271,6 +1328,7 @@ export async function runFileEdits(
     totalAddedLines,
     totalRemovedLines,
     driftNotice,
+    ...(spanMode === "hint" ? { served } : {}),
     newlyRetired: [...newlyRetired],
     range: {
       startLine: unionStartLine,

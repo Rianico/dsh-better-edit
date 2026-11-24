@@ -86,6 +86,10 @@ describe("undo gate — a foreign-generation pin is refused and the pair is recl
         content: CONTENT,
         bom: "",
         originalEnding: "\n",
+        // #171: the reader always names the ending the revert writes and the mixture flag; a pair
+        // written without them falls back to `ending` and reports no mixture.
+        effectiveEnding: "\n",
+        preImageMixed: false,
         hashes: ["AAA"],
         resultContent: "beta\n",
       });

@@ -289,9 +289,7 @@ describe("served state — incremental hazard sweep", () => {
       }));
       store.clearRetiredAnchors(sessionKey, path);
       store.upsertRetiredAnchors(sessionKey, path, JSON.stringify(retired));
-      try {
-        store.clearCards(sessionKey, path);
-      } catch {}
+      store.clearCards(sessionKey, path);
       const before = store.getRetiredEntries(sessionKey, path);
       expect(before.length).toBe(N);
       const cardsBefore = store.getCards(sessionKey, path);
@@ -799,6 +797,10 @@ describe("served state — schema versioning", () => {
         ending: "\n",
         hashes: ["BBB", "AAA"],
         resultContent: content,
+        // #171: the pair columns are additive and survive the unrelated upgrade backfill; the
+        // save named no effective ending, so the row carries the pre-image's own one.
+        effectiveEnding: "\n",
+        preImageMixed: 0,
       });
       store.upsertRetiredAnchors("sessionA", path, JSON.stringify(["BBB"]));
       expect(store.getRetiredAnchors("sessionA", path)).toEqual(new Set(["BBB"]));

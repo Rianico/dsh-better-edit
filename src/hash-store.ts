@@ -79,6 +79,14 @@ export interface UndoRecord {
   ending: string;
   hashes: string[];
   resultContent: string;
+  /**
+   * The one terminator the edit WROTE (#171), or null/absent on a pre-#171 row. The revert restores
+   * at this ending, not at `ending` (`detectEnding`'s pre-image answer), or a mixed pre-image would
+   * come back re-spelled.
+   */
+  effectiveEnding?: string | null;
+  /** 1 when the pre-image spelled more than one terminator kind; null/absent means "not recorded". */
+  preImageMixed?: number | null;
 }
 
 /** The v7 undo row contract: legacy state plus the snapshot pin. */
@@ -90,6 +98,10 @@ export interface FileUndoRecord {
   resultContent: string;
   snapshotHash: string | null;
   updatedAt: number;
+  /** Same pair property as `UndoRecord.effectiveEnding` — both rows carry it or neither does. */
+  effectiveEnding?: string | null;
+  /** Same pair property as `UndoRecord.preImageMixed`. */
+  preImageMixed?: number | null;
 }
 
 /**
@@ -99,7 +111,7 @@ export interface FileUndoRecord {
  */
 export type FileUndoWrite = Omit<FileUndoRecord, "updatedAt">;
 
-/** A `file_undo` row exactly as selected (all columns non-nullable except the pin). */
+/** A `file_undo` row exactly as selected (all columns non-nullable except the pin and the #171 pair). */
 interface FileUndoRow {
   content: string;
   bom: string;
@@ -108,6 +120,8 @@ interface FileUndoRow {
   result_content: string;
   snapshot_hash: string | null;
   updated_at: number;
+  effective_ending: string | null;
+  pre_image_mixed: number | null;
 }
 
 /**
@@ -124,6 +138,11 @@ function mapFileUndoRow(row: Record<string, unknown>): FileUndoRow {
   const resultContent = row["result_content"];
   const snapshotHash = row["snapshot_hash"];
   const updatedAt = row["updated_at"];
+  // The #171 pair: nullable BY DESIGN (an old store's row carries NULL and means "not recorded"),
+  // but a value of the wrong TYPE is shape corruption like any other column — the TypeError feeds
+  // the existing pair-healing path in `getFileUndo`.
+  const effectiveEnding = row["effective_ending"];
+  const preImageMixed = row["pre_image_mixed"];
   if (
     typeof content !== "string" ||
     typeof bom !== "string" ||
@@ -131,7 +150,9 @@ function mapFileUndoRow(row: Record<string, unknown>): FileUndoRow {
     typeof hashes !== "string" ||
     typeof resultContent !== "string" ||
     !(snapshotHash === null || typeof snapshotHash === "string") ||
-    typeof updatedAt !== "number"
+    typeof updatedAt !== "number" ||
+    !(effectiveEnding === null || typeof effectiveEnding === "string") ||
+    !(preImageMixed === null || typeof preImageMixed === "number")
   ) {
     throw new TypeError("invalid file_undo row shape");
   }
@@ -143,6 +164,8 @@ function mapFileUndoRow(row: Record<string, unknown>): FileUndoRow {
     result_content: resultContent,
     snapshot_hash: snapshotHash,
     updated_at: updatedAt,
+    effective_ending: effectiveEnding,
+    pre_image_mixed: preImageMixed,
   };
 }
 
@@ -152,7 +175,7 @@ type SqlParams = (string | number)[];
 
 interface Prepared {
   allPaths: (...params: SqlParams) => Record<string, unknown>[];
-  undoUpsert: (...params: SqlParams) => void;
+  undoUpsert: (...params: (string | number | null)[]) => void;
   undoGet: (...params: SqlParams) => Record<string, unknown> | undefined;
   undoDelete: (...params: SqlParams) => void;
   undoPrunePair: (...params: SqlParams) => void;
@@ -441,6 +464,8 @@ function ensureV7Tables(db: DatabaseSync): void {
       "hashes TEXT NOT NULL, " +
       "result_content TEXT NOT NULL, " +
       "snapshot_hash TEXT, " +
+      "effective_ending TEXT, " +
+      "pre_image_mixed INTEGER, " +
       "updated_at INTEGER NOT NULL" +
       ")",
   );
@@ -480,9 +505,18 @@ function ensureSchema(db: DatabaseSync): void {
       "ending TEXT NOT NULL, " +
       "hashes TEXT NOT NULL, " +
       "result_content TEXT NOT NULL, " +
+      "effective_ending TEXT, " +
+      "pre_image_mixed INTEGER, " +
       "updated_at INTEGER NOT NULL" +
       ")",
   );
+  // #171: the pair columns are additive on BOTH halves, and an old store gets them here — a NULL
+  // means "not recorded" (fall back to `ending`, never claim a mixture), so no row is rewritten and
+  // HASH_STORE_VERSION does not move. Idempotent: `addColumnIfMissing` is a no-op on a current store.
+  addColumnIfMissing(db, "undo", "effective_ending", "TEXT");
+  addColumnIfMissing(db, "undo", "pre_image_mixed", "INTEGER");
+  addColumnIfMissing(db, "file_undo", "effective_ending", "TEXT");
+  addColumnIfMissing(db, "file_undo", "pre_image_mixed", "INTEGER");
   const servedColumns = db.prepare("PRAGMA table_info(served)").all() as {
     name: string;
   }[];
@@ -656,11 +690,11 @@ function buildStore(db: DatabaseSync, storePath: string): { db: DatabaseSync; st
     "SELECT path FROM snapshots UNION SELECT path FROM undo UNION SELECT path FROM served UNION SELECT path FROM file_undo UNION SELECT path FROM file_snapshots UNION SELECT path FROM line_id_counters UNION SELECT file_path FROM served_leases",
   );
   const undoUpsertStmt = db.prepare(
-    "INSERT INTO undo (path, content, bom, ending, hashes, result_content, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?) " +
-      "ON CONFLICT(path) DO UPDATE SET content = excluded.content, bom = excluded.bom, ending = excluded.ending, hashes = excluded.hashes, result_content = excluded.result_content, updated_at = excluded.updated_at",
+    "INSERT INTO undo (path, content, bom, ending, hashes, result_content, effective_ending, pre_image_mixed, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) " +
+      "ON CONFLICT(path) DO UPDATE SET content = excluded.content, bom = excluded.bom, ending = excluded.ending, hashes = excluded.hashes, result_content = excluded.result_content, effective_ending = excluded.effective_ending, pre_image_mixed = excluded.pre_image_mixed, updated_at = excluded.updated_at",
   );
   const undoGetStmt = db.prepare(
-    "SELECT content, bom, ending, hashes, result_content FROM undo WHERE path = ?",
+    "SELECT content, bom, ending, hashes, result_content, effective_ending, pre_image_mixed FROM undo WHERE path = ?",
   );
   const undoDelStmt = db.prepare("DELETE FROM undo WHERE path = ?");
   // Pair-atomic age prune: a path's pair is pruned only when its NEWEST side is older
@@ -680,11 +714,11 @@ function buildStore(db: DatabaseSync, storePath: string): { db: DatabaseSync; st
       ") GROUP BY path) WHERE newest < ?)",
   );
   const fileUndoUpsertStmt = db.prepare(
-    "INSERT INTO file_undo (path, content, bom, ending, hashes, result_content, snapshot_hash, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?) " +
-      "ON CONFLICT(path) DO UPDATE SET content = excluded.content, bom = excluded.bom, ending = excluded.ending, hashes = excluded.hashes, result_content = excluded.result_content, snapshot_hash = excluded.snapshot_hash, updated_at = excluded.updated_at",
+    "INSERT INTO file_undo (path, content, bom, ending, hashes, result_content, effective_ending, pre_image_mixed, snapshot_hash, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) " +
+      "ON CONFLICT(path) DO UPDATE SET content = excluded.content, bom = excluded.bom, ending = excluded.ending, hashes = excluded.hashes, result_content = excluded.result_content, effective_ending = excluded.effective_ending, pre_image_mixed = excluded.pre_image_mixed, snapshot_hash = excluded.snapshot_hash, updated_at = excluded.updated_at",
   );
   const fileUndoGetStmt = db.prepare(
-    "SELECT content, bom, ending, hashes, result_content, snapshot_hash, updated_at FROM file_undo WHERE path = ?",
+    "SELECT content, bom, ending, hashes, result_content, snapshot_hash, updated_at, effective_ending, pre_image_mixed FROM file_undo WHERE path = ?",
   );
   const fileUndoDelStmt = db.prepare("DELETE FROM file_undo WHERE path = ?");
   const servedGetStmt = db.prepare(
@@ -912,6 +946,9 @@ function makeDomainStore(
     const stamp = Date.now();
     withUndoPairTxn(() => {
       if (legacy) {
+        // #171: both halves record the SAME write. `?? legacy.ending` is the pre-#171 caller and an
+        // old row's meaning alike: no effective ending was recorded, so the pre-image's own one is
+        // the best (and previously the only) answer. `=== 1` keeps the flag total: absent means 0.
         stmts.undoUpsert(
           path,
           legacy.content,
@@ -919,6 +956,8 @@ function makeDomainStore(
           legacy.ending,
           JSON.stringify(legacy.hashes),
           legacy.resultContent,
+          legacy.effectiveEnding ?? legacy.ending,
+          legacy.preImageMixed === 1 ? 1 : 0,
           stamp,
         );
       } else {
@@ -932,6 +971,8 @@ function makeDomainStore(
           v7.ending,
           JSON.stringify(v7.hashes),
           v7.resultContent,
+          v7.effectiveEnding ?? v7.ending,
+          v7.preImageMixed === 1 ? 1 : 0,
           v7.snapshotHash,
           stamp,
         );
@@ -1033,6 +1074,10 @@ function makeDomainStore(
           ending: row.ending as string,
           hashes: parsed as string[],
           resultContent: row.result_content as string,
+          // Null when absent (a pre-#171 row): the reader decides the fallback, the store only
+          // reports what is stored. A wrong-typed value is reported as absent rather than a cast.
+          effectiveEnding: typeof row.effective_ending === "string" ? row.effective_ending : null,
+          preImageMixed: typeof row.pre_image_mixed === "number" ? row.pre_image_mixed : null,
         };
       } catch (error) {
         undoPairDeleteImpl(path);
@@ -1059,6 +1104,8 @@ function makeDomainStore(
           resultContent: row.result_content,
           snapshotHash: row.snapshot_hash ?? null,
           updatedAt: row.updated_at,
+          effectiveEnding: row.effective_ending,
+          preImageMixed: row.pre_image_mixed,
         };
       } catch (error) {
         // Shape corruption (`mapFileUndoRow` throws `TypeError`) and payload corruption

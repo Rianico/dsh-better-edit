@@ -116,11 +116,16 @@ export type DomainErrorCode =
   | "E_STORE_NEWER_VERSION";
 
 /**
- * Applied-tier warning codes. A `[W_*]` line reports an applied mutation;
- * `[E_*]` reports a rejection. `formatWarning` is the sole producer of
- * `[W_*]` headers and `formatError` the sole composer of `[E_*]` headers:
- * no raw `[E_*]`/`[W_*]` header literal may exist outside this module
- * (asserted in test/arch/domain-error-registry.test.ts).
+ * Applied-tier warning codes — the `[W_*]` line an APPLIED mutation carries. A
+ * `[W_*]` line in this union reports a write that landed; `[E_*]` reports a rejection.
+ * `formatWarning` is the sole producer of applied-tier `[W_*]` headers and
+ * `formatError` the sole composer of `[E_*]` headers: no raw `[E_*]`/`[W_*]` header
+ * literal may exist outside this module (asserted in
+ * test/arch/domain-error-registry.test.ts).
+ *
+ * Read-tier codes are NOT members here: they live in `ReadWarningCode` and are produced
+ * only by `formatReadWarning`, which renders a bare `[<CODE>]` header because a read
+ * reports state observed before any write and therefore addresses no audience.
  */
 export type DomainWarningCode =
   | "W_NEVER_SERVED_SHAPE"
@@ -128,7 +133,20 @@ export type DomainWarningCode =
   | "W_REVERSED_ANCHORS"
   | "W_UNICODE_LITERAL"
   | "W_LITERAL_BYPASS"
-  | "W_NOOP";
+  | "W_NOOP"
+  | "W_UNSERVED_INTERIOR"
+  | "W_EOL_REWRITTEN";
+
+/**
+ * Read-tier warning codes — a SEPARATE tier from `DomainWarningCode`, on purpose.
+ *
+ * An applied-tier `[W_*]` reports a mutation that landed, so it carries an audience
+ * (`[MODEL]`/`[USER]`) naming who must act. A read-tier code reports state OBSERVED
+ * before any write: nothing was mutated, so there is no actor to address and the header
+ * is bare `[<CODE>]`. Folding the two into one union would force a read notice to carry
+ * an audience it does not have.
+ */
+export type ReadWarningCode = "W_MIXED_EOL";
 
 export interface ErrorPayloadMap {
   E_BAD_PAYLOAD: {
@@ -193,24 +211,28 @@ export interface ErrorPayloadMap {
     count?: number;
   };
   E_BATCH_ABORT: {
-    /** First failing item: routes the typed path and keeps the single-failure envelope byte-identical. */
+    /** First failing item: routes the typed path and is the single bullet's index when `failures` is absent. */
     index: number;
     path: string;
+    /** Items the call submitted; the verdict renders `<failed> of <total>`. */
+    total?: number;
     /** The first failing item's inner failure message (already header-bearing). */
     inner: string;
     /**
-     * Range context for the failed item: either the current on-disk range
-     * block or the "Call read()…" fallback. Empty when no range context
-     * exists (non-anchor failures) — the merge hint is omitted with it.
+     * Serve disposition for the echoed rows (ADR-0043), rendered once under the single
+     * bullet. Absent when no serve was attempted (the envelope re-renders no rows).
      */
-    echoBlock: string;
+    serveNote?: string;
     /**
      * Every failing item in order; present only when more than one failed
      * (C: one resubmission fixes every failure). Each item keeps its own
      * `[E_*]` inline in `inner`.
      */
     failures?: Array<{ index: number; inner: string }>;
-    /** Union of every failing item's rows, in item order. */
+    /**
+     * Union of every failing item's rows, in item order. Machine payload only: the formatter
+     * never re-renders rows (ADR-0046) — each inner message owns its own echo.
+     */
     servedRows: ServedRow[];
     /** Every failing item's block joined in item order ("" when none). */
     servedBlock: string;
@@ -504,29 +526,49 @@ function foreignAnchorFormat(payload: ErrorPayloadMap["E_FOREIGN_ANCHOR"]): stri
   return `${noun} ${verb} inconsistent with ${payload.path}; served for ${homes}; nothing was written.`;
 }
 
-const BATCH_ATOMICITY_TRAILER =
-  "The whole batch was rejected and NOTHING was written — no file changed and earlier items in the batch were NOT applied.";
+/** Split an already-rendered error message into its `[E_*]` token and headerless body. */
+function splitErrorHeader(inner: string): { code: string | undefined; body: string } {
+  const match = /^\[TO (?:MODEL|USER)\] (\[[EW]_[A-Z0-9_]+\]) /.exec(inner);
+  if (match === null) return { code: undefined, body: inner };
+  return { code: match[1]!, body: inner.slice(match[0].length) };
+}
 
+/** Indent every continuation line so one failure stays one list entry. */
+function indentContinuation(text: string): string {
+  return text.replace(/\n/g, "\n  ");
+}
+
+/**
+ * One failing item as a structural list entry. The inner `[TO MODEL]` audience prefix is
+ * stripped; its `[E_*]` token becomes the entry's code. Row-carrying errors keep the rows
+ * their own formatter rendered — the envelope never re-renders them.
+ */
+function batchAbortItem(index: number, path: string, inner: string): string {
+  const { code, body } = splitErrorHeader(inner);
+  const label = code === undefined ? "" : ` ${code}`;
+  return `- edits[${index}] (${path})${label}: ${indentContinuation(body)}`;
+}
+
+/**
+ * The verdict is the lead line and each failing item is one list entry, so the atomicity fact
+ * frames the payload instead of trailing it. A single failure may append its serve disposition
+ * (recorded / not recorded) as one indented sentence; rows are never re-rendered here — the
+ * inner error owns the single echo (ADR-0043).
+ */
 function batchAbortFormat(payload: ErrorPayloadMap["E_BATCH_ABORT"]): string {
-  // C: several failures name every failing item in order (one resubmission
-  // fixes them all); each item keeps its own `[E_*]` inline in `inner`.
-  if (payload.failures !== undefined && payload.failures.length > 1) {
-    const parts = payload.failures.map(
-      (f) => `edits[${f.index}] (${payload.path}) failed: ${f.inner}`,
-    );
-    return (
-      `${parts.join("; ")}\n${BATCH_ATOMICITY_TRAILER} ` +
-      "Fix the failing edits (and any later edits that depend on them), then resubmit the batch."
-    );
-  }
-  const base =
-    `edits[${payload.index}] (${payload.path}) failed: ${payload.inner}\n${payload.echoBlock.trimStart()}\n` +
-    BATCH_ATOMICITY_TRAILER;
-  // WHY: echoBlock is empty exactly when no range context exists (non-anchor
-  // WHY: failures carry no echo), and only a ranged failure can name the edit
-  // WHY: to fix — so the merge hint rides on the same condition.
-  if (!payload.echoBlock) return base;
-  return `${base} Fix the failing edit (and any later edit that depends on it), then resubmit the batch.`;
+  const failures = payload.failures ?? [{ index: payload.index, inner: payload.inner }];
+  const failed = failures.length;
+  const total = payload.total ?? failed;
+  const noun = total === 1 ? "edit" : "edits";
+  const lead = `Batch rejected: ${failed} of ${total} ${noun} failed; nothing was written.`;
+  const items = failures.map((failure) =>
+    batchAbortItem(failure.index, payload.path, failure.inner),
+  );
+  const note =
+    payload.failures === undefined && payload.serveNote !== undefined
+      ? `  ${payload.serveNote}`
+      : undefined;
+  return [lead, ...items, ...(note === undefined ? [] : [note])].join("\n");
 }
 
 function noopLoopFormat(payload: ErrorPayloadMap["E_NOOP_LOOP"]): string {
@@ -739,6 +781,20 @@ export interface WarningPayloadMap {
     line: number;
   };
   W_LITERAL_BYPASS: Record<string, never>;
+  /**
+   * An applied write normalized the file's terminators. The spellings are inlined on purpose:
+   * importing `LineEnding` (edit-diff) or `EolSource` (eol-config) here would cycle those modules
+   * back through this registry. The real guard is the call site — `formatWarning("W_EOL_REWRITTEN",
+   * { target: endingName(effectiveEnding), source: effectiveEol.source, … })` in
+   * `src/mutation/engine.ts` — where `tsc` fails if `EolSource` or `endingName` drift from these
+   * spellings.
+   */
+  W_EOL_REWRITTEN: {
+    target: "LF" | "CRLF" | "CR";
+    source: "env" | "config" | "file" | "system";
+    /** How many pre-image terminators the write re-spelled; never zero when this warning fires. */
+    changed: number;
+  };
   W_NOOP: {
     ref: string;
     anchorFrom: string;
@@ -747,6 +803,32 @@ export interface WarningPayloadMap {
     count: number;
     /** Present on engine single warns: the display path ("in <path>" flavor). */
     path?: string;
+  };
+  W_UNSERVED_INTERIOR: {
+    count: number;
+    from: number;
+    to: number;
+  };
+}
+
+/**
+ * Read-tier warning payloads. The counts are the RAW pre-image's terminators, taken once where
+ * the bytes are decoded, so they describe the file as observed — never a page's slice of it.
+ *
+ * The spellings are inlined on purpose, exactly as `W_EOL_REWRITTEN` inlines them: importing
+ * `LineEnding` (edit-diff) or `EolSource` (eol-config) here would cycle those modules back
+ * through this registry. The real guard is the call site —
+ * `formatReadWarning("W_MIXED_EOL", { …, target: endingName(effective.value), source:
+ * effective.source })` in `src/read-and-serve.ts` — where `tsc` fails if `EolSource` or
+ * `endingName` drift from these spellings.
+ */
+export interface ReadWarningPayloadMap {
+  W_MIXED_EOL: {
+    crlf: number;
+    lf: number;
+    cr: number;
+    target: "LF" | "CRLF" | "CR";
+    source: "env" | "config" | "file" | "system";
   };
 }
 
@@ -792,6 +874,37 @@ function noopWarnFormat(payload: WarningPayloadMap["W_NOOP"]): string {
   );
 }
 
+function unservedInteriorFormat(payload: WarningPayloadMap["W_UNSERVED_INTERIOR"]): string {
+  return (
+    `Span replaced ${payload.count} unserved interior line(s) (lines ${payload.from}-${payload.to}). ` +
+    "Edits should only modify lines previously read and served (enforced under strict mode); " +
+    "verify this uninspected replacement was intended."
+  );
+}
+
+function eolRewrittenFormat(payload: WarningPayloadMap["W_EOL_REWRITTEN"]): string {
+  return (
+    `EOL normalized to ${payload.target} (${payload.source}): ` +
+    `${payload.changed} terminators changed. Undo restores normalized content.`
+  );
+}
+
+/**
+ * Renders the terminator kinds the bytes actually use, in the fixed display order `CRLF`, `LF`,
+ * `CR`. A kind whose count is zero is omitted (it is not spelled "0"), so the list names exactly
+ * what the pre-image spells; the target/source clause is the rung the next write will use.
+ */
+function mixedEolFormat(payload: ReadWarningPayloadMap["W_MIXED_EOL"]): string {
+  const kinds = [
+    { name: "CRLF", count: payload.crlf },
+    { name: "LF", count: payload.lf },
+    { name: "CR", count: payload.cr },
+  ]
+    .filter((kind) => kind.count > 0)
+    .map((kind) => `${kind.count} ${kind.name}`);
+  return `Mixed EOL: ${kinds.join(", ")}. All edits normalize to ${payload.target} (${payload.source}).`;
+}
+
 export const WARNING_REGISTRY: {
   [K in DomainWarningCode]: CodeSpec<WarningPayloadMap[K]>;
 } = {
@@ -821,13 +934,21 @@ export const WARNING_REGISTRY: {
     audience: "MODEL",
     format: noopWarnFormat,
   },
+  W_UNSERVED_INTERIOR: {
+    audience: "MODEL",
+    format: unservedInteriorFormat,
+  },
+  W_EOL_REWRITTEN: {
+    audience: "MODEL",
+    format: eolRewrittenFormat,
+  },
 };
 
 /**
- * SAFETY: the sole producer of `[W_*]` headers. Renders
- * `[<AUDIENCE>] [<W_CODE>] <neutral-observation>` from the registry, so every
- * applied-tier warning carries its machine-readable code and audience by
- * construction.
+ * SAFETY: the applied tier's sole producer of `[W_*]` headers (`formatReadWarning` owns
+ * the read tier). Renders `[<AUDIENCE>] [<W_CODE>] <neutral-observation>` from the
+ * registry, so every applied-tier warning carries its machine-readable code and audience
+ * by construction.
  *
  * PURE by contract (T6 CP2, F2): a formatter carries no state. The deferral
  * witnesses below are INJECTED (`AllowlistTrigger.holds(fired)`), never accumulated —
@@ -844,6 +965,33 @@ export function formatWarning<K extends DomainWarningCode>(
 ): string {
   const spec = WARNING_REGISTRY[code] as CodeSpec<WarningPayloadMap[K]>;
   return `[${spec.audience}] [${code}] ${spec.format(payload)}`;
+}
+
+/**
+ * The read tier's registry: codes that report observed state and carry no audience, so their
+ * entries hold a formatter and nothing else. Kept separate from `WARNING_REGISTRY` by contract —
+ * the applied tier's `CodeSpec` carries an `audience` because an applied notice addresses an
+ * actor, and a read notice has none.
+ */
+const READ_WARNING_REGISTRY: {
+  [K in ReadWarningCode]: { format: (payload: ReadWarningPayloadMap[K]) => string };
+} = {
+  W_MIXED_EOL: {
+    format: mixedEolFormat,
+  },
+};
+
+/**
+ * SAFETY: the read tier's sole producer of `[W_*]` headers — bare `[<CODE>]`, with NO audience
+ * prefix, because a read warning reports state OBSERVED before any write. It never composes an
+ * applied-tier notice and `formatWarning` never composes a read-tier one.
+ */
+export function formatReadWarning<K extends ReadWarningCode>(
+  code: K,
+  payload: ReadWarningPayloadMap[K],
+): string {
+  const spec = READ_WARNING_REGISTRY[code];
+  return `[${code}] ${spec.format(payload)}`;
 }
 
 /**

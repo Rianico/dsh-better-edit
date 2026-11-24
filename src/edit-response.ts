@@ -1,5 +1,6 @@
 import type { ServedRow } from "./hashline/anchor-pipeline.js";
 import { genDiff } from "./edit-diff.js";
+import { formatWarning } from "./domain-errors.js";
 import { truncateHead, formatSize } from "./file-view.js";
 import { clipLine } from "./utils.js";
 
@@ -132,10 +133,6 @@ function formatDiffCard(diff: string): string {
   return `${fenced}\n\n${hint}`;
 }
 
-function driftBlock(driftNotice: string | undefined): string {
-  return driftNotice ? `\n\n${driftNotice}` : "";
-}
-
 export function buildNoop(input: NoopInput): TResult {
   const { path, noopEdit, snapshotId, editMeta, warnings, driftNotice } = input;
 
@@ -177,6 +174,7 @@ export type BatchSection = {
   noopCount: number;
   totalAddedLines: number;
   totalRemovedLines: number;
+  served?: readonly (string | null)[];
 };
 
 export type BatchDetails = EditDetails;
@@ -189,7 +187,37 @@ export function buildBatchResult(sections: BatchSection[]): TResult {
   const addedLines = sections.reduce((n, s) => n + s.totalAddedLines, 0);
   const removedLines = sections.reduce((n, s) => n + s.totalRemovedLines, 0);
   const allNoop = appliedTotal === 0;
-  const warnings = sections.flatMap((s) => s.warnings ?? []);
+  // WHY (#144 T3): one diff per applied section, computed once — it feeds the rendered rows, the
+  // WHY: served mirror and the applied-tier disclosure, so the three can never disagree.
+  const diffBySection = new Map<BatchSection, ReturnType<typeof genDiff>>();
+  const disclosureBySection = new Map<BatchSection, string>();
+  for (const s of appliedFiles) {
+    const diffResult = genDiff(
+      s.originalNormalized,
+      s.result,
+      1,
+      s.resultHashes,
+      s.originalHashes,
+      s.served,
+    );
+    diffBySection.set(s, diffResult);
+    const unserved = diffResult.unservedRemovedLines;
+    if (unserved.length > 0) {
+      disclosureBySection.set(
+        s,
+        formatWarning("W_UNSERVED_INTERIOR", {
+          count: unserved.length,
+          from: unserved[0]!,
+          to: unserved[unserved.length - 1]!,
+        }),
+      );
+    }
+  }
+  // WHY (#144 T3): a fold keeps section order; one disclosure per committed file, never per row.
+  const warnings = sections.flatMap((s) => {
+    const disclosure = disclosureBySection.get(s);
+    return [...(s.warnings ?? []), ...(disclosure === undefined ? [] : [disclosure])];
+  });
   const driftNotice = sections
     .map((s) => s.driftNotice)
     .filter((d): d is string => d !== undefined)
@@ -217,7 +245,7 @@ export function buildBatchResult(sections: BatchSection[]): TResult {
   const servedByPath: Array<{ path: string; servedRows: ServedRow[] }> = [];
   const diffParts: string[] = [];
   for (const s of appliedFiles) {
-    const diffResult = genDiff(s.originalNormalized, s.result, 1, s.resultHashes, s.originalHashes);
+    const diffResult = diffBySection.get(s)!;
     diffParts.push(`--- ${s.path} ---\n${diffResult.diff}`);
     const denseRows: typeof diffResult.servedRows = [];
     for (let i = 0; i < s.resultHashes.length; i++) {
