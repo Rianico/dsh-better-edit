@@ -35,8 +35,11 @@ type RangeCode = (typeof RANGE_CODES)[number];
  * E_STALE_RANGE is 12 since FU-3: the gate's merged `null || undefined` arm was split into a
  * truncated-slot arm and a boundary-never-served arm (upstream ADR-0024 decision 1, adopted;
  * the interior hole now `continue`s instead of throwing, so no arm was added for it).
+ * E_UNSERVED_RANGE is 3 since #144 T2 — strict span mode's aggregated rowless interior refusal is
+ * a new producer beside the mirror-route scan and the boundary arm. Keep the E_STALE_RANGE
+ * wording intact.
  */
-const EXPECTED_SITES: Record<RangeCode, number> = { E_STALE_RANGE: 12, E_UNSERVED_RANGE: 2 };
+const EXPECTED_SITES: Record<RangeCode, number> = { E_STALE_RANGE: 12, E_UNSERVED_RANGE: 3 };
 
 function listSources(root: string): string[] {
   const out: string[] = [];

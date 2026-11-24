@@ -34,6 +34,7 @@ import {
 } from "./hash-assign.js";
 import { NEW_CONTENT_NOT_STRING_MSG, NEW_CONTENT_BODY } from "../constants.js";
 import { DomainError, formatWarning, numericAnchorNote } from "../domain-errors.js";
+import type { SpanMode } from "../span-mode.js";
 import type { ErrorPayloadMap, ServedRow, DomainErrorCode } from "../domain-errors.js";
 import { fmtServedRows, verifyServedRange } from "./served-evidence.js";
 import type { LeaseSpanSource, ResolvedRange } from "./served-evidence.js";
@@ -664,6 +665,7 @@ export function applyEdit(
   retired?: ReadonlySet<string>,
   mode?: EditMode,
   leaseSource?: LeaseSpanSource,
+  spanMode?: SpanMode,
 ): {
   content: string;
   firstChangedLine: number | undefined;
@@ -791,6 +793,7 @@ export function applyEdit(
       servedCanons,
       retired,
       leaseSource,
+      ...(spanMode !== undefined ? { spanMode } : {}),
     });
   }
 

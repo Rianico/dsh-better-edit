@@ -25,6 +25,7 @@ import { DomainError } from "../domain-errors.js";
 import type { DomainErrorCode, RangeCause, ServedRow } from "../domain-errors.js";
 import { HASH_SEP, canon } from "./hash-assign.js";
 import { SERVED_ECHO_CAP } from "../constants.js";
+import type { SpanMode } from "../span-mode.js";
 
 export type ServedCode = "E_STALE_RANGE" | "E_UNSERVED_RANGE";
 
@@ -109,6 +110,48 @@ export function moreRowsHint(count: number, tail: string): string {
 function paginationHint(nextOffset: number, more: number): string {
   return moreRowsHint(more, `read offset=${nextOffset}`);
 }
+
+/** Max runs the strict unserved list renders before it is capped. */
+const STRICT_UNSERVED_MAX_RUNS = 8;
+
+/** Ascending absolute file lines -> contiguous [first, last] runs (input order preserved). */
+function unservedRuns(lines: number[]): Array<[number, number]> {
+  const runs: Array<[number, number]> = [];
+  for (const line of lines) {
+    const last = runs[runs.length - 1];
+    if (last !== undefined && line === last[1] + 1) last[1] = line;
+    else runs.push([line, line]);
+  }
+  return runs;
+}
+
+/**
+ * The strict-mode refusal headline: the count against the whole replaced span, then the absolute
+ * file lines ascending and run-compressed, capped at `STRICT_UNSERVED_MAX_RUNS` with the count of
+ * unshown lines appended. `servedRows`/`servedBlock` stay empty for this arm — no trustworthy
+ * region can be echoed for an edit that was refused before any write.
+ */
+function strictUnservedHeadline(
+  filePath: string | undefined,
+  unserved: number[],
+  totalLines: number,
+): string {
+  const path = filePath ?? "this file";
+  const count = unserved.length;
+  const summary =
+    `Strict span mode refused the edit to ${path}: ${count} of the ${totalLines} ` +
+    `file lines it replaces ${count === 1 ? "was" : "were"} never served.`;
+  if (count === 1) return `${summary}\nUnserved file line: ${unserved[0]!}`;
+  const runs = unservedRuns(unserved);
+  const shown = runs.slice(0, STRICT_UNSERVED_MAX_RUNS);
+  const hidden = runs.slice(STRICT_UNSERVED_MAX_RUNS);
+  const rendered = shown
+    .map(([first, last]) => (first === last ? `${first}` : `${first}-${last}`))
+    .join(", ");
+  const hiddenCount = hidden.reduce((sum, [first, last]) => sum + (last - first + 1), 0);
+  const capped = hiddenCount > 0 ? ` (+${hiddenCount} more lines)` : "";
+  return `${summary}\nUnserved file lines: ${rendered}${capped}`;
+}
 /**
  * SAFETY: the read-only identity seam the edit path resolves a served anchor through (CP2-r1,
  * obligation (c)). Production wires it to `served_leases` + `line_lineage`; tests inject plain
@@ -179,6 +222,22 @@ function owesInteriorScan(route: ServedEvidenceRoute): boolean {
  */
 function acceptsInteriorHole(route: ServedEvidenceRoute, k: number, servedLen: number): boolean {
   return route.kind === "leased" && k !== 0 && k !== servedLen - 1;
+}
+
+/**
+ * Question 2b: does strict span mode refuse the interior hole the leased route would otherwise
+ * accept? Strict narrows upstream ADR-0024 decision 1 to fully served spans — an interior `null`
+ * is exactly the never-served line the mode refuses. Hint (and absent) keeps the tolerant route
+ * byte-identical; the mirror route's own interior scan already rejects its holes, so the policy
+ * is leased-only and builds on `acceptsInteriorHole` rather than re-deriving the rule.
+ */
+function refusesInteriorHole(
+  spanMode: SpanMode | undefined,
+  route: ServedEvidenceRoute,
+  k: number,
+  servedLen: number,
+): boolean {
+  return spanMode === "strict" && acceptsInteriorHole(route, k, servedLen);
 }
 
 /**
@@ -335,10 +394,15 @@ export function verifyRebasedSpan(args: {
   echo: string;
   echoRows: ServedRow[];
   where: string;
+  /** Strict span mode refuses an edit whose window replaces a never-served interior row. */
+  spanMode?: SpanMode;
+  /** Path label for the strict refusal headline. */
+  filePath?: string;
 }): void {
-  const { served, route, echo, echoRows, where } = args;
+  const { served, route, echo, echoRows, where, spanMode } = args;
   const leaseSource = route.source;
   const servedLen = args.servedEnd - args.servedStart + 1;
+  const unservedInterior: number[] = [];
   const rebasedLen = args.rebasedEnd - args.rebasedStart + 1;
   if (rebasedLen !== servedLen) {
     throw new ServedRejectionError({
@@ -383,6 +447,12 @@ export function verifyRebasedSpan(args: {
           cause: "never-served",
         });
       }
+      if (refusesInteriorHole(spanMode, route, k, servedLen)) {
+        // Collect while the loop keeps adjudicating the other slots: a concrete staleness
+        // elsewhere still wins (existing precedence); only a window with no other refusal
+        // throws the aggregated strict refusal, once, after the loop.
+        unservedInterior.push(currentLine);
+      }
       continue;
     }
     const lease = leaseSource.leaseFor(servedAnchor);
@@ -421,6 +491,17 @@ export function verifyRebasedSpan(args: {
       });
     }
   }
+
+  if (unservedInterior.length > 0) {
+    throw new ServedRejectionError({
+      code: "E_UNSERVED_RANGE",
+      unservedKind: "interior",
+      headline: strictUnservedHeadline(args.filePath, unservedInterior, servedLen),
+      servedRows: [],
+      servedBlock: "",
+      firstOffendingLine: unservedInterior[0]!,
+    });
+  }
 }
 
 export function verifyServedRange(args: {
@@ -442,6 +523,11 @@ export function verifyServedRange(args: {
    * presence-tests this argument.
    */
   leaseSource?: LeaseSpanSource;
+  /**
+   * Strict refuses a leased window that replaces a never-served interior line; absent/hint keeps
+   * today's route.
+   */
+  spanMode?: SpanMode;
 }): void {
   const { served, startHash, endHash, startLine, endLine, fileHashes, fileLines, filePath } = args;
   // The one route construction (obligation (c)): every leased/mirror decision below consults
@@ -597,6 +683,8 @@ export function verifyServedRange(args: {
       echo,
       echoRows,
       where,
+      ...(filePath !== undefined ? { filePath } : {}),
+      ...(args.spanMode !== undefined ? { spanMode: args.spanMode } : {}),
     });
   } else if (from !== startLine - 1) {
     throw new ServedRejectionError({
