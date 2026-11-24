@@ -23,6 +23,8 @@ import { lineHashes } from "../hashline/hash.js";
 import { HASH_SPACE, isPromotableAnchorSpaceExhaustion } from "../hashline/hash-assign.js";
 import { buildNeverServedEditHint } from "../hashline/served-guard.js";
 import { encodingHintAtVersion } from "../file-encoding-state.js";
+import { loadConfig } from "../store-config.js";
+import type { SpanMode } from "../span-mode.js";
 import { recordRejectionRows } from "./rejection-serve.js";
 
 function promotionWarning(retiredSize: number, servedLen: number): string {
@@ -227,6 +229,8 @@ export interface ApplyOneInput {
    * position check; absent => the unconditional position check (preview/no-store).
    */
   leaseSource?: LeaseSpanSource;
+  /** Served-span policy resolved once by the batch for this file ("hint" default). */
+  spanMode?: SpanMode;
   sessionKey?: string;
   /** Pre-resolved edit (single path keeps resEdit before IO for error order). */
   edit?: HEdit;
@@ -296,6 +300,7 @@ export async function applyOne(
       retiredForApply,
       input.mode,
       input.leaseSource,
+      input.spanMode,
     );
   } catch (error) {
     if (error instanceof AnchorMismatchError || error instanceof ServedRejectionError) {
@@ -917,6 +922,9 @@ export async function runFileEdits(
   const first = items[0]!;
   abortIf(opts.signal);
   const absolutePath = first.absolutePath;
+  // Served-span policy: one read per file edit; every item in this file shares it, so a
+  // config edit mid-batch cannot split the batch's policy.
+  const spanMode = loadConfig().spanMode;
   const perSessionRetired = await loadRetiredAnchors(opts.sessionKey, absolutePath);
   const reservedHashes = new Set(perSessionRetired);
   // Issue #112: the mutating re-read consumes the encoding recorded by `read`,
@@ -1034,6 +1042,7 @@ export async function runFileEdits(
         perSessionRetired,
         item.mode,
         originalLeaseSource,
+        spanMode,
       );
     } catch (error) {
       if (!(error instanceof DomainError)) throw error;
@@ -1079,6 +1088,7 @@ export async function runFileEdits(
         retired: new Set([...perSessionRetired, ...Array.from(newlyRetired)]),
         mode: item.mode,
         leaseSource,
+        spanMode,
       },
       async (error, edit) => {
         // In-loop (state-dependent) failures keep single-failure envelopes.
