@@ -32,23 +32,19 @@ function rowAnchors(text: string): string[] {
   return out;
 }
 
-/** Anchors of the rows inside the first `Current range:` block of a rejection message. */
 /**
  * Anchors of the rows inside the first `Current range:` block of a rejection message.
- * The batch-abort envelope concatenates its own on-disk range block onto the inner
- * message, so cut there first — otherwise the last inner row and the outer rows merge
- * into one list. The split key has no leading space: the renderer normalizes the
- * engine's `" Current on-disk range…"` separator (T4 CP1-r4 F12), and a
- * separator-agnostic key survives both sides of that fix.
+ * The structural envelope indents the inner block under its bullet, so every scan here
+ * tolerates leading whitespace; the block appears exactly once (the envelope never
+ * re-renders rows).
  */
 function rangeBlockAnchors(message: string): string[] {
-  const inner = message.split("Current on-disk range for edits[")[0]!;
-  const lines = inner.split("\n");
-  const start = lines.findIndex((line) => line.trim() === "Current range:");
+  const lines = message.split("\n");
+  const start = lines.findIndex((line) => /^\s*Current range(?: \(fresh read\))?:$/.test(line));
   if (start === -1) return [];
   const out: string[] = [];
   for (let i = start + 1; i < lines.length; i += 1) {
-    const m = /^([A-Za-z0-9]{3})│/.exec(lines[i]!);
+    const m = /^\s*([A-Za-z0-9]{3})│/.exec(lines[i]!);
     if (!m) break;
     out.push(m[1]!);
   }
@@ -208,7 +204,8 @@ describe("range-family retry truth (T4)", () => {
         envelope: first.message.startsWith("[TO MODEL] [E_BATCH_ABORT]"),
         code: first.message.includes("[E_STALE_ANCHOR]"),
         headlineInstruction: first.message.includes("Re-read for fresh anchors."),
-        envelopeInstruction: first.message.includes("Call read() to get fresh anchors."),
+        envelopeBullet: first.message.includes("- edits[0] (t4-g7.txt) [E_STALE_ANCHOR]:"),
+        noReadFallback: !first.message.includes("Call read() to get fresh anchors."),
         deadHint: first.message.includes("Retry with these anchors"),
         // The declaration the message never renders — asserted here because M4 flips it.
         remedyIsReadRequired: /read/i.test(ERROR_REGISTRY.E_STALE_ANCHOR.remedy ?? ""),
@@ -218,7 +215,8 @@ describe("range-family retry truth (T4)", () => {
         envelope: true,
         code: true,
         headlineInstruction: true,
-        envelopeInstruction: true,
+        envelopeBullet: true,
+        noReadFallback: true,
         deadHint: false,
         remedyIsReadRequired: true,
         remedyPromisesNoRead: false,
@@ -294,12 +292,10 @@ describe("range-family retry truth (T4)", () => {
     });
   });
 
-  // C11a/C11b (T4 CP1-r4 F12): the envelope's separator is a RENDER concern, so
-  // these cells assert on the whole message the model receives — line by line —
-  // not on `formatError(...)` or a helper's return. The glue they catch was
-  // invisible to every helper-level test that existed before, which is how it
-  // survived four tickets.
-  it("the rendered envelope never glues a row to the on-disk heading (C11a)", async () => {
+  // C11a/C11b (T4 CP1-r4 F12, reshaped by the structural envelope): the model-facing
+  // message is one verdict line plus one bullet per failure. Rows are echoed exactly once,
+  // inside the inner error, and the envelope renders no preview or fallback of its own.
+  it("the rendered envelope is one verdict line plus one bullet, rows echoed once (C11a)", async () => {
     await withTempFile("t4-c11a.txt", "alpha\nbeta\ngamma\n", async ({ cwd, path }) => {
       const harness = setupIntegrationTest(cwd);
       // FU-3 made the old H1 interior-hole geometry an ACCEPT, so this render contract is
@@ -315,25 +311,31 @@ describe("range-family retry truth (T4)", () => {
         edits: [[served[0], served[2], "R"]],
       });
       expect(attempt.applied).toBe(false);
-      // (ii) The heading begins its own line (the engine's leading space is normalized).
-      expect(attempt.message).toMatch(/\n *Current on-disk range/);
-      // (i) No rendered line carries a row separator followed by the next fragment —
-      // a row that runs into following prose is an unparseable anchor for a row
-      // consumer. The joint pattern covers BOTH engine variants.
+      expect(attempt.message).toMatch(
+        /^\[TO MODEL\] \[E_BATCH_ABORT\] Batch rejected: 1 of 1 edit failed; nothing was written\.$/m,
+      );
+      expect(attempt.message).toContain("- edits[0] (t4-c11a.txt) [E_STALE_RANGE]:");
+      // The envelope renders no second block; the inner rows are the only echo, indented.
+      expect(attempt.message).not.toContain("Current on-disk range");
+      expect(attempt.message.match(/^\s*Current range:$/gm)).toHaveLength(1);
+      const rowLines = attempt.message
+        .split("\n")
+        .filter((line) => /^\s*[A-Za-z0-9]{3}│/.test(line));
+      expect(rowLines).toHaveLength(4);
+      // No rendered line carries a row separator followed by the next fragment.
       const glued = attempt.message
         .split("\n")
         .filter((line) => /│.*(Current on-disk range|Call read\(\))/.test(line));
       expect(glued, `row glued to the next fragment: ${glued.join(" | ")}`).toEqual([]);
-      // Non-vacuity: this geometry really does render rows.
       expect(attempt.message).toContain("│");
     });
   });
 
-  it("the contextless fallback starts its own line in the rendered envelope (C11b)", async () => {
+  it("a contextless refusal renders the bullet only, with no fallback line (C11b)", async () => {
     await withTempFile("t4-c11b.txt", "alpha\nbeta\ngamma\ndelta\n", async ({ cwd, path }) => {
       const harness = setupIntegrationTest(cwd);
-      // The G7 geometry: whole-file rewrite → contextless E_STALE_ANCHOR → the
-      // engine's `Call read()…` fallback (no rows at all in this envelope).
+      // The G7 geometry: whole-file rewrite → contextless E_STALE_ANCHOR → a rowless
+      // inner message; the envelope adds no fallback.
       const served = rowAnchors(
         getText(await harness.readTool.execute("read", { path: "t4-c11b.txt" })),
       );
@@ -344,17 +346,9 @@ describe("range-family retry truth (T4)", () => {
       });
       expect(attempt.applied).toBe(false);
       expect(attempt.message).toContain("[E_STALE_ANCHOR]");
-      // (ii) The fallback fragment begins its own line.
-      expect(attempt.message).toMatch(/\n *Call read\(\) to get fresh anchors\./);
-      // (i) The same joint rule. Measured: the geometry that selects the fallback is
-      // exactly the geometry with no rows (G4 has rows and therefore renders the
-      // `Current on-disk range` block instead — see C4), so this half cannot be
-      // non-vacuous here. C11a carries the row-bearing half, and the assertion
-      // below pins that premise so a change to it cannot pass silently.
-      const glued = attempt.message
-        .split("\n")
-        .filter((line) => /│.*(Current on-disk range|Call read\(\))/.test(line));
-      expect(glued, `row glued to the next fragment: ${glued.join(" | ")}`).toEqual([]);
+      expect(attempt.message).toContain("- edits[0] (t4-c11b.txt) [E_STALE_ANCHOR]:");
+      expect(attempt.message).not.toContain("Call read() to get fresh anchors.");
+      expect(attempt.message).not.toContain("Current on-disk range");
       expect(attempt.message).not.toContain("│");
     });
   });
