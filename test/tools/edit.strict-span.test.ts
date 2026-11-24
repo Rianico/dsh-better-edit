@@ -111,6 +111,28 @@ describe("strict span mode — tool acceptance (#144 T4)", () => {
     });
   });
 
+  it("non-contiguous hint holes pin the warning range to the first and last unserved line", async () => {
+    const TWELVE = Array.from({ length: 12 }, (_, i) => `row ${i + 1}`).join("\n") + "\n";
+    await withTempFile("span.txt", TWELVE, async ({ cwd, path }) => {
+      const harness = setupIntegrationTest(cwd);
+      // Serve boundaries plus the middle run: old lines 3 and 10 stay unserved.
+      const anchors = await readWindows(harness, "span.txt", [
+        { offset: 1, limit: 2 },
+        { offset: 4, limit: 6 },
+        { offset: 11, limit: 2 },
+      ]);
+
+      const out = await withSpanMode("hint", () =>
+        harness.editTool.execute("edit", {
+          path: "span.txt",
+          edits: [[anchors.get("row 1")!, anchors.get("row 12")!, "replacement"]],
+        }),
+      );
+
+      expect(getText(out)).toContain("Span replaced 2 unserved interior line(s) (lines 3-10).");
+      expect(await readFile(path, "utf-8")).toBe("replacement\n");
+    });
+  });
   it("strict refuses the span before any write and records no undo row", async () => {
     await withTempFile("hole.txt", HOLE, async ({ cwd, path }) => {
       const harness = setupIntegrationTest(cwd);
@@ -128,6 +150,7 @@ describe("strict span mode — tool acceptance (#144 T4)", () => {
 
       expect(error.code).toBe("E_BATCH_ABORT");
       expect(error.message).toContain("[E_UNSERVED_RANGE]");
+      expect(error.message).toContain("Strict span mode refused the edit to hole.txt:");
       expect(error.message).toContain("1 of the 3 file lines it replaces was never served.");
       expect(error.message).toContain("Unserved file line: 2");
       // The strict refusal is rowless, so it must not pretend to echo a current range.
@@ -137,10 +160,13 @@ describe("strict span mode — tool acceptance (#144 T4)", () => {
     });
   });
 
-  it("a fully served span passes strict mode", async () => {
+  it("a hole-filled span passes strict mode once line 2 is read", async () => {
     await withTempFile("hole.txt", HOLE, async ({ cwd, path }) => {
       const harness = setupIntegrationTest(cwd);
-      const anchors = await readWindows(harness, "hole.txt", [{ offset: 1, limit: 3 }]);
+      // The literal retry path: boundaries first, then the hole, then the same span.
+      const holes = await readWindows(harness, "hole.txt", holeWindows());
+      const filled = await readWindows(harness, "hole.txt", [{ offset: 2, limit: 1 }]);
+      const anchors = new Map([...holes, ...filled]);
 
       await withSpanMode("strict", () =>
         harness.editTool.execute("edit", {

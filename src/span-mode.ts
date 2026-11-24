@@ -3,7 +3,8 @@
  *
  * WHY a module of its own: the resolver owns the served-span policy for edit
  * payloads — "hint" (default) serves the span for verification, "strict"
- * rejects an edit whose span drifted. It stays a leaf (no imports) so later
+ * refuses a span that replaces an interior line this session never served. It
+ * stays a leaf (no imports) so later
  * tickets read `loadConfig().spanMode` instead of re-parsing YAML or env, and
  * no config-side import ring can re-close around it.
  *
