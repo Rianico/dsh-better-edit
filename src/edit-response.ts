@@ -1,7 +1,7 @@
 import type { ServedRow } from "./hashline/anchor-pipeline.js";
 import { genDiff } from "./edit-diff.js";
 import { truncateHead, formatSize } from "./file-view.js";
-import { visLines, clipLine } from "./utils.js";
+import { clipLine } from "./utils.js";
 
 export type EditDetails = {
   diff: string;
@@ -54,18 +54,6 @@ export interface NoopInput {
   snapshotId?: string;
   editMeta: RMeta;
   warnings: string[] | undefined;
-  driftNotice?: string;
-}
-
-export interface SuccessInput {
-  path: string;
-  originalNormalized: string;
-  originalHashes: string[];
-  result: string;
-  resultHashes: string[];
-  warnings: string[] | undefined;
-  snapshotId?: string;
-  editMeta: RMeta;
   driftNotice?: string;
 }
 
@@ -172,66 +160,6 @@ export function buildNoop(input: NoopInput): TResult {
       classification: "noop" as const,
       metrics,
       ...(warnings !== undefined && warnings.length > 0 ? { warnings } : {}),
-      ...(driftNotice === undefined ? {} : { driftNotice }),
-    },
-  };
-}
-
-export function buildChanged(input: SuccessInput): TResult {
-  const {
-    path,
-    result,
-    warnings,
-    snapshotId,
-    originalNormalized,
-    originalHashes,
-    editMeta,
-    resultHashes,
-    driftNotice,
-  } = input;
-  const resultLines = visLines(result);
-  const diffResult = genDiff(originalNormalized, result, 1, resultHashes, originalHashes);
-  const addedLines = editMeta.addedLines;
-  const removedLines = editMeta.removedLines;
-  const warningsBlock = warnBlock(warnings);
-  const successPrefix = `Successfully edited in ${path}.`;
-  const lineSummary =
-    addedLines > 0 || removedLines > 0
-      ? ` Added ${addedLines} line(s), removed ${removedLines} line(s).`
-      : "";
-  const baseText =
-    resultLines.length === 0
-      ? "File is empty. Use edit to insert content."
-      : warningsBlock
-        ? `${successPrefix}${lineSummary}${warningsBlock}`
-        : `${successPrefix}${lineSummary}`;
-  const diffSection = resultLines.length === 0 ? "" : formatDiffCard(diffResult.diff);
-  const text = `${baseText}${diffSection}`;
-
-  const metrics = buildMetrics({
-    classification: "applied",
-    editsAttempted: editMeta.editsAttempted,
-    noopEditsCount: editMeta.noopEditsCount,
-    warningsCount: warnings?.length ?? 0,
-    firstChangedLine: editMeta.firstChangedLine,
-    lastChangedLine: editMeta.lastChangedLine,
-    addedLines,
-    removedLines,
-  });
-  const denseServedRows: typeof diffResult.servedRows = [];
-  for (let i = 0; i < resultHashes.length; i++) {
-    denseServedRows.push({ position: i, hash: resultHashes[i]! });
-  }
-
-  return {
-    content: [{ type: "text", text }],
-    details: {
-      diff: diffResult.diff,
-      firstChangedLine: editMeta.firstChangedLine ?? diffResult.firstChangedLine,
-      snapshotId,
-      metrics,
-      ...(warnings !== undefined && warnings.length > 0 ? { warnings } : {}),
-      servedRows: denseServedRows,
       ...(driftNotice === undefined ? {} : { driftNotice }),
     },
   };
