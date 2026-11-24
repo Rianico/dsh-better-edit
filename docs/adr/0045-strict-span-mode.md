@@ -36,6 +36,7 @@ The default acceptance path is unchanged, so no existing profile loses an edit a
 
 - #144 — this change.
 - #141 — the false blanket-refusal promise this ADR retires.
-- upstream `pi-better-edit@feeef35` (`feat(edit): dual-mode span verification & disclosure`, PR #309, closes #301). The brief's "upstream #319" has no carrier; the verified reference is PR #309.
+- upstream `pi-better-edit@feeef35` (`feat(edit): dual-mode span verification & disclosure`, PR #309, closes #301) — the implementing source.
+- `Rianico/pi-better-edit#319` — downstream-filed refinement request for the strict refusal message shape (summary + run-compressed capped list); open, not implemented upstream.
 - upstream ADR-0024 decision 1 — interior `null` slots are accepted on the leased route.
 - ADR-0037 — the served-evidence seam; this ADR adds a policy axis beside it, not a second entry point.
