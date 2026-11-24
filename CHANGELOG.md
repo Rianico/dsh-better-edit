@@ -17,7 +17,7 @@ All notable changes to this project will be documented in this file.
 
 ### Bug Fixes
 
-* **edit:** render `E_BATCH_ABORT` as one verdict line plus one bullet per failing item, stop re-echoing served rows, and state the failure count against the submitted total (#144)
+* **edit:** render `E_BATCH_ABORT` as one verdict line plus one bullet per failing item, stop re-echoing served rows, and state the failure count against the submitted total (#174)
 
 ## [1.2.7] - 2026-11-24
 
