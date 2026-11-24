@@ -13,11 +13,11 @@ All notable changes to this project will be documented in this file.
 
 ### Bug Fixes
 
-* **edit:** pair duplicate lines in applied and undo diffs by anchor identity instead of Myers text position, so a removed row names the line actually removed and survivors keep their own anchor; the dead single-file `buildChanged` builder is retired, leaving `buildBatchResult` as the one batch projection (#151)
+* **edit:** pair duplicate lines in applied and undo diffs by anchor identity instead of Myers text position, so a removed row names the line actually removed and survivors keep their own anchor; the dead single-file `buildChanged` builder is retired, leaving `buildBatchResult` as the one batch projection (#176)
 
 ### Documentation
 
-* **adr:** record ADR-0045 — diff alignment follows anchor identity (#151)
+* **adr:** record ADR-0045 — diff alignment follows anchor identity (#176)
 
 ## [1.2.7] - 2026-11-24
 
