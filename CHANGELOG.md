@@ -17,6 +17,7 @@ All notable changes to this project will be documented in this file.
 
 * **eol:** resolve one effective line ending per write from a four-rung ladder — `DSH_BETTER_EDIT_EOL` > the new `eol` config (`AUTO` | `LF` | `CRLF` | `CR`, default `AUTO`) > the file's dominant terminator (whole-file; ties prefer LF, then CRLF, then CR) > the system ending (`\r\n` on Windows, `\n` elsewhere) — from terminator counts taken once at decode, so a file with no terminator gets the platform one and a forced rung names its own source (ADR-0047). (#175)
 * **read:** append a bare `[W_MIXED_EOL]` notice — whole-file counts in CRLF/LF/CR order and the ending the next edit will use — after the rows of a read whose pre-image spells more than one terminator kind, so the mixture is disclosed before the first write collapses it; the notice is chrome, never a served row or an anchor (ADR-0047). (#175)
+* **edit:** admit an optional `dry_run` boolean on the `edit` payload — absent or `null` normalizes to `false` and a non-boolean is refused at admission — the contract half of the read-only preview flag (upstream `56047a3`, #145). (#183)
 
 ### Bug Fixes
 

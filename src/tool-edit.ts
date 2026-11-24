@@ -7,7 +7,7 @@
  */
 
 import { defineTool } from "@deepseek-ai/dsh-tools";
-import { normalizeRequest as normReq, assertEditRequest } from "./contract.js";
+import { normalizeRequest as normReq, assertEditRequest, dryRunSchema } from "./contract.js";
 import { abortIf } from "./utils.js";
 import { execute } from "./mutation.js";
 import { EDIT_DESCRIPTION } from "./prompts.js";
@@ -71,6 +71,7 @@ export function buildEditTool(io: FileIO, sandbox: FsSandboxController) {
         description:
           'How to treat bytes reproducing served rows: "general" refuses them, "literal" declares them as intended file content',
       },
+      dry_run: dryRunSchema,
       ...(sandbox.escalationModes.length > 0 ? sandbox.schemaFields() : {}),
     },
     output: {

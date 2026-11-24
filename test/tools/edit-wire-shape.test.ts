@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { type JsonSchemaNode, validateJsonSchemaValue } from "@deepseek-ai/dsh-tools";
-import { editRequestFrom, prepareEditArguments } from "../../src/contract.js";
+import {
+  assertEditRequest,
+  editRequestFrom,
+  normalizeRequest,
+  normalizedEdit,
+  prepareEditArguments,
+} from "../../src/contract.js";
 import { buildEditTool } from "../../src/tool-edit.js";
 import { localIO } from "../../src/fs-bridge.js";
 import { FsSandboxController } from "../../src/sandbox.js";
@@ -10,9 +16,9 @@ import { FsSandboxController } from "../../src/sandbox.js";
  * shape against third-party shape adapters, so a renamed or newly added key cannot silently arm
  * a foreign consumer of our anchors.
  *
- * The declared shape is the named-object contract from ADR-0015: root `file` / `edits` / `mode`,
- * item `anchor_from` / `anchor_to` / `replace_with` (the item object is closed to additional
- * properties). Legacy tuple items, the legacy `path` / `file_path` root keys, and the legacy
+ * The declared shape is the named-object contract from ADR-0015: root `file` / `edits` / `mode` /
+ * `dry_run`, item `anchor_from` / `anchor_to` / `replace_with` (the item object is closed to
+ * additional properties). Legacy tuple items, the legacy `path` / `file_path` root keys, and the
  * `remove_from` / `remove_to` / `replacement_text` item keys survive ONLY as pre-validation fold
  * inputs — they are never declared wire keys, so no adapter can see a shape it recognizes.
  *
@@ -63,7 +69,7 @@ function tupleItemBranch(params: JsonSchemaNode): JsonSchemaNode {
 describe("edit payload wire shape", () => {
   it("declares exactly the named-object keys and closes the item object", () => {
     const params = paramsOf(false);
-    expect(rootKeys(params)).toEqual(["edits", "file", "mode"]);
+    expect(rootKeys(params)).toEqual(["dry_run", "edits", "file", "mode"]);
 
     const named = namedItemBranch(params);
     expect(Object.keys(named.properties ?? {}).sort()).toEqual([
@@ -86,6 +92,7 @@ describe("edit payload wire shape", () => {
 
     // Escalation fields are the ONLY extra root keys a confining composition may add.
     expect(rootKeys(paramsOf(true))).toEqual([
+      "dry_run",
       "edits",
       "file",
       "justification",
@@ -154,6 +161,7 @@ describe("edit payload wire shape", () => {
         { anchor_from: "qWe", anchor_to: "rTy", replace_with: "" },
       ],
       mode: "general",
+      dry_run: false,
     });
     // Fold output IS the declared wire shape: adapters may hand us legacy input, but the
     // canonical form always validates against the declared schema.
@@ -182,5 +190,79 @@ describe("edit payload wire shape", () => {
         edits: [{ anchor_from: "aB3", anchor_to: "cD4", replacement_text: "new" }],
       }),
     ).toBeUndefined();
+  });
+});
+
+/** The canonical single-item payload every dry_run arm folds. */
+const payload = {
+  file: "sample.ts",
+  edits: [{ anchor_from: "aB3", anchor_to: "cD4", replace_with: "new" }],
+};
+
+describe("edit payload wire shape — dry_run root field", () => {
+  it("declares dry_run beside file and edits; admits boolean, null, and absent", () => {
+    const params = paramsOf(false);
+    const dryRun = params.properties?.dry_run;
+    expect(dryRun?.oneOf?.map((branch) => branch.type)).toEqual(["boolean", "null"]);
+
+    expect(validateJsonSchemaValue(params, { ...payload, dry_run: true })).toEqual([]);
+    expect(validateJsonSchemaValue(params, { ...payload, dry_run: false })).toEqual([]);
+    expect(validateJsonSchemaValue(params, { ...payload, dry_run: null })).toEqual([]);
+    expect(validateJsonSchemaValue(params, payload)).toEqual([]);
+
+    for (const bad of ["yes", 1, {}]) {
+      expect(
+        validateJsonSchemaValue(params, { ...payload, dry_run: bad as never }).length,
+      ).toBeGreaterThan(0);
+    }
+  });
+
+  it("normalizes absent and null to false and keeps explicit booleans", () => {
+    expect(editRequestFrom(payload)?.dry_run).toBe(false);
+    expect(editRequestFrom({ ...payload, dry_run: null })?.dry_run).toBe(false);
+    expect(editRequestFrom({ ...payload, dry_run: true })?.dry_run).toBe(true);
+    expect(editRequestFrom({ ...payload, dry_run: false })?.dry_run).toBe(false);
+
+    const absent = normalizeRequest(payload);
+    assertEditRequest(absent);
+    expect(absent.dry_run).toBe(false);
+
+    const nulled = normalizeRequest({ ...payload, dry_run: null });
+    assertEditRequest(nulled);
+    expect(nulled.dry_run).toBe(false);
+
+    const preview = normalizeRequest({ ...payload, dry_run: true });
+    assertEditRequest(preview);
+    expect(preview.dry_run).toBe(true);
+  });
+
+  it("refuses a non-boolean dry_run at admission", () => {
+    for (const bad of ["yes", 1, {}]) {
+      const request = { ...payload, dry_run: bad };
+      expect(editRequestFrom(request)).toBeUndefined();
+      expect(() => assertEditRequest(normalizeRequest(request))).toThrow(/E_BAD_PAYLOAD/);
+      expect(() => assertEditRequest(normalizeRequest(request))).toThrow(
+        /"dry_run" must be a boolean/,
+      );
+    }
+  });
+
+  it("keeps root closure: an extra key is still refused", () => {
+    const closed = { ...payload, dry_run: true, extra: 1 };
+    expect(editRequestFrom(closed)).toBeUndefined();
+    expect(() => prepareEditArguments(closed)).toThrow(/E_BAD_PAYLOAD/);
+  });
+
+  it("prepareEditArguments returns the folded dry_run", () => {
+    expect(prepareEditArguments({ ...payload, dry_run: true }).dry_run).toBe(true);
+    expect(prepareEditArguments(payload).dry_run).toBe(false);
+  });
+
+  it("refuses a normalized record whose dry_run was forced non-boolean", () => {
+    // The pre-marker predicate in assertEditRequest is the one dry_run type gate:
+    // a non-boolean never normalizes, so it refuses the raw record by name.
+    const forced: Record<string, unknown> = { ...payload, mode: "general", dry_run: "yes" };
+    Object.defineProperty(forced, normalizedEdit, { value: true, enumerable: false });
+    expect(() => assertEditRequest(forced)).toThrow(/"dry_run" must be a boolean/);
   });
 });

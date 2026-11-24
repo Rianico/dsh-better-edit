@@ -35,6 +35,11 @@ export type EditRequest = {
    * "literal" declares them as intended file content (W_LITERAL_BYPASS).
    */
   mode?: EditMode;
+  /**
+   * true = preview only: validate anchors and leases and compute the diff without
+   * writing to disk, recording undo, or updating leases. Absent or null means false.
+   */
+  dry_run?: boolean;
 };
 
 // legacy single-edit shape retained for mutation.ts internal API (renamed with the payload)
@@ -119,6 +124,7 @@ const ROOT_INPUT_KS = new Set([
   "path",
   "edits",
   "mode",
+  "dry_run",
   "sandbox_permissions",
   "justification",
 ]);
@@ -129,12 +135,13 @@ export function editRequestFrom(input: unknown): NormalizedEditRequest | undefin
   for (const key of Object.keys(rec)) {
     if (!ROOT_INPUT_KS.has(key)) return undefined;
   }
-  const { file, file_path, path, edits, mode } = rec as {
+  const { file, file_path, path, edits, mode, dry_run } = rec as {
     file?: unknown;
     file_path?: unknown;
     path?: unknown;
     edits?: unknown;
     mode?: unknown;
+    dry_run?: unknown;
   };
   // file preferred; legacy path/file_path fold (sanitized). #117: a null or
   // absent file is an admission error — the anchor-inference seam is retired.
@@ -158,7 +165,12 @@ export function editRequestFrom(input: unknown): NormalizedEditRequest | undefin
     if (mode !== "general" && mode !== "literal") return undefined;
     effectiveMode = mode;
   }
-  return { file: effectivePath, edits: items, mode: effectiveMode };
+  let effectiveDryRun = false;
+  if (dry_run !== undefined && dry_run !== null) {
+    if (typeof dry_run !== "boolean") return undefined;
+    effectiveDryRun = dry_run;
+  }
+  return { file: effectivePath, edits: items, mode: effectiveMode, dry_run: effectiveDryRun };
 }
 
 /**
@@ -208,10 +220,10 @@ export function sanitizePath(value: unknown): string | null {
 
 export const EDIT_PAYLOAD_HINT =
   "Edit must be called with exactly one payload. Use the canonical payload " +
-  '{"file": file, "edits": [{ "anchor_from": anchor_from, "anchor_to": anchor_to, "replace_with": replace_with }, ...], "mode"?: "general" | "literal"}: ' +
+  '{"file": file, "edits": [{ "anchor_from": anchor_from, "anchor_to": anchor_to, "replace_with": replace_with }, ...], "mode"?: "general" | "literal", "dry_run"?: boolean}: ' +
   '"file" is the text file to edit (a non-empty string, never a directory); each item names ' +
   "two inclusive bare-3-char anchors and the full replacement " +
-  '(an empty string deletes the range); optional "mode" is "general" (default, reproduced served rows are refused) or "literal" (declared literal content). ' +
+  '(an empty string deletes the range); optional "mode" is "general" (default, reproduced served rows are refused) or "literal" (declared literal content); optional "dry_run" is boolean (omitted or null means false — a live edit). ' +
   "Legacy tuple items and legacy key spellings still fold; do not mix old and new key spellings.";
 
 function describeReceived(input: unknown): string {
@@ -225,7 +237,14 @@ function describeReceived(input: unknown): string {
 
 // ---- filed sets (declared once) ---------------------------------------------
 
-const EDIT_KS = new Set(["file", "edits", "mode", "sandbox_permissions", "justification"]);
+const EDIT_KS = new Set([
+  "file",
+  "edits",
+  "mode",
+  "dry_run",
+  "sandbox_permissions",
+  "justification",
+]);
 const READ_KS = new Set(["path", "offset", "limit", "encoding", "windows"]);
 const ITEM_KS = new Set(["anchor_from", "anchor_to", "replace_with"]);
 const LEGACY_ITEM_KS = new Set(["remove_from", "remove_to", "replacement_text"]);
@@ -251,6 +270,7 @@ export function normalizeRequest(input: unknown): unknown {
     file: valid.file,
     edits: valid.edits,
     mode: valid.mode,
+    dry_run: valid.dry_run,
   };
   // preserve non-standard fields like sandbox_permissions/justification for later reject check? but we strip to valid fields and re-add them?
   for (const k of ["sandbox_permissions", "justification"]) {
@@ -268,7 +288,7 @@ export function prepareEditArguments(args: unknown): Record<string, unknown> {
   if (valid) {
     // F10.1: preserve mode like normalizeRequest — the two normalizers agree.
     // prepareEditArguments returns schema-ready folded objects (named triple).
-    return { file: valid.file, edits: valid.edits, mode: valid.mode };
+    return { file: valid.file, edits: valid.edits, mode: valid.mode, dry_run: valid.dry_run };
   }
   throw new DomainError("E_BAD_PAYLOAD", {
     message: `${EDIT_PAYLOAD_HINT} ${describeReceived(args)}`,
@@ -283,6 +303,10 @@ const FILE_SPELLINGS = ["file", "path", "file_path"] as const;
 /** The exact refusal ADR-0031 quotes; one sentence, one owner. */
 const FILE_REQUIRED_MESSAGE =
   "Edit request file must be a non-empty string; name the file to edit.";
+
+/** The exact refusal for a non-boolean dry_run; one sentence, one owner. */
+const DRY_RUN_TYPE_MESSAGE =
+  'Edit request "dry_run" must be a boolean (absent or null means false — a live edit).';
 
 /**
  * #117: is this raw record an unnamed target rather than a malformed payload?
@@ -313,6 +337,16 @@ function namesNoFile(request: Record<string, unknown>): boolean {
   return seesUnnamed || Array.isArray(request.edits);
 }
 
+/**
+ * #117 reachability: a non-boolean `dry_run` never normalizes, so without this
+ * predicate the generic hint is the only message the caller sees.
+ */
+function hasUnusableDryRun(request: Record<string, unknown>): boolean {
+  if (!("dry_run" in request)) return false;
+  const value = request.dry_run;
+  return value !== null && value !== undefined && typeof value !== "boolean";
+}
+
 export function assertEditRequest(request: unknown): asserts request is NormalizedEditRequest {
   // #117: the specific refusal must be reachable before the marker guard — a raw
   // record whose file is null/absent/empty never normalizes, so the generic hint
@@ -321,10 +355,13 @@ export function assertEditRequest(request: unknown): asserts request is Normaliz
     throw new DomainError("E_BAD_PAYLOAD", { message: FILE_REQUIRED_MESSAGE });
   }
 
+  if (isRec(request) && hasUnusableDryRun(request)) {
+    throw new DomainError("E_BAD_PAYLOAD", { message: DRY_RUN_TYPE_MESSAGE });
+  }
   if (!isNormalizedEdit(request)) {
     throw new DomainError("E_BAD_PAYLOAD", {
       message:
-        'Edit request must be exactly { file, edits: [{ anchor_from, anchor_to, replace_with }, ...], mode?: "general" | "literal" }. ' +
+        'Edit request must be exactly { file, edits: [{ anchor_from, anchor_to, replace_with }, ...], mode?: "general" | "literal", dry_run?: boolean }. ' +
         EDIT_PAYLOAD_HINT,
     });
   }
@@ -416,6 +453,18 @@ export const editPathSchema = {
   description: "Text file to edit (a file, never a directory)",
 } as const;
 
+/** One owner for the `dry_run` wire member: the live parameters and this literal both reference it. */
+export const dryRunSchema = {
+  oneOf: [
+    {
+      type: "boolean",
+      description:
+        "Optional preview: when true, validate anchors and leases and compute the diff without writing to disk, recording undo, or updating leases. Absent or null means false (a live edit).",
+    },
+    { type: "null" },
+  ],
+} as const;
+
 export const editTupleSchema = {
   type: "array",
   prefixItems: [anchorFromSchema, anchorToSchema, replaceWithSchema],
@@ -455,5 +504,6 @@ export const editToolSchema = {
       maxItems: EDITS_MAX_ITEMS,
       items: editItemSchema,
     },
+    dry_run: dryRunSchema,
   },
 } as const;
