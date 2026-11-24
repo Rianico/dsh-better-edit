@@ -2,7 +2,7 @@ import type { ServedRow } from "./hashline/anchor-pipeline.js";
 import { genDiff } from "./edit-diff.js";
 import { formatWarning } from "./domain-errors.js";
 import { truncateHead, formatSize } from "./file-view.js";
-import { visLines, clipLine } from "./utils.js";
+import { clipLine } from "./utils.js";
 
 export type EditDetails = {
   diff: string;
@@ -56,19 +56,6 @@ export interface NoopInput {
   editMeta: RMeta;
   warnings: string[] | undefined;
   driftNotice?: string;
-}
-
-export interface SuccessInput {
-  path: string;
-  originalNormalized: string;
-  originalHashes: string[];
-  result: string;
-  resultHashes: string[];
-  warnings: string[] | undefined;
-  snapshotId?: string;
-  editMeta: RMeta;
-  driftNotice?: string;
-  served?: readonly (string | null)[];
 }
 
 export function buildMetrics(args: {
@@ -146,10 +133,6 @@ function formatDiffCard(diff: string): string {
   return `${fenced}\n\n${hint}`;
 }
 
-function driftBlock(driftNotice: string | undefined): string {
-  return driftNotice ? `\n\n${driftNotice}` : "";
-}
-
 export function buildNoop(input: NoopInput): TResult {
   const { path, noopEdit, snapshotId, editMeta, warnings, driftNotice } = input;
 
@@ -174,83 +157,6 @@ export function buildNoop(input: NoopInput): TResult {
       classification: "noop" as const,
       metrics,
       ...(warnings !== undefined && warnings.length > 0 ? { warnings } : {}),
-      ...(driftNotice === undefined ? {} : { driftNotice }),
-    },
-  };
-}
-
-export function buildChanged(input: SuccessInput): TResult {
-  const {
-    path,
-    result,
-    warnings,
-    snapshotId,
-    originalNormalized,
-    originalHashes,
-    editMeta,
-    resultHashes,
-    driftNotice,
-    served,
-  } = input;
-  const resultLines = visLines(result);
-  const diffResult = genDiff(originalNormalized, result, 1, resultHashes, originalHashes, served);
-  // WHY (#144 T3): the blanked removed rows are proof the session never read them; the diff alone
-  // WHY: shows an empty gutter, so the applied tier names the fact once — one warning, one file.
-  const unservedRemoved = diffResult.unservedRemovedLines;
-  const effectiveWarnings =
-    unservedRemoved.length === 0
-      ? warnings
-      : [
-          ...(warnings ?? []),
-          formatWarning("W_UNSERVED_INTERIOR", {
-            count: unservedRemoved.length,
-            from: unservedRemoved[0]!,
-            to: unservedRemoved[unservedRemoved.length - 1]!,
-          }),
-        ];
-  const addedLines = editMeta.addedLines;
-  const removedLines = editMeta.removedLines;
-  const warningsBlock = warnBlock(effectiveWarnings);
-  const successPrefix = `Successfully edited in ${path}.`;
-  const lineSummary =
-    addedLines > 0 || removedLines > 0
-      ? ` Added ${addedLines} line(s), removed ${removedLines} line(s).`
-      : "";
-  const baseText =
-    resultLines.length === 0
-      ? "File is empty. Use edit to insert content."
-      : warningsBlock
-        ? `${successPrefix}${lineSummary}${warningsBlock}`
-        : `${successPrefix}${lineSummary}`;
-  const diffSection = resultLines.length === 0 ? "" : formatDiffCard(diffResult.diff);
-  const text = `${baseText}${diffSection}`;
-
-  const metrics = buildMetrics({
-    classification: "applied",
-    editsAttempted: editMeta.editsAttempted,
-    noopEditsCount: editMeta.noopEditsCount,
-    warningsCount: effectiveWarnings?.length ?? 0,
-    firstChangedLine: editMeta.firstChangedLine,
-    lastChangedLine: editMeta.lastChangedLine,
-    addedLines,
-    removedLines,
-  });
-  const denseServedRows: typeof diffResult.servedRows = [];
-  for (let i = 0; i < resultHashes.length; i++) {
-    denseServedRows.push({ position: i, hash: resultHashes[i]! });
-  }
-
-  return {
-    content: [{ type: "text", text }],
-    details: {
-      diff: diffResult.diff,
-      firstChangedLine: editMeta.firstChangedLine ?? diffResult.firstChangedLine,
-      snapshotId,
-      metrics,
-      ...(effectiveWarnings !== undefined && effectiveWarnings.length > 0
-        ? { warnings: effectiveWarnings }
-        : {}),
-      servedRows: denseServedRows,
       ...(driftNotice === undefined ? {} : { driftNotice }),
     },
   };

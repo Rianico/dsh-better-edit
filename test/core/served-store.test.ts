@@ -289,9 +289,7 @@ describe("served state — incremental hazard sweep", () => {
       }));
       store.clearRetiredAnchors(sessionKey, path);
       store.upsertRetiredAnchors(sessionKey, path, JSON.stringify(retired));
-      try {
-        store.clearCards(sessionKey, path);
-      } catch {}
+      store.clearCards(sessionKey, path);
       const before = store.getRetiredEntries(sessionKey, path);
       expect(before.length).toBe(N);
       const cardsBefore = store.getCards(sessionKey, path);

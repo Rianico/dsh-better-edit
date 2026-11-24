@@ -24,11 +24,13 @@ All notable changes to this project will be documented in this file.
 
 * **edit:** write every edit at one resolved effective EOL and disclose the rewrite with `[MODEL] [W_EOL_REWRITTEN] ... N terminators changed. Undo restores normalized content.` only after the write landed, so a mixed file no longer loses its mixture silently while the bytes it kept are re-spelled at the new ending; a terminator a new line introduces is not counted, and `write`/`str_replace_editor` bytes are unchanged (ADR-0047). (#175)
 * **undo:** restore the pre-edit content at the ending the EDIT wrote, compare staleness against that same ending, and say `Restored at <ending>; the pre-edit mixture is not restored.` when the pre-image was mixed — the record gains `effective_ending` + `pre_image_mixed` on both undo halves as additive nullable columns (idempotent ALTER, no version bump), and an old row falls back to `ending` and never claims a mixture (ADR-0047). (#175)
+* **edit:** pair duplicate lines in applied and undo diffs by anchor identity instead of Myers text position, so a removed row names the line actually removed and survivors keep their own anchor; the dead single-file `buildChanged` builder is retired, leaving `buildBatchResult` as the one batch projection (#176)
 
 ### Documentation
 
 * **adr:** record ADR-0047 — EOL normalization, normalized undo and the `eol` config, with the upstream `aa10e61`/ADR-0019 §1–§4 referent and the downstream deviations named. (#175)
 * **readme:** replace the "exact line endings" undo promise with the effective-EOL contract, document `eol`/`DSH_BETTER_EDIT_EOL`, and state the `[W_MIXED_EOL]`/`[W_EOL_REWRITTEN]` disclosures in both READMEs and the glossary. (#175)
+* **adr:** record ADR-0048 — diff alignment follows anchor identity (#176)
 
 ### Tests
 
