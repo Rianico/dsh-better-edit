@@ -128,7 +128,8 @@ export type DomainWarningCode =
   | "W_REVERSED_ANCHORS"
   | "W_UNICODE_LITERAL"
   | "W_LITERAL_BYPASS"
-  | "W_NOOP";
+  | "W_NOOP"
+  | "W_UNSERVED_INTERIOR";
 
 export interface ErrorPayloadMap {
   E_BAD_PAYLOAD: {
@@ -748,6 +749,11 @@ export interface WarningPayloadMap {
     /** Present on engine single warns: the display path ("in <path>" flavor). */
     path?: string;
   };
+  W_UNSERVED_INTERIOR: {
+    count: number;
+    from: number;
+    to: number;
+  };
 }
 
 function neverServedShapeFormat(payload: WarningPayloadMap["W_NEVER_SERVED_SHAPE"]): string {
@@ -792,6 +798,14 @@ function noopWarnFormat(payload: WarningPayloadMap["W_NOOP"]): string {
   );
 }
 
+function unservedInteriorFormat(payload: WarningPayloadMap["W_UNSERVED_INTERIOR"]): string {
+  return (
+    `Span replaced ${payload.count} unserved interior line(s) (lines ${payload.from}-${payload.to}). ` +
+    "Edits should only modify lines previously read and served (enforced under strict mode); " +
+    "verify this uninspected replacement was intended."
+  );
+}
+
 export const WARNING_REGISTRY: {
   [K in DomainWarningCode]: CodeSpec<WarningPayloadMap[K]>;
 } = {
@@ -820,6 +834,10 @@ export const WARNING_REGISTRY: {
   W_NOOP: {
     audience: "MODEL",
     format: noopWarnFormat,
+  },
+  W_UNSERVED_INTERIOR: {
+    audience: "MODEL",
+    format: unservedInteriorFormat,
   },
 };
 

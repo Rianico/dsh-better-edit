@@ -204,6 +204,7 @@ export async function execute(opts: {
     noopCount: fileResult.noopCount,
     totalAddedLines: fileResult.totalAddedLines,
     totalRemovedLines: fileResult.totalRemovedLines,
+    ...(fileResult.served === undefined ? {} : { served: fileResult.served }),
   });
 
   // The serve write is a SECOND unit, deliberately outside the committed pair: a fault there must

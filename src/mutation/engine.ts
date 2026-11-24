@@ -132,6 +132,11 @@ export interface FileEditResult {
   totalRemovedLines: number;
   driftNotice: string | undefined;
   /**
+   * The pre-batch served mirror in ORIGINAL coordinates, present only in hint mode. The diff uses
+   * it to blank anchors for rows the session never read; strict refuses those rows before a diff.
+   */
+  served?: readonly (string | null)[];
+  /**
    * Anchors this edit freed, to be retired by the caller AFTER the write lands (upstream
    * CAND-3, #98). This phase only reports them; it must never commit them.
    */
@@ -1281,6 +1286,7 @@ export async function runFileEdits(
     totalAddedLines,
     totalRemovedLines,
     driftNotice,
+    ...(spanMode === "hint" ? { served } : {}),
     newlyRetired: [...newlyRetired],
     range: {
       startLine: unionStartLine,
