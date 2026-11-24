@@ -46,7 +46,7 @@ A contiguous interval of lines; the technical word used when verification compar
 _Avoid_: hunk
 
 **served span**:
-The contiguous run of served hashes between the two boundary anchors' served positions — the served-state reconstruction of the model's view of a range.
+The contiguous run of served hashes between the two boundary anchors' served positions — the served-state reconstruction of the model's view of a range. The two boundary anchors pin the span's extent, not the model's view of its interior: a leased span may cross unserved interior lines (ADR-0045).
 
 **served range**:
 The model-facing word for the `served span` — the span between `remove_from` and `remove_to` as the model saw it. Alias to `served span` for glossary search.
@@ -57,7 +57,15 @@ The condition where the `served range` (span between anchors) cannot be reconcil
 _Avoid_: range staleness (use `served range` for span)
 
 **never-served**:
-An interior line with no entry in the served record — the model was never shown that line. Reported as `[E_UNSERVED_RANGE]`; the response serves the current range so the model can retry.
+An interior line with no entry in the served record — the model was never shown that line. `hint` span mode accepts it and discloses the replaced interior (`[W_UNSERVED_INTERIOR]`, blank diff gutter); `strict` refuses the edit before any write with a rowless `[E_UNSERVED_RANGE]` naming the unserved file lines (ADR-0045).
+
+**unserved interior**:
+A `never-served` line strictly inside a resolved range. `hint` tolerates it and discloses the replacement; `strict` refuses a span that replaces one before any write (ADR-0045).
+_Avoid_: stale interior (staleness is a failed reconciliation, not a missing serve)
+
+**span mode**:
+The per-profile served-span policy: `hint` (default) accepts a leased span across unserved interior lines and discloses them, `strict` refuses such a span before any write. Configured by `spanMode` in `config.yaml` or `DSH_BETTER_EDIT_SPAN_MODE`; never a per-call argument (ADR-0045).
+_Avoid_: strict mode (name the axis: span mode)
 
 ### File Encoding
 

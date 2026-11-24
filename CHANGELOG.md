@@ -11,6 +11,10 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Features
+
+* **edit:** add an opt-in `spanMode: hint|strict` served-span policy (`DSH_BETTER_EDIT_SPAN_MODE`, default `hint`). `strict` refuses an edit whose leased span replaces an interior line this session never served — before any write, with a rowless `[E_UNSERVED_RANGE]` that counts the replaced span and lists the unserved file lines; default `hint` still accepts and now discloses via a blank diff gutter and one `[W_UNSERVED_INTERIOR]` applied warning, removing the false blanket-refusal promise (ADR-0045, closes #141). (#144)
+
 ### Bug Fixes
 
 * **read:** report an oversized line as a fact — its size, the byte limit, and that the read tool cannot show it — instead of advising a Bash `sed`/`head` command and a path placeholder that a PowerShell-only Windows preset or a remote backend cannot run; anchors, served rows, pagination, and truncation are unchanged, and a regression test pins the absence of `bash`, `sed`, `head -c`, PowerShell, and `<path>` (#162)
