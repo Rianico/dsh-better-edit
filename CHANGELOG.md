@@ -11,6 +11,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.2.7] - 2026-11-24
+
 ### Bug Fixes
 
 * **read:** report an oversized line as a fact — its size, the byte limit, and that the read tool cannot show it — instead of advising a Bash `sed`/`head` command and a path placeholder that a PowerShell-only Windows preset or a remote backend cannot run; anchors, served rows, pagination, and truncation are unchanged, and a regression test pins the absence of `bash`, `sed`, `head -c`, PowerShell, and `<path>` (#162)
