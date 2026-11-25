@@ -75,6 +75,8 @@ async function retryLineHashesWithPromotion(
   warnings: string[],
   fn: (reserved: Set<string>, retired: Set<string>) => Promise<string[]>,
 ): Promise<string[]> {
+  // WHY (#145): exhaustion is the one dry-run path that clears retired anchors — the clear is what
+  // lets the allocation succeed at all (parity over purity), unreachable below 62^ANCHOR_LEN lines.
   const clearWarning = await clearRetiredForPromotion(sessionKey, absolutePath);
   if (clearWarning !== undefined) warnings.push(clearWarning);
   const servedLen = served?.filter((h): h is string => h !== null).length ?? 0;
@@ -688,6 +690,8 @@ async function collectAbortPart(opts: {
   // snapshot). The `echoRowsForItem` fallback arm (zero-row rejection) is a rendered
   // preview of a region nobody proved served — never recorded. `recordRejectionRows`
   // declines a window that would duplicate an anchor already served elsewhere.
+  // WHY (#145): these rows describe the CURRENT file (ADR-0043), so a refusal stays recordable even
+  // in a preview; only rows derived from the hypothetical result are suppressed, never these.
   const rowsServed =
     opts.frames === undefined && carriedRows.length > 0 && echoRows !== undefined
       ? await recordRejectionRows({
@@ -940,7 +944,7 @@ async function loadLeaseStore(): Promise<HashStore | undefined> {
 export async function runFileEdits(
   io: FileIO,
   items: PreparedItem[],
-  opts: { signal?: AbortSignal; sessionKey: string },
+  opts: { signal?: AbortSignal; sessionKey: string; dryRun?: boolean },
 ): Promise<FileEditResult> {
   const first = items[0]!;
   abortIf(opts.signal);
@@ -971,6 +975,9 @@ export async function runFileEdits(
     signal: opts.signal,
     maxLines: MAX_HASH_LINES,
     reservedHashes,
+    // WHY (#145): a dry run is read-only, so the pre-image snapshot, lineage and lease upserts below
+    // `lineHashes` are skipped. Only persistence is withheld — every hash value is the live one.
+    noPersist: opts.dryRun === true,
     retiredHashes: perSessionRetired,
   });
 
@@ -1176,27 +1183,31 @@ export async function runFileEdits(
 
     if (applied.noop) {
       noopCount += 1;
-      const payload = noopPayloadKey(
-        absolutePath,
-        item.anchor_from,
-        item.anchor_to,
-        item.replace_with,
-      );
-      const count = trackNoopPayload(opts.sessionKey, absolutePath, payload);
-      const notice = await enforceNoopLoop({
-        anchorFrom: item.anchor_from,
-        anchorTo: item.anchor_to,
-        displayPath: item.file,
-        index: item.index,
-        count,
-        originalNormalized,
-        echoRows: echoRowsForItem(applied.edit, originalHashes),
-        // Same served-or-absent rule as the shifted-buffer rejections: the noop's rows come from a
-        // buffer earlier items changed, so they name current-file lines only and record nothing.
-        ...(currentContent !== originalNormalized ? { frames } : {}),
-        range: { startLine: applied.range.startLine, endLine: applied.range.endLine },
-      });
-      if (notice) warnings.push(notice);
+      // WHY (#145): a dry run previews the very payload a live call would send, so it must neither
+      // advance the counter nor arm the loop guard — the next LIVE attempt keeps the tally it earned.
+      if (opts.dryRun !== true) {
+        const payload = noopPayloadKey(
+          absolutePath,
+          item.anchor_from,
+          item.anchor_to,
+          item.replace_with,
+        );
+        const count = trackNoopPayload(opts.sessionKey, absolutePath, payload);
+        const notice = await enforceNoopLoop({
+          anchorFrom: item.anchor_from,
+          anchorTo: item.anchor_to,
+          displayPath: item.file,
+          index: item.index,
+          count,
+          originalNormalized,
+          echoRows: echoRowsForItem(applied.edit, originalHashes),
+          // Same served-or-absent rule as the shifted-buffer rejections: the noop's rows come from a
+          // buffer earlier items changed, so they name current-file lines only and record nothing.
+          ...(currentContent !== originalNormalized ? { frames } : {}),
+          range: { startLine: applied.range.startLine, endLine: applied.range.endLine },
+        });
+        if (notice) warnings.push(notice);
+      }
       warnings.push(
         `edits[${item.index}] (${item.file}) was a noop: the range already contains the replacement text.`,
       );
@@ -1227,7 +1238,8 @@ export async function runFileEdits(
       );
     }
     currentHashes = applied.hashes;
-    clearNoopLoop(opts.sessionKey, absolutePath);
+    // A dry run changed nothing, so it must not clear the live payload's tally either.
+    if (opts.dryRun !== true) clearNoopLoop(opts.sessionKey, absolutePath);
     pushAppliedWarnings(applied.anchorWarnings, applied.neverServedCount);
   }
 
@@ -1248,7 +1260,9 @@ export async function runFileEdits(
           removedHashes: lastApplied.removedHashes,
         },
         undefined,
-        true,
+        // WHY (#145): the result exists only in memory on a dry run, so its anchor snapshot must not
+        // be persisted. Persistence is the only thing withheld: the anchors themselves are identical.
+        opts.dryRun !== true,
         reservedHashes,
         perSessionRetired,
       );
@@ -1270,7 +1284,8 @@ export async function runFileEdits(
               removedHashes: lastApplied.removedHashes,
             },
             undefined,
-            true,
+            // Same rule as the first allocation: a dry run's retry persists no snapshot either.
+            opts.dryRun !== true,
             recomputed,
             emptyRetired,
           ),
@@ -1286,7 +1301,10 @@ export async function runFileEdits(
   }
 
   let driftNotice: string | undefined;
-  if (appliedCount > 0 && unionStartLine !== Infinity) {
+  // WHY (#145): a preview writes nothing, so its post-edit coordinates are hypothetical — recording
+  // them would insert a served row at a position the file does not hold and retire the hashes they
+  // displace. The notice would describe a write that never landed, so the scan does not run at all.
+  if (opts.dryRun !== true && appliedCount > 0 && unionStartLine !== Infinity) {
     const resultLines = splitLines(result);
     const originalLines = splitLines(originalNormalized);
     try {

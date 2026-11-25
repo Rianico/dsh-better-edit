@@ -23,6 +23,7 @@ describe("edit payload fold (named-object + legacy)", () => {
       file: "a.txt",
       edits: [{ anchor_from: "h1", anchor_to: "h2", replace_with: "x" }],
       mode: "general",
+      dry_run: false,
     });
   });
 
@@ -99,6 +100,7 @@ describe("edit payload fold (named-object + legacy)", () => {
         { anchor_from: "h3", anchor_to: "h4", replace_with: "y" },
       ],
       mode: "general",
+      dry_run: false,
     });
   });
 
