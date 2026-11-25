@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it } from "vitest";
 import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
@@ -8,11 +8,18 @@ import {
   HASH_RE,
   lineHashesAligned,
   rawDigest,
+  initHasher,
 } from "../../src/hashline/hash-assign.js";
 import { alignToLatestLineage, lineHashes } from "../../src/hashline/hash.js";
 import { normFromText } from "../../src/file-view.js";
 import type { LineageRow } from "../../src/snapshot-store/lineage-store.js";
 import { useTestHome } from "../support/fixtures.js";
+
+// #199: await the hashing seam before the first digest, so the spec never races the
+// async xxhash-wasm init on a cold runner.
+beforeAll(async () => {
+  await initHasher();
+});
 
 const home = useTestHome();
 
