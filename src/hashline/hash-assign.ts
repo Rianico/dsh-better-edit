@@ -217,6 +217,17 @@ export function canonDigest(line: string): string {
   return String(xxh32(canon(line)));
 }
 
+/**
+ * SAFETY: the raw-line digest — the exact value `line_lineage.raw_hash` persists (#188). The
+ * trim-only canon folds the edge whitespace class, so `"    }"` and `"  }"` share one
+ * `canonDigest` while remaining byte-distinct lines with distinct anchors; the ordinal carry
+ * compares raw digests so it can prove a prior run holds ONE spelling. A missing value (a legacy
+ * row) is no evidence, and the carry gate fails closed on it rather than matching by inference.
+ */
+export function rawDigest(line: string): string {
+  return String(xxh32(line));
+}
+
 function getCanon(cache: Map<string, string>, line: string): string {
   let v = cache.get(line);
   if (v !== undefined) return v;

@@ -2,8 +2,13 @@ import { describe, expect, it } from "vitest";
 import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
-import { shutdownHashStore } from "../../src/hash-store.js";
-import { canonDigest, HASH_RE, lineHashesAligned } from "../../src/hashline/hash-assign.js";
+import { loadHashStore, shutdownHashStore } from "../../src/hash-store.js";
+import {
+  canonDigest,
+  HASH_RE,
+  lineHashesAligned,
+  rawDigest,
+} from "../../src/hashline/hash-assign.js";
 import { alignToLatestLineage, lineHashes } from "../../src/hashline/hash.js";
 import { normFromText } from "../../src/file-view.js";
 import type { LineageRow } from "../../src/snapshot-store/lineage-store.js";
@@ -138,7 +143,7 @@ describe("checksum miss aligns against the latest committed lineage", () => {
     expect(drifted).not.toContain(prior[1]);
   });
 
-  it("retires an ambiguous homogeneous shrink fail-closed — ordinal carry is T2", async () => {
+  it("carries a homogeneous shrink by ordinal — the k-th copy answers the k-th copy (T2)", async () => {
     const path = pathFor("homogeneous-shrink.txt");
     const prior = await lineHashes("a\na\na\nb\n", path);
     const retired = new Set<string>();
@@ -154,10 +159,10 @@ describe("checksum miss aligns against the latest committed lineage", () => {
       { enabled: true, retired },
     );
 
+    expect(drifted[0]).toBe(prior[0]);
+    expect(drifted[1]).toBe(prior[1]);
     expect(drifted[2]).toBe(prior[3]);
-    expect(retired).toEqual(new Set([prior[0], prior[1], prior[2]]));
-    expect(drifted).not.toContain(prior[0]);
-    expect(new Set(drifted).size).toBe(3);
+    expect(retired).toEqual(new Set([prior[2]]));
   });
 
   it("returns the stored anchors unchanged on a checksum hit", async () => {
@@ -224,5 +229,91 @@ describe("checksum miss aligns against the latest committed lineage", () => {
     expect(drifted.fileHashes[0]).toBe(prior.fileHashes[0]);
     expect(drifted.fileHashes[2]).toBe(prior.fileHashes[3]);
     expect(drifted.fileHashes).not.toContain(prior.fileHashes[1]);
+  });
+
+  it("carries a homogeneous growth by ordinal and allocates the fresh tail", async () => {
+    const path = pathFor("homogeneous-growth.txt");
+    const prior = await lineHashes("head\nx\nx\ntail\n", path);
+
+    const drifted = await lineHashes(
+      "head\nx\nx\nx\nx\ntail\n",
+      path,
+      undefined,
+      undefined,
+      true,
+      new Set(),
+      new Set(),
+      ALIGN,
+    );
+
+    expect(drifted[0]).toBe(prior[0]);
+    expect(drifted[1]).toBe(prior[1]);
+    expect(drifted[2]).toBe(prior[2]);
+    expect(drifted[5]).toBe(prior[3]);
+    expect(prior).not.toContain(drifted[3]);
+    expect(prior).not.toContain(drifted[4]);
+    expect(drifted[3]).not.toBe(drifted[4]);
+  });
+
+  it("never carries across an indentation change — the raw digest gates the run", async () => {
+    const path = pathFor("indent-neighbours.txt");
+    const prior = await lineHashes("head\n  }\n    }\ntail\n", path);
+    const retired = new Set<string>();
+
+    const drifted = await lineHashes(
+      "head\n    }\ntail\n",
+      path,
+      undefined,
+      undefined,
+      true,
+      new Set(),
+      new Set(),
+      { enabled: true, retired },
+    );
+
+    expect(drifted[0]).toBe(prior[0]);
+    expect(drifted[2]).toBe(prior[3]);
+    expect(drifted[1]).not.toBe(prior[1]);
+    expect(drifted[1]).not.toBe(prior[2]);
+    expect(retired.has(prior[1]!)).toBe(true);
+    expect(retired.has(prior[2]!)).toBe(true);
+  });
+
+  it("fails closed when the prior lineage predates the raw digest", async () => {
+    const path = pathFor("legacy-null-raw.txt");
+    const prior = await lineHashes("x\na\na\ny\n", path);
+    shutdownHashStore();
+    const db = new DatabaseSync(sqlitePath(), { defensive: false } as any);
+    db.prepare(
+      "UPDATE line_lineage SET raw_hash = NULL WHERE snapshot_id = " +
+        "(SELECT MAX(snapshot_id) FROM file_snapshots WHERE path = ?)",
+    ).run(path);
+    db.close();
+
+    const drifted = await lineHashes(
+      "x\na\ny\n",
+      path,
+      undefined,
+      undefined,
+      true,
+      new Set(),
+      new Set(),
+      ALIGN,
+    );
+
+    expect(drifted[0]).toBe(prior[0]);
+    expect(drifted[2]).toBe(prior[3]);
+    expect(drifted[1]).not.toBe(prior[1]);
+    expect(drifted[1]).not.toBe(prior[2]);
+  });
+
+  it("records the raw-line digest the carry reads", async () => {
+    const path = pathFor("raw-digest-recorded.txt");
+    await lineHashes("  a\nb\n", path);
+
+    const rows = (await loadHashStore()).latestLineageFor(path);
+
+    expect(rows?.map((row) => row.rawHash)).toEqual([rawDigest("  a"), rawDigest("b")]);
+    expect(rows?.[0]?.canonHash).toBe(canonDigest("  a"));
   });
 });

@@ -10,8 +10,14 @@
 import { splitLines } from "../utils.js";
 import { loadHashStore, type HashStore } from "../hash-store.js";
 import { contentChecksum, initHasher, HASH_RE } from "./hash-assign.js";
-import { canonDigest, lineHashesAligned, lineHashesPure, mapStableHashes } from "./hash-assign.js";
-import { pairLineage, type LineDescriptor } from "../snapshot-store/pairing.js";
+import {
+  canonDigest,
+  lineHashesAligned,
+  lineHashesPure,
+  mapStableHashes,
+  rawDigest,
+} from "./hash-assign.js";
+import { pairLineage, type LineageLine } from "../snapshot-store/pairing.js";
 import type { LineageRow } from "../snapshot-store/lineage-store.js";
 
 export interface HashSnapshotIO {
@@ -103,13 +109,15 @@ export function alignToLatestLineage(
   servedCount?: number,
 ): LineageAlignment {
   const lines = splitLines(content);
-  const prev: LineDescriptor[] = latest.map((row) => ({
+  const prev: LineageLine[] = latest.map((row) => ({
     lineNumber: row.lineNumber,
     canonHash: row.canonHash,
+    rawHash: row.rawHash,
   }));
-  const curr: LineDescriptor[] = lines.map((line, index) => ({
+  const curr: LineageLine[] = lines.map((line, index) => ({
     lineNumber: index + 1,
     canonHash: canonDigest(line),
+    rawHash: rawDigest(line),
   }));
   const pairing = pairLineage(prev, curr);
 

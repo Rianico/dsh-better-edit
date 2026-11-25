@@ -30,6 +30,7 @@ import {
   CANON_VERSION,
   ANCHOR_GENERATION,
   canonDigest,
+  rawDigest,
   contentChecksum,
   HASH_RE,
 } from "../hashline/hash-assign.js";
@@ -95,6 +96,8 @@ export interface LineageRow {
   lineNumber: number;
   lineId: number;
   canonHash: string;
+  /** `xxh32` of the raw line; `undefined` on a legacy row, where the carry fails closed. */
+  rawHash?: string | undefined;
   anchor: string;
 }
 
@@ -162,6 +165,7 @@ interface LineageRecord {
   line_number: number;
   line_id: number;
   canon_hash: string;
+  raw_hash: string | null;
   anchor: string;
 }
 
@@ -199,11 +203,20 @@ export function ensureLineageTables(db: DatabaseSync): void {
       "line_number INTEGER NOT NULL, " +
       "line_id INTEGER NOT NULL, " +
       "canon_hash TEXT NOT NULL, " +
+      "raw_hash TEXT, " +
       "anchor TEXT NOT NULL, " +
       "PRIMARY KEY (snapshot_id, line_number), " +
       "FOREIGN KEY (snapshot_id) REFERENCES file_snapshots(snapshot_id) ON DELETE CASCADE" +
       ")",
   );
+  // #188: additive and nullable — a pre-column row reads as no raw evidence (the carry fails
+  // closed), so no row is rewritten and nothing is dropped. Idempotent on a current store.
+  const lineageColumns = db
+    .prepare("SELECT name FROM pragma_table_info(?)")
+    .all("line_lineage") as { name: string }[];
+  if (!lineageColumns.some((column) => column.name === "raw_hash")) {
+    db.exec("ALTER TABLE line_lineage ADD COLUMN raw_hash TEXT");
+  }
   db.exec(
     "CREATE UNIQUE INDEX IF NOT EXISTS idx_lineage_snapshot_line_id " +
       "ON line_lineage (snapshot_id, line_id)",
@@ -330,11 +343,11 @@ export function createLineageStore(db: DatabaseSync): LineageStore {
       "VALUES (?, ?, ?, ?, 1)",
   );
   const insertLineageStmt = db.prepare(
-    "INSERT INTO line_lineage (snapshot_id, line_number, line_id, canon_hash, anchor) " +
-      "VALUES (?, ?, ?, ?, ?)",
+    "INSERT INTO line_lineage (snapshot_id, line_number, line_id, canon_hash, raw_hash, anchor) " +
+      "VALUES (?, ?, ?, ?, ?, ?)",
   );
   const snapshotLineageStmt = db.prepare(
-    "SELECT line_number, line_id, canon_hash, anchor FROM line_lineage " +
+    "SELECT line_number, line_id, canon_hash, raw_hash, anchor FROM line_lineage " +
       "WHERE snapshot_id = ? ORDER BY line_number ASC",
   );
   const upsertLeaseStmt = db.prepare(
@@ -517,6 +530,7 @@ export function createLineageStore(db: DatabaseSync): LineageStore {
                 index + 1,
                 lineId,
                 curCanons[index]!,
+                rawDigest(lines[index] ?? ""),
                 input.hashes[index]!,
               );
             });
@@ -542,6 +556,7 @@ export function createLineageStore(db: DatabaseSync): LineageStore {
           lineNumber: row.line_number,
           lineId: row.line_id,
           canonHash: row.canon_hash,
+          rawHash: row.raw_hash ?? undefined,
           anchor: row.anchor,
         }),
       );
@@ -563,6 +578,7 @@ export function createLineageStore(db: DatabaseSync): LineageStore {
           lineNumber: row.line_number,
           lineId: row.line_id,
           canonHash: row.canon_hash,
+          rawHash: row.raw_hash ?? undefined,
           anchor: row.anchor,
         });
       }

@@ -28,6 +28,15 @@ export interface LineDescriptor {
   canonHash: string;
 }
 
+/**
+ * One line's pairing evidence: `canonHash` for the engine, `rawHash` for the homogeneous-run carry.
+ * `rawHash` is absent on a legacy (pre-#188) lineage row, where the canon alone cannot prove the
+ * run's one spelling — the carry then fails closed instead of inferring.
+ */
+export interface LineageLine extends LineDescriptor {
+  rawHash?: string | undefined;
+}
+
 export interface AnchorPin {
   prevLine: number;
   currLine: number;
@@ -473,18 +482,77 @@ export function pairSnapshots(
 }
 
 /**
- * Pair a prior lineage against freshly-read lines — the checksum-miss alignment entry.
+ * Fill the gaps `pairSnapshots` leaves UNPAIRED when each side is one contiguous raw-uniform run.
+ * No unique pin exists inside such a run, so the ordinal is the only reading left: the k-th copy
+ * answers the k-th copy, a current tail allocates fresh, and prior overflow retires.
  *
- * `pairSnapshots` is the whole rule today: the pin-bounded engine pairs only what both sides can
- * prove (unique pins, rigid runs, a unique LCS embedding) and leaves every ambiguous interval
- * UNPAIRED, so an unprovable duplicate retires instead of being guessed. Naming the entry keeps the
- * alignment call site off the raw engine, so a later rule can extend the checksum-miss alignment
- * without changing what the edit path's `line_id` pairing does.
+ * Fail-closed gates: the CURRENT gap is raw-uniform by digest, and every PRIOR row of the gap
+ * carries the run's canon AND its raw digest. The canon folds the edge whitespace class, so only
+ * the raw digest separates `"    }"` from `"  }"`; an absent digest (a legacy row) is no evidence,
+ * so the gap is skipped. Pairs are appended in order, so monotonicity still holds.
+ */
+function carryHomogeneousRuns(
+  prev: readonly LineageLine[],
+  curr: readonly LineageLine[],
+  pairing: Map<number, number>,
+): void {
+  const bounds: AnchorPin[] = [{ prevLine: 0, currLine: 0 }];
+  for (const [prevLine, currLine] of [...pairing.entries()].sort((a, b) => a[0] - b[0])) {
+    bounds.push({ prevLine, currLine });
+  }
+  bounds.push({ prevLine: prev.length + 1, currLine: curr.length + 1 });
+
+  for (let i = 1; i < bounds.length; i++) {
+    const lower = bounds[i - 1]!;
+    const upper = bounds[i]!;
+    const pStart = lower.prevLine + 1;
+    const pEnd = upper.prevLine - 1;
+    const cStart = lower.currLine + 1;
+    const cEnd = upper.currLine - 1;
+    if (pStart > pEnd || cStart > cEnd) continue;
+
+    const first = curr[cStart - 1]!;
+    const runRaw = first.rawHash;
+    if (runRaw === undefined) continue;
+    let currentUniform = true;
+    for (let c = cStart + 1; c <= cEnd; c++) {
+      if (curr[c - 1]!.rawHash !== runRaw) {
+        currentUniform = false;
+        break;
+      }
+    }
+    if (!currentUniform) continue;
+
+    let carried = 0;
+    let priorUniform = true;
+    for (let p = pStart; p <= pEnd; p++) {
+      const row = prev[p - 1];
+      if (row === undefined || row.canonHash !== first.canonHash || row.rawHash !== runRaw) {
+        priorUniform = false;
+        break;
+      }
+      carried++;
+    }
+    if (!priorUniform) continue;
+
+    const carry = Math.min(carried, cEnd - cStart + 1);
+    for (let j = 0; j < carry; j++) pairing.set(pStart + j, cStart + j);
+  }
+}
+
+/**
+ * Pair a prior lineage against freshly-read lines: the pin-bounded engine first, then the
+ * homogeneous-run ordinal carry for the gaps it leaves UNPAIRED. A pair the engine proved is never
+ * overridden — the carry only fills gaps — and an ambiguous, mixed-spelling, or legacy-NULL gap
+ * stays unpaired, so those anchors retire fail-closed.
  */
 export function pairLineage(
-  prevLines: LineDescriptor[],
-  currLines: LineDescriptor[],
+  prev: LineageLine[],
+  curr: LineageLine[],
   options?: PairingOptions,
 ): Map<number, number> {
-  return pairSnapshots(prevLines, currLines, options);
+  const pairing = pairSnapshots(prev, curr, options);
+  carryHomogeneousRuns(prev, curr, pairing);
+  assertMonotonicPairing(pairing);
+  return pairing;
 }
