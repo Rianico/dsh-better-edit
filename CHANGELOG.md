@@ -11,8 +11,6 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
-## [1.3.0] - 2026-11-25
-
 ### Features
 
 * **edit:** announce an explicit encoding migration on the applied result — one `[MODEL] [W_ENCODING_MIGRATED]` per migrated file, pushed after the write lands, so the abandoned codec and its BOM state are visible where the write happened. (#198)
