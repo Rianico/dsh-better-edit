@@ -23,7 +23,7 @@ All notable changes to this project will be documented in this file.
 
 ### Bug Fixes
 
-* **store:** align checksum miss and carry anchors across homogeneous runs
+* **store:** align checksum miss and carry anchors across homogeneous runs (#197)
 * **edit:** render `E_BATCH_ABORT` as one verdict line plus one bullet per failing item, stop re-echoing served rows, and state the failure count against the submitted total (#174)
 
 * **edit:** write every edit at one resolved effective EOL and disclose the rewrite with `[MODEL] [W_EOL_REWRITTEN] ... N terminators changed. Undo restores normalized content.` only after the write landed, so a mixed file no longer loses its mixture silently while the bytes it kept are re-spelled at the new ending; a terminator a new line introduces is not counted, and `write`/`str_replace_editor` bytes are unchanged (ADR-0047). (#175)
