@@ -6,9 +6,9 @@
  * content, the noop-loop guard, and the persist-undo → write → restore
  * Transaction (persist-undo → write → restore) is owned by Mutation, not this engine.
  *
- * The model-facing contract lives here unchanged: E_NOOP_LOOP and E_UNDO_UNAVAILABLE carry
- * byte-identical messages, and every batch rejection routes through the one assembler in
- * `./batch-rejection.ts`, which records the rows it shows (ADR-0043) before it throws.
+ * The model-facing contract lives here: every batch rejection — the noop-loop guard's included —
+ * routes through the one assembler in `./batch-rejection.ts`, which records the rows it shows
+ * (ADR-0043) before it throws. E_UNDO_UNAVAILABLE is owned elsewhere.
  * @module dsh-better-edit/mutation/engine
  */
 
@@ -426,12 +426,26 @@ export interface NoopLoopOptions {
 }
 
 /**
- * The shared noop-loop guard. Returns the "twice in a row" notice for the
- * caller to append to warnings, or throws E_NOOP_LOOP (with the current-range
- * echo) once the payload has been submitted NOOP_LOOP_THRESHOLD times
- * with no change. Messages are byte-identical to the pre-engine tools.
+ * The shared noop-loop guard's decision: a warning for the caller to append, or the refusal to
+ * assemble. Below the warn tier the guard says nothing (`undefined`); at the warn tier it returns
+ * the notice; at the reject tier it returns the refusal for the caller to assemble
+ * (`throwBatchRejection`), so the rows it shows are recorded as served and a multi-item call
+ * renders the batch grammar.
  */
-export async function enforceNoopLoop(opts: NoopLoopOptions): Promise<string | undefined> {
+export type NoopLoopDecision =
+  | { action: "warn"; notice: string }
+  | { action: "reject"; error: DomainError<"E_NOOP_LOOP"> };
+
+/**
+ * The shared noop-loop guard. Below the warn tier it returns `undefined`; at the warn tier it
+ * returns the "twice in a row" notice for the caller to append; at the reject tier — the payload
+ * has been submitted NOOP_LOOP_THRESHOLD times with no change — it returns the E_NOOP_LOOP refusal
+ * (with the current-range echo) for the caller to assemble (`throwBatchRejection`), so the rows it
+ * shows are recorded as served and a multi-item call renders the batch grammar.
+ */
+export async function enforceNoopLoop(
+  opts: NoopLoopOptions,
+): Promise<NoopLoopDecision | undefined> {
   const { anchorFrom, anchorTo, displayPath, index, count } = opts;
   if (count >= NOOP_LOOP_THRESHOLD) {
     const ref = `edits[${index}] (${displayPath})`;
@@ -451,36 +465,48 @@ export async function enforceNoopLoop(opts: NoopLoopOptions): Promise<string | u
       const note =
         "An earlier item of this call had already changed the temporary batch buffer, so this " +
         `rejection shows no rows and none were recorded as served. ${namedReadSentence(currentLines, frames.complete)}`;
-      throw new DomainError("E_NOOP_LOOP", {
+      return {
+        action: "reject",
+        error: new DomainError("E_NOOP_LOOP", {
+          ref,
+          anchorFrom,
+          anchorTo,
+          count,
+          batch: true,
+          servedRows: [],
+          servedBlock: "",
+          note,
+        }),
+      };
+    }
+    const originalLines = splitLines(opts.originalNormalized);
+    const echoRows = opts.echoRows;
+    return {
+      action: "reject",
+      error: new DomainError("E_NOOP_LOOP", {
         ref,
         anchorFrom,
         anchorTo,
         count,
         batch: true,
-        servedBlock: "",
-        note,
-      });
-    }
-    const originalLines = splitLines(opts.originalNormalized);
-    const echoRows = opts.echoRows;
-    throw new DomainError("E_NOOP_LOOP", {
-      ref,
-      anchorFrom,
-      anchorTo,
-      count,
-      batch: true,
-      // F5: pass raw rows — the registry owns the `Current on-disk range:` heading.
-      servedBlock: echoRows ? fmtServedRows(echoRows, originalLines) : "",
-    });
+        // The assembler records these same rows (ADR-0043), so the anchors under the bullet resolve.
+        servedRows: echoRows ?? [],
+        // F5: pass raw rows — the registry owns the `Current on-disk range:` heading.
+        servedBlock: echoRows ? fmtServedRows(echoRows, originalLines) : "",
+      }),
+    };
   }
   if (count === 2) {
-    return formatWarning("W_NOOP", {
-      ref: `edits[${index}] (${displayPath})`,
-      anchorFrom,
-      anchorTo,
-      batch: true,
-      count,
-    });
+    return {
+      action: "warn",
+      notice: formatWarning("W_NOOP", {
+        ref: `edits[${index}] (${displayPath})`,
+        anchorFrom,
+        anchorTo,
+        batch: true,
+        count,
+      }),
+    };
   }
   return undefined;
 }
@@ -1084,7 +1110,7 @@ export async function runFileEdits(
           item.replace_with,
         );
         const count = trackNoopPayload(opts.sessionKey, absolutePath, payload);
-        const notice = await enforceNoopLoop({
+        const decision = await enforceNoopLoop({
           anchorFrom: item.anchor_from,
           anchorTo: item.anchor_to,
           displayPath: item.file,
@@ -1097,7 +1123,17 @@ export async function runFileEdits(
           ...(currentContent !== originalNormalized ? { frames } : {}),
           range: { startLine: applied.range.startLine, endLine: applied.range.endLine },
         });
-        if (notice) warnings.push(notice);
+        if (decision?.action === "reject") {
+          // The noop-loop refusal joins the one grammar: the assembler records the rows it shows
+          // (ADR-0043) and, in a multi-item call, wraps it in the verdict + bullet envelope.
+          return throwBatchRejection({
+            failures: [{ index: item.index, error: decision.error }],
+            total: items.length,
+            path: item.file,
+            record: rejectionRecord,
+          });
+        }
+        if (decision?.action === "warn") warnings.push(decision.notice);
       }
       warnings.push(
         `edits[${item.index}] (${item.file}) was a noop: the range already contains the replacement text.`,

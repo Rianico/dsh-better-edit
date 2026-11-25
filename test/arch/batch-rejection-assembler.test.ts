@@ -102,8 +102,9 @@ describe("batch rejection assembler (#215)", () => {
     expect(hitsOf(/\b(?:collectAbortPart|buildBatchAbort|AbortPart)\b/)).toEqual([]);
   });
 
-  it("pins the seam-call set: three engine sites, every one with a recorder", () => {
+  it("pins the seam-call set: four engine sites, every one with a recorder", () => {
     expect(seamCalls().map((call) => `${call.file}#${call.fn}`)).toEqual([
+      "src/mutation/engine.ts#runFileEdits",
       "src/mutation/engine.ts#runFileEdits",
       "src/mutation/engine.ts#runFileEdits",
       "src/mutation/engine.ts#runFileEdits",

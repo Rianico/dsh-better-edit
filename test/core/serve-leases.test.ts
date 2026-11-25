@@ -501,6 +501,8 @@ const NOOP_LOOP_EXTERNAL = "one\ntwo\nthree\n";
 interface NoopLoopRun {
   read1Anchors: string[];
   read2Anchors: string[];
+  /** The payload anchor the guard refused (the echoed row's anchor). */
+  anchor: string;
   servedBefore: (string | null)[];
   servedAfterReject: (string | null)[];
   leasesBefore: LeaseDump;
@@ -575,6 +577,7 @@ async function runNoopLoop(
     run = {
       read1Anchors,
       read2Anchors,
+      anchor,
       servedBefore,
       servedAfterReject,
       leasesBefore,
@@ -752,21 +755,31 @@ describe("serve leases — a rejected edit is a no-op for the next read", () => 
     expect(treatment.fileAfter).toBe("beta\nalpha\nBETA\ngamma\ndelta\nepsilon\n");
   });
 
-  it("noop-loop rejection records nothing — served rows and grants byte-identical, next read ≡ control", async () => {
+  it("noop-loop rejection re-serves the echoed row against the current snapshot, next read ≡ control", async () => {
     // The control learns the fresh-read anchor set; the treatment probes those
     // anchors too, and the equality pin below keeps that widening sound.
     const control = await runNoopLoop(false);
     const treatment = await runNoopLoop(true, control.read2Anchors);
     expect(treatment.rejected).toBe(true);
     expect(treatment.message).toMatch(/E_NOOP_LOOP/);
+    // Arity one: the assembler throws the refusal itself — the bare diagnosis, no bullet.
+    expect(treatment.message).toMatch(/^\[TO MODEL\] \[E_NOOP_LOOP\] identical edit/m);
+    expect(treatment.message).not.toContain("- edits[");
     expect(treatment.fileAfter).toBe(NOOP_LOOP_EXTERNAL);
     expect(treatment.read2Anchors).toEqual(control.read2Anchors);
-    // (a) served rows — byte-identical. The guard's `lineCount` (3) differs from
-    // the served array's length (2), so a reject-path write is observable here.
+    // (a) served rows — byte-identical. The echoed row is the same row the earlier
+    // read served, so re-recording it rewrites the lease, not the mirror.
     expect(treatment.servedAfterReject).toEqual(treatment.servedBefore);
-    // (b) grants — byte-identical INCLUDING `retiredAt`: an insert below the range
-    // preserves every served line_id, so nothing is retired by normalization.
-    expect(treatment.leasesAfterReject).toEqual(treatment.leasesBefore);
+    // (b) grants — the echoed anchor's lease is re-stamped against the CURRENT
+    // (normalized) snapshot, and every OTHER probed lease is byte-identical.
+    const echoed = treatment.leasesAfterReject[treatment.anchor];
+    // The serve snapshot is the committed pre-batch text VERBATIM (trailing newline included) —
+    // `recordRejectionRows` passes `current-file content`, exactly what a read would have recorded.
+    expect(echoed?.snapshotHash).toBe(snapshotHashFor(NOOP_LOOP_EXTERNAL));
+    expect(echoed?.retiredAt).toBeNull();
+    const others = (dump: LeaseDump): LeaseDump =>
+      Object.fromEntries(Object.entries(dump).filter(([key]) => key !== treatment.anchor));
+    expect(others(treatment.leasesAfterReject)).toEqual(others(treatment.leasesBefore));
     // (c) the next fresh read is the control's, with no duplicate anchors.
     expect(duplicateAnchors(control.read2Anchors)).toEqual([]);
     expect(duplicateAnchors(treatment.read2Anchors)).toEqual([]);

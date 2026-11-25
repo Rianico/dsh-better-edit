@@ -69,7 +69,7 @@ const T = {
   batchAbort:
     "batch abort (one part rejecting) records nothing — served rows and grants byte-identical",
   noopLoop:
-    "noop-loop rejection records nothing — served rows and grants byte-identical, next read ≡ control",
+    "noop-loop rejection re-serves the echoed row against the current snapshot, next read ≡ control",
   malformed: "malformed anchor on an existing file rejects E_MALFORMED_ANCHOR and writes nothing",
 };
 
@@ -324,7 +324,7 @@ const MUTANTS = {
     scope: [CONTRACT],
     expected: [T.noopLoop],
     caveat:
-      "drifted since base 1018480f: the call site is now indented 8 spaces (the recipe matches 6), so the anchor is refused loudly — re-derive at lane close",
+      "drifted since base 1018480f: the call site is now indented 8 spaces (the recipe matches 6), so the anchor is refused loudly — re-derive at lane close; #216 makes the guard's rejection record its own rows by design, so the extra-write mutant has no carrier — re-derive at lane close",
     edits: [
       SESS_IMPORT,
       {
@@ -358,19 +358,27 @@ const MUTANTS = {
   Z3b: {
     what: "throw in enforceNoopLoop's batch branch",
     scope: null, // full suite
+    caveat:
+      "measured: the raw Error surfaces as E_UNKNOWN at the tool boundary, so every cell that " +
+      "asserts the E_NOOP_LOOP code or message reds, plus the dry-run tally cell",
     expected: [
-      "batch_edit rejects repeated noop edits at the loop threshold",
       T.noopLoop,
-      "second identical no-op warns applied, third rejects E_NOOP_LOOP, file untouched",
-      "batch: throws at threshold and notice at 2",
+      "leaves a live tally it neither advanced nor cleared",
+      "batch_edit rejects repeated noop edits at the loop threshold",
+      "a two-item loop renders one verdict and one bullet, and its echoed interior rows resolve",
+      "a one-item loop renders the bare diagnosis, and its rows still resolve next call",
+      "shows no rows and names the current-file lines a read would serve",
+      "batch: rejects at threshold and notice at 2",
       "batch reject renders the on-disk heading exactly once",
-      "batch without echoRows still throws",
+      "batch without echoRows still refuses",
+      "second identical no-op warns applied, third rejects E_NOOP_LOOP, file untouched",
+      "two sessions on one file keep independent counts",
     ],
     edits: [
       {
         file: ENGINE,
-        old: "  if (count >= NOOP_LOOP_THRESHOLD) {\n    const originalLines = splitLines(opts.originalNormalized);",
-        new: '  if (count >= NOOP_LOOP_THRESHOLD) {\n    throw new Error("Z3b");\n    const originalLines = splitLines(opts.originalNormalized);',
+        old: "  if (count >= NOOP_LOOP_THRESHOLD) {\n    const ref = `edits[${index}] (${displayPath})`;",
+        new: '  if (count >= NOOP_LOOP_THRESHOLD) {\n    throw new Error("Z3b");\n    const ref = `edits[${index}] (${displayPath})`;',
       },
     ],
   },
