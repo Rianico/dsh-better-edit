@@ -130,8 +130,9 @@ describe("issue #142 — a rejection's echoed rows are recorded as served", () =
       });
       expect(rejection.applied).toBe(false);
       expect(rejection.message).toContain("[E_STALE_RANGE]");
-      expect(rejection.message).toMatch(/- edits\[0\] \(i142-repro\.txt\) \[E_STALE_RANGE\]:/);
-      expect(rejection.message).toContain("recorded as served");
+      expect(rejection.message).toMatch(/^\[TO MODEL\] \[E_STALE_RANGE\] /m);
+      expect(rejection.message).not.toContain("Batch rejected:");
+      expect(rejection.message).not.toContain("- edits[");
       expect(await readFile(path, "utf-8")).toBe("left\nexternal\nright\n");
 
       // Step 5: the echoed `external` anchor is now spendable — no read in between.
@@ -228,7 +229,6 @@ describe("issue #142 — a rejection's echoed rows are recorded as served", () =
         edits: [[neverServed, end, "R"]],
       });
       expect(attempt.applied).toBe(false);
-      expect(attempt.message).toContain("[E_BATCH_ABORT]");
       expect(attempt.message).toContain("[E_UNKNOWN_ANCHOR]");
       // A rowless rejection renders no preview rows at all.
       expect(attempt.message).not.toContain("Current range:");
@@ -265,12 +265,12 @@ describe("issue #142 — a rejection's echoed rows are recorded as served", () =
       }
 
       expect(rejection.applied).toBe(false);
-      expect(rejection.message).toContain("were NOT recorded as served");
-      expect(rejection.message).toContain("re-read");
+      // The arity-one rule (spec #214) throws the bare diagnosis, so the envelope's serve
+      // disposition is not rendered here: the ledger and the refused retry below are the evidence.
       // The rolled-back unit left nothing behind.
       expect(await servedAt(cwd, fullKey, path)).toEqual(servedBefore);
 
-      // The echoed anchor is therefore NOT spendable: the notice told the truth.
+      // The echoed anchor is therefore NOT spendable: the ledger said nothing, so nothing was granted.
       const echoed = rowOf(rejection.message, "external")[0];
       const retry = await attemptEdit(harness, {
         path: "i142-rollback.txt",

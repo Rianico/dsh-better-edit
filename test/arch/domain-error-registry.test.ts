@@ -421,6 +421,58 @@ describe("arch: domain-error registry", () => {
     expect(offenders, `raw headers in: ${offenders.join(", ")}`).toEqual([]);
   });
 
+  // #218: the header is a PAIR — `[TO <audience>] [E_<CODE>]` — and only `domain-errors.ts` may
+  // compose one. The literal scan matches the pair, never the audience token alone:
+  // `src/prompts.ts` legitimately names `[TO MODEL]` in guidance prose (no code), so a
+  // bare-audience scan would be a permanent false RED. A raw pair OR a second composer template in
+  // any other file still reddens, and the composer stays a single template.
+  it("the audience-prefixed rejection header is composed only by formatError", () => {
+    const hits: string[] = [];
+    for (const file of listSources(SRC_ROOT)) {
+      if (file.endsWith(join("src", "domain-errors.ts"))) continue;
+      const text = stripComments(readFileSync(file, "utf-8"));
+      for (const [index, line] of text.split("\n").entries()) {
+        // A raw pair, or a second composer template (`[TO ${...}] [${code}]`).
+        if (/\[TO (?:MODEL|USER)\] \[E_/.test(line) || /\[TO \$\{/.test(line)) {
+          hits.push(`${file}:${index + 1}`);
+        }
+      }
+    }
+    expect(hits).toEqual([]);
+    // The composer itself is a template in domain-errors.ts — exactly one.
+    const registry = stripComments(readFileSync(join(SRC_ROOT, "domain-errors.ts"), "utf-8"));
+    expect(registry.match(/\[TO \$\{/g)).toHaveLength(1);
+    // Self-check: the scanner would catch a raw header or a second composer in another file.
+    const planted = 'const leaked = "[TO MODEL] [E_STALE_RANGE] x";';
+    expect(/\[TO (?:MODEL|USER)\] \[E_/.test(planted)).toBe(true);
+    const plantedComposer = "const leaked = `[TO ${spec.audience}] [${code}] ${body}`;";
+    expect(/\[TO \$\{/.test(plantedComposer)).toBe(true);
+  });
+
+  it("applied-tier warning headers are composed only by formatWarning", () => {
+    const hits: string[] = [];
+    for (const file of listSources(SRC_ROOT)) {
+      if (file.endsWith(join("src", "domain-errors.ts"))) continue;
+      const text = stripComments(readFileSync(file, "utf-8"));
+      for (const [index, line] of text.split("\n").entries()) {
+        // A raw pair, or a second composer template (`[${audience}] [${code}]`).
+        if (/\[(?:MODEL|USER)\] \[W_/.test(line) || /\[\$\{[^}]+\}\] \[\$\{code\}\]/.test(line)) {
+          hits.push(`${file}:${index + 1}`);
+        }
+      }
+    }
+    expect(hits).toEqual([]);
+    const registry = stripComments(readFileSync(join(SRC_ROOT, "domain-errors.ts"), "utf-8"));
+    // MEASURED at 61e7fbba: `formatWarning` composes `[${spec.audience}] [${code}]` and
+    // `formatError` composes `[TO ${spec.audience}] [${code}]`, so the shared shape with the
+    // optional addressee marker occurs twice. The registry's own `PROMPT_DIVERGED_NOTICE` literal
+    // is why the file is skipped above — and why this count is 2, not 3.
+    expect(registry.match(/\[(?:TO )?\$\{spec\.audience\}\] \[\$\{code\}\]/g)).toHaveLength(2);
+    const planted = 'const leaked = "[MODEL] [W_NOOP] x";';
+    expect(/\[(?:MODEL|USER)\] \[W_/.test(planted)).toBe(true);
+    const plantedComposer = "const leaked = `[${spec.audience}] [${code}] ${body}`;";
+    expect(/\[\$\{[^}]+\}\] \[\$\{code\}\]/.test(plantedComposer)).toBe(true);
+  });
   // The read tier's header shape is bare `[<CODE>]` — no audience. A read notice reports state
   // observed before any write, so there is no actor to address; the applied tier's
   // `[<AUDIENCE>] [<CODE>]` prefix is exactly what must NOT appear here.

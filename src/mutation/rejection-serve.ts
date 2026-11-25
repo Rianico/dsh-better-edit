@@ -4,8 +4,8 @@
  * Invariant (non-negotiable): `rows` must be current-file coordinates derived from the
  * committed on-disk snapshot (`content`/`hashes`), never rows from a working buffer or a
  * rendered preview. The parameter list makes the unsafe inputs unrepresentable — the only
- * caller ({@link collectAbortPart} in `./engine.ts`) passes the call's pre-batch snapshot
- * plus the rows the verifier built from that snapshot.
+ * caller ({@link throwBatchRejection} in `./batch-rejection.js`) passes the call's pre-batch
+ * snapshot plus the rows each failing item carries.
  *
  * All-or-nothing duplicate gate (ADR-0043): the echo's anchors come from the edit path's
  * content-addressed assignment, which can differ from the read path's served-stable one.

@@ -2,6 +2,8 @@ import { readFile } from "node:fs/promises";
 import { describe, expect, it } from "vitest";
 
 import { NOOP_LOOP_THRESHOLD } from "../../src/constants.js";
+import { loadServed } from "../../src/session-view.js";
+import { sessionKeyFor, withWorkspace } from "../../src/workspace-context.js";
 import { getText, setupIntegrationTest, withTempFile } from "../support/fixtures.js";
 
 /**
@@ -47,6 +49,7 @@ describe("issue #150 — noop-loop rejection is rowless in a changed buffer", ()
     const source = "aaa\nbbb\nccc\nddd\n";
     await withTempFile("i150-noop.txt", source, async ({ cwd, path }) => {
       const harness = setupIntegrationTest(cwd);
+      const fullKey = sessionKeyFor(harness.sessionKey);
       const served = rowPairs(
         getText(await harness.readTool.execute("read", { path: "i150-noop.txt" })),
       );
@@ -63,6 +66,9 @@ describe("issue #150 — noop-loop rejection is rowless in a changed buffer", ()
         ],
       };
 
+      // The rowless arm records nothing: the ledger before the first submission and after the
+      // final round is byte-identical.
+      const servedBefore = await withWorkspace(cwd, () => loadServed(fullKey, path));
       let last = { applied: true, message: "" };
       for (let round = 1; round <= NOOP_LOOP_THRESHOLD; round += 1) {
         last = await attemptEdit(harness, batch);
@@ -73,6 +79,14 @@ describe("issue #150 — noop-loop rejection is rowless in a changed buffer", ()
 
       // Round `NOOP_LOOP_THRESHOLD` trips the loop guard, and that round's grow had already
       // changed the buffer: the refusal is served-or-absent.
+      expect(last.message).toMatch(
+        /^\[TO MODEL\] \[E_BATCH_ABORT\] Batch rejected: 1 of 4 edits failed; nothing was written\.$/m,
+      );
+      expect(last.message.match(/- edits\[3\] \(i150-noop\.txt\) \[E_NOOP_LOOP\]:/g)).toHaveLength(
+        1,
+      );
+      // The body must not repeat the item prefix the bullet already names.
+      expect(last.message).not.toContain("edits[3] (i150-noop.txt):");
       expect(last.message).toContain("[E_NOOP_LOOP]");
       expect(last.message).not.toContain("│");
       expect(last.message).not.toContain("Current on-disk range");
@@ -80,6 +94,7 @@ describe("issue #150 — noop-loop rejection is rowless in a changed buffer", ()
       expect(last.message).toContain(
         "An anchored read of current-file lines 3-3 would serve that range.",
       );
+      expect(await withWorkspace(cwd, () => loadServed(fullKey, path))).toEqual(servedBefore);
 
       // The withheld rows were not recorded as served: the original serve still applies a
       // standalone edit of the same span, which proves the real served record was not displaced.

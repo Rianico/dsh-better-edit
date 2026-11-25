@@ -141,6 +141,10 @@ _Avoid_: reject-then-reread (only a rowless or declined refusal needs the read),
 A rejection whose region cannot be identified: the submitted anchors no longer name a live span (both bounds stale, a survivor that shifted, or a window that collapses or misses the file). Its payload carries **no rows** and no `Current range` heading; the headline names the previously served position and instructs a read, so no served coordinate the model never targeted becomes committable. Realized locally as an `[E_STALE_RANGE]` payload with an empty `servedRows` (`src/fs-bridge.ts`, F7) — the local disjointness signal is the row count, not the code.
 _Avoid_: context serve (dropped: no such operation exists), unverified range (unported upstream code)
 
+**batch rejection**:
+The one model-facing shape a failed `edit` call renders. A multi-item call leads with one verdict line — `Batch rejected: <K> of <N> edits failed; nothing was written.` — then one bullet per failing item, `- edits[<i>] (<path>) [<E_CODE>]: <diagnosis>`, with every continuation line indented two spaces so one failure stays one list entry. `N` is the submitted `edits.length` and `K` the number of failing items, so the verdict is the call's own arithmetic; each bullet keeps its own code and its own instruction. A one-item call (`N === 1`) has no batch to roll back and throws that item's own diagnosis instead: the header is the actionable code and no verdict or bullet appears. One assembler (`src/mutation/batch-rejection.ts`, `throwBatchRejection`) builds, records and throws every rejection, so a refusal that shows rows always leases them; a row-carrying failure passed with no recorder throws `TypeError` (ADR-0046, amended 2026-11-25).
+_Avoid_: batch error (name the code each bullet carries), "1 of 1" (a one-item call is not a batch), multi-error response
+
 **drift**:
 The divergence between the served state and the current file: lines the model was shown whose content has changed on disk since they were served. Detected by comparing served hashes against current hashes.
 _Avoid_: modification, external change (the tool cannot know the source)
