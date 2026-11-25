@@ -6,6 +6,8 @@ Date: 2026-11-25
 
 accepted (issue #191; the t1 half of ticket i148-encoding)
 
+Upstream referent: none — downstream-only. `pi-better-edit` carries no encoding model, so no upstream commit or upstream ADR corresponds to this disclosure.
+
 Downstream records: `src/file-encoding-state.ts` (`EncodingMigration`, `prepareForSave` verdict),
 `src/mutation.ts` (`persistUndoAndWrite` forwarding, `AppliedMigration`), `src/undo-edit.ts`
 (`UndoEntry.migration`), `src/hash-store.ts` (`undo`/`file_undo` gain `migrated_from` +

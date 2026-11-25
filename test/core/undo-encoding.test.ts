@@ -13,6 +13,7 @@
  */
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { beforeAll, beforeEach, afterEach, describe, expect, it } from "vitest";
 import iconv from "iconv-lite";
 
@@ -21,7 +22,13 @@ import { loadHashStore, shutdownHashStore, type UndoRecord } from "../../src/has
 import { getUndo } from "../../src/undo-edit.js";
 import { withWorkspace } from "../../src/workspace-context.js";
 import { _resetConfigCache } from "../../src/store-config.js";
-import { clearEncodingState, prepareForSave } from "../../src/file-encoding-state.js";
+import {
+  clearEncodingState,
+  prepareForSave,
+  setEncodingState,
+} from "../../src/file-encoding-state.js";
+import { persistUndoAndWrite } from "../../src/mutation.js";
+import { hashStorePath } from "../../src/store-tenancy.js";
 import { resolveTarget } from "../../src/paths.js";
 import {
   extractHash,
@@ -169,6 +176,26 @@ describe("migration — windows-1251 via read({ encoding })", () => {
       expect((await readFile(path)).equals(Buffer.from("ALPHA\nbeta\n", "utf-8"))).toBe(true);
 
       const text = getText(await harness.undoTool.execute("u1", { path: "ascii.txt" }));
+
+      expect((await readFile(path)).equals(before)).toBe(true);
+      expect(text).not.toContain("Restored as UTF-8");
+    });
+  });
+
+  it("an ASCII-only file recorded as windows-1251 with normalize ON: still no verdict, bytes identical", async () => {
+    // Mutant caught: `normalize ? { encoding: recorded, hasBOM } : undefined` in place of
+    // `faithful ? undefined : { encoding: recorded, hasBOM }` mints a verdict for this faithful
+    // body and pushes the clause — this arm pins the faithful gate, not the normalize flag.
+    await withTempBytes("ascii-norm.txt", cp1251Bytes("alpha\nbeta\n"), async ({ cwd, path }) => {
+      const before = await readFile(path);
+      setNormalizeToUtf8(true);
+      const { harness } = await readAndEdit(cwd, "ascii-norm.txt", "alpha", "ALPHA", {
+        encoding: "windows-1251",
+      });
+      // The faithful body lands byte-identical UTF-8 bytes with no verdict at any step.
+      expect((await readFile(path)).equals(Buffer.from("ALPHA\nbeta\n", "utf-8"))).toBe(true);
+
+      const text = getText(await harness.undoTool.execute("u1", { path: "ascii-norm.txt" }));
 
       expect((await readFile(path)).equals(before)).toBe(true);
       expect(text).not.toContain("Restored as UTF-8");
@@ -330,6 +357,19 @@ describe("prepareForSave — the verdict fires once, at the save seam", () => {
     ).toBeUndefined();
   });
 
+  it("no migration for a byte-faithful legacy body even when normalize is ON", () => {
+    // Mutant caught: `normalize ? { encoding: recorded, hasBOM } : undefined` in place of
+    // `faithful ? undefined : { encoding: recorded, hasBOM }` mints a verdict here — the
+    // faithful gate, not the normalize flag, decides.
+    expect(
+      prepareForSave(
+        "plain ascii\n",
+        { encoding: "windows-1251", hasBOM: false, lineEnding: "\n", version: undefined },
+        { normalizeToUtf8: true },
+      ).migration,
+    ).toBeUndefined();
+  });
+
   it("exactly one verdict for a non-faithful legacy body: recorded codec + recorded BOM-ness", () => {
     const utf16 = prepareForSave(
       "первая\n",
@@ -344,5 +384,118 @@ describe("prepareForSave — the verdict fires once, at the save seam", () => {
       { normalizeToUtf8: true },
     );
     expect(cp.migration).toEqual({ encoding: "windows-1251", hasBOM: false });
+  });
+});
+
+describe("half-record — one new column NULL claims nothing", () => {
+  it("codec without its BOM flag on the legacy half: no verdict, no clause, undo still restores", async () => {
+    // Mutant caught: `typeof migratedFrom === "string" ? { encoding: migratedFrom, ... } : undefined`
+    // (BOM flag unchecked) or `||` in place of `&&` rebuilds a verdict from this half-record
+    // and pushes the clause — the gate needs BOTH columns fully typed.
+    await withTempBytes(
+      "u16-half.txt",
+      utf16leBytes("первая\r\nвторая\r\n"),
+      async ({ cwd, path }) => {
+        setNormalizeToUtf8(true);
+        const { harness } = await readAndEdit(cwd, "u16-half.txt", "вторая", "другая");
+        const abs = await resolveTarget(path);
+        await withWorkspace(cwd, async () => {
+          const store = await loadHashStore();
+          expect(store.getUndo(abs)?.migratedFrom).toBe("utf16le");
+        });
+
+        // Strip the BOM flag on BOTH halves: a half-record is a half-record wherever it sits.
+        shutdownHashStore();
+        const raw = new DatabaseSync(hashStorePath(cwd));
+        raw.exec(
+          "UPDATE undo SET migrated_from = 'utf16le', migrated_from_bom = NULL; " +
+            "UPDATE file_undo SET migrated_from = 'utf16le', migrated_from_bom = NULL;",
+        );
+        raw.close();
+
+        await withWorkspace(cwd, async () => {
+          expect((await getUndo(abs))?.migration).toBeUndefined();
+        });
+
+        const text = getText(await harness.undoTool.execute("u1", { path: "u16-half.txt" }));
+        expect(await readFile(path, "utf-8")).toBe("первая\r\nвторая\r\n");
+        expect(text).not.toContain("Restored as UTF-8");
+      },
+    );
+  });
+
+  it("BOM flag without its codec on the legacy half: no verdict, no clause, undo still restores", async () => {
+    // Mutant caught: `typeof migratedFromBOM === "number" ? { ... } : undefined`
+    // (codec unchecked) rebuilds a verdict from this reverse half-record — same gate, other side.
+    await withTempBytes(
+      "u16-half-rev.txt",
+      utf16leBytes("первая\r\nвторая\r\n"),
+      async ({ cwd, path }) => {
+        setNormalizeToUtf8(true);
+        const { harness } = await readAndEdit(cwd, "u16-half-rev.txt", "вторая", "другая");
+        const abs = await resolveTarget(path);
+
+        shutdownHashStore();
+        const raw = new DatabaseSync(hashStorePath(cwd));
+        raw.exec(
+          "UPDATE undo SET migrated_from = NULL, migrated_from_bom = 0; " +
+            "UPDATE file_undo SET migrated_from = NULL, migrated_from_bom = 0;",
+        );
+        raw.close();
+
+        await withWorkspace(cwd, async () => {
+          expect((await getUndo(abs))?.migration).toBeUndefined();
+        });
+
+        const text = getText(await harness.undoTool.execute("u1", { path: "u16-half-rev.txt" }));
+        expect(await readFile(path, "utf-8")).toBe("первая\r\nвторая\r\n");
+        expect(text).not.toContain("Restored as UTF-8");
+      },
+    );
+  });
+});
+
+describe("transaction — persistUndoAndWrite forwards the verdict", () => {
+  it("returns the populated AppliedMigration for a migrated file", async () => {
+    // Mutant caught: `return []` / dropping `prep.migration` in `persistUndoAndWrite` keeps the
+    // write+memo correct while silencing the return — this pins the populated arm (`[]` alone is
+    // already pinned at `coverage-agent-c-mutation-engine.test.ts`).
+    await withTempDir("undo-enc-applied-", async (dir) => {
+      const abs = join(dir, "u16.txt");
+      setNormalizeToUtf8(true);
+      setEncodingState(abs, {
+        encoding: "utf16le",
+        hasBOM: true,
+        lineEnding: "\n",
+        version: undefined,
+      });
+      const io = { writeText: async () => undefined };
+      const sandbox = { mapError: (error: unknown) => error as Error };
+      const applied = await withWorkspace(dir, () =>
+        persistUndoAndWrite({
+          io: io as never,
+          files: [
+            {
+              absolutePath: abs,
+              displayPath: "u16.txt",
+              originalNormalized: "первая\n",
+              bom: "",
+              originalEnding: "\n",
+              effectiveEnding: "\n",
+              preImageMixed: false,
+              originalHashes: ["AAA"],
+              result: "другая\n",
+            },
+          ],
+          exec: {} as never,
+          sandbox: sandbox as never,
+          sandboxPolicy: undefined,
+          undoUnavailableMessage: () => "x",
+        }),
+      );
+      expect(applied).toEqual([
+        { displayPath: "u16.txt", migration: { encoding: "utf16le", hasBOM: true } },
+      ]);
+    });
   });
 });
