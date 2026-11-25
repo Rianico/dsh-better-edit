@@ -14,6 +14,7 @@ All notable changes to this project will be documented in this file.
 ### Bug Fixes
 
 * **edit:** give both unserved-interior messages one structural shape. One formatter now names the replaced file-line count, the unserved count, and the exact absolute file lines as compressed runs; the hint `[W_UNSERVED_INTERIOR]` no longer prints a min..max envelope that could name served lines, and a single line prints `Unserved file line: 3`. Strict `[E_UNSERVED_RANGE]` keeps the same facts, and its capped remainder now agrees in number (ADR-0053, closes #223).
+* **canon:** fence the canon evidence a snapshot stores behind its full `CANON_VERSION:ANCHOR_GENERATION` epoch, so a prior-canon `line_lineage`/`served_leases` row no longer carries a `line_id`, resolves a lease, or pairs into the next snapshot — the four reuse seams (S_latest pairing, read-path alignment, the identity-position fallback, and the edit's lease source) plus the undo pin. One module (`src/snapshot-store/epoch.ts`) now owns the key shape and both predicates, replacing three literal copies; raw-byte anchors are untouched by a canon-only change, so `undo_last_edit` keeps a canon-only pin and its restore re-derives the snapshot key on the current epoch, serving the next edit without an intermediate read. The snapshot cache key and the open-time sweep keep their current miss semantics — retention is not validity — with no migration and no schema change (ADR-0054, closes #221).
 
 ## [1.3.0] - 2026-11-25
 

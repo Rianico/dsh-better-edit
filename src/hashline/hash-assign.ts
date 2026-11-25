@@ -164,8 +164,11 @@ export const HL_BARE_PREFIX_RE = new RegExp(`^\\s*(${HASH_CLASS})│`);
  * recorded, pairing breaks and the edit rejects fail-closed.
  * Prior versions: v2 stripped every ASCII whitespace run anywhere in the line (docs/adr/0002), which
  * folded `"a b"` into `"ab"` and let a stale anchor overwrite the other writer's bytes.
- * Snapshot keys carry both axes (`${CANON_VERSION}:${ANCHOR_GENERATION}:${checksum}`), so pre-v4 rows
- * are inert cache misses rebuilt on the next read — no migration needed.
+ * Snapshot keys carry both axes (`${CANON_VERSION}:${ANCHOR_GENERATION}:${checksum}`), so a
+ * prior-canon row's key is stale: raw anchors stay valid, while the canon evidence stored beside them
+ * (lineage and lease `canon_hash`, and the `line_id`s paired through it) is fenced by the full epoch
+ * at every reuse seam (`src/snapshot-store/epoch.ts`). No migration runs and no pre-v4 constant is
+ * retained.
  */
 export const CANON_VERSION = 4;
 
@@ -182,9 +185,11 @@ export const CANON_VERSION = 4;
  * of those change.
  *
  * WHY a second axis beside CANON_VERSION: cache keys carry both
- * (`${CANON_VERSION}:${ANCHOR_GENERATION}:${checksum}`), so a canon-only change misses the cache
- * without invalidating anchor-bearing state, while a generation change invalidates that state — the
- * `hash-store` open-time sweep and the undo gate both read this same prefix.
+ * (`${CANON_VERSION}:${ANCHOR_GENERATION}:${checksum}`), and the two axes answer different questions.
+ * Anchor reuse (the undo restore's stored anchors, the open-time sweep) reads this axis alone: a
+ * canon-only change keeps every raw anchor valid. A generation change invalidates both the anchors
+ * and the stored canon evidence. The epoch shape and both predicates have one owner:
+ * `src/snapshot-store/epoch.ts` (ADR-0054).
  */
 export const ANCHOR_GENERATION = 2;
 
