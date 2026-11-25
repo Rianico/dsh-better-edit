@@ -13,6 +13,8 @@ All notable changes to this project will be documented in this file.
 
 ### Bug Fixes
 
+* **edit:** give both unserved-interior messages one structural shape. One zero-import formatter owns the summary, run compression, plural agreement and remedy for the strict refusal and the hint; the hint names the replaced file-line count and the exact unserved file lines instead of a `min..max` envelope that could name served lines. Strict facts are unchanged, and a single line prints `Unserved file line: N` (ADR-0053, closes #223).
+
 * **edit:** one batch-rejection assembler owns build → record → throw, so a refusal that shows rows always leases them; a multi-item call renders one `Batch rejected: K of N edits failed; nothing was written.` verdict and one `- edits[i] (path) [E_CODE]:` bullet per failure, and a one-item call throws that item's bare diagnosis instead (ADR-0046 amended). (#225)
 
 * **errors:** name where the standing encoding-migration consent lives — `$DSH_HOME/plugins/dsh-better-edit/config.yaml` — in the `[E_ENCODING_UNWRITABLE]` message and remedy, so the model is not left to guess the config location; the per-call `allow_encoding_migration` route is unchanged (#220)

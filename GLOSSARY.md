@@ -53,14 +53,14 @@ The model-facing word for the `served span` — the span between `remove_from` a
 _Avoid_: range (use `served range` for verified span, `range` for current file run)
 
 **served-range staleness**:
-The condition where the `served range` (span between anchors) cannot be reconciled with served state: interior `served span` vs `current span` mismatch (`hash`/`canon`/`retired`/`len`). Reported as `[E_STALE_RANGE]` (changed) or `[E_UNSERVED_RANGE]` (never-served, `details.unservedKind` `boundary`|`interior`). Both do `reject-and-serve`; when the region is unidentifiable the rejection is a `target-lost rejection`.
+The condition where the `served range` (span between anchors) cannot be reconciled with served state: interior `served span` vs `current span` mismatch (`hash`/`canon`/`retired`/`len`). Reported as `[E_STALE_RANGE]` (changed) or `[E_UNSERVED_RANGE]` (never-served, `details.unservedKind` `boundary`|`interior`); both unserved-interior voices name the replaced file-line count, the unserved count and the exact absolute file lines. Both do `reject-and-serve`; when the region is unidentifiable the rejection is a `target-lost rejection`.
 _Avoid_: range staleness (use `served range` for span)
 
 **never-served**:
-An interior line with no entry in the served record — the model was never shown that line. `hint` span mode accepts it and discloses the replaced interior (`[W_UNSERVED_INTERIOR]`, blank diff gutter); `strict` refuses the edit before any write with a rowless `[E_UNSERVED_RANGE]` naming the unserved file lines (ADR-0045).
+An interior line with no entry in the served record — the model was never shown that line. `hint` span mode accepts it and discloses the replaced interior (`[W_UNSERVED_INTERIOR]`, blank diff gutter), naming the replaced file-line count, the unserved count and the exact absolute file lines; `strict` refuses the edit before any write with a rowless `[E_UNSERVED_RANGE]` carrying the same facts (ADR-0045, ADR-0053).
 
 **unserved interior**:
-A `never-served` line strictly inside a resolved range. `hint` tolerates it and discloses the replacement; `strict` refuses a span that replaces one before any write (ADR-0045).
+A `never-served` line strictly inside a resolved range. `hint` tolerates it and discloses the replacement; `strict` refuses a span that replaces one before any write (ADR-0045). Both voices render through one formatter (`src/unserved-span-message.ts`), so they share grammar, plural agreement and list compression; a single line prints `Unserved file line: N`, never a collapsed range.
 _Avoid_: stale interior (staleness is a failed reconciliation, not a missing serve)
 
 **span mode**:

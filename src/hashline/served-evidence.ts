@@ -26,6 +26,7 @@ import type { DomainErrorCode, RangeCause, ServedRow } from "../domain-errors.js
 import { HASH_SEP, canon } from "./hash-assign.js";
 import { SERVED_ECHO_CAP } from "../constants.js";
 import type { SpanMode } from "../span-mode.js";
+import { formatUnservedSpanMessage } from "../unserved-span-message.js";
 
 export type ServedCode = "E_STALE_RANGE" | "E_UNSERVED_RANGE";
 
@@ -111,47 +112,6 @@ function paginationHint(nextOffset: number, more: number): string {
   return moreRowsHint(more, `read offset=${nextOffset}`);
 }
 
-/** Max runs the strict unserved list renders before it is capped. */
-const STRICT_UNSERVED_MAX_RUNS = 8;
-
-/** Ascending absolute file lines -> contiguous [first, last] runs (input order preserved). */
-function unservedRuns(lines: number[]): Array<[number, number]> {
-  const runs: Array<[number, number]> = [];
-  for (const line of lines) {
-    const last = runs[runs.length - 1];
-    if (last !== undefined && line === last[1] + 1) last[1] = line;
-    else runs.push([line, line]);
-  }
-  return runs;
-}
-
-/**
- * The strict-mode refusal headline: the count against the whole replaced span, then the absolute
- * file lines ascending and run-compressed, capped at `STRICT_UNSERVED_MAX_RUNS` with the count of
- * unshown lines appended. `servedRows`/`servedBlock` stay empty for this arm — no trustworthy
- * region can be echoed for an edit that was refused before any write.
- */
-function strictUnservedHeadline(
-  filePath: string | undefined,
-  unserved: number[],
-  totalLines: number,
-): string {
-  const path = filePath ?? "this file";
-  const count = unserved.length;
-  const summary =
-    `Strict span mode refused the edit to ${path}: ${count} of the ${totalLines} ` +
-    `file lines it replaces ${count === 1 ? "was" : "were"} never served.`;
-  if (count === 1) return `${summary}\nUnserved file line: ${unserved[0]!}`;
-  const runs = unservedRuns(unserved);
-  const shown = runs.slice(0, STRICT_UNSERVED_MAX_RUNS);
-  const hidden = runs.slice(STRICT_UNSERVED_MAX_RUNS);
-  const rendered = shown
-    .map(([first, last]) => (first === last ? `${first}` : `${first}-${last}`))
-    .join(", ");
-  const hiddenCount = hidden.reduce((sum, [first, last]) => sum + (last - first + 1), 0);
-  const capped = hiddenCount > 0 ? ` (+${hiddenCount} more lines)` : "";
-  return `${summary}\nUnserved file lines: ${rendered}${capped}`;
-}
 /**
  * SAFETY: the read-only identity seam the edit path resolves a served anchor through (CP2-r1,
  * obligation (c)). Production wires it to `served_leases` + `line_lineage`; tests inject plain
@@ -496,7 +456,12 @@ export function verifyRebasedSpan(args: {
     throw new ServedRejectionError({
       code: "E_UNSERVED_RANGE",
       unservedKind: "interior",
-      headline: strictUnservedHeadline(args.filePath, unservedInterior, servedLen),
+      headline: formatUnservedSpanMessage({
+        voice: "strict",
+        ...(args.filePath !== undefined ? { path: args.filePath } : {}),
+        unservedLines: unservedInterior,
+        replacedLineCount: servedLen,
+      }),
       servedRows: [],
       servedBlock: "",
       firstOffendingLine: unservedInterior[0]!,

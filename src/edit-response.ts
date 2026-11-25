@@ -209,9 +209,8 @@ export function buildBatchResult(sections: BatchSection[], dryRun = false): TRes
       disclosureBySection.set(
         s,
         formatWarning("W_UNSERVED_INTERIOR", {
-          count: unserved.length,
-          from: unserved[0]!,
-          to: unserved[unserved.length - 1]!,
+          unservedLines: unserved,
+          replacedLineCount: diffResult.removedLineCount,
         }),
       );
     }

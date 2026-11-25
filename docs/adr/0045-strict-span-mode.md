@@ -40,3 +40,12 @@ The default acceptance path is unchanged, so no existing profile loses an edit a
 - `Rianico/pi-better-edit#319` — downstream-filed refinement request for the strict refusal message shape (summary + run-compressed capped list); open, not implemented upstream.
 - upstream ADR-0024 decision 1 — interior `null` slots are accepted on the leased route.
 - ADR-0037 — the served-evidence seam; this ADR adds a policy axis beside it, not a second entry point.
+
+## Amendment (2026-11-25, #223)
+
+Hint now feeds the same formatter as strict (`src/unserved-span-message.ts`). The hint
+`[W_UNSERVED_INTERIOR]` names the replaced file-line count, the unserved count and the exact
+absolute file lines as compressed runs; it no longer prints the min..max envelope that could name a
+served line. Strict's facts are unchanged: the same path, denominator, counts and list, and the
+same eight-run cap. The capped remainder now agrees in number — `(+1 more line)` when one line is
+hidden. See [ADR-0053](0053-unserved-interior-one-formatter.md).
