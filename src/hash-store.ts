@@ -48,6 +48,7 @@ import {
   createLineageStore,
   ensureLineageTables,
   snapshotHashFor,
+  type LineageRow,
   type LineageStore,
 } from "./snapshot-store/lineage-store.js";
 import { withTransaction } from "./snapshot-store/txn.js";
@@ -239,6 +240,13 @@ export interface HashStore {
     hashes: string[],
     content?: string,
   ): void;
+  /**
+   * The newest committed lineage for a path, in line order — the evidence a checksum-miss read
+   * pairs drifted content against. `undefined` when the path has no committed snapshot, its
+   * lineage is empty, or its rows are unusable, so the read falls back to fresh allocation.
+   * READ-ONLY: no snapshot row, no lease write.
+   */
+  latestLineageFor(path: string): LineageRow[] | undefined;
   /** Every path referenced by any row family (snapshots ∪ undo ∪ served). */
   allKnownPaths(): { path: string }[];
   /** Every snapshot's path and raw hashes JSON (for path-by-hash scans). */
@@ -1058,6 +1066,9 @@ function makeDomainStore(
     },
     lineageFor(path, snapshotHash) {
       return lineageStore.lineageFor(path, snapshotHash);
+    },
+    latestLineageFor(path) {
+      return lineageStore.latestLineageFor(path);
     },
     positionsByIdentity(path, content) {
       return lineageStore.positionsByIdentity(path, content);

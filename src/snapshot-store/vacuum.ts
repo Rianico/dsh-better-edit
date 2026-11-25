@@ -3,7 +3,7 @@
  *
  * WHY — global LRU vacuum (spec §3.6.1). The CAS store is a bounded cache: 50 MB globally, and
  * `min(10, max(2, floor(10 MB / snapshot_lineage_bytes)))` versions per path where
- * `snapshot_lineage_bytes ≈ 40 × line_count`. Eviction is global and oldest-`created_at` first
+ * `snapshot_lineage_bytes ≈ 52 × line_count`. Eviction is global and oldest-`created_at` first
  * across all paths. Identity wins over budget: a snapshot a session can still resolve through —
  * an active lease inside the 7-day TTL, a `file_undo.snapshot_hash` restore target, or a lease
  * retired inside the 1-hour grace — is PINNED and never evicted, so the vacuum only drops versions
@@ -30,7 +30,10 @@ export const VACUUM_SOFT_OVERFLOW_BYTES = 100 * 1024 * 1024;
 export const VACUUM_PER_PATH_BUDGET_BYTES = 10 * 1024 * 1024;
 export const VACUUM_MAX_SNAPSHOTS_PER_PATH = 10;
 export const VACUUM_MIN_SNAPSHOTS_PER_PATH = 2;
-export const VACUUM_LINEAGE_BYTES_PER_LINE = 40;
+// #188 price model: the measured row delta for `raw_hash` is 11.02 bytes/line (200k synthetic rows,
+// 10-digit digest, table + unique index, VACUUM'd file size), rounded to 12 for page granularity:
+// 40 + 12 = 52. Re-measure if the digest width or the lineage columns change.
+export const VACUUM_LINEAGE_BYTES_PER_LINE = 52;
 export const VACUUM_RETIRED_PIN_MS = 60 * 60 * 1000;
 
 /** Bounds for one vacuum pass; the policy values are the module-level production constants. */
@@ -133,7 +136,7 @@ function buildVacuumStmts(db: DatabaseSync): VacuumStmts {
   };
 }
 
-/** The lineage price of one snapshot: `40 bytes × line_count`, floored at one line for an empty file. */
+/** The lineage price of one snapshot: `52 bytes × line_count`, floored at one line for an empty file. */
 function lineageBytes(row: VacuumSnapshotRow, perLine: number): number {
   return perLine * Math.max(1, row.line_count);
 }

@@ -1,4 +1,4 @@
-# ADR-0050 — the undo names the codec a migration edit abandoned
+# ADR-0051 — the undo names the codec a migration edit abandoned
 
 Date: 2026-11-25
 

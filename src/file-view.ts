@@ -18,9 +18,9 @@
 
 import { stat as fsStat } from "fs/promises";
 import { MAX_READ_LINE_BYTES, eLargeFileMsg } from "./constants.js";
-import { lineHashes, fmtRegion, HASH_SEP } from "./hashline/index.js";
+import { lineHashes, fmtRegion, canon, HASH_SEP } from "./hashline/index.js";
 import { HASH_SPACE } from "./hashline/hash-assign.js";
-import { visLines, abortIf } from "./utils.js";
+import { visLines, abortIf, splitLines } from "./utils.js";
 import { DomainError } from "./domain-errors.js";
 import {
   detectEnding,
@@ -170,6 +170,12 @@ export interface NormFile {
    */
   endingCounts: LineEndingCounts;
   fileHashes: string[];
+  /**
+   * Anchors the checksum-miss alignment retired on this load — lines the latest committed lineage
+   * held and this content does not. Absent when the alignment did not run or retired nothing; the
+   * read path persists them as session-retired anchors so fresh allocation cannot re-issue one.
+   */
+  retiredHashes?: string[];
   hadUtf8DecodeErrors: boolean;
 }
 
@@ -219,6 +225,8 @@ export async function normFromText(input: {
   noPersist?: boolean;
   reservedHashes?: ReadonlySet<string>;
   retiredHashes?: ReadonlySet<string>;
+  /** Opt in to the checksum-miss lineage alignment; the read path sets it, the edit load does not. */
+  alignOnMiss?: boolean;
   hadUtf8DecodeErrors?: boolean;
   previous?: { content: string; hashes: string[]; removedHashes?: Set<string> };
 }): Promise<NormFile> {
@@ -234,14 +242,26 @@ export async function normFromText(input: {
       throw new Error(eLargeFileMsg(displayPath, lineCount, input.maxLines));
     }
   }
+  // The served mirror is canon-joined, so it describes this content only while every line's canon
+  // still matches. A drifted read drops it and falls through to the cached snapshot / lineage
+  // alignment — the checksum-miss path — instead of re-deriving anchors from a stale map.
+  const mirrorHolds =
+    input.previous !== undefined &&
+    input.previous.content ===
+      splitLines(normalized)
+        .map((line) => canon(line))
+        .join("\n");
+  const previous = mirrorHolds ? input.previous : undefined;
+  const alignedRetired = new Set<string>();
   const fileHashes = await lineHashes(
     normalized,
     absolutePath,
-    input.previous,
+    previous,
     input.store,
     input.noPersist !== true,
     input.reservedHashes,
     input.retiredHashes,
+    input.alignOnMiss === true ? { enabled: true, retired: alignedRetired } : undefined,
   );
   return {
     absolutePath,
@@ -250,6 +270,7 @@ export async function normFromText(input: {
     originalEnding,
     endingCounts,
     fileHashes,
+    ...(alignedRetired.size > 0 ? { retiredHashes: [...alignedRetired] } : {}),
     hadUtf8DecodeErrors: input.hadUtf8DecodeErrors === true,
   };
 }
@@ -740,6 +761,8 @@ export interface FileView {
   absolutePath: string;
   truncation?: TruncationResult;
   nextOffset?: number;
+  /** Anchors this read's alignment retired; `read-and-serve` persists them after the serve write. */
+  retiredHashes?: string[];
   /**
    * The full-read verdict — computed HERE and nowhere else (ADR-0035).
    *
@@ -788,17 +811,25 @@ export async function readView(
   const { signal } = opts;
   const absolutePath = await io.resolve(path, cwd, signal);
   const rawText = await io.readText(absolutePath, signal, opts.encoding);
-  const { normalized, fileHashes, hadUtf8DecodeErrors, bom, originalEnding, endingCounts } =
-    await normFromText({
-      absolutePath,
-      rawText,
-      displayPath: path,
-      signal,
-      maxLines: MAX_HASH_LINES,
-      reservedHashes: opts.reservedHashes,
-      retiredHashes: opts.retiredHashes,
-      previous: opts.previous,
-    });
+  const {
+    normalized,
+    fileHashes,
+    retiredHashes,
+    hadUtf8DecodeErrors,
+    bom,
+    originalEnding,
+    endingCounts,
+  } = await normFromText({
+    absolutePath,
+    rawText,
+    displayPath: path,
+    signal,
+    maxLines: MAX_HASH_LINES,
+    reservedHashes: opts.reservedHashes,
+    retiredHashes: opts.retiredHashes,
+    alignOnMiss: true,
+    previous: opts.previous,
+  });
   const r = await fmtReadPreview(
     normalized,
     { offset: opts.offset, limit: opts.limit, windows: opts.windows },
@@ -825,5 +856,6 @@ export async function readView(
     originalEnding,
     endingCounts,
     normalized,
+    ...(retiredHashes === undefined ? {} : { retiredHashes }),
   };
 }

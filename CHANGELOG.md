@@ -15,20 +15,6 @@ All notable changes to this project will be documented in this file.
 
 * **edit:** announce an explicit encoding migration on the applied result — one `[MODEL] [W_ENCODING_MIGRATED]` per migrated file, pushed after the write lands, so the abandoned codec and its BOM state are visible where the write happened. (#192)
 
-### Bug Fixes
-
-* **undo:** name the codec a migration edit abandoned when the revert lands — `Restored as UTF-8; the pre-edit <codec> encoding[ and its BOM] is not restored.` — from a verdict taken once at the save seam and carried on the undo pair as additive nullable columns (no version bump), so silence can no longer read as restoration (ADR-0050). (#191)
-
-### Documentation
-
-* **readme:** scope the undo promise to content-at-effective-EOL-as-UTF-8 with the migrated codec+BOM named and the original bytes unrecoverable, and document the encoding surface — refusal, the `normalizeToUtf8` opt-in, `read({ encoding })`, the auto-guess gate, the codec list and the byte-faithful ASCII case — in both READMEs. (#193)
-* **glossary:** add the `encoding migration` entry and the applied-tier `W_ENCODING_MIGRATED` entry beside the EOL disclosures. (#193)
-* **test:** drive `read`/`edit`/`undo_last_edit` over the 11-case encoding matrix — opt-in migration, byte-faithful silence, BOM control, refusal, restart, abort, pre-change row, staleness, multi-item notice and EOL-before-encoding order — pinning on-disk bytes and result text per case. (#193)
-
-## [1.3.0] - 2026-11-25
-
-### Features
-
 * **edit:** add an opt-in `spanMode: hint|strict` served-span policy (`DSH_BETTER_EDIT_SPAN_MODE`, default `hint`). `strict` refuses an edit whose leased span replaces an interior line this session never served — before any write, with a rowless `[E_UNSERVED_RANGE]` that counts the replaced span and lists the unserved file lines; default `hint` still accepts and now discloses via a blank diff gutter and one `[W_UNSERVED_INTERIOR]` applied warning, removing the false blanket-refusal promise (ADR-0045, closes #141). (#173)
 
 * **eol:** resolve one effective line ending per write from a four-rung ladder — `DSH_BETTER_EDIT_EOL` > the new `eol` config (`AUTO` | `LF` | `CRLF` | `CR`, default `AUTO`) > the file's dominant terminator (whole-file; ties prefer LF, then CRLF, then CR) > the system ending (`\r\n` on Windows, `\n` elsewhere) — from terminator counts taken once at decode, so a file with no terminator gets the platform one and a forced rung names its own source (ADR-0047). (#175)
@@ -39,6 +25,9 @@ All notable changes to this project will be documented in this file.
 
 ### Bug Fixes
 
+* **undo:** name the codec a migration edit abandoned when the revert lands — `Restored as UTF-8; the pre-edit <codec> encoding[ and its BOM] is not restored.` — from a verdict taken once at the save seam and carried on the undo pair as additive nullable columns (no version bump), so silence can no longer read as restoration (ADR-0051). (#191)
+
+* **store:** align checksum miss and carry anchors across homogeneous runs (#197)
 * **edit:** render `E_BATCH_ABORT` as one verdict line plus one bullet per failing item, stop re-echoing served rows, and state the failure count against the submitted total (#174)
 
 * **edit:** write every edit at one resolved effective EOL and disclose the rewrite with `[MODEL] [W_EOL_REWRITTEN] ... N terminators changed. Undo restores normalized content.` only after the write landed, so a mixed file no longer loses its mixture silently while the bytes it kept are re-spelled at the new ending; a terminator a new line introduces is not counted, and `write`/`str_replace_editor` bytes are unchanged (ADR-0047). (#175)
@@ -47,12 +36,17 @@ All notable changes to this project will be documented in this file.
 
 ### Documentation
 
+* **readme:** scope the undo promise to content-at-effective-EOL-as-UTF-8 with the migrated codec+BOM named and the original bytes unrecoverable, and document the encoding surface — refusal, the `normalizeToUtf8` opt-in, `read({ encoding })`, the auto-guess gate, the codec list and the byte-faithful ASCII case — in both READMEs. (#193)
+* **glossary:** add the `encoding migration` entry and the applied-tier `W_ENCODING_MIGRATED` entry beside the EOL disclosures. (#193)
+
 * **adr:** record ADR-0047 — EOL normalization, normalized undo and the `eol` config, with the upstream `aa10e61`/ADR-0019 §1–§4 referent and the downstream deviations named. (#175)
 * **readme:** replace the "exact line endings" undo promise with the effective-EOL contract, document `eol`/`DSH_BETTER_EDIT_EOL`, and state the `[W_MIXED_EOL]`/`[W_EOL_REWRITTEN]` disclosures in both READMEs and the glossary. (#175)
 * **adr:** record ADR-0048 — diff alignment follows anchor identity (#176)
 * **edit:** document `dry_run` in the model guidance — when to preview (complex multi-range or high-risk, not routinely), that added rows print a blank gutter and grant no new anchors, and that a preview costs an extra turn — and record ADR-0049 covering admission, execution and the serve rulings. The seeded `<preset>/edit.md` guidance is written once and never re-rendered on upgrade, so an existing install sees the new bullet only after resetting that file to blank. (#186)
 
 ### Tests
+
+* **test:** drive `read`/`edit`/`undo_last_edit` over the 11-case encoding matrix — opt-in migration, byte-faithful silence, BOM control, refusal, restart, abort, pre-change row, staleness, multi-item notice and EOL-before-encoding order — pinning on-disk bytes and result text per case. (#193)
 
 * **eol:** drive the public `read`/`edit`/`undo_last_edit` tools over the end-to-end matrix — three mixed majorities, three uniform endings, a zero-terminator file (the `system` rung), and the `env` > `config` > `file` precedence on one mixed fixture — pinning the read notice, post-edit bytes, applied warning, post-undo bytes and undo mixture clause per case. (#175)
 

@@ -277,6 +277,12 @@ export interface ServeContext {
    * verdict at all.
    */
   fullRead: boolean;
+  /**
+   * Anchors the read's checksum-miss alignment retired — deleted lines the latest lineage held.
+   * Added to the session's retired set inside the same serve write, so a later fresh allocation
+   * can never hand one out. Independent of `fullRead`: a partial page still proves the deletion.
+   */
+  retiredHashes?: Iterable<string>;
 }
 
 /**
@@ -404,6 +410,9 @@ export async function recordServed(
       // so a page still commits the content it showed. Gate this and a displayed anchor becomes
       // uneditable (`E_UNKNOWN_ANCHOR` on page-then-edit, 12 cells across 7 files).
       grantServeLeases(store, sessionKey, path, rows, full?.hashes, full?.content);
+      // AFTER the full-read clear above, so a full read clears the set and then re-adds the anchors
+      // its own alignment just retired; a partial read merges them into the set it kept.
+      addRetiredAnchors(store, sessionKey, path, full?.retiredHashes ?? []);
     });
     return true;
   } catch (error) {

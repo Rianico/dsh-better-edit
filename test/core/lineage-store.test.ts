@@ -178,16 +178,16 @@ describe("lineage-store — patience pairing engine", () => {
     ]);
   });
 
-  it("a duplicate exterior insert leaves the duplicated identity unpaired", () => {
+  it("a duplicate exterior insert carries the prior identity and mints the tail", () => {
     const { lineage } = open();
     commit(lineage, "/dup.ts", "alpha\nbeta\ngamma", "A");
     const duplicated = "alpha\nalpha\nbeta\ngamma";
     commit(lineage, "/dup.ts", duplicated, "B");
-    // The inserted line duplicates a served line, so `alpha` is not locally unique in the
-    // new snapshot and cannot pin. The leaf interval [alpha] vs [alpha, alpha] has two
-    // optimal embeddings, so BOTH occurrences take fresh ids (4, 5) — the conservative
-    // direction: no occurrence is guessed to be the original.
-    expect(idsOf(lineage, "/dup.ts", duplicated)).toEqual([4, 5, 2, 3]);
+    // WHY (T3): `pairLineIds` now runs `pairLineage` (engine + homogeneous-run carry), so the
+    // run's k-th copy keeps the k-th prior identity — the first `alpha` carries id 1 and only
+    // the current tail (`alpha`) mints fresh. The engine leaves the pair unpaired; the carry
+    // fills that gap on raw-uniform evidence, which is the same rule the read path serves by.
+    expect(idsOf(lineage, "/dup.ts", duplicated)).toEqual([1, 4, 2, 3]);
   });
 });
 

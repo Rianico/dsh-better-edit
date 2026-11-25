@@ -124,3 +124,6 @@ export {
   VACUUM_RETIRED_PIN_MS,
   REPORT_CONTEXT_CAP,
 } from "./vacuum.js";
+// The checksum-miss alignment reads the prior lineage through the store surface; the module entry
+// re-exports its row shape so consumers never reach into the lineage module directly.
+export type { LineageRow } from "./lineage-store.js";

@@ -217,6 +217,17 @@ export function canonDigest(line: string): string {
   return String(xxh32(canon(line)));
 }
 
+/**
+ * SAFETY: the raw-line digest — the exact value `line_lineage.raw_hash` persists (#188). The
+ * trim-only canon folds the edge whitespace class, so `"    }"` and `"  }"` share one
+ * `canonDigest` while remaining byte-distinct lines with distinct anchors; the ordinal carry
+ * compares raw digests so it can prove a prior run holds ONE spelling. A missing value (a legacy
+ * row) is no evidence, and the carry gate fails closed on it rather than matching by inference.
+ */
+export function rawDigest(line: string): string {
+  return String(xxh32(line));
+}
+
 function getCanon(cache: Map<string, string>, line: string): string {
   let v = cache.get(line);
   if (v !== undefined) return v;
@@ -280,6 +291,52 @@ export function lineHashesPure(
     if (e instanceof AnchorSpaceExhaustedError) throw e;
     if (isAnchorSpaceExhaustion(e)) {
       const rc = retiredCount ?? reservedHashes.size;
+      const sc = servedCount ?? 0;
+      throw new AnchorSpaceExhaustedError(rc, sc);
+    }
+    throw e;
+  }
+  return hashes;
+}
+
+/**
+ * Fresh allocation for a line set whose paired lines already own an anchor: every entry of
+ * `carried` (1-based line number -> anchor) is served as-is, and every other line takes the same
+ * raw-byte-derived anchor `lineHashesPure` would give it, probing around the used slots.
+ *
+ * `blocked` is the caller's reservation: session-retired anchors, and the prior anchors alignment
+ * retired as duplicates, so a fresh line can never reclaim a spelling a lease still names. Every
+ * carried anchor joins that reservation too — one writer, so a caller cannot accidentally hand out
+ * a duplicate of an already-filled position.
+ */
+export function lineHashesAligned(
+  content: string,
+  carried: ReadonlyMap<number, string>,
+  blocked: ReadonlySet<string> = new Set(),
+  reservedCount?: number,
+  servedCount?: number,
+): string[] {
+  const lines = splitLines(content);
+  const hashes = new Array<string>(lines.length);
+  const used = new Uint32Array(BITSET_WORDS);
+  for (const hash of blocked) markHashUsed(used, hash);
+  for (const anchor of carried.values()) markHashUsed(used, anchor);
+  const hint = { value: 0 };
+  try {
+    for (let i = 0; i < lines.length; i++) {
+      const carriedHash = carried.get(i + 1);
+      if (carriedHash !== undefined) {
+        hashes[i] = carriedHash;
+        continue;
+      }
+      const baseIdx = (xxh32(lines[i]!) >>> 14) % HASH_SPACE;
+      hashes[i] = assignHash(used, baseIdx, hint);
+    }
+  } catch (e: unknown) {
+    // Rethrow identity: an already-typed exhaustion keeps its counts untouched.
+    if (e instanceof AnchorSpaceExhaustedError) throw e;
+    if (isAnchorSpaceExhaustion(e)) {
+      const rc = reservedCount ?? blocked.size;
       const sc = servedCount ?? 0;
       throw new AnchorSpaceExhaustedError(rc, sc);
     }

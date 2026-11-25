@@ -234,20 +234,22 @@ describe("vacuum — per-path and global budgets", () => {
 
   it("cell 02 global budget: oldest-created_at rows are evicted until the total holds", () => {
     const { db } = open();
-    const perRow = VACUUM_LINEAGE_BYTES_PER_LINE * 400_000; // 16 MB per synthetic row
+    const linesPerRow = 300_000; // 15.6 MB/row at 52 B/line: four rows overflow the 50 MB budget, three fit
+    const perRow = VACUUM_LINEAGE_BYTES_PER_LINE * linesPerRow;
     const hashA = "2:bulk-a";
     const hashB = "2:bulk-b";
     const hashC = "2:bulk-c";
     const hashD = "2:bulk-d";
     // Explicit distinct stamps: ordering is by created_at and must never depend on wall-clock ties.
-    insertSnapshot(db, "/bulk-a.ts", hashA, 400_000, 1_000);
-    insertSnapshot(db, "/bulk-a.ts", hashB, 400_000, 1_100);
-    insertSnapshot(db, "/bulk-b.ts", hashC, 400_000, 1_200);
-    insertSnapshot(db, "/bulk-b.ts", hashD, 400_000, 1_300);
+    insertSnapshot(db, "/bulk-a.ts", hashA, linesPerRow, 1_000);
+    insertSnapshot(db, "/bulk-a.ts", hashB, linesPerRow, 1_100);
+    insertSnapshot(db, "/bulk-b.ts", hashC, linesPerRow, 1_200);
+    insertSnapshot(db, "/bulk-b.ts", hashD, linesPerRow, 1_300);
 
     const result = vacuumSnapshots(db);
 
     expect(perRow * 4).toBeGreaterThan(VACUUM_GLOBAL_BUDGET_BYTES);
+    expect(perRow * 3).toBeLessThanOrEqual(VACUUM_GLOBAL_BUDGET_BYTES);
     expect(result.evicted).toBe(1);
     expect(result.totalBytes).toBe(perRow * 3);
     expect(result.totalBytes).toBeLessThanOrEqual(VACUUM_GLOBAL_BUDGET_BYTES);
@@ -387,10 +389,12 @@ describe("vacuum — pins", () => {
   it("cell 07 protectSnapshotIds: the in-flight id survives an over-budget sweep", () => {
     const { db } = open();
     const paths = ["/protect-0.ts", "/protect-1.ts", "/protect-2.ts", "/protect-3.ts"];
-    const oldestId = insertSnapshot(db, paths[0]!, "7:oldest", 400_000, 2_000);
-    insertSnapshot(db, paths[1]!, "7:second", 400_000, 2_100);
-    insertSnapshot(db, paths[2]!, "7:third", 400_000, 2_200);
-    insertSnapshot(db, paths[3]!, "7:fourth", 400_000, 2_300);
+    const linesPerRow = 300_000; // 15.6 MB/row at 52 B/line: four rows overflow the 50 MB budget, three fit
+    const perRow = VACUUM_LINEAGE_BYTES_PER_LINE * linesPerRow;
+    const oldestId = insertSnapshot(db, paths[0]!, "7:oldest", linesPerRow, 2_000);
+    insertSnapshot(db, paths[1]!, "7:second", linesPerRow, 2_100);
+    insertSnapshot(db, paths[2]!, "7:third", linesPerRow, 2_200);
+    insertSnapshot(db, paths[3]!, "7:fourth", linesPerRow, 2_300);
 
     const unprotected = vacuumSnapshots(db);
     expect(unprotected.evicted).toBe(1);
@@ -398,17 +402,18 @@ describe("vacuum — pins", () => {
 
     // Rebuild, and protect exactly the row the oldest-first sweep would take first.
     const second = open();
-    const protectedId = insertSnapshot(second.db, paths[0]!, "7:oldest", 400_000, 2_000);
-    insertSnapshot(second.db, paths[1]!, "7:second", 400_000, 2_100);
-    insertSnapshot(second.db, paths[2]!, "7:third", 400_000, 2_200);
-    insertSnapshot(second.db, paths[3]!, "7:fourth", 400_000, 2_300);
+    const protectedId = insertSnapshot(second.db, paths[0]!, "7:oldest", linesPerRow, 2_000);
+    insertSnapshot(second.db, paths[1]!, "7:second", linesPerRow, 2_100);
+    insertSnapshot(second.db, paths[2]!, "7:third", linesPerRow, 2_200);
+    insertSnapshot(second.db, paths[3]!, "7:fourth", linesPerRow, 2_300);
     const guarded = vacuumSnapshots(second.db, { protectSnapshotIds: [protectedId] });
 
     expect(guarded.evicted).toBe(1);
     expect(countSnapshots(second.db, paths[0]!)).toBe(1);
     expect(countSnapshots(second.db, paths[1]!)).toBe(0);
     expect(oldestId).toBe(protectedId);
-    expect(VACUUM_LINEAGE_BYTES_PER_LINE * 400_000 * 4).toBeGreaterThan(VACUUM_GLOBAL_BUDGET_BYTES);
+    expect(perRow * 4).toBeGreaterThan(VACUUM_GLOBAL_BUDGET_BYTES);
+    expect(perRow * 3).toBeLessThanOrEqual(VACUUM_GLOBAL_BUDGET_BYTES);
   });
 
   it("cell 08 counters and leases are never touched, even for a fully evicted path", () => {

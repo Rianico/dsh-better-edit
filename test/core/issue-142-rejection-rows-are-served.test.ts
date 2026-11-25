@@ -282,71 +282,39 @@ describe("issue #142 — a rejection's echoed rows are recorded as served", () =
     });
   });
 
-  it("a window that would duplicate an already-served anchor is declined", async () => {
-    // The conservative arm: the echo's anchors come from the edit path's content-addressed
-    // assignment, the mirror from the read path's served-stable one. When the two disagree
-    // for one line (here an external insert duplicates a served line, so the inserted `beta`
-    // gets the anchor the older `beta` already holds), recording the echo would put one
-    // anchor at two positions — ADR-0018's duplicate state. The window is declined whole and
-    // the mirror stays byte-identical, so the recovery is one bounded read.
+  it("an exterior duplicate insert no longer collides with a served anchor (T3)", async () => {
+    // WHY (T3): the duplicate insert used to make the echo's content-addressed anchor collide
+    // with the served one, so the window was declined. With read-path lineage alignment the
+    // served `beta` keeps its own anchor and the inserted twin gets a fresh one, so the edit
+    // applies on the served line. The row-carrying rejection this cell used to pin is now
+    // exercised by the torn-span cells above (and by
+    // test/arch/rejection-payload-region.test.ts).
     const source = "alpha\nbeta\ngamma\ndelta\n";
     const changed = "beta\nalpha\nbeta\ngamma\ndelta\n";
 
-    // Control (no intervening rejection): what the fresh read serves after the external write.
-    let controlAnchors: string[] = [];
-    await withTempFile("i142-dup-control.txt", source, async ({ cwd, path }) => {
-      const harness = setupIntegrationTest(cwd);
-      await harness.readTool.execute("read", { path: "i142-dup-control.txt" });
-      await writeFile(path, changed, "utf-8");
-      controlAnchors = rowAnchors(
-        getText(await harness.readTool.execute("read", { path: "i142-dup-control.txt" })),
-      );
-      expect(controlAnchors).toHaveLength(5);
-    });
-
     await withTempFile("i142-dup.txt", source, async ({ cwd, path }) => {
       const harness = setupIntegrationTest(cwd);
-      const fullKey = sessionKeyFor(harness.sessionKey);
       const read1 = getText(await harness.readTool.execute("read", { path: "i142-dup.txt" }));
-      const anchors = rowAnchors(read1);
       const beta = rowOf(read1, "beta")[0];
 
       await writeFile(path, changed, "utf-8");
-      const servedBefore = await servedAt(cwd, fullKey, path);
-      const leasesBefore = await leasesAt(cwd, fullKey, path, anchors);
-
-      const rejection = await attemptEdit(harness, {
+      const applied = await attemptEdit(harness, {
         path: "i142-dup.txt",
         edits: [[beta, beta, "BETA"]],
       });
-      expect(rejection.applied).toBe(false);
-      expect(rejection.message).toMatch(/- edits\[0\] \(i142-dup\.txt\) \[E_STALE_RANGE\]:/);
-      expect(rejection.message).toContain("were NOT recorded as served");
-      expect(rejection.message).not.toContain("were recorded as served");
-      expect(rejection.message).toContain("re-read");
+      // Applies on the SERVED line (the original `beta`), not on the inserted twin.
+      expect(applied.applied).toBe(true);
+      expect(await readFile(path, "utf-8")).toBe("beta\nalpha\nBETA\ngamma\ndelta\n");
 
-      // Declined whole: nothing in the mirror moved, no lease was granted.
-      expect(await servedAt(cwd, fullKey, path)).toEqual(servedBefore);
-      expect(await leasesAt(cwd, fullKey, path, anchors)).toEqual(leasesBefore);
-
-      // The next fresh read has no duplicate and is the control's anchor list.
-      const fresh = rowAnchors(
-        getText(await harness.readTool.execute("read", { path: "i142-dup.txt" })),
-      );
+      const freshRead = getText(await harness.readTool.execute("read", { path: "i142-dup.txt" }));
+      const fresh = rowAnchors(freshRead);
+      // The next fresh read has no duplicate anchors.
       expect([...new Set(fresh)]).toHaveLength(fresh.length);
-      expect(fresh).toEqual(controlAnchors);
-
-      // The named recovery works: a bounded read, then the edit applies.
-      const firstRow = rowOf(
-        getText(await harness.readTool.execute("read", { path: "i142-dup.txt" })),
-        "beta",
-      )[0];
-      const fixed = await attemptEdit(harness, {
-        path: "i142-dup.txt",
-        edits: [[firstRow, firstRow, "BETA"]],
-      });
-      expect(fixed.applied).toBe(true);
-      expect(await readFile(path, "utf-8")).toBe("BETA\nalpha\nbeta\ngamma\ndelta\n");
+      // The inserted twin keeps its own (fresh) anchor; it never inherited the served one, and
+      // the served anchor is not re-issued anywhere in the file. (The rewritten line itself
+      // necessarily rotates its anchor: anchors derive from the line's raw bytes.)
+      expect(rowOf(freshRead, "beta")[0]).not.toBe(beta);
+      expect(fresh).not.toContain(beta);
     });
   });
 });

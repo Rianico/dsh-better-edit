@@ -25,19 +25,22 @@ beforeAll(async () => {
  * rejects `E_UNKNOWN_ANCHOR` (`verifyServedRange`), an ambiguous boundary keeps
  * `E_UNSERVED_RANGE` with rows,
  * and the `verifyRebasedSpan` gate keeps `E_STALE_RANGE`. The edit NEVER re-binds onto a
- * surviving twin.
+ * surviving twin. Under the aligned edit load (T3, ADR-0050) a deleted twin's anchor is
+ * ABSENT from the aligned buffer, so the refusal lands on the stale-anchor arm
+ * (`E_STALE_ANCHOR`, anchors that resolve to nothing) before any lease-identity interception
+ * can mint `E_TARGET_LOST`; that interception arm stays covered by
+ * `test/core/lease-resolve-seam.test.ts` (direct `verifyRebasedSpan` calls).
  *
  * Case 1 — externally deleting the anchored line leaves the surviving byte-identical
  * twin holding the deleted line's anchor; the edit must reject and write nothing.
  * Refutability (a) identity arms, not the position check: Case 1 runs on the tool path (a lease
- * source is present), so the boundary reaches `interceptLeaseBoundaries` before any placement or
- * gate check, and the position check is never reached for it. Knocking out the interception's
- * stale-identity landing — the `E_TARGET_LOST` mint
- * (`src/hashline/served-evidence.ts`, `interceptLeaseBoundaries`) — demotes the rejection to the
- * downstream `verifyRebasedSpan` arms (its retired and rebind-mismatch arms), which report
- * `E_STALE_RANGE`: this test goes red either way. The seam's
- * arm-level pins moved to `test/core/lease-resolve-seam.test.ts` (direct `verifyRebasedSpan` calls).
- * The twin keeps the deleted line's hash and its canon still matches — only identity disagrees. The
+ * source is present), and the alignment leaves the deleted line's anchor with no position in
+ * the buffer, so `valEdit` reports it stale and `E_STALE_ANCHOR` refuses the submission. Drop
+ * the aligned load (or its retired-anchor block) and the surviving twin's spelling would
+ * resolve again — this test goes red. The twin keeps the deleted line's hash and its canon
+ * still matches; only identity disagrees, and under alignment identity decides before content.
+ * The lease-identity interception (`E_TARGET_LOST`) is pinned at arm level by
+ * `test/core/lease-resolve-seam.test.ts` (direct `verifyRebasedSpan` calls). The
  * position check (`verifyServedRange`'s lease-less fallback) is pinned by the pos-free test in this
  * file (`:159`), not Case 1.
  *
@@ -50,7 +53,7 @@ beforeAll(async () => {
  * That search IS the "heal and proceed" arm this contract removes.
  */
 describe("deleted twin anchor (exact position lock)", () => {
-  it("rejects E_TARGET_LOST and writes nothing when the anchored line was deleted externally", async () => {
+  it("rejects E_STALE_ANCHOR and writes nothing when the anchored line was deleted externally", async () => {
     const initial =
       "export function alpha() {\n" +
       "  return compute(value);\n" +
@@ -89,17 +92,16 @@ describe("deleted twin anchor (exact position lock)", () => {
       }
       // The call rejects …
       expect(error).toBeDefined();
-      // … with E_TARGET_LOST at the interception (surfaced inside the batch wrapper) …
-      expect(String((error as Error).message)).toMatch(/E_TARGET_LOST/);
-      // FU-4 granular shape: the TARGET_LOST headline names the gone line identity and
-      // carries the re-target remedy, with NO rows — the payload renders no `Current range:`
-      // heading (the envelope's own `Current on-disk range` note is not a payload row), and
-      // no retry hint.
+      // … with E_STALE_ANCHOR at anchor resolution (surfaced inside the batch wrapper): the
+      // aligned buffer holds no line with the deleted twin's spelling, so the anchor is stale —
+      // the rowless shape: the headline names the anchor and carries the re-read remedy, with
+      // NO rows (the envelope's own `Current on-disk range` note is not a payload row), and no
+      // retry hint.
       const message = String((error as Error).message);
+      expect(message).toMatch(/E_STALE_ANCHOR/);
       expect(message).toContain(
-        "line 2 in twins.ts no longer resolves to the line identity it was served with.",
+        `1 stale anchor in twins.ts: "${firstAnchor}". Re-read for fresh anchors.`,
       );
-      expect(message).toContain("Read the file and re-target.");
       expect(message).not.toContain("Current range:");
       expect(message).not.toContain("Retry with these anchors");
       // … and the file on disk is byte-identical to the externally-written
@@ -206,12 +208,13 @@ describe("deleted twin anchor (exact position lock)", () => {
     expect(servedCanons).toEqual([canon("other"), canon("twin")]);
   });
 
-  it("rejects E_TARGET_LOST when a WINDOWED read served the twin (leased boundary route)", async () => {
+  it("rejects E_STALE_ANCHOR when a WINDOWED read served the twin (alignment makes the spelling absent)", async () => {
     // The reachable route this pins: the epoch pin was written only inside
     // `if (isFullRead)` and `isFullRead` requires `rows.length === full.hashes.length`, so a
-    // WINDOWED read never pinned it for that (session, path). Since FU-4 the windowed
-    // read's served rows still carry leases, so the deleted boundary is caught by
-    // `interceptLeaseBoundaries` (→ `E_TARGET_LOST`) before the position check matters;
+    // WINDOWED read never pinned it for that (session, path). The windowed read's served rows
+    // still carry leases. Since T3 the edit load aligns to the latest lineage, so the deleted
+    // twin's spelling is ABSENT from the buffer and the refusal happens at anchor resolution
+    // (`E_STALE_ANCHOR`) — before the lease-identity interception could mint `E_TARGET_LOST`;
     // the pos-free route itself is pinned by the direct cell above. Before the position
     // check was made unconditional this edit silently applied to the surviving twin.
     const initial =
@@ -256,7 +259,7 @@ describe("deleted twin anchor (exact position lock)", () => {
         error = e;
       }
       expect(error).toBeDefined();
-      expect(String((error as Error).message)).toMatch(/E_TARGET_LOST/);
+      expect(String((error as Error).message)).toMatch(/E_STALE_ANCHOR/);
       // Byte-identical: the edit never re-bound onto the surviving twin.
       expect(await readFile(path, "utf-8")).toBe(external);
     });
