@@ -134,8 +134,8 @@ kQm│}
 # $DSH_HOME/plugins/dsh-better-edit/config.yaml
 storeDir: central # 存储位置："central"（默认，位于 $DSH_HOME/.../runtime/<name>-<hash8>/）| "workspace"（旧版 <ws>/.dsh_better_edit/）| "/abs/path"（自定义根目录）
 autoGitignore: false # 仅 workspace：当 .git 存在但 .gitignore 缺少 .dsh_better_edit/ 时，true = 自动追加 ".dsh_better_edit/"，false = 仅告警一次
-spanMode: hint # hint | strict——strict 拒绝被替换却从未提供的内部行
-eol: AUTO # 行尾：AUTO（沿用文件主导行尾）| LF | CRLF | CR
+spanMode: hint # hint | strict——strict 拒绝替换本会话从未提供的内部行（审计 / CI 场景）
+eol: AUTO # 行尾：AUTO（文件主导行尾，其次系统行尾）| LF | CRLF | CR——配 .gitattributes 的仓库用 LF
 undo_ttl_s: 604800 # 撤销历史 TTL（秒）；-1 = 永久保留（默认 604800 = 7 天）
 storeMaxAgeS: 2592000 # central 清理：runtime/<name>-<hash8>/ 目录最大闲置时长（秒），超时后被清理（默认 2592000 = 30 天）
 storeMaxTotalBytes: 524288000 # central 清理：runtime/ 下总字节数上限，超限后按 LRU 清理（默认 524288000 = 500 MB)
@@ -153,9 +153,9 @@ DSH_BETTER_EDIT_SPAN_MODE=hint|strict
 DSH_BETTER_EDIT_EOL=AUTO|LF|CRLF|CR          # 大小写不敏感
 ```
 
-`spanMode` 不提供按调用覆盖；策略归 profile 所有。详见 [ADR-0045](docs/adr/0045-strict-span-mode.md)。
+**span 模式**——`strict` 用于审计、CI 或代码评审会话：任何未经检视的内部行都不得被替换；`hint` 用于交互式工作：模型通常清楚自己替换的范围。`hint`（默认）应用编辑并以 `[W_UNSERVED_INTERIOR]` 披露被替换的内部行；`strict` 在写入前以无行的 `[E_UNSERVED_RANGE]` 拒绝，统计被替换的范围并列出从未提供的文件行号。不提供按调用覆盖——策略归 profile 所有。详见 [ADR-0045](docs/adr/0045-strict-span-mode.md)。
 
-**行尾。** 每次 `edit` 只写**一种**生效行尾：优先 `DSH_BETTER_EDIT_EOL`，其次上面配置里的 `eol`，其次文件的主导行尾（平局依次取 LF、CRLF、CR），最后才是系统行尾（Windows `\r\n`，其他 `\n`）。`AUTO` 沿用文件主导行尾，`LF`/`CRLF`/`CR` 强制指定。混合行尾的文件会在读取时说明——`[W_MIXED_EOL] Mixed EOL: 2 CRLF, 1 LF. All edits normalize to CRLF (file).`——而真正改写了行尾的编辑会报告 `[MODEL] [W_EOL_REWRITTEN] EOL normalized to CRLF (file): 1 terminators changed. Undo restores normalized content.`；`undo_last_edit` 在同一个生效行尾上恢复，并在编辑前是混合行尾时明确说明混合已无法还原。
+**行尾。** 每次 `edit` 只写**一种**生效行尾，依次解析 `DSH_BETTER_EDIT_EOL` > 配置里的 `eol` > 文件的主导行尾（全文件；平局依次取 LF、CRLF、CR）> 系统行尾（Windows `\r\n`，其他 `\n`）。`AUTO` 沿用文件主导行尾；文件**完全没有**行尾符时落到**系统行尾**——同一个零行尾文件在 Windows 主机上写 `\r\n`，在 Linux 主机上写 `\n`。跨平台且依赖 `.gitattributes` 的仓库请设 `eol: LF`，让所有主机写出同一种拼写；`LF`/`CRLF`/`CR` 强制指定行尾。混合行尾的文件会在读取时说明——`[W_MIXED_EOL] Mixed EOL: 2 CRLF, 1 LF. All edits normalize to CRLF (file).`——而真正改写了行尾的编辑会报告 `[MODEL] [W_EOL_REWRITTEN] EOL normalized to CRLF (file): 1 terminators changed. Undo restores normalized content.`；`undo_last_edit` 在同一个生效行尾上恢复，并在编辑前是混合行尾时明确说明混合已无法还原。
 
 **文件编码。** 一次 `read` 会记录文件的 `{encoding, hasBOM}`，而后续写入必须经过永远编码为 UTF-8 的纯文本通道复现这些字节。无法往返的旧文件（UTF-16，或含非 ASCII 内容的 `windows-1251`）因此以 `[E_ENCODING_UNWRITABLE]` 拒绝——不写任何字节，不做静默转码，已提供的锚点仍然描述磁盘上的字节。在 `$DSH_HOME/plugins/dsh-better-edit/config.yaml` 中以 `normalizeToUtf8: true`（`DSH_BETTER_EDIT_NORMALIZE_TO_UTF8=true`，默认 `false`）选择启用：下一次编辑把文件迁移到 UTF-8——这是单向门，应用结果以 `[W_ENCODING_MIGRATED]` 载明，撤销会指名但永不反转（`undo_last_edit` 以 UTF-8 恢复文本；编码及其 BOM 已丢失）。以 `read({ encoding })`（例如 `windows-1251`）在另一种编码下重新打开字节；`autoGuessEncoding` 门（`DSH_BETTER_EDIT_AUTO_GUESS_ENCODING`，默认 `false`）只在确定性的 BOM → 严格 UTF-8 检测失败后才自动解码：它没有把握的猜测会随读取一并报告，并列出 Top-3 候选，而无法解码的文件则携带 Top-3 被拒绝，供模型挑选。猜测范围限于 `supportedEncodings`（`DSH_BETTER_EDIT_SUPPORTED_ENCODINGS`，默认 `gbk, big5, shift_jis, euc-kr, windows-1251, iso-8859-1`）；UTF-8 恒被接受，不在该名单之内——确定性的 BOM → 严格 UTF-8 通道先于任何猜测运行。挂着旧编码名的纯 ASCII 文件是字节忠实的，会静默编辑——它的字节本来就是 UTF-8。
 

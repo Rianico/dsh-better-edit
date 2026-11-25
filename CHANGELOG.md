@@ -43,6 +43,7 @@ All notable changes to this project will be documented in this file.
 * **readme:** replace the "exact line endings" undo promise with the effective-EOL contract, document `eol`/`DSH_BETTER_EDIT_EOL`, and state the `[W_MIXED_EOL]`/`[W_EOL_REWRITTEN]` disclosures in both READMEs and the glossary. (#175)
 * **adr:** record ADR-0048 — diff alignment follows anchor identity (#176)
 * **edit:** document `dry_run` in the model guidance — when to preview (complex multi-range or high-risk, not routinely), that added rows print a blank gutter and grant no new anchors, and that a preview costs an extra turn — and record ADR-0049 covering admission, execution and the serve rulings. The seeded `<preset>/edit.md` guidance is written once and never re-rendered on upgrade, so an existing install sees the new bullet only after resetting that file to blank. (#186)
+* **docs:** name how to choose `spanMode` — `strict` for audit, CI or review sessions where an unreviewed interior must never be replaced, `hint` for interactive work where the model usually knows the span — and state that `eol: AUTO` falls back to the system ending (`\r\n` on Windows, `\n` elsewhere) for a file that spells no terminator, with `eol: LF` advised for cross-platform repositories relying on `.gitattributes`; the seeded `config.yaml` comments carry the same guidance, and both READMEs mirror it. (#203)
 
 ### Tests
 
