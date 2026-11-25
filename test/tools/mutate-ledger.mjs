@@ -70,7 +70,7 @@ const T = {
     "batch abort (one part rejecting) records nothing — served rows and grants byte-identical",
   noopLoop:
     "noop-loop rejection records nothing — served rows and grants byte-identical, next read ≡ control",
-  malformed: "malformed anchor on an existing file rejects E_BATCH_ABORT and writes nothing",
+  malformed: "malformed anchor on an existing file rejects E_MALFORMED_ANCHOR and writes nothing",
 };
 
 /** T4 CP1-r2 cell titles (ADR-0018 "T4 ledger" / ADR-0013 "Reproduce"). */
@@ -260,6 +260,15 @@ const SESS_IMPORT = {
   new: '  retireAnchors,\n  recordServed,\n} from "../session-view.js";',
 };
 
+/**
+ * #215 moved the rejection recorder out of `collectAbortPart` and into the assembler seam, and it
+ * removed the zero-row `echoRows` fallback these two mutants injected (the payload no longer unions
+ * a window nobody proved served). The recipes below are still the pre-#215 text, which was ALREADY
+ * drifted at base `1018480f` (the anchor's `: undefined;` indentation moved in an earlier
+ * refactor), so they refuse loudly rather than red a false set. Re-deriving M1/M2 is a lane-close
+ * sweep item, not a #215 port.
+ */
+
 const M1_TITLES = [
   T.twinRecords,
   T.twinGrants,
@@ -272,9 +281,11 @@ const M1_TITLES = [
 
 const MUTANTS = {
   M1: {
-    what: "full write at collectAbortPart (rows + snapshot context)",
+    what: "full write at the rejection recorder (rows + snapshot context)",
     scope: [CONTRACT],
     expected: M1_TITLES,
+    caveat:
+      "retired carrier: targets the pre-#215 `collectAbortPart` site (drifted since base 1018480f) and its fake row source was that site's zero-row fallback; re-derive at lane close",
     edits: [
       SESS_IMPORT,
       {
@@ -294,6 +305,8 @@ const MUTANTS = {
     what: "same site, rows only — no snapshot context",
     scope: [CONTRACT],
     expected: M1_TITLES.filter((t) => t !== T.twinGrants),
+    caveat:
+      "same drifted site as M1: the zero-row fallback that gave the mutant a row source is gone (#215); re-derive at lane close",
     edits: [
       SESS_IMPORT,
       {
@@ -310,6 +323,8 @@ const MUTANTS = {
     what: "full write at the batch noop guard's call site",
     scope: [CONTRACT],
     expected: [T.noopLoop],
+    caveat:
+      "drifted since base 1018480f: the call site is now indented 8 spaces (the recipe matches 6), so the anchor is refused loudly — re-derive at lane close",
     edits: [
       SESS_IMPORT,
       {
@@ -329,8 +344,9 @@ const MUTANTS = {
     scope: [CONTRACT],
     expected: [T.malformed],
     caveat:
-      "the RED is the cause assertion (contract :759); the envelope assertion (:758) passes because " +
-      "the E_BATCH_ABORT envelope survives, and the two nothing-written asserts (:760-761) are NOT reached",
+      "the RED is the malformed-anchor cell: the mutant makes the parser accept the token, so the " +
+      "refusal carries a different code and the E_MALFORMED_ANCHOR assertion fails; the " +
+      "nothing-recorded and nothing-written asserts are NOT reached",
     edits: [
       {
         file: ANCHOR_PIPELINE,

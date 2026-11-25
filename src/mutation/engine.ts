@@ -6,9 +6,9 @@
  * content, the noop-loop guard, and the persist-undo → write → restore
  * Transaction (persist-undo → write → restore) is owned by Mutation, not this engine.
  *
- * The model-facing contract lives here unchanged: E_BATCH_ABORT,
- * E_NOOP_LOOP, E_UNDO_UNAVAILABLE carry byte-identical messages, and
- * a rejection rethrows with the current-range echo and records/grants nothing.
+ * The model-facing contract lives here unchanged: E_NOOP_LOOP and E_UNDO_UNAVAILABLE carry
+ * byte-identical messages, and every batch rejection routes through the one assembler in
+ * `./batch-rejection.ts`, which records the rows it shows (ADR-0043) before it throws.
  * @module dsh-better-edit/mutation/engine
  */
 
@@ -31,7 +31,7 @@ import { buildNeverServedEditHint } from "../hashline/served-guard.js";
 import { encodingHintAtVersion } from "../file-encoding-state.js";
 import { loadConfig } from "../store-config.js";
 import type { SpanMode } from "../span-mode.js";
-import { recordRejectionRows } from "./rejection-serve.js";
+import { throwBatchRejection, type BatchFailure } from "./batch-rejection.js";
 
 function promotionWarning(retiredSize: number, servedLen: number): string {
   // Soft promotion notice: plain non-header text (no [E_] code, no audience).
@@ -102,7 +102,7 @@ import {
 import type { ResolvedRange } from "../hashline/served-evidence.js";
 import type { ServedRow } from "../hashline/anchor-pipeline.js";
 import { DomainError, FRESH_READ_HEADING, formatWarning } from "../domain-errors.js";
-import type { ErrorPayloadMap, RangeCause } from "../domain-errors.js";
+import type { ErrorPayloadMap } from "../domain-errors.js";
 import type { EditMode } from "../contract.js";
 import type { ServedPersistence } from "../hash-store.js";
 import { clearNoopLoop, noopPayloadKey, trackNoopPayload } from "../noop-guard.js";
@@ -282,9 +282,10 @@ export interface ApplyOneResult {
  *
  * `onReject` owns the reject-and-serve policy: it receives resolve/verify
  * failures (and the edit that failed, when resolved) and MUST throw. The
- * single path rethrows the original anchor error; the batch path wraps with
- * E_BATCH_ABORT plus the current-range echo. A rejection records and grants
- * nothing — the recovery is the re-read the message already instructs.
+ * single path rethrows the original anchor error; the batch path routes
+ * through the rejection assembler (`./batch-rejection.ts`), which records
+ * the rows it shows (ADR-0043) before it throws.
+ * Rows the message shows land as a serve, so a retry with an echoed anchor resolves.
  */
 export async function applyOne(
   input: ApplyOneInput,
@@ -496,25 +497,6 @@ function echoRowsForItem(edit: HEdit, originalHashes: string[]): ServedRow[] | u
   return buildRangeEcho(Math.min(s, e) + 1, Math.max(s, e) + 1, originalHashes);
 }
 
-/** One failing item's share of an E_BATCH_ABORT envelope (C). */
-type AbortPart = {
-  index: number;
-  /** The item's full failure message (already header-bearing, own `[E_*]` inline). */
-  inner: string;
-  echoRows: ServedRow[] | undefined;
-  /** Serve disposition for the carried rows (ADR-0043); absent when no serve was attempted. */
-  serveNote?: string;
-  /** Structural rows rendered without heading (unions into servedBlock). */
-  fmtBlock: string;
-  /**
-   * Serve outcome for the echoed rows (ADR-0043): `true` = the rows landed as a serve;
-   * `false` = a serve was attempted and rolled back; `undefined` = no serve was attempted
-   * (no claim is made in the message).
-   */
-  rowsServed?: boolean;
-  cause: RangeCause | undefined;
-};
-
 /** Regex for the `line N` / `line N-M` headline forms the producers emit. */
 const HEADLINE_LINE_RE = /\bline (\d+)(?:-(\d+))?\b/g;
 
@@ -545,8 +527,14 @@ function namedReadSentence(currentLines: number[], complete: boolean): string {
  * are shown, none record a serve, none grant a lease. The message keeps the code and its headline,
  * re-anchored to current-file coordinates, and names the lines an anchored read would serve.
  * `undefined` means "no such rule applies to this code".
+ *
+ * The pair is the rowless typed diagnosis (arity one still throws it) plus the rendered message
+ * (the note is a suffix the registry formatter has no slot for).
  */
-function shiftedBufferInner(error: DomainError, frames: BufferFrames): string | undefined {
+function shiftedBufferProjection(
+  error: DomainError,
+  frames: BufferFrames,
+): { error: DomainError; inner: string } | undefined {
   // E_UNVERIFIED_RANGE rows name served coordinates (already current-file lines); every other
   // producer names working-buffer coordinates.
   const rowsAreBufferCoordinates = error.code !== "E_UNVERIFIED_RANGE";
@@ -586,7 +574,7 @@ function shiftedBufferInner(error: DomainError, frames: BufferFrames): string | 
         servedBlock: "",
         ...(firstCurrent !== undefined ? { firstOffendingLine: firstCurrent } : {}),
       });
-      return `${rowless.message}${note}`;
+      return { error: rowless, inner: `${rowless.message}${note}` };
     }
     case "E_STALE_ANCHOR": {
       // SAFETY: switch (error.code) selects the payload shape this cast asserts.
@@ -597,7 +585,7 @@ function shiftedBufferInner(error: DomainError, frames: BufferFrames): string | 
         servedRows: [],
         servedBlock: "",
       });
-      return `${rowless.message}${note}`;
+      return { error: rowless, inner: `${rowless.message}${note}` };
     }
     case "E_UNSERVED_RANGE": {
       // SAFETY: switch (error.code) selects the payload shape this cast asserts.
@@ -609,7 +597,7 @@ function shiftedBufferInner(error: DomainError, frames: BufferFrames): string | 
         servedBlock: "",
         ...(firstCurrent !== undefined ? { firstOffendingLine: firstCurrent } : {}),
       });
-      return `${rowless.message}${note}`;
+      return { error: rowless, inner: `${rowless.message}${note}` };
     }
     case "E_UNVERIFIED_RANGE": {
       // SAFETY: switch (error.code) selects the payload shape this cast asserts.
@@ -627,7 +615,10 @@ function shiftedBufferInner(error: DomainError, frames: BufferFrames): string | 
       // this is the only place the served-coordinate frame is written down: its rows come from
       // `lease.servedLineNumber` (src/hashline/served-evidence.ts:277-292), i.e. served coordinates.
       // A future widening of that catch must keep this frame rule.
-      return `${rowless.message.replace(FRESH_READ_HEADING_SUFFIX_RE, "")}${note}`;
+      return {
+        error: rowless,
+        inner: `${rowless.message.replace(FRESH_READ_HEADING_SUFFIX_RE, "")}${note}`,
+      };
     }
     default:
       // No other row-carrying code reaches the loop resolver today. One that did would escape this
@@ -639,137 +630,20 @@ function shiftedBufferInner(error: DomainError, frames: BufferFrames): string | 
 }
 
 /**
- * Shared echo resolution for batch rejections: prefer the failure's own
- * rows, else the resolved edit's rows. A row-carrying rejection from the
- * committed on-disk snapshot RECORDS those rows as a serve (ADR-0043), so a
- * retry with an echoed anchor resolves; a rowless refusal records nothing.
- *
- * `frames` (live batch only) makes the rejection served-or-absent once an
- * earlier item changed the working buffer: the rows are dropped, nothing is
- * recorded, and the message names the current-file lines an anchored read
- * would serve.
+ * Prepare one failing item for the assembler. The served-or-absent rule (ADR-0042) applies only
+ * to a row-carrying rejection raised after an earlier item changed the batch buffer; every other
+ * failure keeps its own diagnosis and the rows the verifier measured against the committed
+ * snapshot.
  */
-async function collectAbortPart(opts: {
-  sessionKey: string;
-  absolutePath: string;
-  error: DomainError;
-  edit: HEdit | undefined;
-  index: number;
-  originalNormalized: string;
-  originalHashes: string[];
-  /** Present once an earlier item of the live batch changed the working buffer. */
-  frames?: BufferFrames;
-}): Promise<AbortPart> {
-  // WHY a zero-row rejection falls through to the row fallback instead of the served-or-absent rule:
-  // upstream (`pi-better-edit@5412d3f`) rewrites only when `servedRows.length > 0`, and the fallback
-  // renders `echoRowsForItem`'s pre-batch rows, which are self-consistent — never the mixed
-  // batch-buffer snapshot this rule exists to hide. Recorded for ADR-0042.
-  if (opts.frames !== undefined && opts.error.servedRows.length > 0) {
-    const inner = shiftedBufferInner(opts.error, opts.frames);
-    if (inner !== undefined) {
-      // Served-or-absent: no rows, no serve record, no lease — the message names the read that helps.
-      return {
-        index: opts.index,
-        inner,
-        echoRows: undefined,
-        fmtBlock: "",
-        cause: opts.error.cause,
-      };
+function collectFailure(index: number, error: DomainError, frames?: BufferFrames): BatchFailure {
+  if (frames !== undefined && error.servedRows.length > 0) {
+    const projected = shiftedBufferProjection(error, frames);
+    if (projected !== undefined) {
+      return { index, error: projected.error, inner: projected.inner };
     }
   }
-  const carriedRows = opts.error.servedRows;
-  const echoRows =
-    carriedRows.length > 0
-      ? carriedRows
-      : opts.edit
-        ? echoRowsForItem(opts.edit, opts.originalHashes)
-        : undefined;
-  // ADR-0043: record ONLY when (a) no earlier item of the call changed the buffer
-  // (`frames === undefined`) and (b) the rejection itself carried the rows
-  // (`servedRows.length > 0` — the verifier identified the region from the committed
-  // snapshot). The `echoRowsForItem` fallback arm (zero-row rejection) is a rendered
-  // preview of a region nobody proved served — never recorded. `recordRejectionRows`
-  // declines a window that would duplicate an anchor already served elsewhere.
-  // WHY (#145): these rows describe the CURRENT file (ADR-0043), so a refusal stays recordable even
-  // in a preview; only rows derived from the hypothetical result are suppressed, never these.
-  const rowsServed =
-    opts.frames === undefined && carriedRows.length > 0 && echoRows !== undefined
-      ? await recordRejectionRows({
-          sessionKey: opts.sessionKey,
-          absolutePath: opts.absolutePath,
-          rows: echoRows,
-          content: opts.originalNormalized,
-          hashes: opts.originalHashes,
-        })
-      : undefined;
-  const originalLines = splitLines(opts.originalNormalized);
-  const fmtBlock = echoRows ? fmtServedRows(echoRows, originalLines) : "";
-  const serveNote =
-    rowsServed === true
-      ? "These rows are the file's current anchors and were recorded as served — retry with them."
-      : rowsServed === false
-        ? "These rows are the file's current anchors but were NOT recorded as served — re-read before retrying."
-        : undefined;
-  return {
-    index: opts.index,
-    inner: opts.error.message,
-    echoRows,
-    serveNote,
-    fmtBlock,
-    ...(rowsServed !== undefined ? { rowsServed } : {}),
-    cause: opts.error.cause,
-  };
+  return { index, error };
 }
-
-/**
- * One aggregated E_BATCH_ABORT for every failing item (C). `total` is the
- * call's submitted item count, so the verdict can say `<failed> of <total>`;
- * several parts add the `failures` list (one bullet each, in order) and a
- * single part may add its serve disposition (`serveNote`). `code` routes the
- * typed path via the first item; servedRows unions every part's rows;
- * servedBlock joins every part's block (machine payload — the formatter only
- * renders each inner message's own echo); cause/details ride only on
- * unanimous diagnosis (DomainError builds details from cause).
- */
-function buildBatchAbort(
-  file: string,
-  parts: AbortPart[],
-  total: number,
-): DomainError<"E_BATCH_ABORT"> {
-  const first = parts[0]!;
-  const rows: ServedRow[] = [];
-  const blocks: string[] = [];
-  for (const part of parts) {
-    if (part.echoRows) rows.push(...part.echoRows);
-    if (part.fmtBlock) blocks.push(part.fmtBlock);
-  }
-  const base = {
-    index: first.index,
-    path: file,
-    inner: first.inner,
-    total,
-    ...(parts.length === 1 && first.serveNote !== undefined ? { serveNote: first.serveNote } : {}),
-    servedRows: rows,
-    servedBlock: blocks.join("\n"),
-  };
-  if (parts.length === 1) {
-    // FU-7 conformance (b92e0ec:src/mutation-engine/pipeline.ts:531-560 — `batchAbortFor`): the
-    // single-failing-item stage forwards the item's `details.cause` untouched; unanimity is
-    // trivially true for one item, so the base envelope must not drop it.
-    return new DomainError("E_BATCH_ABORT", {
-      ...base,
-      ...(first.cause !== undefined ? { cause: first.cause } : {}),
-    });
-  }
-  const firstCause = parts[0]!.cause;
-  const unanimous = firstCause !== undefined && parts.every((part) => part.cause === firstCause);
-  return new DomainError("E_BATCH_ABORT", {
-    ...base,
-    failures: parts.map((part) => ({ index: part.index, inner: part.inner })),
-    ...(unanimous ? { cause: firstCause } : {}),
-  });
-}
-
 /** The `makeDomainStore` object behind the narrowed `HashStore` view. */
 function internalStore(store: HashStore): InternalHashStore {
   // SAFETY: `loadHashStore` and `options.store` return the `makeDomainStore` object, which
@@ -1046,7 +920,7 @@ export async function runFileEdits(
       ? undefined
       : idsFromPositions(originalPositions, splitLines(originalNormalized).length);
   // Pre-batch line of each identity, so a rejection inside a buffer that earlier items already changed
-  // can name the current-file lines an anchored read would serve (see `shiftedBufferInner`). The map is
+  // can name the current-file lines an anchored read would serve (see `shiftedBufferProjection`). The map is
   // frozen before the batch; `currentIds` is not — it advances past every applied item.
   const baselineLineById = new Map<number, number>();
   if (currentIds !== undefined) {
@@ -1081,7 +955,15 @@ export async function runFileEdits(
   // served failures collect for one aggregated rejection; a non-domain
   // throw is unexpected and aborts immediately. The loop below still owns
   // state-dependent (mid-loop) failures via onReject.
-  const preParts: AbortPart[] = [];
+  // One recorder context for every rejection of this call (ADR-0043): the committed pre-batch
+  // snapshot the echoed rows were derived from, never a buffer echo.
+  const rejectionRecord = {
+    sessionKey: opts.sessionKey,
+    absolutePath,
+    content: originalNormalized,
+    hashes: originalHashes,
+  };
+  const failures: BatchFailure[] = [];
   for (const item of items) {
     abortIf(opts.signal);
     let edit: HEdit | undefined;
@@ -1106,20 +988,17 @@ export async function runFileEdits(
       );
     } catch (error) {
       if (!(error instanceof DomainError)) throw error;
-      preParts.push(
-        await collectAbortPart({
-          sessionKey: opts.sessionKey,
-          absolutePath,
-          error,
-          edit,
-          index: item.index,
-          originalNormalized,
-          originalHashes,
-        }),
-      );
+      failures.push(collectFailure(item.index, error));
     }
   }
-  if (preParts.length > 0) throw buildBatchAbort(first.file, preParts, items.length);
+  if (failures.length > 0) {
+    return throwBatchRejection({
+      failures,
+      total: items.length,
+      path: first.file,
+      record: rejectionRecord,
+    });
+  }
 
   for (const item of items) {
     abortIf(opts.signal);
@@ -1150,36 +1029,36 @@ export async function runFileEdits(
         leaseSource,
         spanMode,
       },
-      async (error, edit) => {
+      async (error) => {
         // In-loop (state-dependent) failures keep single-failure envelopes.
         if (error instanceof AnchorMismatchError || error instanceof ServedRejectionError) {
-          const part = await collectAbortPart({
-            sessionKey: opts.sessionKey,
-            absolutePath,
-            error,
-            edit,
-            index: item.index,
-            originalNormalized,
-            originalHashes,
-            // Served-or-absent once an earlier item changed the buffer (see `shiftedBufferInner`).
-            ...(currentContent !== originalNormalized ? { frames } : {}),
+          return throwBatchRejection({
+            failures: [
+              collectFailure(
+                item.index,
+                error,
+                // Served-or-absent once an earlier item changed the buffer (see `shiftedBufferProjection`).
+                currentContent !== originalNormalized ? frames : undefined,
+              ),
+            ],
+            total: items.length,
+            path: item.file,
+            record: rejectionRecord,
           });
-          throw buildBatchAbort(item.file, [part], items.length);
         }
-        const message = error instanceof Error ? error.message : String(error);
-        throw buildBatchAbort(
-          item.file,
-          [
+        // Any other failure joins the same grammar. At arity one the raw error surfaces as
+        // `E_UNKNOWN` at the edit tool boundary (`wrapUnexpected`).
+        return throwBatchRejection({
+          failures: [
             {
               index: item.index,
-              inner: message,
-              echoRows: undefined,
-              fmtBlock: "",
-              cause: undefined,
+              error: error instanceof Error ? error : new Error(String(error)),
             },
           ],
-          items.length,
-        );
+          total: items.length,
+          path: item.file,
+          record: rejectionRecord,
+        });
       },
     );
 

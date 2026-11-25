@@ -132,10 +132,10 @@ describe("issue #138 — anchors identify raw bytes at the tool seam", () => {
 
       // The merged line is a different line entity, so its canon no longer matches the lease and
       // the edit refuses fail-closed. Downstream's carrier for a canon mismatch is `[E_STALE_ANCHOR]`
-      // inside the batch envelope (upstream's name for this arm is `[E_TARGET_LOST]`).
+      // as the one-item call's bare code (upstream's name for this arm is `[E_TARGET_LOST]`).
       const { error, code, message } = await editOne(harness, sigRef, "func hello() /* marked */");
       expect(error, "the merged signature line must reject, not overwrite").toBeDefined();
-      expect(code).toBe("E_BATCH_ABORT");
+      expect(code).toBe("E_STALE_ANCHOR");
       expect(message).toContain("[E_STALE_ANCHOR]");
       expect(await readFile(path, "utf-8")).toBe(external);
     });

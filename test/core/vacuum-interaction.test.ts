@@ -232,11 +232,10 @@ describe("vacuum — interaction with lineage, leases and the tools", () => {
         }
         // FU-4 ports the granular codes: the evicted snapshot leaves the boundary's lease
         // without a live line identity, so `interceptLeaseBoundaries` fails closed with
-        // `E_TARGET_LOST` (no rows) inside the batch envelope — the collapsed
+        // `E_TARGET_LOST` (no rows) as the bare diagnosis — the collapsed
         // `E_STALE_RANGE` shape this cell pinned pre-FU-4 is retired.
         expect(failure).toContain("[E_TARGET_LOST]");
         expect(failure).toContain("no longer resolves to the line identity it was served with");
-        expect(failure).toContain("nothing was written");
         expect(failure).not.toContain("[E_STALE_RANGE]");
         expect(await readFile(path, "utf-8")).toBe(bytesBefore);
       } finally {

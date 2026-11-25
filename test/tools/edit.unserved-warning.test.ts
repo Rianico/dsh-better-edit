@@ -135,9 +135,9 @@ describe("edit unserved-interior disclosure (#144 T3)", () => {
           path: "t.txt",
           edits: [[anchors.get("a")!, anchors.get("f")!, "X"]],
         });
-        // The edit tool always routes through the batch envelope, so the span refusal arrives as
-        // the first item's inner diagnostic (#144 T2 producer).
-        await expect(attempt).rejects.toMatchObject({ code: "E_BATCH_ABORT" });
+        // A one-item call renders the item's bare diagnosis, so the span refusal arrives as its
+        // own `E_UNSERVED_RANGE` header (#144 T2 producer).
+        await expect(attempt).rejects.toMatchObject({ code: "E_UNSERVED_RANGE" });
         const error = await attempt.catch((e: unknown) => e);
         expect((error as Error).message).toContain("[E_UNSERVED_RANGE]");
         expect((error as Error).message).toContain("never served");

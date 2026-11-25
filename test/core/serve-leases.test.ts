@@ -610,7 +610,7 @@ interface BatchAbortRun {
 /**
  * Two-item batch through `batch_edit`: item 0 (stale `beta`) aborts, item 1
  * (`gamma`) resolves. `withBatch` false is the control (same external change, no
- * batch call). Drives `collectAbortPart` in `runFileEdits`.
+ * batch call). Drives `collectFailure`/`throwBatchRejection` in `runFileEdits`.
  */
 async function runBatchAbort(withBatch: boolean): Promise<BatchAbortRun> {
   let run: BatchAbortRun | undefined;
@@ -804,7 +804,7 @@ describe("serve leases — a rejected edit is a no-op for the next read", () => 
     expect(duplicateAnchors(treatment.read2Anchors)).toEqual([]);
   });
 
-  it("malformed anchor on an existing file rejects E_BATCH_ABORT and writes nothing", async () => {
+  it("malformed anchor on an existing file rejects E_MALFORMED_ANCHOR and writes nothing", async () => {
     await withTempFile("malformed.txt", TWIN_FILE, async ({ cwd, path }) => {
       const { sessionKey, readTool, editTool } = setupIntegrationTest(cwd);
       // Serve the file first: with rows served, a reject-path write would be observable below.
@@ -821,9 +821,8 @@ describe("serve leases — a rejected edit is a no-op for the next read", () => 
         error = e;
       }
 
-      // (a) the envelope and its cause; (b) nothing recorded; (c) nothing written.
+      // (a) the bare diagnosis and its cause; (b) nothing recorded; (c) nothing written.
       // Reddens if `parseRef` (src/hashline/anchor-pipeline.ts) accepts a malformed token.
-      expect(String((error as Error).message)).toMatch(/E_BATCH_ABORT/);
       expect(String((error as Error).message)).toMatch(/E_MALFORMED_ANCHOR/);
       expect(await servedAt(cwd, sessionKey, path)).toEqual(servedBefore);
       expect(await readFile(path, "utf-8")).toBe(TWIN_FILE);
