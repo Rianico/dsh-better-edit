@@ -79,12 +79,12 @@ npx @deepseek-ai/dsh plugin --profile web add /path/to/dsh-better-edit   # 从�
 dsh --profile <name> --dump-config   # 会显示 "# == dsh-better-edit" 层
 ```
 
-| 要求    |                                                                       |
-| ------- | --------------------------------------------------------------------- |
-| Node    | `^22.19.0 \|\| >=24.0.0`（dsh 的要求；存储使用 `node:sqlite`）        |
-| Profile | 一个 dsh profile（首次使用 `dsh plugin` 时初始化）                    |
-| 后端    | 支持沙箱/远程文件系统（写入经 `ctx.fs`）                              |
-| dsh     | `0.2.1-rc.2`（已端到端验证；`0.1.6-alpha.2` 是上一个 0.2 之前的基线） |
+| 要求    |                                                                        |
+| ------- | ---------------------------------------------------------------------- |
+| Node    | `>=24`（按包内 `engines.node`；更新的 dsh 宿主可能要求更高的最低版本） |
+| Profile | 一个 dsh profile（首次使用 `dsh plugin` 时初始化）                     |
+| 后端    | 支持沙箱/远程文件系统（写入经 `ctx.fs`）                               |
+| dsh     | `0.2.1-rc.2`（已端到端验证；`0.1.6-alpha.2` 是上一个 0.2 之前的基线）  |
 
 **支持 dsh 0.2.0 及以上。** 注册走 `agent/created`，路径解析跟随会话的**实时**工作目录（`workingDirectory`，0.2.1 之前回退到 session header），工具指引的 order 取自 `systemPrompt.getSectionOrder`。没有 peer 版本范围，也不做运行时版本探测：兼容性来自这层稳定接口加可选服务回退——缺少 `workingDirectory` 或 `agentPresets` 的组合同样可用。
 
