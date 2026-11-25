@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 import { assertEditRequest, normalizeRequest, prepareEditArguments } from "../../src/contract.js";
 import { DomainError } from "../../src/domain-errors.js";
 import { parseHashRef, resEdit } from "../../src/hashline/anchor-pipeline.js";
+import { setupIntegrationTest, withTempFile } from "../support/fixtures.js";
 
 /**
  * #217 refusal budget (spec #214 T2): an admission refusal states the fault and ONE shape line.
@@ -171,6 +172,28 @@ describe("edit refusal budget (#217, spec #214)", () => {
       catchOf(() => parseHashRef("")).message,
     ];
     for (const message of messages) expect(message, message).not.toContain("..");
+  });
+
+  // #218: the same budget holds at the boundary the model actually meets — the edit tool, which
+  // runs the contract fold and wraps the refusal, not `assertEditRequest` directly. The input is
+  // the empty-batch arm, not a non-array `edits`: the host's wire schema (`edits: { type:
+  // "array" }`) answers `invalid arguments` (INVALID_ARGS) before the plugin's contract runs, so
+  // a non-array never reaches this budget.
+  it("the tool boundary renders the same budgeted refusal", async () => {
+    await withTempFile("budget.txt", "alpha\nbeta\n", async ({ cwd }) => {
+      const harness = setupIntegrationTest(cwd);
+      let message = "";
+      try {
+        await harness.editTool.execute("budget", { file: "budget.txt", edits: [] });
+        expect.unreachable();
+      } catch (error) {
+        message = String((error as Error).message);
+      }
+      expect(message.length, message).toBeLessThanOrEqual(BUDGET);
+      expect(message.startsWith(HEADER), message).toBe(true);
+      expect(shapeCount(message), message).toBe(1);
+      expect(message).not.toContain("Received: ");
+    });
   });
 });
 

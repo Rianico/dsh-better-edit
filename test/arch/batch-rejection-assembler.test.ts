@@ -80,6 +80,13 @@ function seamCalls(): { file: string; fn: string; hasRecord: boolean }[] {
 
 const SEAM = "src/mutation/batch-rejection.ts";
 
+/**
+ * Seam calls that legitimately carry no recorder, each with a one-line reason. Empty: every
+ * rejection site today records the rows it renders. A new bare site must add an entry here (and
+ * the reason is reviewed), so "shows rows but never leases them" cannot return by omission.
+ */
+const ROWLESS_ALLOWLIST: { key: string; reason: string }[] = [];
+
 describe("batch rejection assembler (#215)", () => {
   it("defines the assembler exactly once, in the mutation seam", () => {
     expect(hitsOf(/^(?:export )?async function throwBatchRejection\(/).map(fileOf)).toEqual([SEAM]);
@@ -109,7 +116,10 @@ describe("batch rejection assembler (#215)", () => {
       "src/mutation/engine.ts#runFileEdits",
       "src/mutation/engine.ts#runFileEdits",
     ]);
-    expect(seamCalls().filter((call) => !call.hasRecord)).toEqual([]);
+    expect(ROWLESS_ALLOWLIST).toHaveLength(0);
+    const bare = seamCalls().filter((call) => !call.hasRecord);
+    expect(bare).toEqual([]);
+    expect(seamCalls()).toHaveLength(4);
   });
 
   it("throws TypeError, never a silent skip, when rows arrive with no recorder", async () => {
