@@ -88,6 +88,13 @@ export interface UndoRecord {
   effectiveEnding?: string | null;
   /** 1 when the pre-image spelled more than one terminator kind; null/absent means "not recorded". */
   preImageMixed?: number | null;
+  /**
+   * The codec the migrating write abandoned (#191), or null/absent on a pre-#191 row and on any
+   * row whose write migrated nothing. Null means "not recorded" — never a claim.
+   */
+  migratedFrom?: string | null;
+  /** 1 when the abandoned codec carried a BOM the UTF-8 revert cannot restore; null = not recorded. */
+  migratedFromBOM?: number | null;
 }
 
 /** The v7 undo row contract: legacy state plus the snapshot pin. */
@@ -103,6 +110,10 @@ export interface FileUndoRecord {
   effectiveEnding?: string | null;
   /** Same pair property as `UndoRecord.preImageMixed`. */
   preImageMixed?: number | null;
+  /** Same pair property as `UndoRecord.migratedFrom`. */
+  migratedFrom?: string | null;
+  /** Same pair property as `UndoRecord.migratedFromBOM`. */
+  migratedFromBOM?: number | null;
 }
 
 /**
@@ -123,6 +134,8 @@ interface FileUndoRow {
   updated_at: number;
   effective_ending: string | null;
   pre_image_mixed: number | null;
+  migrated_from: string | null;
+  migrated_from_bom: number | null;
 }
 
 /**
@@ -144,6 +157,11 @@ function mapFileUndoRow(row: Record<string, unknown>): FileUndoRow {
   // the existing pair-healing path in `getFileUndo`.
   const effectiveEnding = row["effective_ending"];
   const preImageMixed = row["pre_image_mixed"];
+  // The #191 pair: nullable BY DESIGN (an old row carries NULL and means "not recorded"),
+  // but a value of the wrong TYPE is shape corruption like any other column — the TypeError
+  // feeds the existing pair-healing path in `getFileUndo`.
+  const migratedFrom = row["migrated_from"];
+  const migratedFromBOM = row["migrated_from_bom"];
   if (
     typeof content !== "string" ||
     typeof bom !== "string" ||
@@ -153,7 +171,9 @@ function mapFileUndoRow(row: Record<string, unknown>): FileUndoRow {
     !(snapshotHash === null || typeof snapshotHash === "string") ||
     typeof updatedAt !== "number" ||
     !(effectiveEnding === null || typeof effectiveEnding === "string") ||
-    !(preImageMixed === null || typeof preImageMixed === "number")
+    !(preImageMixed === null || typeof preImageMixed === "number") ||
+    !(migratedFrom === null || typeof migratedFrom === "string") ||
+    !(migratedFromBOM === null || typeof migratedFromBOM === "number")
   ) {
     throw new TypeError("invalid file_undo row shape");
   }
@@ -167,6 +187,8 @@ function mapFileUndoRow(row: Record<string, unknown>): FileUndoRow {
     updated_at: updatedAt,
     effective_ending: effectiveEnding,
     pre_image_mixed: preImageMixed,
+    migrated_from: migratedFrom,
+    migrated_from_bom: migratedFromBOM,
   };
 }
 
@@ -474,6 +496,8 @@ function ensureV7Tables(db: DatabaseSync): void {
       "snapshot_hash TEXT, " +
       "effective_ending TEXT, " +
       "pre_image_mixed INTEGER, " +
+      "migrated_from TEXT, " +
+      "migrated_from_bom INTEGER, " +
       "updated_at INTEGER NOT NULL" +
       ")",
   );
@@ -515,6 +539,8 @@ function ensureSchema(db: DatabaseSync): void {
       "result_content TEXT NOT NULL, " +
       "effective_ending TEXT, " +
       "pre_image_mixed INTEGER, " +
+      "migrated_from TEXT, " +
+      "migrated_from_bom INTEGER, " +
       "updated_at INTEGER NOT NULL" +
       ")",
   );
@@ -523,8 +549,12 @@ function ensureSchema(db: DatabaseSync): void {
   // HASH_STORE_VERSION does not move. Idempotent: `addColumnIfMissing` is a no-op on a current store.
   addColumnIfMissing(db, "undo", "effective_ending", "TEXT");
   addColumnIfMissing(db, "undo", "pre_image_mixed", "INTEGER");
+  addColumnIfMissing(db, "undo", "migrated_from", "TEXT");
+  addColumnIfMissing(db, "undo", "migrated_from_bom", "INTEGER");
   addColumnIfMissing(db, "file_undo", "effective_ending", "TEXT");
   addColumnIfMissing(db, "file_undo", "pre_image_mixed", "INTEGER");
+  addColumnIfMissing(db, "file_undo", "migrated_from", "TEXT");
+  addColumnIfMissing(db, "file_undo", "migrated_from_bom", "INTEGER");
   const servedColumns = db.prepare("PRAGMA table_info(served)").all() as {
     name: string;
   }[];
@@ -698,11 +728,11 @@ function buildStore(db: DatabaseSync, storePath: string): { db: DatabaseSync; st
     "SELECT path FROM snapshots UNION SELECT path FROM undo UNION SELECT path FROM served UNION SELECT path FROM file_undo UNION SELECT path FROM file_snapshots UNION SELECT path FROM line_id_counters UNION SELECT file_path FROM served_leases",
   );
   const undoUpsertStmt = db.prepare(
-    "INSERT INTO undo (path, content, bom, ending, hashes, result_content, effective_ending, pre_image_mixed, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) " +
-      "ON CONFLICT(path) DO UPDATE SET content = excluded.content, bom = excluded.bom, ending = excluded.ending, hashes = excluded.hashes, result_content = excluded.result_content, effective_ending = excluded.effective_ending, pre_image_mixed = excluded.pre_image_mixed, updated_at = excluded.updated_at",
+    "INSERT INTO undo (path, content, bom, ending, hashes, result_content, effective_ending, pre_image_mixed, migrated_from, migrated_from_bom, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) " +
+      "ON CONFLICT(path) DO UPDATE SET content = excluded.content, bom = excluded.bom, ending = excluded.ending, hashes = excluded.hashes, result_content = excluded.result_content, effective_ending = excluded.effective_ending, pre_image_mixed = excluded.pre_image_mixed, migrated_from = excluded.migrated_from, migrated_from_bom = excluded.migrated_from_bom, updated_at = excluded.updated_at",
   );
   const undoGetStmt = db.prepare(
-    "SELECT content, bom, ending, hashes, result_content, effective_ending, pre_image_mixed FROM undo WHERE path = ?",
+    "SELECT content, bom, ending, hashes, result_content, effective_ending, pre_image_mixed, migrated_from, migrated_from_bom FROM undo WHERE path = ?",
   );
   const undoDelStmt = db.prepare("DELETE FROM undo WHERE path = ?");
   // Pair-atomic age prune: a path's pair is pruned only when its NEWEST side is older
@@ -722,11 +752,11 @@ function buildStore(db: DatabaseSync, storePath: string): { db: DatabaseSync; st
       ") GROUP BY path) WHERE newest < ?)",
   );
   const fileUndoUpsertStmt = db.prepare(
-    "INSERT INTO file_undo (path, content, bom, ending, hashes, result_content, effective_ending, pre_image_mixed, snapshot_hash, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) " +
-      "ON CONFLICT(path) DO UPDATE SET content = excluded.content, bom = excluded.bom, ending = excluded.ending, hashes = excluded.hashes, result_content = excluded.result_content, effective_ending = excluded.effective_ending, pre_image_mixed = excluded.pre_image_mixed, snapshot_hash = excluded.snapshot_hash, updated_at = excluded.updated_at",
+    "INSERT INTO file_undo (path, content, bom, ending, hashes, result_content, effective_ending, pre_image_mixed, migrated_from, migrated_from_bom, snapshot_hash, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) " +
+      "ON CONFLICT(path) DO UPDATE SET content = excluded.content, bom = excluded.bom, ending = excluded.ending, hashes = excluded.hashes, result_content = excluded.result_content, effective_ending = excluded.effective_ending, pre_image_mixed = excluded.pre_image_mixed, migrated_from = excluded.migrated_from, migrated_from_bom = excluded.migrated_from_bom, snapshot_hash = excluded.snapshot_hash, updated_at = excluded.updated_at",
   );
   const fileUndoGetStmt = db.prepare(
-    "SELECT content, bom, ending, hashes, result_content, snapshot_hash, updated_at, effective_ending, pre_image_mixed FROM file_undo WHERE path = ?",
+    "SELECT content, bom, ending, hashes, result_content, snapshot_hash, updated_at, effective_ending, pre_image_mixed, migrated_from, migrated_from_bom FROM file_undo WHERE path = ?",
   );
   const fileUndoDelStmt = db.prepare("DELETE FROM file_undo WHERE path = ?");
   const servedGetStmt = db.prepare(
@@ -957,6 +987,7 @@ function makeDomainStore(
         // #171: both halves record the SAME write. `?? legacy.ending` is the pre-#171 caller and an
         // old row's meaning alike: no effective ending was recorded, so the pre-image's own one is
         // the best (and previously the only) answer. `=== 1` keeps the flag total: absent means 0.
+        // #191: the verdict has NO fallback — absent stays NULL ("not recorded", never a claim).
         stmts.undoUpsert(
           path,
           legacy.content,
@@ -966,6 +997,8 @@ function makeDomainStore(
           legacy.resultContent,
           legacy.effectiveEnding ?? legacy.ending,
           legacy.preImageMixed === 1 ? 1 : 0,
+          legacy.migratedFrom ?? null,
+          legacy.migratedFromBOM ?? null,
           stamp,
         );
       } else {
@@ -981,6 +1014,8 @@ function makeDomainStore(
           v7.resultContent,
           v7.effectiveEnding ?? v7.ending,
           v7.preImageMixed === 1 ? 1 : 0,
+          v7.migratedFrom ?? null,
+          v7.migratedFromBOM ?? null,
           v7.snapshotHash,
           stamp,
         );
@@ -1089,6 +1124,10 @@ function makeDomainStore(
           // reports what is stored. A wrong-typed value is reported as absent rather than a cast.
           effectiveEnding: typeof row.effective_ending === "string" ? row.effective_ending : null,
           preImageMixed: typeof row.pre_image_mixed === "number" ? row.pre_image_mixed : null,
+          // #191: same contract — NULL (a pre-#191 row, or a write that migrated nothing) is
+          // "not recorded"; the reconstruction decision belongs to the reader (`getUndo`).
+          migratedFrom: typeof row.migrated_from === "string" ? row.migrated_from : null,
+          migratedFromBOM: typeof row.migrated_from_bom === "number" ? row.migrated_from_bom : null,
         };
       } catch (error) {
         undoPairDeleteImpl(path);
@@ -1117,6 +1156,8 @@ function makeDomainStore(
           updatedAt: row.updated_at,
           effectiveEnding: row.effective_ending,
           preImageMixed: row.pre_image_mixed,
+          migratedFrom: row.migrated_from,
+          migratedFromBOM: row.migrated_from_bom,
         };
       } catch (error) {
         // Shape corruption (`mapFileUndoRow` throws `TypeError`) and payload corruption

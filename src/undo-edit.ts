@@ -10,6 +10,7 @@
 
 import type { LineEnding } from "./edit-diff.js";
 import { loadHashStore, type FileUndoRecord, type UndoRecord } from "./hash-store.js";
+import type { EncodingMigration } from "./file-encoding-state.js";
 import {
   isCurrentGenerationSnapshotHash,
   snapshotHashFor,
@@ -34,6 +35,9 @@ async function writeUndo(path: string, entry: UndoRecord): Promise<void> {
     // Same pair property on both halves (#171): the store falls back to `ending` when absent.
     effectiveEnding: entry.effectiveEnding,
     preImageMixed: entry.preImageMixed,
+    // Same pair property on both halves (#191): absent stays NULL, never a claim.
+    migratedFrom: entry.migratedFrom,
+    migratedFromBOM: entry.migratedFromBOM,
   });
 }
 
@@ -57,6 +61,12 @@ export interface UndoEntry {
   effectiveEnding?: LineEnding;
   /** True when the pre-image spelled more than one terminator kind, so the revert cannot restore it. */
   preImageMixed?: boolean;
+  /**
+   * The codec the migrating write abandoned (#191). Absent = "not recorded" (a pre-#191 row,
+   * or a write that migrated nothing): the revert claims nothing. Present only when the save
+   * seam took the verdict on the non-faithful legacy arm — never recomputed here.
+   */
+  migration?: EncodingMigration;
 }
 
 /**
@@ -94,6 +104,10 @@ export async function saveUndo(
       // the same value without the nested ternary.
       effectiveEnding: entry.effectiveEnding,
       preImageMixed: entry.preImageMixed === true ? 1 : 0,
+      // #191: the save seam's verdict rides the same pair. Absent stays undefined here; the store
+      // coalesces it to NULL ("not recorded") on both halves.
+      migratedFrom: entry.migration?.encoding,
+      migratedFromBOM: entry.migration === undefined ? undefined : entry.migration.hasBOM ? 1 : 0,
     });
   } catch (error) {
     console.error("Failed to persist undo entry:", error);
@@ -138,6 +152,12 @@ export async function getUndo(path: string): Promise<UndoEntry | undefined> {
       store.deleteUndoPair(path);
       return undefined;
     }
+    // #191: the verdict rebuilds ONLY from a fully-typed stored pair — a codec name without its
+    // BOM flag (or vice versa) is a half-record, and a half-record claims nothing.
+    const migration =
+      typeof record.migratedFrom === "string" && typeof record.migratedFromBOM === "number"
+        ? { encoding: record.migratedFrom, hasBOM: record.migratedFromBOM === 1 }
+        : undefined;
     return {
       content: record.content,
       bom: record.bom,
@@ -147,6 +167,7 @@ export async function getUndo(path: string): Promise<UndoEntry | undefined> {
       // never an invented mixture.
       effectiveEnding: knownEnding(record.effectiveEnding) ?? originalEnding,
       preImageMixed: record.preImageMixed === 1,
+      ...(migration === undefined ? {} : { migration }),
       hashes: record.hashes,
       resultContent: record.resultContent,
     };

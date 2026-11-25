@@ -365,7 +365,7 @@ describe("coverage: mutation engine persistUndoAndWrite", () => {
         signal: undefined,
         undoUnavailableMessage: () => "x",
       }),
-    ).resolves.toBeUndefined();
+    ).resolves.toEqual([]);
     expect(io.writeText).toHaveBeenCalledTimes(1);
     saveSpy.mockRestore();
   });

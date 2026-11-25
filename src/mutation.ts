@@ -13,7 +13,7 @@
  *
  * Public surface:
  *   execute(io, items, {sessionKey, exec, sandbox, signal}) → string  — deep seam: ONE interface
- *   persistUndoAndWrite(opts) → void                                  — transaction (exported for tests)
+ *   persistUndoAndWrite(opts) → AppliedMigration[]               — transaction (exported for tests)
  *
  * Depth: small interface (execute) with large implementation — locality and leverage.
  *
@@ -28,7 +28,7 @@ import type { ToolExecution } from "@deepseek-ai/dsh-tools";
 import type { SandboxExecutionPolicy } from "@deepseek-ai/dsh-sandbox";
 import type { FsSandboxController } from "./sandbox.js";
 
-import { formatError } from "./domain-errors.js";
+import { formatError, formatWarning } from "./domain-errors.js";
 import { canon } from "./hashline/hash-assign.js";
 import type { LineEnding } from "./edit-diff.js";
 import { recordServedTruncated, retireAnchors } from "./session-view.js";
@@ -40,7 +40,7 @@ import { restoreEndings } from "./edit-diff.js";
 import { buildBatchResult } from "./edit-response.js";
 import type { BatchSection } from "./edit-response.js";
 import { getEncodingState, prepareForSave } from "./file-encoding-state.js";
-import type { FileEncodingState } from "./file-encoding-state.js";
+import type { EncodingMigration, FileEncodingState } from "./file-encoding-state.js";
 import { loadConfig } from "./store-config.js";
 
 // Engine helpers are private to Mutation — not re-exported.
@@ -80,14 +80,28 @@ interface PersistWriteOptions {
   undoUnavailableMessage: (displayPath: string) => string;
 }
 
-export async function persistUndoAndWrite(opts: PersistWriteOptions): Promise<void> {
+/**
+ * The codec one file's write abandoned (#191): the save seam's verdict, forwarded so the
+ * undo can disclose it. Empty when no file in the batch migrated — the caller renders
+ * nothing from this; the disclosure belongs to the undo that restores the content.
+ */
+export interface AppliedMigration {
+  displayPath: string;
+  migration: EncodingMigration;
+}
+
+export async function persistUndoAndWrite(opts: PersistWriteOptions): Promise<AppliedMigration[]> {
   const { io, files } = opts;
   // Issue #112: decide the save text for EVERY file BEFORE any write. The seam throws
   // E_ENCODING_UNWRITABLE when the recorded encoding cannot be reproduced through the
   // text-only write, so a batch never leaves file 1 transcoded and file 2 refused —
   // nothing (not even the undo rows) is written when the round-trip is impossible.
   const normalizeToUtf8 = loadConfig().normalizeToUtf8;
-  const prepared: Array<{ file: UndoWriteFile; textToWrite: string }> = files.map((file) => {
+  const prepared: Array<{
+    file: UndoWriteFile;
+    textToWrite: string;
+    migration?: EncodingMigration;
+  }> = files.map((file) => {
     const recorded = getEncodingState(file.absolutePath);
     // No memo (e.g. a first write): reconstruct the utf8/utf8bom state the edit read.
     const state: FileEncodingState = recorded ?? {
@@ -101,15 +115,27 @@ export async function persistUndoAndWrite(opts: PersistWriteOptions): Promise<vo
       displayPath: file.displayPath,
       lineEnding: file.effectiveEnding,
     });
-    return { file, textToWrite: prep.textToWrite };
+    // #191: the verdict is the seam's — captured here, forwarded below, never recomputed.
+    return {
+      file,
+      textToWrite: prep.textToWrite,
+      ...(prep.migration === undefined ? {} : { migration: prep.migration }),
+    };
   });
+
+  const appliedMigrations: AppliedMigration[] = [];
+  for (const { file, migration } of prepared) {
+    if (migration !== undefined) {
+      appliedMigrations.push({ displayPath: file.displayPath, migration });
+    }
+  }
 
   const undos: Array<{
     file: UndoWriteFile;
     textToWrite: string;
     restore: () => Promise<void>;
   }> = [];
-  for (const { file, textToWrite } of prepared) {
+  for (const { file, textToWrite, migration } of prepared) {
     const undo = await saveUndo(file.absolutePath, {
       content: file.originalNormalized,
       bom: file.bom,
@@ -120,6 +146,8 @@ export async function persistUndoAndWrite(opts: PersistWriteOptions): Promise<vo
       // forwarded, never recomputed — the engine's one decode already decided them.
       effectiveEnding: file.effectiveEnding,
       preImageMixed: file.preImageMixed,
+      // #191: the save seam's verdict rides the same pair, so the revert can name the codec.
+      ...(migration === undefined ? {} : { migration }),
     });
     if (!undo.persisted) {
       for (const u of undos) {
@@ -194,6 +222,8 @@ export async function persistUndoAndWrite(opts: PersistWriteOptions): Promise<vo
     }
     throw opts.sandbox.mapError(error, opts.sandboxPolicy);
   }
+
+  return appliedMigrations;
 }
 
 // --- Deep seam: unified mutation API (one interface, thin adapters) ---
@@ -319,11 +349,19 @@ export async function execute(opts: {
     result: fileResult.result,
   };
 
-  // WHY (#169): the EOL notice describes a write, so it is pushed only after one LANDED — an
-  // all-noop call rewrites nothing and must not claim it did. Both applied branches share this.
-  const pushEolNoticeAfterWrite = (): void => {
+  // WHY (#169, #192): the EOL and encoding notices describe a write, so they are pushed only
+  // after one LANDED — an all-noop call rewrites nothing and must not claim it did. The EOL
+  // notice stays first (it names the terminators the write used); one
+  // `W_ENCODING_MIGRATED` follows per file the write migrated, in batch order. Both applied
+  // branches share this.
+  const pushAppliedWriteNotices = (migrations: AppliedMigration[]): void => {
     if (fileResult.eolRewriteWarning !== undefined) {
       fileResult.warnings.push(fileResult.eolRewriteWarning);
+    }
+    for (const { displayPath, migration } of migrations) {
+      fileResult.warnings.push(
+        formatWarning("W_ENCODING_MIGRATED", { path: displayPath, ...migration }),
+      );
     }
   };
 
@@ -336,7 +374,7 @@ export async function execute(opts: {
     // WHY (#145): all three steps describe a write. A dry run performs none of them, or the preview
     // would leave an undo row, a retired anchor set, and an EOL notice for bytes that never landed.
     if (!dryRun) {
-      await persistUndoAndWrite({
+      const migrations = await persistUndoAndWrite({
         io,
         files: [commitFile],
         exec,
@@ -347,7 +385,7 @@ export async function execute(opts: {
           formatError("E_UNDO_UNAVAILABLE", { path: displayPath }),
       });
       await retireFreedAnchors();
-      pushEolNoticeAfterWrite();
+      pushAppliedWriteNotices(migrations);
     }
 
     const built = buildBatchResult([toSection()], dryRun);
@@ -360,7 +398,7 @@ export async function execute(opts: {
   } else if (fileResult.appliedCount > 0) {
     // Same gate as the single-call branch above: a dry run commits nothing, so it retires nothing.
     if (!dryRun) {
-      await persistUndoAndWrite({
+      const migrations = await persistUndoAndWrite({
         io,
         files: [commitFile],
         exec,
@@ -371,7 +409,7 @@ export async function execute(opts: {
           formatError("E_UNDO_UNAVAILABLE", { path: displayPath, batch: true }),
       });
       await retireFreedAnchors();
-      pushEolNoticeAfterWrite();
+      pushAppliedWriteNotices(migrations);
     }
   }
 

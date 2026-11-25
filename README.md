@@ -85,7 +85,7 @@ File editing is the #1 point of failure for autonomous agents. Traditional tools
 - **Decoupled Line Identity**: Lines are verified against served snapshot lineage, not ephemeral line coordinates.
 - **Collision-Free Anchors**: Coprime bitset probing ensures duplicate lines in a file receive distinct, unambiguous 3-character hashes.
 - **No Heuristic Guessing**: Retires fuzzy matching. If an anchor cannot be unambiguously resolved, it fails closed safely.
-- **Persisted Undo**: `undo_last_edit` restores the previous content at the **effective EOL** (BOM and original anchors too, persisting across session restarts). A pre-edit mixture of line endings is **not** restored — the revert writes one ending and says so.
+- **Persisted Undo**: `undo_last_edit` restores the previous content at the **effective EOL** as UTF-8 (BOM and original anchors too, persisting across session restarts). A pre-edit mixture of line endings is **not** restored — the revert writes one ending and says so; a migrated legacy file comes back as UTF-8 text — the revert names the abandoned codec and its BOM, but the original bytes do not come back.
 
 ---
 
@@ -184,6 +184,8 @@ Env overrides yaml (`DSH_BETTER_EDIT_STORE_DIR`, `DSH_BETTER_EDIT_AUTO_GITIGNORE
 
 **Line endings** — every `edit` writes **one** effective EOL: `DSH_BETTER_EDIT_EOL` if set, else `eol` from the config above, else the file's dominant terminator (ties: LF, CRLF, CR), else the system one (`\r\n` on Windows, `\n` elsewhere). `AUTO` keeps the file's dominant ending; `LF`/`CRLF`/`CR` force it. A file that mixes endings says so on read — `[W_MIXED_EOL] Mixed EOL: 2 CRLF, 1 LF. All edits normalize to CRLF (file).` — and an edit that re-spells terminators reports `[MODEL] [W_EOL_REWRITTEN] EOL normalized to CRLF (file): 1 terminators changed. Undo restores normalized content.` `undo_last_edit` restores at that same effective EOL and names it when a pre-edit mixture could not come back.
 
+**File encoding** — a `read` records the file's `{encoding, hasBOM}` and a later write must reproduce those bytes through a text-only seam that always encodes UTF-8. A legacy file that cannot round-trip (UTF-16, or `windows-1251` with non-ASCII content) therefore refuses with `[E_ENCODING_UNWRITABLE]` — nothing is written, nothing is silently transcoded, and the served anchors still describe the bytes on disk. Opt in with `normalizeToUtf8: true` (`DSH_BETTER_EDIT_NORMALIZE_TO_UTF8=true`, default `false`) in `$DSH_HOME/plugins/dsh-better-edit/config.yaml`: the next edit migrates the file to UTF-8 — a one-way door the applied result carries as `[W_ENCODING_MIGRATED]` and the revert names but never reverses (`undo_last_edit` restores the text as UTF-8; the codec and its BOM are gone). Reopen bytes under another codec with `read({ encoding })` (e.g. `windows-1251`); the `autoGuessEncoding` gate (`DSH_BETTER_EDIT_AUTO_GUESS_ENCODING`, default `false`) auto-decodes only after deterministic BOM → strict-UTF-8 detection fails: a guess it is not confident about is reported on the read together with its Top-3 candidates, and a file it cannot decode is refused with the Top-3 for the model to pick from. Guessing ranges over `supportedEncodings` (`DSH_BETTER_EDIT_SUPPORTED_ENCODINGS`, default `gbk, big5, shift_jis, euc-kr, windows-1251, iso-8859-1`); UTF-8 is always accepted outside that list — the deterministic BOM → strict-UTF-8 pass runs before any guessing. An ASCII-only file under a legacy name is byte-faithful and edits silently — its bytes are already UTF-8.
+
 **Guidance per preset** — `tool:read` / `tool:edit` / `tool:undo_last_edit` are plain markdown per preset at `$DSH_HOME/plugins/dsh-better-edit/<preset>/<section>.md`. The default order is the harness's own tool slot (`systemPrompt.getSectionOrder`: `1100` read, `1300` edit, `1310` undo), so a band change upstream moves the sections with it; front-matter pins a custom order. The seeded roster is the shipped presets — `standard`, `ptc`, `minimal`, `cordis`. Delete or empty a file → default re-seeds at next boot; keep a `---` fence to blank on purpose.
 
 ## Why Hashline
@@ -216,12 +218,12 @@ Single stochastic run, `opencode-go/gpt-5.6-luna` high. [Artifact](https://githu
 
 ## Tools
 
-| Tool             | What it does                                                                                                                       |
-| ---------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
-| `read`           | `HASH│content` with `offset`/`limit`; `[Showing N-M of T]` paging; `>200KB` lines show marker                                      |
-| `read_skill`     | Plain text, no hashes, no serves — editing after it needs a serve                                                                  |
-| `edit`           | `{file, edits:[[from,to,text]]}` (named objects too; `path`/`file_path` aliases fold), `""` deletes, atomic ≤32, verify-then-write |
-| `undo_last_edit` | `{path}` restores last edit at its effective EOL (BOM/anchors too), names a lost mixture, persisted                                |
+| Tool             | What it does                                                                                                                         |
+| ---------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| `read`           | `HASH│content` with `offset`/`limit`; `[Showing N-M of T]` paging; `>200KB` lines show marker                                        |
+| `read_skill`     | Plain text, no hashes, no serves — editing after it needs a serve                                                                    |
+| `edit`           | `{file, edits:[[from,to,text]]}` (named objects too; `path`/`file_path` aliases fold), `""` deletes, atomic ≤32, verify-then-write   |
+| `undo_last_edit` | `{path}` restores last edit at its effective EOL as UTF-8 (BOM/anchors too), names a lost mixture or a migrated codec+BOM, persisted |
 
 `write` stays, but refuses an exact `HASH│` echo for same `session/path/line` before dispatch.
 
@@ -263,11 +265,14 @@ Single stochastic run, `opencode-go/gpt-5.6-luna` high. [Artifact](https://githu
 
 ### Warning codes
 
-| Code                    | Meaning                                                                                           | What to do                                                                             |
-| ----------------------- | ------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------- |
-| `[W_UNSERVED_INTERIOR]` | `hint` mode applied an edit whose replaced span included interior lines this session never served | Verify the uninspected replacement was intended; `spanMode: strict` refuses it instead |
+| Code                    | Meaning                                                                                               | What to do                                                                                                                                  |
+| ----------------------- | ----------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| `[W_UNSERVED_INTERIOR]` | `hint` mode applied an edit whose replaced span included interior lines this session never served     | Verify the uninspected replacement was intended; `spanMode: strict` refuses it instead                                                      |
+| `[W_EOL_REWRITTEN]`     | An edit re-spelled the file's terminators at one effective EOL                                        | `undo_last_edit` restores normalized content; a forced rung re-spells even a uniform file                                                   |
+| `[W_MIXED_EOL]`         | A read served a file mixing terminator kinds (no audience: a read reports state, it addresses nobody) | No action; the next edit normalizes to the named ending                                                                                     |
+| `[W_ENCODING_MIGRATED]` | An edit migrated a legacy file to UTF-8 under `normalizeToUtf8: true`                                 | `undo_last_edit` restores the text; the pre-edit codec and BOM are gone — version control or an external re-encode is the only byte restore |
 
-Warnings are applied-tier notices: the edit landed and the file is valid; the text names what was not inspected.
+Warnings are applied-tier notices: the edit landed and the file is valid; the text names what was not inspected. The one read-tier code is listed for completeness and carries no audience — a read reports observed state and nothing was written.
 
 ## Comparison
 
