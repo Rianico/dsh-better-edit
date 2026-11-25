@@ -9,8 +9,10 @@
  */
 import { splitLines } from "../utils.js";
 import { loadHashStore, type HashStore } from "../hash-store.js";
-import { contentChecksum, initHasher, HASH_RE, AnchorSpaceExhaustedError } from "./hash-assign.js";
-import { lineHashesPure, mapStableHashes } from "./hash-assign.js";
+import { contentChecksum, initHasher, HASH_RE } from "./hash-assign.js";
+import { canonDigest, lineHashesAligned, lineHashesPure, mapStableHashes } from "./hash-assign.js";
+import { pairLineage, type LineDescriptor } from "../snapshot-store/pairing.js";
+import type { LineageRow } from "../snapshot-store/lineage-store.js";
 
 export interface HashSnapshotIO {
   get(path: string, content: string, deleteCorrupt: boolean): Promise<string[] | undefined>;
@@ -21,6 +23,13 @@ export interface HashSnapshotIO {
     hashes: string[],
     content?: string,
   ): Promise<void>;
+  /**
+   * The newest committed lineage for `path`, or `undefined` when the path has no usable prior
+   * lineage — the evidence the checksum-miss alignment pairs against. Optional: an IO without it
+   * (a test double, or a store with no lineage family) simply cannot align, and the read falls
+   * back to fresh allocation. A rejection is treated the same way, never surfaced to the model.
+   */
+  latestLineage?(path: string): Promise<LineageRow[] | undefined>;
 }
 
 let defaultHashSnapshotIO: HashSnapshotIO | undefined;
@@ -38,6 +47,7 @@ export function snapshotIOFor(store?: HashStore): HashSnapshotIO | undefined {
         store.upsertSnapshot(path, checksum, lineCount, hashes, content);
         return Promise.resolve();
       },
+      latestLineage: async (path) => store.latestLineageFor(path),
     };
   }
   return (
@@ -49,6 +59,10 @@ export function snapshotIOFor(store?: HashStore): HashSnapshotIO | undefined {
       upsert: async (path, checksum, lineCount, hashes, content?) => {
         const s = await loadHashStore();
         s.upsertSnapshot(path, checksum, lineCount, hashes, content);
+      },
+      latestLineage: async (path) => {
+        const s = await loadHashStore();
+        return s.latestLineageFor(path);
       },
     }
   );
@@ -62,6 +76,106 @@ export function isValidHashList(value: unknown): value is string[] {
   return true;
 }
 
+export interface LineageAlignment {
+  hashes: string[];
+  /** Prior anchors the alignment retired: the line they named paired with nothing in `content`. */
+  retired: Set<string>;
+}
+
+/**
+ * Align `content` against the latest committed lineage — the checksum-miss half of a read.
+ *
+ * `pairLineage` decides what both sides can prove: a paired line keeps the exact anchor it was
+ * served under, and every unpaired line allocates fresh (fail-closed — an ambiguous interval
+ * retires rather than guessing a coordinate). A prior anchor whose CANON occurs more than once in
+ * the lineage stays blocked from fresh allocation even when its own line retired, so a fresh
+ * duplicate can never reclaim a retired twin's spelling; a canon seen once stays free, so a pure
+ * reorder never rotates unchanged bytes.
+ *
+ * `retired` is an OUT-set the caller persists as a retirement marker (the session layer's job —
+ * this function only reports which anchors no current line carries).
+ */
+export function alignToLatestLineage(
+  content: string,
+  latest: readonly LineageRow[],
+  reservedHashes: ReadonlySet<string> = new Set(),
+  reservedCount?: number,
+  servedCount?: number,
+): LineageAlignment {
+  const lines = splitLines(content);
+  const prev: LineDescriptor[] = latest.map((row) => ({
+    lineNumber: row.lineNumber,
+    canonHash: row.canonHash,
+  }));
+  const curr: LineDescriptor[] = lines.map((line, index) => ({
+    lineNumber: index + 1,
+    canonHash: canonDigest(line),
+  }));
+  const pairing = pairLineage(prev, curr);
+
+  const byLineNumber = new Map(latest.map((row) => [row.lineNumber, row]));
+  const carried = new Map<number, string>();
+  const pairedPrev = new Set<number>();
+  for (const [prevLine, currLine] of pairing) {
+    const row = byLineNumber.get(prevLine);
+    if (row === undefined || !HASH_RE.test(row.anchor)) continue;
+    carried.set(currLine, row.anchor);
+    pairedPrev.add(prevLine);
+  }
+
+  const seenCanons = new Set<string>();
+  const twinCanons = new Set<string>();
+  for (const row of latest) {
+    if (seenCanons.has(row.canonHash)) twinCanons.add(row.canonHash);
+    else seenCanons.add(row.canonHash);
+  }
+  const blocked = new Set<string>(reservedHashes);
+  for (const row of latest) {
+    if (!HASH_RE.test(row.anchor)) continue;
+    if (pairedPrev.has(row.lineNumber) || twinCanons.has(row.canonHash)) blocked.add(row.anchor);
+  }
+
+  const liveAnchors = new Set(carried.values());
+  const retired = new Set<string>();
+  for (const row of latest) {
+    if (pairedPrev.has(row.lineNumber)) continue;
+    if (!HASH_RE.test(row.anchor) || liveAnchors.has(row.anchor)) continue;
+    retired.add(row.anchor);
+  }
+
+  return {
+    hashes: lineHashesAligned(content, carried, blocked, reservedCount, servedCount),
+    retired,
+  };
+}
+
+/** Best-effort prior-lineage read: a missing capability, an absent family, or a store fault loses the alignment, never the read. */
+async function readLatestLineage(
+  io: HashSnapshotIO | undefined,
+  path: string,
+): Promise<LineageRow[] | undefined> {
+  if (io?.latestLineage === undefined) return undefined;
+  try {
+    const latest = await io.latestLineage(path);
+    return latest !== undefined && latest.length > 0 ? latest : undefined;
+  } catch (error) {
+    console.error("Failed to read the latest lineage for alignment:", error);
+    return undefined;
+  }
+}
+
+export interface HashAlignmentOptions {
+  /**
+   * Opt in to the checksum-miss lineage alignment. The READ path sets it (`readView` through
+   * `normFromText`); every other caller — the edit pipeline's working-buffer re-derivation in
+   * particular — keeps the fresh allocation it has always had, so the write path's anchor identity
+   * does not move until the identity union owns it.
+   */
+  enabled: boolean;
+  /** OUT: prior anchors the alignment retired — the session layer persists them as retirement markers. */
+  retired?: Set<string>;
+}
+
 export async function lineHashes(
   content: string,
   path?: string,
@@ -70,6 +184,8 @@ export async function lineHashes(
   persist?: boolean,
   reservedHashes: ReadonlySet<string> = new Set(),
   retiredHashes: ReadonlySet<string> = new Set(),
+  /** Opt in to (and collect from) the checksum-miss lineage alignment; absent means fresh allocation. */
+  alignment?: HashAlignmentOptions,
 ): Promise<string[]> {
   await initHasher();
   if (!path) return lineHashesPure(content, reservedHashes);
@@ -114,7 +230,16 @@ export async function lineHashes(
     }
   }
   if (cached && !cached.some((hash) => retiredHashes.has(hash))) return cached;
-  const newHashes = lineHashesPure(content, reservedHashes, retiredHashes.size, 0);
+  const latest = alignment?.enabled === true ? await readLatestLineage(io, path) : undefined;
+  const aligned =
+    latest === undefined
+      ? undefined
+      : alignToLatestLineage(content, latest, reservedHashes, retiredHashes.size, 0);
+  if (aligned !== undefined && alignment?.retired !== undefined) {
+    for (const hash of aligned.retired) alignment.retired.add(hash);
+  }
+  const newHashes =
+    aligned?.hashes ?? lineHashesPure(content, reservedHashes, retiredHashes.size, 0);
   if (persist !== false && io) {
     try {
       await io.upsert(

@@ -31,6 +31,7 @@ import {
   ANCHOR_GENERATION,
   canonDigest,
   contentChecksum,
+  HASH_RE,
 } from "../hashline/hash-assign.js";
 import { splitLines } from "../utils.js";
 import { withBusyRetry } from "../store-retry.js";
@@ -109,6 +110,14 @@ export interface LineageStore {
   /** Create-or-adopt (path, snapshotHash) and grant leases in ONE BEGIN IMMEDIATE. */
   commitSnapshot(input: CommitSnapshotInput): void;
   lineageFor(path: string, snapshotHash: string): LineageRow[];
+  /**
+   * The newest committed lineage for `path`, in line order — the evidence a checksum-miss alignment
+   * pairs drifted content against. `undefined` when the path has no committed snapshot, its lineage
+   * is empty, or the rows are unusable (non-contiguous numbering, an anchor outside the hash
+   * alphabet, or a repeated anchor): alignment then loses its evidence and the caller falls back to
+   * fresh allocation, never to damaged coordinates. READ-ONLY.
+   */
+  latestLineageFor(path: string): LineageRow[] | undefined;
   /**
    * `line_id` -> current line number for `content` — the identity map the edit path resolves a
    * leased line through (CP2-r1). Prefers the committed lineage of `content`; otherwise pairs the
@@ -536,6 +545,28 @@ export function createLineageStore(db: DatabaseSync): LineageStore {
           anchor: row.anchor,
         }),
       );
+    },
+    latestLineageFor(path) {
+      const latest = latestSnapshotStmt.get(path) as SnapshotRow | undefined;
+      if (latest === undefined) return undefined;
+      // SAFETY: SELECT list matches LineageRecord field-for-field (same statement as grantLeases).
+      const records = snapshotLineageStmt.all(latest.snapshot_id) as unknown as LineageRecord[];
+      if (records.length === 0) return undefined;
+      const rows: LineageRow[] = [];
+      const anchors = new Set<string>();
+      for (let index = 0; index < records.length; index++) {
+        const row = records[index]!;
+        if (row.line_number !== index + 1) return undefined;
+        if (!HASH_RE.test(row.anchor) || anchors.has(row.anchor)) return undefined;
+        anchors.add(row.anchor);
+        rows.push({
+          lineNumber: row.line_number,
+          lineId: row.line_id,
+          canonHash: row.canon_hash,
+          anchor: row.anchor,
+        });
+      }
+      return rows;
     },
 
     positionsByIdentity(path, content) {

@@ -471,3 +471,20 @@ export function pairSnapshots(
   assertMonotonicPairing(pairing);
   return pairing;
 }
+
+/**
+ * Pair a prior lineage against freshly-read lines — the checksum-miss alignment entry.
+ *
+ * `pairSnapshots` is the whole rule today: the pin-bounded engine pairs only what both sides can
+ * prove (unique pins, rigid runs, a unique LCS embedding) and leaves every ambiguous interval
+ * UNPAIRED, so an unprovable duplicate retires instead of being guessed. Naming the entry keeps the
+ * alignment call site off the raw engine, so a later rule can extend the checksum-miss alignment
+ * without changing what the edit path's `line_id` pairing does.
+ */
+export function pairLineage(
+  prevLines: LineDescriptor[],
+  currLines: LineDescriptor[],
+  options?: PairingOptions,
+): Map<number, number> {
+  return pairSnapshots(prevLines, currLines, options);
+}

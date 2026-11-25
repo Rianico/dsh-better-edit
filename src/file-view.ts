@@ -219,6 +219,8 @@ export async function normFromText(input: {
   noPersist?: boolean;
   reservedHashes?: ReadonlySet<string>;
   retiredHashes?: ReadonlySet<string>;
+  /** Opt in to the checksum-miss lineage alignment; the read path sets it, the edit load does not. */
+  alignOnMiss?: boolean;
   hadUtf8DecodeErrors?: boolean;
   previous?: { content: string; hashes: string[]; removedHashes?: Set<string> };
 }): Promise<NormFile> {
@@ -242,6 +244,7 @@ export async function normFromText(input: {
     input.noPersist !== true,
     input.reservedHashes,
     input.retiredHashes,
+    input.alignOnMiss === true ? { enabled: true } : undefined,
   );
   return {
     absolutePath,
@@ -797,6 +800,7 @@ export async function readView(
       maxLines: MAX_HASH_LINES,
       reservedHashes: opts.reservedHashes,
       retiredHashes: opts.retiredHashes,
+      alignOnMiss: true,
       previous: opts.previous,
     });
   const r = await fmtReadPreview(
