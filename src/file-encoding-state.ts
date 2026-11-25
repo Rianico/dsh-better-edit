@@ -421,6 +421,20 @@ export interface EncodeForSaveOptions {
 export const UTF8_BOM = "\uFEFF";
 
 /**
+ * The codec a migration edit abandoned (#191). Recorded once, at the save seam
+ * (`prepareForSave`, legacy-recorded arm with a non-faithful body), and forwarded
+ * through the undo pair — never recomputed downstream, so the undo disclosure cannot
+ * disagree with the write that migrated the file.
+ *
+ * `hasBOM` is the recorded FILE property, never text-level `stripBOM`: a legacy BOM
+ * (e.g. utf16le's FF FE) is a byte image a UTF-8 string write cannot reproduce.
+ */
+export interface EncodingMigration {
+  readonly encoding: string;
+  readonly hasBOM: boolean;
+}
+
+/**
  * True when the text's UTF-8 byte image is byte-identical to its byte image
  * under `encoding` — an ASCII-only file in a single-byte charset, where the
  * text-only write seam reproduces the original bytes exactly. Checking bytes
@@ -458,7 +472,7 @@ export function prepareForSave(
   content: string,
   existingState: FileEncodingState | undefined,
   opts: EncodeForSaveOptions = {},
-): { textToWrite: string; newState?: FileEncodingState } {
+): { textToWrite: string; newState?: FileEncodingState; migration?: EncodingMigration } {
   const displayPath = opts.displayPath ?? "(unknown path)";
   const normalize = opts.normalizeToUtf8 === true;
 
@@ -523,9 +537,16 @@ export function prepareForSave(
     }
     // Migration (normalizeToUtf8) or a byte-faithful legacy image: both land UTF-8
     // bytes, so the memo must describe UTF-8 — never a stale utf16le/legacy name.
+    // #191: the verdict fires ONLY here, on the non-faithful arm: the write abandoned the
+    // recorded codec, so the undo names it. A faithful body changed nothing about the codec
+    // (its bytes are identical either way) and carries no verdict.
+    const migration: EncodingMigration | undefined = faithful
+      ? undefined
+      : { encoding: recorded, hasBOM: existingState.hasBOM };
     return {
       textToWrite: body,
       newState: { encoding: "utf8", hasBOM: false, lineEnding, version: undefined },
+      ...(migration === undefined ? {} : { migration }),
     };
   }
 

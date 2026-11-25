@@ -13,7 +13,7 @@
  *
  * Public surface:
  *   execute(io, items, {sessionKey, exec, sandbox, signal}) → string  — deep seam: ONE interface
- *   persistUndoAndWrite(opts) → void                                  — transaction (exported for tests)
+ *   persistUndoAndWrite(opts) → AppliedMigration[]               — transaction (exported for tests)
  *
  * Depth: small interface (execute) with large implementation — locality and leverage.
  *
@@ -40,7 +40,7 @@ import { restoreEndings } from "./edit-diff.js";
 import { buildBatchResult } from "./edit-response.js";
 import type { BatchSection } from "./edit-response.js";
 import { getEncodingState, prepareForSave } from "./file-encoding-state.js";
-import type { FileEncodingState } from "./file-encoding-state.js";
+import type { EncodingMigration, FileEncodingState } from "./file-encoding-state.js";
 import { loadConfig } from "./store-config.js";
 
 // Engine helpers are private to Mutation — not re-exported.
@@ -80,14 +80,28 @@ interface PersistWriteOptions {
   undoUnavailableMessage: (displayPath: string) => string;
 }
 
-export async function persistUndoAndWrite(opts: PersistWriteOptions): Promise<void> {
+/**
+ * The codec one file's write abandoned (#191): the save seam's verdict, forwarded so the
+ * undo can disclose it. Empty when no file in the batch migrated — the caller renders
+ * nothing from this; the disclosure belongs to the undo that restores the content.
+ */
+export interface AppliedMigration {
+  displayPath: string;
+  migration: EncodingMigration;
+}
+
+export async function persistUndoAndWrite(opts: PersistWriteOptions): Promise<AppliedMigration[]> {
   const { io, files } = opts;
   // Issue #112: decide the save text for EVERY file BEFORE any write. The seam throws
   // E_ENCODING_UNWRITABLE when the recorded encoding cannot be reproduced through the
   // text-only write, so a batch never leaves file 1 transcoded and file 2 refused —
   // nothing (not even the undo rows) is written when the round-trip is impossible.
   const normalizeToUtf8 = loadConfig().normalizeToUtf8;
-  const prepared: Array<{ file: UndoWriteFile; textToWrite: string }> = files.map((file) => {
+  const prepared: Array<{
+    file: UndoWriteFile;
+    textToWrite: string;
+    migration?: EncodingMigration;
+  }> = files.map((file) => {
     const recorded = getEncodingState(file.absolutePath);
     // No memo (e.g. a first write): reconstruct the utf8/utf8bom state the edit read.
     const state: FileEncodingState = recorded ?? {
@@ -101,15 +115,27 @@ export async function persistUndoAndWrite(opts: PersistWriteOptions): Promise<vo
       displayPath: file.displayPath,
       lineEnding: file.effectiveEnding,
     });
-    return { file, textToWrite: prep.textToWrite };
+    // #191: the verdict is the seam's — captured here, forwarded below, never recomputed.
+    return {
+      file,
+      textToWrite: prep.textToWrite,
+      ...(prep.migration === undefined ? {} : { migration: prep.migration }),
+    };
   });
+
+  const appliedMigrations: AppliedMigration[] = [];
+  for (const { file, migration } of prepared) {
+    if (migration !== undefined) {
+      appliedMigrations.push({ displayPath: file.displayPath, migration });
+    }
+  }
 
   const undos: Array<{
     file: UndoWriteFile;
     textToWrite: string;
     restore: () => Promise<void>;
   }> = [];
-  for (const { file, textToWrite } of prepared) {
+  for (const { file, textToWrite, migration } of prepared) {
     const undo = await saveUndo(file.absolutePath, {
       content: file.originalNormalized,
       bom: file.bom,
@@ -120,6 +146,8 @@ export async function persistUndoAndWrite(opts: PersistWriteOptions): Promise<vo
       // forwarded, never recomputed — the engine's one decode already decided them.
       effectiveEnding: file.effectiveEnding,
       preImageMixed: file.preImageMixed,
+      // #191: the save seam's verdict rides the same pair, so the revert can name the codec.
+      ...(migration === undefined ? {} : { migration }),
     });
     if (!undo.persisted) {
       for (const u of undos) {
@@ -194,6 +222,8 @@ export async function persistUndoAndWrite(opts: PersistWriteOptions): Promise<vo
     }
     throw opts.sandbox.mapError(error, opts.sandboxPolicy);
   }
+
+  return appliedMigrations;
 }
 
 // --- Deep seam: unified mutation API (one interface, thin adapters) ---

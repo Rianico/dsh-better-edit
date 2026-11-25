@@ -310,6 +310,17 @@ export function buildUndoTool(io: FileIO, sandbox: FsSandboxController) {
             `Restored at ${endingName(effectiveEnding)}; the pre-edit mixture is not restored.`,
           );
         }
+        // #191: a migration revert still writes UTF-8 — it never refuses and never claims the old
+        // bytes came back. The codec is named verbatim from the stored verdict (taken once at the
+        // save seam, never recomputed), so silence cannot read as restoration. Absent = no verdict:
+        // rows that migrated nothing (and all pre-#191 rows) push no such clause.
+        if (undo.migration !== undefined) {
+          parts.push(
+            undo.migration.hasBOM
+              ? `Restored as UTF-8; the pre-edit ${undo.migration.encoding} encoding and its BOM are not restored.`
+              : `Restored as UTF-8; the pre-edit ${undo.migration.encoding} encoding is not restored.`,
+          );
+        }
         // The serve write is a SECOND unit, deliberately outside the committed pair: a fault
         // here must not roll the revert back. But it decides whether the anchors below are
         // usable, so the claim is made only when the serve landed.

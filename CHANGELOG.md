@@ -11,6 +11,10 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Bug Fixes
+
+* **undo:** name the codec a migration edit abandoned when the revert lands — `Restored as UTF-8; the pre-edit <codec> encoding[ and its BOM] is not restored.` — from a verdict taken once at the save seam and carried on the undo pair as additive nullable columns (no version bump), so silence can no longer read as restoration (ADR-0050). (#191)
+
 ## [1.3.0] - 2026-11-25
 
 ### Features

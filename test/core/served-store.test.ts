@@ -801,6 +801,9 @@ describe("served state — schema versioning", () => {
         // save named no effective ending, so the row carries the pre-image's own one.
         effectiveEnding: "\n",
         preImageMixed: 0,
+        // #191: the verdict pair rides the same additive contract — NULL here, never a claim.
+        migratedFrom: null,
+        migratedFromBOM: null,
       });
       store.upsertRetiredAnchors("sessionA", path, JSON.stringify(["BBB"]));
       expect(store.getRetiredAnchors("sessionA", path)).toEqual(new Set(["BBB"]));
