@@ -10,6 +10,8 @@
  */
 
 import { EDITS_MAX_ITEMS } from "./constants.js";
+import { isEncodingMigrationConsent } from "./encoding-consent.js";
+import type { EncodingMigrationConsent } from "./encoding-consent.js";
 import type { ReadWindow } from "./file-view.js";
 import type { EditMode } from "./edit-mode.js";
 import { isRec, normalizeFilePath, rejectUnknownFields } from "./utils.js";
@@ -40,6 +42,13 @@ export type EditRequest = {
    * writing to disk, recording undo, or updating leases. Absent or null means false.
    */
   dry_run?: boolean;
+  /**
+   * Per-call encoding-migration consent for this edit: `"refuse"` never converts the file,
+   * `"utf8"` / `"utf8bom"` convert it to UTF-8 without / with a BOM. Absent delegates to the
+   * config ladder (`allowEncodingMigration` > legacy `normalizeToUtf8` > `"refuse"`); a present
+   * value outside the enum (including `null`) is refused at admission.
+   */
+  allow_encoding_migration?: EncodingMigrationConsent;
 };
 
 // legacy single-edit shape retained for mutation.ts internal API (renamed with the payload)
@@ -125,6 +134,7 @@ const ROOT_INPUT_KS = new Set([
   "edits",
   "mode",
   "dry_run",
+  "allow_encoding_migration",
   "sandbox_permissions",
   "justification",
 ]);
@@ -135,13 +145,14 @@ export function editRequestFrom(input: unknown): NormalizedEditRequest | undefin
   for (const key of Object.keys(rec)) {
     if (!ROOT_INPUT_KS.has(key)) return undefined;
   }
-  const { file, file_path, path, edits, mode, dry_run } = rec as {
+  const { file, file_path, path, edits, mode, dry_run, allow_encoding_migration } = rec as {
     file?: unknown;
     file_path?: unknown;
     path?: unknown;
     edits?: unknown;
     mode?: unknown;
     dry_run?: unknown;
+    allow_encoding_migration?: unknown;
   };
   // file preferred; legacy path/file_path fold (sanitized). #117: a null or
   // absent file is an admission error — the anchor-inference seam is retired.
@@ -170,7 +181,21 @@ export function editRequestFrom(input: unknown): NormalizedEditRequest | undefin
     if (typeof dry_run !== "boolean") return undefined;
     effectiveDryRun = dry_run;
   }
-  return { file: effectivePath, edits: items, mode: effectiveMode, dry_run: effectiveDryRun };
+  // Omission is the only spelling of "the config decides": a present value — `null` included —
+  // must be a consent, so anything else fails the fold (refused by name in assertEditRequest).
+  let effectiveConsent: EncodingMigrationConsent | undefined;
+  if (allow_encoding_migration !== undefined) {
+    if (!isEncodingMigrationConsent(allow_encoding_migration)) return undefined;
+    effectiveConsent = allow_encoding_migration;
+  }
+  return {
+    file: effectivePath,
+    edits: items,
+    mode: effectiveMode,
+    dry_run: effectiveDryRun,
+    // Absent stays absent: the config ladder must not see a materialized "refuse" here.
+    ...(effectiveConsent === undefined ? {} : { allow_encoding_migration: effectiveConsent }),
+  };
 }
 
 /**
@@ -220,10 +245,10 @@ export function sanitizePath(value: unknown): string | null {
 
 export const EDIT_PAYLOAD_HINT =
   "Edit must be called with exactly one payload. Use the canonical payload " +
-  '{"file": file, "edits": [{ "anchor_from": anchor_from, "anchor_to": anchor_to, "replace_with": replace_with }, ...], "mode"?: "general" | "literal", "dry_run"?: boolean}: ' +
+  '{"file": file, "edits": [{ "anchor_from": anchor_from, "anchor_to": anchor_to, "replace_with": replace_with }, ...], "mode"?: "general" | "literal", "dry_run"?: boolean, "allow_encoding_migration"?: "refuse" | "utf8" | "utf8bom"}: ' +
   '"file" is the text file to edit (a non-empty string, never a directory); each item names ' +
   "two inclusive bare-3-char anchors and the full replacement " +
-  '(an empty string deletes the range); optional "mode" is "general" (default, reproduced served rows are refused) or "literal" (declared literal content); optional "dry_run" is boolean (omitted or null means false — a live edit). ' +
+  '(an empty string deletes the range); optional "mode" is "general" (default, reproduced served rows are refused) or "literal" (declared literal content); optional "dry_run" is boolean (omitted or null means false — a live edit); optional "allow_encoding_migration" consents to converting this file to UTF-8 on this write — "refuse" (never convert), "utf8" (no BOM) or "utf8bom" (with BOM) — and omitted means the config decides. ' +
   "Legacy tuple items and legacy key spellings still fold; do not mix old and new key spellings.";
 
 function describeReceived(input: unknown): string {
@@ -242,6 +267,7 @@ const EDIT_KS = new Set([
   "edits",
   "mode",
   "dry_run",
+  "allow_encoding_migration",
   "sandbox_permissions",
   "justification",
 ]);
@@ -271,6 +297,10 @@ export function normalizeRequest(input: unknown): unknown {
     edits: valid.edits,
     mode: valid.mode,
     dry_run: valid.dry_run,
+    // Carried only when the caller named it: a materialized "refuse" would outrank the config.
+    ...(valid.allow_encoding_migration === undefined
+      ? {}
+      : { allow_encoding_migration: valid.allow_encoding_migration }),
   };
   // preserve non-standard fields like sandbox_permissions/justification for later reject check? but we strip to valid fields and re-add them?
   for (const k of ["sandbox_permissions", "justification"]) {
@@ -288,7 +318,15 @@ export function prepareEditArguments(args: unknown): Record<string, unknown> {
   if (valid) {
     // F10.1: preserve mode like normalizeRequest — the two normalizers agree.
     // prepareEditArguments returns schema-ready folded objects (named triple).
-    return { file: valid.file, edits: valid.edits, mode: valid.mode, dry_run: valid.dry_run };
+    return {
+      file: valid.file,
+      edits: valid.edits,
+      mode: valid.mode,
+      dry_run: valid.dry_run,
+      ...(valid.allow_encoding_migration === undefined
+        ? {}
+        : { allow_encoding_migration: valid.allow_encoding_migration }),
+    };
   }
   throw new DomainError("E_BAD_PAYLOAD", {
     message: `${EDIT_PAYLOAD_HINT} ${describeReceived(args)}`,
@@ -307,6 +345,10 @@ const FILE_REQUIRED_MESSAGE =
 /** The exact refusal for a non-boolean dry_run; one sentence, one owner. */
 const DRY_RUN_TYPE_MESSAGE =
   'Edit request "dry_run" must be a boolean (absent or null means false — a live edit).';
+
+/** The exact refusal for a bad encoding-migration consent; one sentence, one owner. */
+const ENCODING_CONSENT_MESSAGE =
+  'Edit request "allow_encoding_migration" must be "refuse", "utf8", or "utf8bom" (omit it to let the config decide).';
 
 /**
  * #117: is this raw record an unnamed target rather than a malformed payload?
@@ -347,6 +389,17 @@ function hasUnusableDryRun(request: Record<string, unknown>): boolean {
   return value !== null && value !== undefined && typeof value !== "boolean";
 }
 
+/**
+ * #209 reachability: an out-of-enum `allow_encoding_migration` never normalizes, so without this
+ * predicate the generic hint is the only message the caller sees.
+ */
+function hasUnusableEncodingConsent(request: Record<string, unknown>): boolean {
+  if (!("allow_encoding_migration" in request)) return false;
+  const value = request.allow_encoding_migration;
+  // `undefined` is the only absent spelling: `null` is a value outside the enum, refused by name.
+  return value !== undefined && !isEncodingMigrationConsent(value);
+}
+
 export function assertEditRequest(request: unknown): asserts request is NormalizedEditRequest {
   // #117: the specific refusal must be reachable before the marker guard — a raw
   // record whose file is null/absent/empty never normalizes, so the generic hint
@@ -358,10 +411,13 @@ export function assertEditRequest(request: unknown): asserts request is Normaliz
   if (isRec(request) && hasUnusableDryRun(request)) {
     throw new DomainError("E_BAD_PAYLOAD", { message: DRY_RUN_TYPE_MESSAGE });
   }
+  if (isRec(request) && hasUnusableEncodingConsent(request)) {
+    throw new DomainError("E_BAD_PAYLOAD", { message: ENCODING_CONSENT_MESSAGE });
+  }
   if (!isNormalizedEdit(request)) {
     throw new DomainError("E_BAD_PAYLOAD", {
       message:
-        'Edit request must be exactly { file, edits: [{ anchor_from, anchor_to, replace_with }, ...], mode?: "general" | "literal", dry_run?: boolean }. ' +
+        'Edit request must be exactly { file, edits: [{ anchor_from, anchor_to, replace_with }, ...], mode?: "general" | "literal", dry_run?: boolean, allow_encoding_migration?: "refuse" | "utf8" | "utf8bom" }. ' +
         EDIT_PAYLOAD_HINT,
     });
   }
@@ -371,6 +427,14 @@ export function assertEditRequest(request: unknown): asserts request is Normaliz
     throw new DomainError("E_BAD_PAYLOAD", {
       message: FILE_REQUIRED_MESSAGE,
     });
+  }
+  // Defence in depth: the pre-marker predicate reads the RAW record, so the marker-carrying
+  // record is re-checked here (a forced value never folds, but a hand-built marker can).
+  if (
+    req.allow_encoding_migration !== undefined &&
+    !isEncodingMigrationConsent(req.allow_encoding_migration)
+  ) {
+    throw new DomainError("E_BAD_PAYLOAD", { message: ENCODING_CONSENT_MESSAGE });
   }
   if (req.mode !== undefined && req.mode !== "general" && req.mode !== "literal") {
     throw new DomainError("E_BAD_PAYLOAD", {

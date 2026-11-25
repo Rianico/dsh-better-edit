@@ -72,6 +72,17 @@ export function buildEditTool(io: FileIO, sandbox: FsSandboxController) {
           'How to treat bytes reproducing served rows: "general" refuses them, "literal" declares them as intended file content',
       },
       dry_run: dryRunSchema,
+      allow_encoding_migration: {
+        type: "string",
+        enum: ["refuse", "utf8", "utf8bom"],
+        description:
+          'Per-call encoding-migration consent: "refuse" never converts this file, "utf8" / "utf8bom" convert it to UTF-8 without / with a BOM on this write (omit it to let the config decide)',
+        // The declared wire enum is the first gate: the host refuses a value outside it before the
+        // tool body runs — an out-of-enum string names the three values
+        // (`"arguments.allow_encoding_migration" must be one of ["refuse","utf8","utf8bom"]`), while
+        // a wrong type (`null`, boolean, number) reports `must be a string`. The contract's own
+        // `E_BAD_PAYLOAD` names the three values for any wrong value that reaches it.
+      },
       ...(sandbox.escalationModes.length > 0 ? sandbox.schemaFields() : {}),
     },
     output: {
@@ -121,7 +132,20 @@ export function buildEditTool(io: FileIO, sandbox: FsSandboxController) {
           }
 
           // Deep seam: one interface, all lifecycle branching concentrates in Mutation
-          return execute({ io, items, sessionKey, signal, exec, sandbox, sandboxPolicy, dryRun });
+          return execute({
+            io,
+            items,
+            sessionKey,
+            signal,
+            exec,
+            sandbox,
+            sandboxPolicy,
+            dryRun,
+            // Carried only when the payload named it: absent means "the config decides".
+            ...(req.allow_encoding_migration === undefined
+              ? {}
+              : { allowEncodingMigration: req.allow_encoding_migration }),
+          });
         } catch (error: unknown) {
           throw wrapUnexpected(error, exec.signal);
         }

@@ -1,7 +1,7 @@
 # ADR-0012 — VS Code Encoding Model for Non-UTF-8 Text
 
 Date: 2026-08-30
-Status: accepted (grill-with-docs, Q1–Q12). Amended 2026-11-16 (#112): the write seam is text-only, so the save side refuses a non-round-trippable encoding instead of transcoding.
+Status: accepted (grill-with-docs, Q1–Q12). Amended 2026-11-16 (#112): the write seam is text-only, so the save side refuses a non-round-trippable encoding instead of transcoding. Amended 2026-11-25 (#209): migration is a per-call consent with a UTF-8/BOM target enum; see ADR-0052.
 Related: #34 `read/edit reject non-UTF-8 text files`, `docs/specs/issue-34-encoding-research.md`, GLOSSARY.md `File Encoding`
 
 ## Context
@@ -135,6 +135,10 @@ After any successful write the memo describes the bytes actually written: the br
 Byte-preserving writes stay out of scope until the harness filesystem offers a **byte-write primitive** — a `writeBytes(target, Uint8Array, …)` (or equivalent `editBytes`) that goes through the same policy, intent, and observation gates. When it lands, the trigger is: `prepareForSave` gains an encode arm (`encodeText` already exists in `src/encoding.ts`) and `E_ENCODING_UNWRITABLE` is produced only when the recorded encoding itself is unmappable. Until then the refusal is the contract, and its message tells the model the one legal way forward.
 
 - Tests: `test/core/encoding-roundtrip.test.ts`.
+
+### Per-call migration consent (#209)
+
+The migration this amendment calls "the only way a non-UTF-8 file becomes writable" is no longer only a fleet knob: `edit` accepts an optional `allow_encoding_migration: "refuse" | "utf8" | "utf8bom"`, and the config key `allowEncodingMigration` (`DSH_BETTER_EDIT_ALLOW_ENCODING_MIGRATION`) sits above the legacy `normalizeToUtf8` spelling in one ladder (payload > config > legacy > `"refuse"`). `"utf8"` writes the migrated file without a BOM, `"utf8bom"` writes it with one leading `EF BB BF` so Windows tooling reads it as UTF-8, and `"refuse"` protects one file in a fleet that has opted in. The UTF-8 family is untouched — a consent never adds a BOM to a file already recorded as UTF-8, and a byte-faithful ASCII body still lands unchanged and silent. See [ADR-0052](0052-per-call-encoding-migration-consent.md).
 
 ## References
 

@@ -13,6 +13,8 @@ All notable changes to this project will be documented in this file.
 
 ### Features
 
+* **edit:** admit an optional per-call encoding-migration consent on the `edit` payload — `allow_encoding_migration: "refuse" | "utf8" | "utf8bom"` (payload > `allowEncodingMigration` / `DSH_BETTER_EDIT_ALLOW_ENCODING_MIGRATION` > legacy `normalizeToUtf8` > `"refuse"`) — so one file can convert without changing fleet policy and `"utf8bom"` yields the Windows-readable target; byte-faithful ASCII stays silent and the memo records the chosen target (ADR-0052). (#209)
+
 * **edit:** announce an explicit encoding migration on the applied result — one `[MODEL] [W_ENCODING_MIGRATED]` per migrated file, pushed after the write lands, so the abandoned codec and its BOM state are visible where the write happened. (#198)
 
 * **edit:** add an opt-in `spanMode: hint|strict` served-span policy (`DSH_BETTER_EDIT_SPAN_MODE`, default `hint`). `strict` refuses an edit whose leased span replaces an interior line this session never served — before any write, with a rowless `[E_UNSERVED_RANGE]` that counts the replaced span and lists the unserved file lines; default `hint` still accepts and now discloses via a blank diff gutter and one `[W_UNSERVED_INTERIOR]` applied warning, removing the false blanket-refusal promise (ADR-0045, closes #141). (#173)
