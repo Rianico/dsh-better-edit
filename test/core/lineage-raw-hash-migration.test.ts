@@ -1,12 +1,18 @@
-import { describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it } from "vitest";
 import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
 import { HASH_STORE_VERSION } from "../../src/constants.js";
 import { loadHashStore, shutdownHashStore } from "../../src/hash-store.js";
-import { HASH_RE, rawDigest } from "../../src/hashline/hash-assign.js";
+import { HASH_RE, initHasher, rawDigest } from "../../src/hashline/hash-assign.js";
 import { lineHashes } from "../../src/hashline/hash.js";
 import { useTestHome } from "../support/fixtures.js";
+
+// #199: await the hashing seam before the first digest, so the spec never races the
+// async xxhash-wasm init on a cold runner.
+beforeAll(async () => {
+  await initHasher();
+});
 
 const home = useTestHome();
 
