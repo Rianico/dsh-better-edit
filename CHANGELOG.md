@@ -11,6 +11,10 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Bug Fixes
+
+* **guidance:** track seed provenance in `.seeded.json`, refresh unedited legacy seeds on upgrade, retire default static `order:`, and disclose prompt divergence (ADR-0052, closes #177). (#212)
+
 ## [1.3.0] - 2026-11-25
 
 ### Features
