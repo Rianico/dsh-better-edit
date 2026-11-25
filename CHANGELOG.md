@@ -11,6 +11,10 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Tests
+
+* **test:** await the xxhash seam in the three hashing specs added by #197, so a pure spec cannot reach its first digest before the async wasm init settles on a cold runner (#200)
+
 ### Features
 
 * **edit:** announce an explicit encoding migration on the applied result — one `[MODEL] [W_ENCODING_MIGRATED]` per migrated file, pushed after the write lands, so the abandoned codec and its BOM state are visible where the write happened. (#198)
