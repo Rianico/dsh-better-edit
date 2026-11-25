@@ -1,6 +1,12 @@
-import { describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it } from "vitest";
 import { pairLineage, pairSnapshots, type LineageLine } from "../../src/snapshot-store/pairing.js";
-import { canonDigest, rawDigest } from "../../src/hashline/hash-assign.js";
+import { canonDigest, initHasher, rawDigest } from "../../src/hashline/hash-assign.js";
+
+// #199: this spec is pure, so its first digest runs before the async xxhash-wasm init would
+// otherwise settle on a cold runner. Await the seam explicitly, as every hashing spec does.
+beforeAll(async () => {
+  await initHasher();
+});
 
 /** Line-order descriptors carrying both pairing digests, as the checksum-miss alignment builds them. */
 function lineage(lines: string[]): LineageLine[] {

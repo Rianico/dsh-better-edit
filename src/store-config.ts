@@ -168,10 +168,12 @@ normalizeToUtf8: false
 # allowlist scored for top-3 previews when autoGuessEncoding:true
 supportedEncodings: [${SUPPORTED_ENCODINGS.join(", ")}]
 
-# served-span policy for edit payloads: "hint" (default) | "strict"
+# served-span policy for edit payloads: "hint" (default; disclose a replaced unserved interior) |
+# "strict" (refuse before any write — audit/CI)
 spanMode: hint
 
-# line ending a write uses: AUTO = keep the file's dominant terminator | LF | CRLF | CR
+# line ending a write uses: AUTO = the file's dominant terminator, else the system one | LF | CRLF | CR
+# cross-platform repos relying on .gitattributes: prefer LF
 eol: AUTO
 
 # undo history TTL in seconds; -1 = keep forever (default 604800 = 7 days)
