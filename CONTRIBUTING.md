@@ -23,6 +23,10 @@ Cut a release from `main` with the release workflow; five phases run in order, a
 
 The ledger decides the bump. A user-facing feature needs a `feat` title; a breaking entry needs `!` in the title. A `fix` title licenses a patch and cannot publish a `### Features` entry.
 
+### Guidance seed ledger
+
+A release that changes compiled guidance (`src/prompts.ts` or `src/guidance/resolve.ts` rendering) must append the new `seedHash` for each changed seeded file to `KNOWN_HISTORICAL_SEEDS` in `src/guidance/seed-history.ts` and add the matching fixture under `test/fixtures/guidance-seeds/<tag>/<file>`. `test/guidance-seed-history.test.ts` fails on ledger/fixture drift, so the omission is caught before the tag.
+
 ## Reporting Issues
 
 Pick the template that matches your intent — see `.github/ISSUE_TEMPLATE/` (blank issues disabled, `config.yml` links #38):
