@@ -11,6 +11,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.3.0] - 2026-11-25
+
 ### Features
 
 * **edit:** add an opt-in `spanMode: hint|strict` served-span policy (`DSH_BETTER_EDIT_SPAN_MODE`, default `hint`). `strict` refuses an edit whose leased span replaces an interior line this session never served — before any write, with a rowless `[E_UNSERVED_RANGE]` that counts the replaced span and lists the unserved file lines; default `hint` still accepts and now discloses via a blank diff gutter and one `[W_UNSERVED_INTERIOR]` applied warning, removing the false blanket-refusal promise (ADR-0045, closes #141). (#173)
