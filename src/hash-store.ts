@@ -23,13 +23,7 @@ import { hashStorePath } from "./store-tenancy.js";
 import { onStoreOpen, setStoresGetter } from "./store-lifecycle.js";
 import { workspaceCwd } from "./workspace-context.js";
 import { errCode, splitLines } from "./utils.js";
-import {
-  initHasher,
-  HASH_CLASS,
-  HASH_RE,
-  CANON_VERSION,
-  ANCHOR_GENERATION,
-} from "./hashline/hash-assign.js";
+import { initHasher, HASH_CLASS, HASH_RE } from "./hashline/hash-assign.js";
 // `SERVED_TTL_MS` was imported but never read here (the served-TTL prune lives in
 // `store-lifecycle`), so the import carries only what this module uses.
 import { HASH_STORE_VERSION, HASH_STORE_BUSY_TIMEOUT } from "./constants.js";
@@ -51,6 +45,7 @@ import {
   type LineageRow,
   type LineageStore,
 } from "./snapshot-store/lineage-store.js";
+import { snapshotEpochKey } from "./snapshot-store/epoch.js";
 import { withTransaction } from "./snapshot-store/txn.js";
 // ---- validators (owned here; the store's corruption handling uses them) ----
 
@@ -627,14 +622,15 @@ function migrateForward(db: DatabaseSync, storePath: string): void {
 }
 
 /**
- * `meta` key carrying the identity axes the store's anchor-bearing rows were minted under.
- * Value shape: `${CANON_VERSION}:${ANCHOR_GENERATION}` — the prefix every snapshot key starts with.
+ * `meta` key carrying the snapshot epoch the store's anchor-bearing rows were minted under.
+ * Value shape: `snapshotEpochKey()` — `${CANON_VERSION}:${ANCHOR_GENERATION}`, without the trailing
+ * separator. The epoch shape and both of its predicates are owned by `./snapshot-store/epoch.js`.
  */
 const ANCHOR_STAMP_KEY = "anchor_generation";
 
-/** The current identity axes as the stamp value (also the prefix of every snapshot key). */
+/** The current snapshot epoch as the stamp value (also the prefix of every snapshot key). */
 function anchorStamp(): string {
-  return `${CANON_VERSION}:${ANCHOR_GENERATION}`;
+  return snapshotEpochKey();
 }
 
 /**
@@ -644,6 +640,10 @@ function anchorStamp(): string {
  * transaction: this is key-prefix housekeeping, not a schema step, and it must stay idempotent on
  * every open. There is NO schema change and NO per-row generation column — every row family that
  * carries anchors is keyed by a snapshot key, so "not under the current prefix" IS the marker.
+ *
+ * Retention only, never validity: the sweep keeps the FULL-epoch prefix (`${CANON_VERSION}:${ANCHOR_GENERATION}:`),
+ * and a row that outlives it — one a concurrent mixed-version writer mints after this open — is still
+ * refused as evidence by every reuse seam (`src/snapshot-store/epoch.ts`, ADR-0054).
  *
  * One `BEGIN IMMEDIATE`, one unit: a crash between two deletes would otherwise leave a lease
  * pointing at a snapshot that no longer exists (or lineage without its snapshot row) — exactly the
@@ -659,7 +659,7 @@ function anchorStamp(): string {
  *
  * pi-lens note (`sql-injection` probes `db.exec`/`db.prepare` for template substitutions): every
  * pattern below is a BOUND parameter, not interpolated text, and the stamp itself is built only
- * from the numeric `CANON_VERSION`/`ANCHOR_GENERATION` constants — no caller data reaches the SQL,
+ * from the numeric constants behind `./snapshot-store/epoch.js` — no caller data reaches the SQL,
  * which is strictly stronger than the identifier allowlist `addColumnIfMissing` relies on.
  */
 function sweepForeignAnchorGeneration(db: DatabaseSync): void {

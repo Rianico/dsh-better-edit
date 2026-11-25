@@ -26,44 +26,24 @@
  * @module dsh-better-edit/snapshot-store/lineage-store
  */
 import { DatabaseSync } from "node:sqlite";
-import {
-  CANON_VERSION,
-  ANCHOR_GENERATION,
-  canonDigest,
-  rawDigest,
-  contentChecksum,
-  HASH_RE,
-} from "../hashline/hash-assign.js";
+import { canonDigest, rawDigest, contentChecksum, HASH_RE } from "../hashline/hash-assign.js";
+import { snapshotEpochPrefix } from "./epoch.js";
 import { splitLines } from "../utils.js";
 import { withBusyRetry } from "../store-retry.js";
 import { pairLineage } from "./pairing.js";
 import { withTransaction } from "./txn.js";
 
 /**
- * The snapshot key `(path, snapshotHash)`: BOTH identity axes plus the content checksum, the same
- * shape `snapshot-store`'s legacy `snapshots.checksum` row carries.
- * Canon first, generation second — a canon-only change is a plain cache miss, a generation change
- * invalidates anchor-bearing state (the open-time sweep and the undo gate match this prefix).
+ * The snapshot key `(path, snapshotHash)`: the current epoch's prefix plus the content checksum —
+ * the same shape `snapshot-store`'s legacy `snapshots.checksum` row carries. The shape itself is
+ * owned by `./epoch.js`, so the key and its two predicates can never drift apart.
+ *
+ * The epoch carries BOTH axes: a canon-only change misses the exact key (a plain cache miss for
+ * raw anchors), while the stored canon evidence is fenced by the full epoch at every reuse seam
+ * (ADR-0054).
  */
 export function snapshotHashFor(content: string): string {
-  return `${CANON_VERSION}:${ANCHOR_GENERATION}:${contentChecksum(content)}`;
-}
-
-/**
- * True when a persisted snapshot key was minted by the current canon+generation axes.
- *
- * WHY split on `:` and compare BOTH components: a prefix-only test (`hash.startsWith(canon + ":")`)
- * accepts the retired two-part shape `<canon>:<checksum>`, whose second component is a checksum and
- * not a generation — the check would then bless exactly the rows it exists to refuse.
- */
-export function isCurrentGenerationSnapshotHash(hash: string | null | undefined): boolean {
-  if (hash === null || hash === undefined) return false;
-  const parts = hash.split(":");
-  return (
-    parts.length >= 3 &&
-    parts[0] === String(CANON_VERSION) &&
-    parts[1] === String(ANCHOR_GENERATION)
-  );
+  return snapshotEpochPrefix() + contentChecksum(content);
 }
 
 /**
@@ -296,10 +276,10 @@ function pairLineIds(prev: PrevLine[], curLines: string[]): (number | null)[] {
  * line 1, or a `canon_hash` that disagrees with the line being adopted — or undefined when it
  * can be adopted as-is.
  *
- * The canon arm cannot be version skew: `snapshotHashFor` embeds BOTH axes (canon + anchor
- * generation) in the key that found this row, and `canonDigest` is deterministic for a given line,
- * so within the adopt arm a mismatch can only be corruption. Excluding it would silently inherit the
- * corrupt row's `line_id` into every future `pairLineIds` pairing.
+ * The canon arm cannot be version skew: the S_latest lookup below is epoch-filtered, so the row
+ * this key found was minted by the current canon, and `canonDigest` is deterministic for a given
+ * line. Within the adopt arm a canon mismatch can therefore only be corruption. Excluding it would
+ * silently inherit the corrupt row's `line_id` into every future `pairLineIds` pairing.
  *
  * Unusable is no longer thrown: the adopt arm repairs it (see the `unusable` branch below).
  * The diagnosis is still built so the repair warning carries the precise arm, and so a future
@@ -342,9 +322,15 @@ export function createLineageStore(db: DatabaseSync): LineageStore {
   const getSnapshotStmt = db.prepare(
     "SELECT snapshot_id FROM file_snapshots WHERE path = ? AND snapshot_hash = ?",
   );
+  // Epoch-fenced: the newest snapshot that belongs to the CURRENT epoch. A prior-canon row stays on
+  // disk for retention (the open-time sweep owns that decision) but is never evidence here — its
+  // `canon_hash` values and paired `line_id`s were written under a canon this build no longer uses.
+  // The pattern is built only from the numeric constants in `./epoch.js`; no caller data reaches it.
   const latestSnapshotStmt = db.prepare(
-    "SELECT snapshot_id, snapshot_hash FROM file_snapshots WHERE path = ? ORDER BY snapshot_id DESC LIMIT 1",
+    "SELECT snapshot_id, snapshot_hash FROM file_snapshots WHERE path = ? AND snapshot_hash LIKE ? " +
+      "ORDER BY snapshot_id DESC LIMIT 1",
   );
+  const currentEpochLike = `${snapshotEpochPrefix()}%`;
   const prevLineageStmt = db.prepare(
     "SELECT line_number, line_id, canon_hash, raw_hash FROM line_lineage WHERE snapshot_id = ? ORDER BY line_number ASC",
   );
@@ -499,7 +485,9 @@ export function createLineageStore(db: DatabaseSync): LineageStore {
           }
         }
         if (snapshotId === undefined) {
-          const latest = latestSnapshotStmt.get(input.path) as SnapshotRow | undefined;
+          const latest = latestSnapshotStmt.get(input.path, currentEpochLike) as
+            | SnapshotRow
+            | undefined;
           const prev: PrevLine[] = [];
           if (latest !== undefined) {
             // SAFETY: prevLineageStmt's SELECT list (line_number, line_id, canon_hash, raw_hash)
@@ -579,7 +567,7 @@ export function createLineageStore(db: DatabaseSync): LineageStore {
       );
     },
     latestLineageFor(path) {
-      const latest = latestSnapshotStmt.get(path) as SnapshotRow | undefined;
+      const latest = latestSnapshotStmt.get(path, currentEpochLike) as SnapshotRow | undefined;
       if (latest === undefined) return undefined;
       // SAFETY: SELECT list matches LineageRecord field-for-field (same statement as grantLeases).
       const records = snapshotLineageStmt.all(latest.snapshot_id) as unknown as LineageRecord[];
@@ -615,7 +603,7 @@ export function createLineageStore(db: DatabaseSync): LineageStore {
         }
         return map;
       }
-      const latest = latestSnapshotStmt.get(path) as SnapshotRow | undefined;
+      const latest = latestSnapshotStmt.get(path, currentEpochLike) as SnapshotRow | undefined;
       if (latest === undefined) return new Map();
       // SAFETY: prevLineageStmt's SELECT list (line_number, line_id, canon_hash, raw_hash) matches
       // this inline shape field-for-field; node:sqlite returns one record per row with those columns.
