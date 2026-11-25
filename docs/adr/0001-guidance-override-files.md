@@ -4,7 +4,7 @@ The four `tool:*` guidance sections are configured with plain-markdown override 
 
 ## Status
 
-Accepted (issue #7, spec #8). Amended (issue #17): reset-on-empty/delete semantics and malformed-fence fast fail.
+Accepted (issue #7, spec #8). Amended (issue #17): reset-on-empty/delete semantics and malformed-fence fast fail. Amended (issue #177): seed provenance and upgrade lifecycle — see [ADR-0052](0052-guidance-seed-provenance-and-upgrade-lifecycle.md).
 
 ## Considered Options
 
