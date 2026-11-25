@@ -13,7 +13,7 @@ All notable changes to this project will be documented in this file.
 
 ### Features
 
-* **edit:** admit an optional per-call encoding-migration consent on the `edit` payload — `allow_encoding_migration: "refuse" | "utf8" | "utf8bom"` (payload > `allowEncodingMigration` / `DSH_BETTER_EDIT_ALLOW_ENCODING_MIGRATION` > legacy `normalizeToUtf8` > `"refuse"`) — so one file can convert without changing fleet policy and `"utf8bom"` yields the Windows-readable target; byte-faithful ASCII stays silent and the memo records the chosen target (ADR-0052). (#209)
+* **edit:** admit an optional per-call encoding-migration consent on the `edit` payload — `allow_encoding_migration: "refuse" | "utf8" | "utf8bom"` (payload > `allowEncodingMigration` / `DSH_BETTER_EDIT_ALLOW_ENCODING_MIGRATION` > legacy `normalizeToUtf8` > `"refuse"`) — so one file can convert without changing fleet policy and `"utf8bom"` yields the Windows-readable target; byte-faithful ASCII stays silent and the memo records the chosen target (ADR-0052). (#213)
 
 * **edit:** announce an explicit encoding migration on the applied result — one `[MODEL] [W_ENCODING_MIGRATED]` per migrated file, pushed after the write lands, so the abandoned codec and its BOM state are visible where the write happened. (#198)
 
@@ -27,7 +27,7 @@ All notable changes to this project will be documented in this file.
 
 ### Bug Fixes
 
-* **errors:** rewrite `[E_ENCODING_UNWRITABLE]` so its message and remedy name a value a caller can actually send — the per-call `allow_encoding_migration: "utf8" | "utf8bom"` value and the standing `allowEncodingMigration` setting — and drop the bare `normalizeToUtf8: true` phrase that read like a payload key; no shell, command-line or OS token is named (#210)
+* **errors:** rewrite `[E_ENCODING_UNWRITABLE]` so its message and remedy name a value a caller can actually send — the per-call `allow_encoding_migration: "utf8" | "utf8bom"` value and the standing `allowEncodingMigration` setting — and drop the bare `normalizeToUtf8: true` phrase that read like a payload key; no shell, command-line or OS token is named (#213)
 
 * **undo:** name the codec a migration edit abandoned when the revert lands — `Restored as UTF-8; the pre-edit <codec> encoding[ and its BOM] is not restored.` — from a verdict taken once at the save seam and carried on the undo pair as additive nullable columns (no version bump), so silence can no longer read as restoration (ADR-0051). (#198)
 
@@ -40,7 +40,7 @@ All notable changes to this project will be documented in this file.
 
 ### Documentation
 
-* **readme:** document the encoding-migration consent surface in both READMEs — payload key vs config setting vs legacy spelling, and `"utf8"`/`"utf8bom"` described by the bytes they write — and add the `encoding migration consent` glossary entry (#210)
+* **readme:** document the encoding-migration consent surface in both READMEs — payload key vs config setting vs legacy spelling, and `"utf8"`/`"utf8bom"` described by the bytes they write — and add the `encoding migration consent` glossary entry (#213)
 
 * **readme:** scope the undo promise to content-at-effective-EOL-as-UTF-8 with the migrated codec+BOM named and the original bytes unrecoverable, and document the encoding surface — refusal, the `normalizeToUtf8` opt-in, `read({ encoding })`, the auto-guess gate, the codec list and the byte-faithful ASCII case — in both READMEs. (#198)
 * **glossary:** add the `encoding migration` entry and the applied-tier `W_ENCODING_MIGRATED` entry beside the EOL disclosures. (#198)
