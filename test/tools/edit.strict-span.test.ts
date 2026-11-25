@@ -129,7 +129,10 @@ describe("strict span mode — tool acceptance (#144 T4)", () => {
         }),
       );
 
-      expect(getText(out)).toContain("Span replaced 2 unserved interior line(s) (lines 3-10).");
+      expect(getText(out)).toContain(
+        "Span replaced 12 file lines, 2 of which were never served; the edit applied.\n" +
+          "Unserved file lines: 3, 10",
+      );
       expect(await readFile(path, "utf-8")).toBe("replacement\n");
     });
   });

@@ -1,7 +1,8 @@
 /**
  * Domain error registry — the closed, type-safe contract for every
- * model-facing diagnostic. Zero dependencies: no imports, so any seam can
- * throw without wiring a store, session, or hasher.
+ * model-facing diagnostic. Its imports are pure leaves — no store, no session, no hasher — so any
+ * seam can throw without wiring one. (`./unserved-span-message.js` imports nothing, so this stays
+ * store-free even though the registry renders the unserved-interior sentences through it.)
  *
  * INVARIANT (the point of this module): a code is never declared without a
  * producer. Every `DomainErrorCode` member must have at least one
@@ -49,6 +50,8 @@
  *
  * @module dsh-better-edit/domain-errors
  */
+
+import { formatUnservedSpanMessage } from "./unserved-span-message.js";
 
 /**
  * Message channel: `formatError` prefixes every rendered error with
@@ -808,10 +811,14 @@ export interface WarningPayloadMap {
     /** Present on engine single warns: the display path ("in <path>" flavor). */
     path?: string;
   };
+  /**
+   * Absolute old-file lines the edit replaced unseen, plus the replaced-set denominator the
+   * shared formatter quotes. Both are facts; the sentence grammar lives in
+   * `./unserved-span-message.js` so this voice and the strict refusal cannot drift.
+   */
   W_UNSERVED_INTERIOR: {
-    count: number;
-    from: number;
-    to: number;
+    unservedLines: readonly number[];
+    replacedLineCount: number;
   };
   /**
    * A migration edit moved a legacy file to UTF-8. Spellings inlined on purpose,
@@ -892,11 +899,11 @@ function noopWarnFormat(payload: WarningPayloadMap["W_NOOP"]): string {
 }
 
 function unservedInteriorFormat(payload: WarningPayloadMap["W_UNSERVED_INTERIOR"]): string {
-  return (
-    `Span replaced ${payload.count} unserved interior line(s) (lines ${payload.from}-${payload.to}). ` +
-    "Edits should only modify lines previously read and served (enforced under strict mode); " +
-    "verify this uninspected replacement was intended."
-  );
+  return formatUnservedSpanMessage({
+    voice: "hint",
+    unservedLines: payload.unservedLines,
+    replacedLineCount: payload.replacedLineCount,
+  });
 }
 
 function encodingMigratedFormat(payload: WarningPayloadMap["W_ENCODING_MIGRATED"]): string {

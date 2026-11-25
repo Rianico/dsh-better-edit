@@ -153,7 +153,7 @@ DSH_BETTER_EDIT_SPAN_MODE=hint|strict
 DSH_BETTER_EDIT_EOL=AUTO|LF|CRLF|CR          # 大小写不敏感
 ```
 
-**span 模式**——`strict` 用于审计、CI 或代码评审会话：任何未经检视的内部行都不得被替换；`hint` 用于交互式工作：模型通常清楚自己替换的范围。`hint`（默认）应用编辑并以 `[W_UNSERVED_INTERIOR]` 披露被替换的内部行；`strict` 在写入前以无行的 `[E_UNSERVED_RANGE]` 拒绝，统计被替换的范围并列出从未提供的文件行号。不提供按调用覆盖——策略归 profile 所有。详见 [ADR-0045](docs/adr/0045-strict-span-mode.md)。
+**span 模式**——`strict` 用于审计、CI 或代码评审会话：任何未经检视的内部行都不得被替换；`hint` 用于交互式工作：模型通常清楚自己替换的范围。`hint`（默认）应用编辑并以 `[W_UNSERVED_INTERIOR]` 披露，给出被替换的文件行数、未提供的行数，以及压缩成区间的精确绝对文件行；`strict` 在写入前以无行的 `[E_UNSERVED_RANGE]` 拒绝，事实与前者一致。两种声音由同一个格式化器负责，语法与列表压缩不会漂移（[ADR-0053](docs/adr/0053-unserved-interior-one-formatter.md)）。不提供按调用覆盖——策略归 profile 所有。详见 [ADR-0045](docs/adr/0045-strict-span-mode.md)。
 
 **行尾。** 每次 `edit` 只写**一种**生效行尾，依次解析 `DSH_BETTER_EDIT_EOL` > 配置里的 `eol` > 文件的主导行尾（全文件；平局依次取 LF、CRLF、CR）> 系统行尾（Windows `\r\n`，其他 `\n`）。`AUTO` 沿用文件主导行尾；文件**完全没有**行尾符时落到**系统行尾**——同一个零行尾文件在 Windows 主机上写 `\r\n`，在 Linux 主机上写 `\n`。跨平台且依赖 `.gitattributes` 的仓库请设 `eol: LF`，让所有主机写出同一种拼写；`LF`/`CRLF`/`CR` 强制指定行尾。混合行尾的文件会在读取时说明——`[W_MIXED_EOL] Mixed EOL: 2 CRLF, 1 LF. All edits normalize to CRLF (file).`——而真正改写了行尾的编辑会报告 `[MODEL] [W_EOL_REWRITTEN] EOL normalized to CRLF (file): 1 terminators changed. Undo restores normalized content.`；`undo_last_edit` 在同一个生效行尾上恢复，并在编辑前是混合行尾时明确说明混合已无法还原。
 
@@ -289,43 +289,43 @@ token 基准测试衡量的是模型发出的负载——它假设模型每次�
 
 ### 错误码
 
-| 代码                      | 含义                                                             | 处理方式                                                                                                               |
-| ------------------------- | ---------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
-| `[E_BAD_PAYLOAD]`         | 请求形态错误（未知字段、缺少 `file`、元组位置错误）              | 修正形态后重发                                                                                                         |
-| `[E_MALFORMED_ANCHOR]`    | 锚点不是裸 3 字符锚点（粘贴的块或伪锚点）                        | 传裸锚点后重试                                                                                                         |
-| `[E_UNKNOWN_ANCHOR]`      | 该锚点从未为本文件提供过                                         | `read` 获取新锚点                                                                                                      |
-| `[E_FOREIGN_ANCHOR]`      | 该锚点属于其他文件或会话                                         | 使用本文件提供的锚点                                                                                                   |
-| `[E_STALE_ANCHOR]`        | 锚点已无法解析（哈希/已退役/规范化失配）                         | `read` 获取新锚点                                                                                                      |
-| `[E_AMBIGUOUS_MATCH]`     | `str_replace` 的 `old_str` 命中多处                              | 扩大 `old_str` 上下文                                                                                                  |
-| `[E_NO_MATCH]`            | `str_replace` 的 `old_str` 不存在                                | 重新 `view` 后重试                                                                                                     |
-| `[E_EMPTY_RANGE]`         | 编辑会清空非空文件                                               | 改用 `write`                                                                                                           |
-| `[E_STALE_RANGE]`         | 已提供的范围在磁盘上发生变化                                     | 使用回显的新行（已记录为提供）；不带行的拒绝会指名 `read`                                                              |
-| `[E_UNSERVED_RANGE]`      | 边界锚点从未解析，或 `strict` 下被替换的范围包含从未提供的内部行 | `hint`：使用回显的行（已记录为提供），不带行时指名 `read`。`strict`：不带行的拒绝会给出未提供文件行的编号，`read` 它们 |
-| `[E_UNVERIFIED_RANGE]`    | 边界锚点无法对照已提供状态校验                                   | `read` 后重试                                                                                                          |
-| `[E_SUSPICIOUS_TEXT]`     | 替换文本含复制的 `HASH│` 或 diff 预览标记                        | 移除后重发                                                                                                             |
-| `[E_BLIND_REPLACE]`       | `write` / `str_replace_editor` 在观察文件前执行                  | 先 `read` / `view`                                                                                                     |
-| `[E_TARGET_LOST]`         | 目标在操作中途消失或身份改变                                     | `read` 后重新定位                                                                                                      |
-| `[E_BATCH_ABORT]`         | 批次中某项失败，未写入任何内容                                   | 修正该项后重发批次                                                                                                     |
-| `[E_NOOP_LOOP]`           | 同一空操作编辑被反复提交                                         | 修改编辑内容                                                                                                           |
-| `[E_ACCESS]`              | 路径不可读或不可写                                               | 修正权限                                                                                                               |
-| `[E_NOT_FOUND]`           | 文件不存在                                                       | 检查父目录                                                                                                             |
-| `[E_FILE_EXISTS]`         | `create` 目标已存在                                              | 换一个路径                                                                                                             |
-| `[E_UNSUPPORTED_FILE]`    | 目录、二进制或非文本文件                                         | 选择文本文件                                                                                                           |
-| `[E_ENCODING_UNWRITABLE]` | 记录的编码无法由 UTF-8 文本写入复现                              | 在编辑中发送 `allow_encoding_migration: "utf8"` 或 `"utf8bom"`（或设置 `allowEncodingMigration`），或在插件外重新编码  |
-| `[E_UNSUPPORTED]`         | `str_replace_editor undo_edit` 未实现                            | 改用 `undo_last_edit`                                                                                                  |
-| `[E_BAD_COMMAND]`         | 未知的 `str_replace_editor` 命令                                 | 使用 `view`、`str_replace`、`insert` 或 `create`                                                                       |
-| `[E_LARGE_FILE]`          | 超过行数或锚点空间上限                                           | 改用 `write` 或拆分文件                                                                                                |
-| `[E_UNDO_STALE]`          | 编辑之后文件被修改                                               | 无法撤销；重新读取                                                                                                     |
-| `[E_UNDO_UNAVAILABLE]`    | 撤销历史无法持久化                                               | 重试编辑                                                                                                               |
-| `[E_UNDO_NOT_RECORDED]`   | 回滚已落盘但存储未能记录                                         | 重新读取；下次撤销会清掉旧历史                                                                                         |
-| `[E_STORE_NEWER_VERSION]` | 存储由更新版本的插件写入                                         | 升级插件，或改用其他存储目录                                                                                           |
-| `[E_UNKNOWN]`             | 未预期的内部错误                                                 | 上报；消息原文保留                                                                                                     |
+| 代码                      | 含义                                                             | 处理方式                                                                                                                                             |
+| ------------------------- | ---------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `[E_BAD_PAYLOAD]`         | 请求形态错误（未知字段、缺少 `file`、元组位置错误）              | 修正形态后重发                                                                                                                                       |
+| `[E_MALFORMED_ANCHOR]`    | 锚点不是裸 3 字符锚点（粘贴的块或伪锚点）                        | 传裸锚点后重试                                                                                                                                       |
+| `[E_UNKNOWN_ANCHOR]`      | 该锚点从未为本文件提供过                                         | `read` 获取新锚点                                                                                                                                    |
+| `[E_FOREIGN_ANCHOR]`      | 该锚点属于其他文件或会话                                         | 使用本文件提供的锚点                                                                                                                                 |
+| `[E_STALE_ANCHOR]`        | 锚点已无法解析（哈希/已退役/规范化失配）                         | `read` 获取新锚点                                                                                                                                    |
+| `[E_AMBIGUOUS_MATCH]`     | `str_replace` 的 `old_str` 命中多处                              | 扩大 `old_str` 上下文                                                                                                                                |
+| `[E_NO_MATCH]`            | `str_replace` 的 `old_str` 不存在                                | 重新 `view` 后重试                                                                                                                                   |
+| `[E_EMPTY_RANGE]`         | 编辑会清空非空文件                                               | 改用 `write`                                                                                                                                         |
+| `[E_STALE_RANGE]`         | 已提供的范围在磁盘上发生变化                                     | 使用回显的新行（已记录为提供）；不带行的拒绝会指名 `read`                                                                                            |
+| `[E_UNSERVED_RANGE]`      | 边界锚点从未解析，或 `strict` 下被替换的范围包含从未提供的内部行 | `hint`：使用回显的行（已记录为提供），不带行时指名 `read`。`strict`：不带行的拒绝会给出被替换的文件行数、未提供的行数与精确的绝对文件行，`read` 它们 |
+| `[E_UNVERIFIED_RANGE]`    | 边界锚点无法对照已提供状态校验                                   | `read` 后重试                                                                                                                                        |
+| `[E_SUSPICIOUS_TEXT]`     | 替换文本含复制的 `HASH│` 或 diff 预览标记                        | 移除后重发                                                                                                                                           |
+| `[E_BLIND_REPLACE]`       | `write` / `str_replace_editor` 在观察文件前执行                  | 先 `read` / `view`                                                                                                                                   |
+| `[E_TARGET_LOST]`         | 目标在操作中途消失或身份改变                                     | `read` 后重新定位                                                                                                                                    |
+| `[E_BATCH_ABORT]`         | 批次中某项失败，未写入任何内容                                   | 修正该项后重发批次                                                                                                                                   |
+| `[E_NOOP_LOOP]`           | 同一空操作编辑被反复提交                                         | 修改编辑内容                                                                                                                                         |
+| `[E_ACCESS]`              | 路径不可读或不可写                                               | 修正权限                                                                                                                                             |
+| `[E_NOT_FOUND]`           | 文件不存在                                                       | 检查父目录                                                                                                                                           |
+| `[E_FILE_EXISTS]`         | `create` 目标已存在                                              | 换一个路径                                                                                                                                           |
+| `[E_UNSUPPORTED_FILE]`    | 目录、二进制或非文本文件                                         | 选择文本文件                                                                                                                                         |
+| `[E_ENCODING_UNWRITABLE]` | 记录的编码无法由 UTF-8 文本写入复现                              | 在编辑中发送 `allow_encoding_migration: "utf8"` 或 `"utf8bom"`（或设置 `allowEncodingMigration`），或在插件外重新编码                                |
+| `[E_UNSUPPORTED]`         | `str_replace_editor undo_edit` 未实现                            | 改用 `undo_last_edit`                                                                                                                                |
+| `[E_BAD_COMMAND]`         | 未知的 `str_replace_editor` 命令                                 | 使用 `view`、`str_replace`、`insert` 或 `create`                                                                                                     |
+| `[E_LARGE_FILE]`          | 超过行数或锚点空间上限                                           | 改用 `write` 或拆分文件                                                                                                                              |
+| `[E_UNDO_STALE]`          | 编辑之后文件被修改                                               | 无法撤销；重新读取                                                                                                                                   |
+| `[E_UNDO_UNAVAILABLE]`    | 撤销历史无法持久化                                               | 重试编辑                                                                                                                                             |
+| `[E_UNDO_NOT_RECORDED]`   | 回滚已落盘但存储未能记录                                         | 重新读取；下次撤销会清掉旧历史                                                                                                                       |
+| `[E_STORE_NEWER_VERSION]` | 存储由更新版本的插件写入                                         | 升级插件，或改用其他存储目录                                                                                                                         |
+| `[E_UNKNOWN]`             | 未预期的内部错误                                                 | 上报；消息原文保留                                                                                                                                   |
 
 ### 警告码
 
 | 代码                    | 含义                                                                                                                                    | 处理方式                                                                                   |
 | ----------------------- | --------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
-| `[W_UNSERVED_INTERIOR]` | `hint` 模式应用了一次编辑，其替换范围包含本会话从未提供的内部行                                                                         | 确认这次未经检视的替换符合意图；`spanMode: strict` 会改为拒绝                              |
+| `[W_UNSERVED_INTERIOR]` | `hint` 模式应用了一次编辑，其替换范围包含本会话从未提供的行；给出被替换的文件行数、未提供的行数，以及压缩成区间的精确绝对文件行         | 确认这次未经检视的替换符合意图；`spanMode: strict` 会改为拒绝                              |
 | `[W_EOL_REWRITTEN]`     | 一次编辑在同一个生效行尾上重写了文件的行尾                                                                                              | `undo_last_edit` 恢复规范化后的内容；强制档连均匀文件也会重写                              |
 | `[W_MIXED_EOL]`         | 一次读取提供了混合行尾的文件（无受众：读取只报告状态，不寻址任何人）                                                                    | 无需处理；下一次编辑会规范化到指名的行尾                                                   |
 | `[W_ENCODING_MIGRATED]` | 一次编辑在编码迁移同意（`allow_encoding_migration` / `allowEncodingMigration`，或旧拼写 `normalizeToUtf8`）下把旧编码文件迁移到了 UTF-8 | `undo_last_edit` 只恢复文本；编辑前的编码与 BOM 已丢失——只有版本控制或外部重编码能恢复字节 |

@@ -273,6 +273,9 @@ function diffParts(
  *   ` (N unserved)` suffix and the returned list alike, so the count is independent of the cap.
  *   An `undefined` slot is a truncated mirror (the lease outlives it) and keeps its anchor; with
  *   no `served` mirror at all the projection is unchanged and the list is empty.
+ * - removedLineCount counts every removed OLD line in the whole diff, whatever the fold cap
+ *   renders and whatever the served mirror says. It is the replaced-span denominator a message
+ *   quotes, so it never shrinks when the renderer folds rows away.
  */
 export function genDiff(
   oldContent: string,
@@ -287,6 +290,8 @@ export function genDiff(
   firstChangedLine: number | undefined;
   servedRows: ServedRow[];
   unservedRemovedLines: number[];
+  /** Every removed OLD line in the whole diff, whatever the fold cap and the mirror say. */
+  removedLineCount: number;
 } {
   const effectiveNewHashes = newContentHashes ?? lineHashesPure(newContent);
 
@@ -294,6 +299,7 @@ export function genDiff(
   const output: string[] = [];
   const servedRows: ServedRow[] = [];
   const unservedRemovedLines: number[] = [];
+  let removedLineCount = 0;
   let newLineNum = 1;
   let oldLineNum = 1;
   let lastWasChange = false;
@@ -323,6 +329,7 @@ export function genDiff(
         for (const row of removed.rows) output.push(row);
         unservedRemovedLines.push(...removed.unservedRemovedLines);
         oldLineNum = removed.nextOldLineNum;
+        removedLineCount += displayLines.length;
       }
       lastWasChange = true;
       continue;
@@ -380,5 +387,11 @@ export function genDiff(
     lastWasChange = false;
   }
 
-  return { diff: output.join("\n"), firstChangedLine, servedRows, unservedRemovedLines };
+  return {
+    diff: output.join("\n"),
+    firstChangedLine,
+    servedRows,
+    unservedRemovedLines,
+    removedLineCount,
+  };
 }

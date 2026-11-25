@@ -11,6 +11,10 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Bug Fixes
+
+* **edit:** give both unserved-interior messages one structural shape. One formatter now names the replaced file-line count, the unserved count, and the exact absolute file lines as compressed runs; the hint `[W_UNSERVED_INTERIOR]` no longer prints a min..max envelope that could name served lines, and a single line prints `Unserved file line: 3`. Strict `[E_UNSERVED_RANGE]` keeps the same facts, and its capped remainder now agrees in number (ADR-0053, closes #223).
+
 ## [1.3.0] - 2026-11-25
 
 ### Bug Fixes
