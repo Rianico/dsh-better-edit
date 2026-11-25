@@ -34,7 +34,7 @@ describe("coverage-agent-g lifecycle", () => {
     const lc = await import("../../src/store-lifecycle.js");
     lc._resetLifecycleForTests();
     const fakeStmts: any = {
-      servedPruneOlderThan: () => {},
+      servedMetaPruneOlderThan: () => {},
     };
     const fakeStore: any = {
       pruneMissing: () => Promise.resolve(),
@@ -65,7 +65,7 @@ describe("coverage-agent-g lifecycle", () => {
     const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
     const lc = await import("../../src/store-lifecycle.js");
     lc._resetLifecycleForTests();
-    const fakeStmts: any = { servedPruneOlderThan: () => {} };
+    const fakeStmts: any = { servedMetaPruneOlderThan: () => {} };
     const fakeStore: any = {
       pruneMissing: () => Promise.resolve(),
       pruneUndoOlderThan: () => {},
@@ -91,7 +91,7 @@ describe("coverage-agent-g lifecycle", () => {
     lc._resetLifecycleForTests();
     await lc.onStoreOpen(
       "/tmp/central/store.json",
-      { servedPruneOlderThan: () => {} } as any,
+      { servedMetaPruneOlderThan: () => {} } as any,
       {
         pruneMissing: () => Promise.resolve(),
         pruneUndoOlderThan: () => {},
@@ -114,7 +114,7 @@ describe("coverage-agent-g lifecycle", () => {
     lc._resetLifecycleForTests();
     await lc.onStoreOpen(
       storePath,
-      { servedPruneOlderThan: () => {} } as any,
+      { servedMetaPruneOlderThan: () => {} } as any,
       {
         pruneMissing: () => Promise.resolve(),
         pruneUndoOlderThan: () => {},
@@ -139,7 +139,7 @@ describe("coverage-agent-g lifecycle", () => {
     lc._resetLifecycleForTests();
     await lc.onStoreOpen(
       storePath,
-      { servedPruneOlderThan: () => {} } as any,
+      { servedMetaPruneOlderThan: () => {} } as any,
       {
         pruneMissing: () => Promise.resolve(),
         pruneUndoOlderThan: () => {},
@@ -159,7 +159,7 @@ describe("coverage-agent-g lifecycle", () => {
       .mockReturnValue({ storeDir: "central", undo_ttl_s: 10 } as any);
     const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
     const fakeStmts: any = {
-      servedPruneOlderThan: () => {
+      servedMetaPruneOlderThan: () => {
         throw new Error("served fail");
       },
     };
@@ -184,7 +184,7 @@ describe("coverage-agent-g lifecycle", () => {
       undo_ttl_s: -1,
     } as any);
     const pruneMock = vi.fn(() => Promise.resolve());
-    const stmts: any = { servedPruneOlderThan: () => {} };
+    const stmts: any = { servedMetaPruneOlderThan: () => {} };
     const store: any = {
       pruneMissing: pruneMock,
       pruneUndoOlderThan: () => {},

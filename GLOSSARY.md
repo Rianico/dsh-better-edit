@@ -118,7 +118,7 @@ The invariant that every agent-issued file mutation passes through `file encodin
 _Avoid_: encoding handling (implies best-effort, not a gate)
 
 **encoding migration**:
-A write that replaced a legacy codec with UTF-8 — one-way and disclosed, never restored by undo. The verdict is taken once at the save seam (on the non-faithful arm only) and rides the undo pair, so the revert names the abandoned codec and its BOM state while restoring the text as UTF-8; the original bytes do not come back. See `effective EOL` (the revert's one ending) and `W_MIXED_EOL` (the sibling pre-image disclosure) for the mixture half of the same contract.
+A write that replaced a legacy codec with UTF-8 — one-way and disclosed, never restored by undo. The verdict is taken once at the save seam (on the non-faithful arm only) and rides the undo row (`file_undo`), so the revert names the abandoned codec and its BOM state while restoring the text as UTF-8; the original bytes do not come back. See `effective EOL` (the revert's one ending) and `W_MIXED_EOL` (the sibling pre-image disclosure) for the mixture half of the same contract.
 _Avoid_: transcode (a byte operation, not the disclosed one-way write), migration notice (that is the warning's name, not the event)
 
 **encoding migration consent**:
@@ -134,7 +134,7 @@ A file mutation that bypasses `encoding governance` — the built-in `write`/`ed
 _Avoid_: native edit path
 
 **reject-and-serve**:
-The staleness policy: reject the edit and return the current content of the region the submitted anchors identify as `HASH|content` rows — a _region-matched_ serve. A serve refreshes the model's inputs for that region and never substitutes another region for those anchors; the echoed rows are the current file's anchors and ARE recorded as serves (rows + canons + snapshot + leases) when the verifier identified the region from the committed snapshot, so the retry needs no read (ADR-0043). A refusal that cannot identify the region (a changed batch buffer, a `target-lost rejection`, an unresolved anchor) carries no rows; a window whose echoed anchor the served mirror already holds elsewhere is declined — both name the read. "Region-matched" is the upstream referent's name (`pi-better-edit` ADR-0018) for "the window the submitted anchors identify".
+The staleness policy: reject the edit and return the current content of the region the submitted anchors identify as `HASH|content` rows — a _region-matched_ serve. A serve refreshes the model's inputs for that region and never substitutes another region for those anchors; the echoed rows are the current file's anchors and ARE recorded as serves (rows + canons + snapshot + leases) when the verifier identified the region from the committed snapshot, so the retry needs no read (ADR-0043). A refusal that cannot identify the region (a changed batch buffer, a `target-lost rejection`, an unresolved anchor) carries no rows; a window whose echoed anchor the `served_session_meta` mirror already holds elsewhere is declined — both name the read. "Region-matched" is the upstream referent's name (`pi-better-edit` ADR-0018) for "the window the submitted anchors identify".
 _Avoid_: reject-then-reread (only a rowless or declined refusal needs the read), context serve (no such operation exists), region (use `served span` / `served range`)
 
 **target-lost rejection**:
@@ -167,7 +167,7 @@ _Avoid_: duplicate serve (conflates duplicated content with relocated-line-keeps
 The file condition where a line's content survives an external write and, because no probe collision occurs at its new spot, the same hash is reproduced by a fresh hashing pass. Distinct from "duplicated content" (same text at two positions in one file gets two different hashes via probing).
 _Avoid_: duplicate content (implies same hash, which perfect hashing prevents)
 
-**retired anchor** (replaces `tombstone` — ADR-0013 term, DB column `served.retired`, code var `tombstone` is now `retired`):
+**retired anchor** (replaces `tombstone` — ADR-0013 term, DB column `served_session_meta.retired`; the v6 `served` shell keeps its shape but v7 never reads or writes it, ADR-0016/ADR-0055; code var `tombstone` is now `retired`):
 A hash freed by an edit since the last epoch (full read) that must not be reallocated while the model may still hold it. Per `(session, path)`. GC analogy: garbage not yet reclaimable. Replaces `tombstone` everywhere in docs; see also `retired entry` and `hazard card`.
 _Avoid_: tombstone (legacy term — use `retired anchor` for the hash, `retired entry` for the per-position record)
 
@@ -273,7 +273,7 @@ Restoring the compiled default guidance and order for an override file. Triggere
 _Avoid_: restore, regenerate, "recover the default prompt"
 
 **source of truth**:
-The file bytes on disk plus the lease store (`served_leases`, snapshots, `line_lineage`) — the sole authority for retry coordinates. Rendered diff text is never the source of truth; coordinates resolve through leases, never by re-reading a projection.
+The file bytes on disk plus the lease store (`served_leases`, `file_snapshots`, `line_lineage`) — the sole authority for retry coordinates. Rendered diff text is never the source of truth; coordinates resolve through leases, never by re-reading a projection.
 _Avoid_: machine diff (a projection, not the table)
 
 **projection**:

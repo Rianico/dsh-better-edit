@@ -75,12 +75,12 @@ describe("isCurrentSnapshotEpoch — the two-axis evidence predicate", () => {
   });
 });
 
-describe("undo gate — a foreign-generation pin is refused and the pair is reclaimed", () => {
-  it("getUndo refuses a two-part pin and deletes the pair (fail-closed, never replays)", async () => {
+describe("undo gate — a foreign-generation pin is refused and the row is reclaimed", () => {
+  it("getUndo refuses a two-part pin and deletes the row (fail-closed, never replays)", async () => {
     await withTempDir("undo-generation-", async (dir) => {
       const path = join(dir, "a.ts");
       const store = await loadHashStore();
-      store.writeUndoPair(path, LEGACY, {
+      store.writeUndo(path, {
         ...LEGACY,
         snapshotHash: foreignPartTwoHash(CONTENT),
       });
@@ -102,7 +102,7 @@ describe("undo gate — a foreign-generation pin is refused and the pair is recl
     await withTempDir("undo-current-", async (dir) => {
       const path = join(dir, "a.ts");
       const store = await loadHashStore();
-      store.writeUndoPair(path, LEGACY, { ...LEGACY, snapshotHash: snapshotHashFor(CONTENT) });
+      store.writeUndo(path, { ...LEGACY, snapshotHash: snapshotHashFor(CONTENT) });
 
       expect(await getUndo(path)).toEqual({
         content: CONTENT,
@@ -126,7 +126,7 @@ describe("undo gate — stored canon evidence is fenced by the epoch, raw anchor
       const store = await loadHashStore();
       const [canonAxis, generationAxis] = snapshotHashFor(CONTENT).split(":");
       const canonDriftPin = `${Number(canonAxis) - 1}:${generationAxis}:${contentChecksum(CONTENT)}`;
-      store.writeUndoPair(path, LEGACY, { ...LEGACY, snapshotHash: canonDriftPin });
+      store.writeUndo(path, { ...LEGACY, snapshotHash: canonDriftPin });
 
       // The pair survives the gate: the restore re-derives the snapshot key on the current epoch.
       expect(await getUndo(path)).toMatchObject({ content: CONTENT, hashes: ["AAA"] });
@@ -141,7 +141,7 @@ describe("undo gate — stored canon evidence is fenced by the epoch, raw anchor
       const path = join(dir, "a.ts");
       const store = await loadHashStore();
       const generationDriftPin = `${CANON_VERSION}:${ANCHOR_GENERATION + 1}:${contentChecksum(CONTENT)}`;
-      store.writeUndoPair(path, LEGACY, { ...LEGACY, snapshotHash: generationDriftPin });
+      store.writeUndo(path, { ...LEGACY, snapshotHash: generationDriftPin });
 
       expect(await getUndo(path)).toBeUndefined();
       const reloaded = await loadHashStore();
@@ -152,7 +152,7 @@ describe("undo gate — stored canon evidence is fenced by the epoch, raw anchor
 });
 
 describe("open-time sweep — key-prefix reclaim of anchor-bearing rows", () => {
-  it("drops foreign-generation rows, keeps current ones, clears served, and stamps the axes", async () => {
+  it("drops foreign-generation v7 rows, keeps current ones, clears the served meta family, and stamps the axes", async () => {
     await withTempDir("anchor-sweep-", async () => {
       const storePath = hashStorePath();
       // First open creates the schema and stamps meta.version.
@@ -172,6 +172,8 @@ describe("open-time sweep — key-prefix reclaim of anchor-bearing rows", () => 
       // sweep's third statement is the reclaim an FK-off opener relies on.
       raw.exec("PRAGMA foreign_keys = OFF");
       // ---- a foreign-generation family, plus a current-generation survivor ----
+      // v6 shell rows: v7 does not own them, so a foreign-generation row SURVIVES the sweep
+      // (ADR-0016's data-destruction rule).
       const insertSnapshot = raw.prepare(
         "INSERT INTO snapshots (path, checksum, line_count, hashes, updated_at) VALUES (?, ?, ?, ?, ?)",
       );
@@ -228,12 +230,16 @@ describe("open-time sweep — key-prefix reclaim of anchor-bearing rows", () => 
       );
       insertLease.run("s1", "/foreign.ts", "AAA", 1, "11", foreign, 1, now);
       insertLease.run("s1", "/current.ts", "BBB", 2, "22", current, 1, now);
-      // ---- served rows carry anchors and canons but NO key: the stamp decides ----
-      const insertServed = raw.prepare(
-        "INSERT INTO served (session_id, path, hashes, updated_at) VALUES (?, ?, ?, ?)",
+      // ---- the v7 served mirror carries anchors and canons but NO key: the stamp decides ----
+      const insertServedMeta = raw.prepare(
+        "INSERT INTO served_session_meta (session_id, file_path, hashes, updated_at) VALUES (?, ?, ?, ?)",
       );
-      insertServed.run("s1", "/foreign.ts", JSON.stringify(["AAA"]), now);
-      insertServed.run("s1", "/current.ts", JSON.stringify(["BBB"]), now);
+      insertServedMeta.run("s1", "/foreign.ts", JSON.stringify(["AAA"]), now);
+      insertServedMeta.run("s1", "/current.ts", JSON.stringify(["BBB"]), now);
+      // A v6 shell row next to it: untouched by the sweep.
+      raw
+        .prepare("INSERT INTO served (session_id, path, hashes, updated_at) VALUES (?, ?, ?, ?)")
+        .run("v6-session", "/v6.ts", JSON.stringify(["V6A"]), now);
       raw.close();
 
       // The open-time sweep runs here.
@@ -244,8 +250,12 @@ describe("open-time sweep — key-prefix reclaim of anchor-bearing rows", () => 
       const count = (sql: string, ...params: string[]): number =>
         Number((after.prepare(sql).get(...params) as { n: number }).n);
 
-      expect(count("SELECT COUNT(*) AS n FROM snapshots WHERE path = '/foreign.ts'")).toBe(0);
+      // The v6 shells are v6's: their rows survive untouched.
+      expect(count("SELECT COUNT(*) AS n FROM snapshots WHERE path = '/foreign.ts'")).toBe(1);
       expect(count("SELECT COUNT(*) AS n FROM snapshots WHERE path = '/current.ts'")).toBe(1);
+      expect(count("SELECT COUNT(*) AS n FROM undo WHERE path = '/foreign.ts'")).toBe(1);
+      expect(count("SELECT COUNT(*) AS n FROM undo WHERE path = '/current.ts'")).toBe(1);
+      expect(count("SELECT COUNT(*) AS n FROM served")).toBe(1);
       expect(count("SELECT COUNT(*) AS n FROM file_snapshots WHERE path = '/foreign.ts'")).toBe(0);
       expect(count("SELECT COUNT(*) AS n FROM file_snapshots WHERE path = '/current.ts'")).toBe(1);
       // Foreign lineage + the orphan are gone; the survivor's lineage stays.
@@ -258,8 +268,6 @@ describe("open-time sweep — key-prefix reclaim of anchor-bearing rows", () => 
       expect(count("SELECT COUNT(*) AS n FROM line_lineage WHERE snapshot_id = 999999")).toBe(0);
       expect(count("SELECT COUNT(*) AS n FROM file_undo WHERE path = '/foreign.ts'")).toBe(0);
       expect(count("SELECT COUNT(*) AS n FROM file_undo WHERE path = '/current.ts'")).toBe(1);
-      expect(count("SELECT COUNT(*) AS n FROM undo WHERE path = '/foreign.ts'")).toBe(0);
-      expect(count("SELECT COUNT(*) AS n FROM undo WHERE path = '/current.ts'")).toBe(1);
       expect(
         count(
           "SELECT COUNT(*) AS n FROM served_leases WHERE file_path = '/foreign.ts' AND anchor = 'AAA'",
@@ -270,8 +278,8 @@ describe("open-time sweep — key-prefix reclaim of anchor-bearing rows", () => 
           "SELECT COUNT(*) AS n FROM served_leases WHERE file_path = '/current.ts' AND anchor = 'BBB'",
         ),
       ).toBe(1);
-      // No per-row generation marker without a migration, so the stamp decides: served is cleared.
-      expect(count("SELECT COUNT(*) AS n FROM served")).toBe(0);
+      // No per-row generation marker: the stamp decides for the whole v7 served family.
+      expect(count("SELECT COUNT(*) AS n FROM served_session_meta")).toBe(0);
       expect(
         (
           after.prepare("SELECT value FROM meta WHERE key = 'anchor_generation'").get() as

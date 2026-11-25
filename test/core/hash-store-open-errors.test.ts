@@ -136,7 +136,7 @@ describe("hash store open error handling", () => {
     const store = await loadHashStore();
     state.busyOnce = busyError("database is locked");
     expect(() => {
-      store.upsertSnapshot("/p.ts", "checksum", 1, ["AAA"]);
+      store.upsertSnapshot("/p.ts", "checksum", 1, ["AAA"], "a\n");
     }).not.toThrow();
     expect(state.runCalls).toBeGreaterThan(1);
   });
@@ -149,7 +149,7 @@ describe("hash store open error handling", () => {
     state.persistentBusy = true;
     const callsBefore = state.runCalls;
     expect(() => {
-      store.upsertSnapshot("/p.ts", "checksum", 1, ["AAA"]);
+      store.upsertSnapshot("/p.ts", "checksum", 1, ["AAA"], "a\n");
     }).toThrow(/locked/);
     expect(state.runCalls - callsBefore).toBe(4);
   });

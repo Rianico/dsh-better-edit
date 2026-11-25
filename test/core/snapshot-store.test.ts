@@ -1,7 +1,6 @@
 import { describe, expect, it, vi, beforeAll } from "vitest";
 import { mkdtemp, rm, writeFile } from "fs/promises";
 import { join } from "node:path";
-import { DatabaseSync } from "node:sqlite";
 
 import { loadHashStore, shutdownHashStore, type HashStore } from "../../src/hash-store.js";
 import { initHasher, contentChecksum } from "../../src/hashline/hash-assign.js";
@@ -28,24 +27,16 @@ async function withTempHome(run: (home: string) => Promise<void>): Promise<void>
   }
 }
 
-function configHome(home: string): string {
-  return join(home, ".dsh", "plugins", "dsh-better-edit");
-}
-
-function sqlitePath(home: string): string {
-  return join(configHome(home), "hash-store.sqlite");
-}
-
 async function put(
   store: HashStore,
   path: string,
   content: string,
   hashes: string[],
 ): Promise<void> {
-  store.upsertSnapshot(path, contentChecksum(content), splitLines(content).length, hashes);
+  store.upsertSnapshot(path, contentChecksum(content), splitLines(content).length, hashes, content);
 }
 
-describe("snapshot-store — snapshot get / upsert / delete", () => {
+describe("snapshot-store — v7 snapshot get / upsert", () => {
   it("round-trips a snapshot by path and content matching checksum", async () => {
     await withTempHome(async () => {
       const store = await loadHashStore();
@@ -67,13 +58,13 @@ describe("snapshot-store — snapshot get / upsert / delete", () => {
     });
   });
 
-  it("overwrites an existing path with new content+hashes", async () => {
+  it("keeps both versions of a path (the v7 family is a version cache, not last-write-wins)", async () => {
     await withTempHome(async () => {
       const store = await loadHashStore();
       await put(store, "/p.ts", "old\n", ["OPQ"]);
       await put(store, "/p.ts", "new\n", ["NOP"]);
 
-      expect(store.getSnapshot("/p.ts", "old\n")).toBeUndefined();
+      expect(store.getSnapshot("/p.ts", "old\n")).toEqual(["OPQ"]);
       expect(store.getSnapshot("/p.ts", "new\n")).toEqual(["NOP"]);
     });
   });
@@ -82,63 +73,12 @@ describe("snapshot-store — snapshot get / upsert / delete", () => {
     await withTempHome(async () => {
       const store = await loadHashStore();
       const aContent = "a\nb\nc\nd\ne\n".repeat(50);
-      const aHashes = aContent.split("\n").map((_, i) => i.toString(16).padStart(3, "0"));
+      const aHashes = splitLines(aContent).map((_, i) => i.toString(16).padStart(3, "0"));
       await put(store, "/big.ts", aContent, aHashes);
       await put(store, "/small.ts", "x\n", ["XYZ"]);
 
       expect(store.getSnapshot("/big.ts", aContent)).toEqual(aHashes);
       expect(store.getSnapshot("/small.ts", "x\n")).toEqual(["XYZ"]);
-    });
-  });
-});
-
-describe("snapshot-store — corrupt row handling", () => {
-  async function corruptHashes(home: string, path: string, value: string): Promise<void> {
-    const db = new DatabaseSync(sqlitePath(home), { defensive: false } as any);
-    db.prepare("UPDATE snapshots SET hashes = ? WHERE path = ?").run(value, path);
-    db.close();
-  }
-
-  it("treats a row with unparseable hashes as a cache miss", async () => {
-    await withTempHome(async (home) => {
-      const store = await loadHashStore();
-      await put(store, "/p.ts", "x\n", ["AAA"]);
-      await corruptHashes(home, "/p.ts", "not json");
-      shutdownHashStore();
-      const reloaded = await loadHashStore();
-      expect(reloaded.getSnapshot("/p.ts", "x\n")).toBeUndefined();
-      reloaded.upsertSnapshot("/p.ts", contentChecksum("x\n"), 1, ["BBB"]);
-      expect(reloaded.getSnapshot("/p.ts", "x\n")).toEqual(["BBB"]);
-    });
-  });
-
-  it("treats a row with non-string hashes as a cache miss", async () => {
-    await withTempHome(async (home) => {
-      const store = await loadHashStore();
-      await put(store, "/p.ts", "x\n", ["AAA"]);
-      await corruptHashes(home, "/p.ts", "[1,2]");
-      shutdownHashStore();
-      const reloaded = await loadHashStore();
-      expect(reloaded.getSnapshot("/p.ts", "x\n")).toBeUndefined();
-    });
-  });
-
-  it("treats a row with malformed hash strings as a cache miss and deletes it", async () => {
-    await withTempHome(async (home) => {
-      const store = await loadHashStore();
-      await put(store, "/p.ts", "x\n", ["AAA"]);
-      await corruptHashes(home, "/p.ts", '["ZZ", "ZZZZ", "a!b"]');
-      shutdownHashStore();
-      const reloaded = await loadHashStore();
-      expect(reloaded.getSnapshot("/p.ts", "x\n")).toBeUndefined();
-      const db = new DatabaseSync(sqlitePath(home), {
-        defensive: false,
-      } as any);
-      const remaining = db
-        .prepare("SELECT COUNT(*) AS n FROM snapshots WHERE path = ?")
-        .get("/p.ts") as { n: number };
-      db.close();
-      expect(remaining.n).toBe(0);
     });
   });
 });
