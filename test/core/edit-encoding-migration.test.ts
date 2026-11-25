@@ -10,6 +10,11 @@
  * Subject choice: `undo-encoding.test.ts` owns the REVERT clause ("Restored as UTF-8; …");
  * this file owns the EDIT notice ("Migrated … to UTF-8. …"). One subject per file.
  *
+ * Landed-only pinning: the dry-run and all-noop cases pin the positive half (a notice rides
+ * only a landed write) on result text; the refusal and batch-abort arms pin it by the absence
+ * of an undo row, because a thrown `DomainError` message can never carry an applied-tier warning
+ * and asserting its absence there would prove nothing.
+ *
  * "Batch" below means N edit calls (one file per call since ADR-0007 retired cross-file
  * `batch_edit`); the multi-`edits` single call is case 7's abort arm.
  */
@@ -223,7 +228,12 @@ describe("calls that write nothing announce nothing", () => {
         await expect(attempt).rejects.toMatchObject({ code: "E_ENCODING_UNWRITABLE" });
         const error = await attempt.catch((e: unknown) => e);
         expect((error as Error).message).toContain("[E_ENCODING_UNWRITABLE]");
-        expect((error as Error).message).not.toContain(NOTICE_MARK);
+        // A refusal throws its DomainError before any applied-tier warning exists, so the
+        // landed-only half is pinned by the absence of an undo row instead of a vacuous
+        // absence on the thrown message (which can never carry an applied-tier warning).
+        expect(getText(await harness.undoTool.execute("u1", { path: "u16-refuse.txt" }))).toContain(
+          "No undo history",
+        );
         expect((await readFile(path)).equals(before)).toBe(true);
       },
     );
@@ -251,8 +261,11 @@ describe("calls that write nothing announce nothing", () => {
           ],
         });
         await expect(attempt).rejects.toMatchObject({ code: "E_BATCH_ABORT" });
-        const error = await attempt.catch((e: unknown) => e);
-        expect((error as Error).message).not.toContain(NOTICE_MARK);
+        // Same landed-only pin as above: the abort throws before any warning exists, so the
+        // refusal created no undo row.
+        expect(getText(await harness.undoTool.execute("u1", { path: "u16-batch.txt" }))).toContain(
+          "No undo history",
+        );
         expect((await readFile(path)).equals(before)).toBe(true);
       },
     );

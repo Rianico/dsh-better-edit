@@ -404,7 +404,9 @@ describe("half-record — one new column NULL claims nothing", () => {
           expect(store.getUndo(abs)?.migratedFrom).toBe("utf16le");
         });
 
-        // Strip the BOM flag on BOTH halves: a half-record is a half-record wherever it sits.
+        // Strip the BOM flag on both halves so the stored pair keeps one shape on each half.
+        // `getUndo` rebuilds the verdict from the `undo` half only, so the `file_undo` half is
+        // pinned observably below through `getFileUndo` instead of riding along silently.
         shutdownHashStore();
         const raw = new DatabaseSync(hashStorePath(cwd));
         raw.exec(
@@ -415,6 +417,9 @@ describe("half-record — one new column NULL claims nothing", () => {
 
         await withWorkspace(cwd, async () => {
           expect((await getUndo(abs))?.migration).toBeUndefined();
+          const store = await loadHashStore();
+          expect(store.getFileUndo(abs)?.migratedFrom).toBe("utf16le");
+          expect(store.getFileUndo(abs)?.migratedFromBOM).toBeNull();
         });
 
         const text = getText(await harness.undoTool.execute("u1", { path: "u16-half.txt" }));
@@ -427,6 +432,7 @@ describe("half-record — one new column NULL claims nothing", () => {
   it("BOM flag without its codec on the legacy half: no verdict, no clause, undo still restores", async () => {
     // Mutant caught: `typeof migratedFromBOM === "number" ? { ... } : undefined`
     // (codec unchecked) rebuilds a verdict from this reverse half-record — same gate, other side.
+    // As above, the `file_undo` half is pinned observably through `getFileUndo`.
     await withTempBytes(
       "u16-half-rev.txt",
       utf16leBytes("первая\r\nвторая\r\n"),
@@ -445,6 +451,9 @@ describe("half-record — one new column NULL claims nothing", () => {
 
         await withWorkspace(cwd, async () => {
           expect((await getUndo(abs))?.migration).toBeUndefined();
+          const store = await loadHashStore();
+          expect(store.getFileUndo(abs)?.migratedFrom).toBeNull();
+          expect(store.getFileUndo(abs)?.migratedFromBOM).toBe(0);
         });
 
         const text = getText(await harness.undoTool.execute("u1", { path: "u16-half-rev.txt" }));
