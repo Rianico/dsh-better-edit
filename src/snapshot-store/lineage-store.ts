@@ -36,7 +36,7 @@ import {
 } from "../hashline/hash-assign.js";
 import { splitLines } from "../utils.js";
 import { withBusyRetry } from "../store-retry.js";
-import { pairSnapshots } from "./pairing.js";
+import { pairLineage } from "./pairing.js";
 import { withTransaction } from "./txn.js";
 
 /**
@@ -155,6 +155,7 @@ interface PrevLine {
   lineNumber: number;
   lineId: number;
   canonHash: string;
+  rawHash?: string | undefined;
 }
 
 interface CounterRow {
@@ -254,21 +255,35 @@ export function ensureLineageTables(db: DatabaseSync): void {
 }
 
 /**
- * Adapter: the patience/LIS engine (`./pairing.js`) in the shape `commitSnapshot` needs.
- * Returns the inherited `line_id` per current line, or null for a fresh id. A current line
- * the engine left unpaired takes a fresh id, which is what retires the identity of a line
- * it could not prove moved — the fail-closed direction.
+ * Adapter: the ONE pairing owner (`pairLineage` — the pin-bounded engine plus the homogeneous-run
+ * carry) in the shape `commitSnapshot` needs. Returns the inherited `line_id` per current line, or
+ * null for a fresh id. A current line the pairing left unpaired takes a fresh id, which is what
+ * retires the identity of a line it could not prove moved — the fail-closed direction.
+ *
+ * WHY the same owner as the read path: a `line_id` and the anchor served for the same line must
+ * never be decided by different rules, or one line keeps its anchor while its identity retires.
  */
-function pairLineIds(prev: PrevLine[], curCanons: string[]): (number | null)[] {
+function pairLineIds(prev: PrevLine[], curLines: string[]): (number | null)[] {
   const prevById = new Map<number, number>();
   for (const line of prev) prevById.set(line.lineNumber, line.lineId);
-  const pairing = pairSnapshots(
-    prev.map((line) => ({ lineNumber: line.lineNumber, canonHash: line.canonHash })),
-    curCanons.map((canonHash, index) => ({ lineNumber: index + 1, canonHash })),
+  // ONE pairing owner: the engine plus the homogeneous-run carry the checksum-miss alignment uses,
+  // so a `line_id` and the anchor served for the same line can never be decided by different rules.
+  // Raw digests gate the carry exactly as they do on the read path; a legacy NULL row is no evidence.
+  const pairing = pairLineage(
+    prev.map((line) => ({
+      lineNumber: line.lineNumber,
+      canonHash: line.canonHash,
+      rawHash: line.rawHash,
+    })),
+    curLines.map((line, index) => ({
+      lineNumber: index + 1,
+      canonHash: canonDigest(line),
+      rawHash: rawDigest(line),
+    })),
   );
   const prevByCurr = new Map<number, number>();
   for (const [prevLine, currLine] of pairing) prevByCurr.set(currLine, prevLine);
-  return curCanons.map((_, index) => {
+  return curLines.map((_, index) => {
     const prevLine = prevByCurr.get(index + 1);
     if (prevLine === undefined) return null;
     return prevById.get(prevLine) ?? null;
@@ -331,7 +346,7 @@ export function createLineageStore(db: DatabaseSync): LineageStore {
     "SELECT snapshot_id, snapshot_hash FROM file_snapshots WHERE path = ? ORDER BY snapshot_id DESC LIMIT 1",
   );
   const prevLineageStmt = db.prepare(
-    "SELECT line_number, line_id, canon_hash FROM line_lineage WHERE snapshot_id = ? ORDER BY line_number ASC",
+    "SELECT line_number, line_id, canon_hash, raw_hash FROM line_lineage WHERE snapshot_id = ? ORDER BY line_number ASC",
   );
   const getCounterStmt = db.prepare("SELECT next_id FROM line_id_counters WHERE path = ?");
   const upsertCounterStmt = db.prepare(
@@ -487,23 +502,25 @@ export function createLineageStore(db: DatabaseSync): LineageStore {
           const latest = latestSnapshotStmt.get(input.path) as SnapshotRow | undefined;
           const prev: PrevLine[] = [];
           if (latest !== undefined) {
-            // SAFETY: prevLineageStmt's SELECT list (line_number, line_id, canon_hash) matches
-            // this inline shape field-for-field; node:sqlite returns one record per row with
+            // SAFETY: prevLineageStmt's SELECT list (line_number, line_id, canon_hash, raw_hash)
+            // matches this inline shape field-for-field; node:sqlite returns one record per row with
             // exactly those columns.
             const stored = prevLineageStmt.all(latest.snapshot_id) as unknown as {
               line_number: number;
               line_id: number;
               canon_hash: string;
+              raw_hash: string | null;
             }[];
             for (const row of stored) {
               prev.push({
                 lineNumber: row.line_number,
                 lineId: row.line_id,
                 canonHash: row.canon_hash,
+                rawHash: row.raw_hash ?? undefined,
               });
             }
           }
-          const inherited = pairLineIds(prev, curCanons);
+          const inherited = pairLineIds(prev, lines);
           // ONE counter upsert for the whole fresh block.
           const counter = getCounterStmt.get(input.path) as CounterRow | undefined;
           let fresh = counter === undefined ? 1 : counter.next_id;
@@ -600,26 +617,26 @@ export function createLineageStore(db: DatabaseSync): LineageStore {
       }
       const latest = latestSnapshotStmt.get(path) as SnapshotRow | undefined;
       if (latest === undefined) return new Map();
-      // SAFETY: prevLineageStmt's SELECT list (line_number, line_id, canon_hash) matches this
-      // inline shape field-for-field; node:sqlite returns one record per row with those columns.
+      // SAFETY: prevLineageStmt's SELECT list (line_number, line_id, canon_hash, raw_hash) matches
+      // this inline shape field-for-field; node:sqlite returns one record per row with those columns.
       const previous = (
         prevLineageStmt.all(latest.snapshot_id) as unknown as {
           line_number: number;
           line_id: number;
           canon_hash: string;
+          raw_hash: string | null;
         }[]
       ).map((row) => ({
         lineNumber: row.line_number,
         lineId: row.line_id,
         canonHash: row.canon_hash,
+        rawHash: row.raw_hash ?? undefined,
       }));
       if (previous.length === 0) return new Map();
-      const inherited = pairLineIds(
-        previous,
-        splitLines(content).map((line) => canonDigest(line)),
-      );
+      const currentLines = splitLines(content);
+      const inherited = pairLineIds(previous, currentLines);
       const map = new Map<number, number>();
-      for (let index = 0; index < inherited.length; index++) {
+      for (let index = 0; index < currentLines.length; index++) {
         const lineId = inherited[index];
         if (lineId !== null) map.set(lineId, index + 1);
       }

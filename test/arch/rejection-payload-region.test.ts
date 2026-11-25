@@ -628,9 +628,12 @@ describe("rejection payload region rule (ADR-0022)", () => {
         expect(before.slice(0, 2)).toEqual([servedRows[0]!, servedRows[1]!]);
         expect(before.slice(2).every((slot) => slot === null)).toBe(true);
 
-        // An insert ABOVE the served span that duplicates a served line: the minimal
-        // exterior change that makes the edit reject at all.
-        await writeFile(path, `beta\nalpha\nbeta\ngamma\ndelta\nepsilon\n`, "utf-8");
+        // WHY (T3): a duplicate insert above the span no longer collides — the served anchor keeps
+        // its identity and that edit applies. The exterior change is therefore a TEAR: an insert
+        // inside the served span (alpha..beta gains a line), so the span verification refuses with
+        // a row-carrying range rejection and the region rule stays observable.
+        const disk = "alpha\nINSERTED\nbeta\ngamma\ndelta\nepsilon\n";
+        await writeFile(path, disk, "utf-8");
         let caught: unknown;
         try {
           await harness.editTool.execute("edit", {
@@ -643,13 +646,23 @@ describe("rejection payload region rule (ADR-0022)", () => {
           caught = error;
         }
         expect(caught).toBeDefined();
+        expect(String((caught as Error).message)).toContain("[E_STALE_RANGE]");
+        const payload = caught as Payloadish;
         const after = await withWorkspace(cwd, () => loadServed("test-session", path));
         // ADR-0043: a row-carrying rejection records the window it echoed, so the mirror now
-        // holds the CURRENT file's rows at those positions instead of the pre-change ones.
-        const currentHashes = lineHashesPure("beta\nalpha\nbeta\ngamma\ndelta\nepsilon");
-        expect(after.slice(0, 2)).toEqual([currentHashes[0]!, currentHashes[1]!]);
-        // Rows outside the region stay unserved.
-        expect(after.slice(2).every((slot) => slot === null)).toBe(true);
+        // holds the CURRENT file's rows at those positions instead of the pre-change ones. The
+        // echoed region is the torn span's current coordinates (lines 1-3, positions 0-2);
+        // measured from this run, not assumed.
+        const currentHashes = lineHashesPure(disk.trimEnd());
+        expect(payload.servedRows.map((row) => row.position)).toEqual([0, 1, 2]);
+        expect(after.slice(0, 3)).toEqual(currentHashes.slice(0, 3));
+        // Rows outside the region stay unserved AND unrendered.
+        expect(after.slice(3).every((slot) => slot === null)).toBe(true);
+        const diskLines = disk.split("\n").slice(0, -1);
+        for (const outside of [3, 4, 5]) {
+          expect(payload.message).not.toContain(`${currentHashes[outside]}│${diskLines[outside]}`);
+        }
+        expect(await readFile(path, "utf-8"), "the rejection wrote nothing").toBe(disk);
       },
     );
   });

@@ -222,6 +222,7 @@ export async function readAndServe(
         // The verdict travels with the serve: FileView computed it from the request shape, this
         // seam only carries it (ADR-0035).
         fullRead: view.fullRead,
+        ...(view.retiredHashes === undefined ? {} : { retiredHashes: view.retiredHashes }),
       },
     );
   }

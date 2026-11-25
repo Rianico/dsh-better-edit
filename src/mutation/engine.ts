@@ -968,6 +968,7 @@ export async function runFileEdits(
     endingCounts,
     fileHashes: originalHashes,
     hadUtf8DecodeErrors,
+    retiredHashes: loadRetiredHashes,
   } = await normFromText({
     absolutePath,
     rawText,
@@ -979,8 +980,18 @@ export async function runFileEdits(
     // `lineHashes` are skipped. Only persistence is withheld — every hash value is the live one.
     noPersist: opts.dryRun === true,
     retiredHashes: perSessionRetired,
+    // T3: the edit load pairs this buffer against the latest committed lineage (the same owner the
+    // read path uses), so an exterior change no longer forces a re-read to keep a held anchor alive.
+    alignOnMiss: true,
   });
 
+  // T3: this load aligned the buffer against the latest lineage and retired the deletions it found.
+  // Block them for the batch (no fresh allocation may re-issue one) and queue them for the
+  // post-write retirement, so the session cannot hand one out after this edit either.
+  for (const hash of loadRetiredHashes ?? []) {
+    perSessionRetired.add(hash);
+    reservedHashes.add(hash);
+  }
   // #169: ONE decode decides the whole write. The counts are the raw pre-image's terminators, so
   // the effective ending (env > config > file's dominant > OS) and the number of terminators this
   // write re-spells come from the same scan and cannot disagree. A file with no terminator gets
@@ -1061,8 +1072,9 @@ export async function runFileEdits(
   let unionStartHash = "";
   let unionEndHash = "";
   let lastApplied: { content: string; hashes: string[]; removedHashes: Set<string> } | undefined;
-  const newlyRetired = new Set<string>();
-
+  // WHY seeded with the load's deletions: they are retired with this edit's own overflow
+  // (upstream's `accumulatedRemoved`), so one post-write retirement covers both.
+  const newlyRetired = new Set<string>(loadRetiredHashes ?? []);
   // C: pure pre-pass over all items on the pre-batch snapshot — parse each
   // item (resEdit) and resolve its span (applyEdit) with no mutation
   // (warnings go to a throwaway array; noop tracking untouched). Anchor and
