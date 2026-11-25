@@ -371,7 +371,7 @@ export function apply(rootCtx: Context): void {
       `dsh-better-edit: default config materialization failed: ${error instanceof Error ? error.message : String(error)}`,
     );
   });
-  ensurePresetGuidance(configDir()).catch((error) => {
+  ensurePresetGuidance(configDir(), (message) => rootCtx.logger.warn(message)).catch((error) => {
     rootCtx.logger.warn(
       `dsh-better-edit: guidance materialization failed: ${error instanceof Error ? error.message : String(error)}`,
     );

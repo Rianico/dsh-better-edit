@@ -11,6 +11,12 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Bug Fixes
+
+* **guidance:** track seed provenance in `.seeded.json`, refresh unedited legacy seeds on upgrade, retire default static `order:`, and disclose prompt divergence (ADR-0052, closes #177). (#212)
+
+## [1.3.0] - 2026-11-25
+
 ### Features
 
 * **edit:** announce an explicit encoding migration on the applied result — one `[MODEL] [W_ENCODING_MIGRATED]` per migrated file, pushed after the write lands, so the abandoned codec and its BOM state are visible where the write happened. (#198)

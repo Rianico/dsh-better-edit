@@ -177,7 +177,7 @@ $DSH_HOME/plugins/dsh-better-edit/<preset>/<section>.md
 | `edit.md`           | `tool:edit`           | 1300       |
 | `undo_last_edit.md` | `tool:undo_last_edit` | 1310       |
 
-首次启动时插件会为四个随附 preset——`standard/`、`ptc/`、`minimal/`、`cordis/`——各自写入编译内置的可编辑指引文件（含 `order` front-matter）。默认 order 取自 harness 自己的工具槽位（`systemPrompt.getSectionOrder`），上游调整 band 时会自动跟随；front-matter 可自行钉死。详见[配置详情](#按-preset-配置指引)的重置/恢复。完整规范：`docs/specs/issue-24-store-tenancy.md` 与指引文档。
+首次启动时插件会为四个随附 preset——`standard/`、`ptc/`、`minimal/`、`cordis/`——各自写入编译内置的默认正文，并且**不写** `order` front-matter 栅栏；默认 order 取自 harness 自己的工具槽位（`systemPrompt.getSectionOrder`），上游调整 band 时会自动跟随，手写的 `order` 栅栏仍可自行钉死位置。未修改过的种子文件会在版本改动编译内置默认值后自动刷新；你编辑过的文件按字节原样保留，并在一次启动警告中列出（自定义 preset 里的陈旧或自定义内容同理，且永远不会被自动刷新或补建）。有意留空（`---\n---\n`）保持静默、不会被改写。删除或清空文件即可在下次启动恢复默认。本地覆盖正文与默认不一致时，该片段末尾会追加 `[USER] [W_PROMPT_DIVERGED]` 页脚。详见 [ADR-0052](docs/adr/0052-guidance-seed-provenance-and-upgrade-lifecycle.md) 与[重置 / 恢复默认](#重置--恢复默认)。完整规范：`docs/specs/issue-24-store-tenancy.md` 与指引文档。
 
 ##### 重置 / 恢复默认
 
@@ -192,7 +192,8 @@ $DSH_HOME/plugins/dsh-better-edit/<preset>/<section>.md
 
 - **为什么要连栅栏一起删**：只要文件里还有 `---` 栅栏，哪怕是空的、什么内容也没有，插件都当成“你有意留空”，不会去动它。所以“故意留空”就保留栅栏；“恢复默认”就把栅栏和内容一起清掉。
 - **栅栏写错了会怎样**：少了一个 `---`、`order` 不是数字、出现了不认识的键——只要栅栏格式不对，插件会直接忽略这个文件：仍然渲染默认指引，并在日志里提示是哪个文件、哪里写错了。你写的正文会原样留在磁盘上，方便改好后再用。
-- **自带 preset 与自定义 preset**：插件自带的四个 preset（`standard`、`ptc`、`minimal`、`cordis`）会在下一次启动时自动补全空白文件；自定义 preset 里删除的覆盖文件不会自动出现（删了就当“没有这个文件”）。删掉某一整个 preset 目录，下次启动时插件会重新生成里面的三个片段文件（仅限自带 preset）。
+- **种子文件会随版本升级刷新**：新装或升级时，随附 preset 的种子文件只写入编译内置的默认正文，不带 `order` 栅栏；未修改过的文件会被自动刷新成新版本的默认内容，你编辑过的文件则按字节原样保留，并在一次启动警告里列出所有被保留的文件。自定义 preset 的文件只检测、不刷新，也不会被补建。
+- **本地覆盖会被标注**：当某片段的本地正文与插件默认不一致时，插件会在该片段正文之后追加两行 `[USER] [W_PROMPT_DIVERGED]` 页脚，让模型知道以本地文件为准；栅栏只写着相同的默认正文、仅用来钉顺序时不算分歧。
 - **恢复的是“当前版本”的默认**：插件升级后，重置得到的是新版本带的新默认内容，不是旧版本留下的。
 
 文件的重新生成只发生在插件启动时，绝不影响进行中的会话。

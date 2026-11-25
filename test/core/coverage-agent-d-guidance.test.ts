@@ -22,7 +22,7 @@ describe("coverage-agent-d guidance materialize", () => {
     for (const preset of DEFAULT_PRESETS) {
       for (const sec of GUIDANCE_SECTIONS) {
         const c = await readFile(join(home, preset, sec.file), "utf-8");
-        expect(c).toContain("order:");
+        expect(c).toBe(sec.renderDefault());
       }
     }
     // second call should not overwrite edited file
@@ -40,7 +40,7 @@ describe("coverage-agent-d guidance materialize", () => {
     expect(isBlankOverride("   \n ")).toBe(true);
     await ensurePresetGuidance(home);
     const healed = await readFile(p, "utf-8");
-    expect(healed).toContain("order:");
+    expect(healed).toBe(GUIDANCE_SECTIONS[0]!.renderDefault());
     await rm(home, { recursive: true, force: true });
   });
   it("does not heal malformed fence", async () => {
@@ -63,7 +63,9 @@ describe("coverage-agent-d guidance materialize", () => {
     await writeFile(join(custom, "batch_edit.md"), "ghost2");
     await ensurePresetGuidance(home);
     // blank healed
-    expect((await readFile(join(custom, secFile), "utf-8")).includes("order:")).toBe(true);
+    expect(await readFile(join(custom, secFile), "utf-8")).toBe(
+      GUIDANCE_SECTIONS[0]!.renderDefault(),
+    );
     // ghosts removed
     const entries = await readdir(join(home, DEFAULT_PRESETS[0]!));
     expect(entries.includes("batch_edit.md")).toBe(false);

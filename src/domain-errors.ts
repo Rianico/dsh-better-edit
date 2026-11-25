@@ -1021,6 +1021,17 @@ export function formatReadWarning<K extends ReadWarningCode>(
 }
 
 /**
+ * Prompt-tier divergence footer (issue #177): appended to a locally customized
+ * guidance section. Deliberately NOT a `DomainWarningCode` / `WARNING_REGISTRY`
+ * member — it has no formatter envelope, must stay two lines
+ * (`[USER] [W_PROMPT_DIVERGED]` then one sentence), and reports prompt
+ * provenance rather than a tool warning. Keeping the literal here satisfies the
+ * arch gate's single-vocabulary rule; the ADR follow-up cites this constant.
+ */
+export const PROMPT_DIVERGED_NOTICE =
+  "[USER] [W_PROMPT_DIVERGED]\nLocal guidance differs from the plugin defaults; follow the local instructions.";
+
+/**
  * SAFETY: the sole composer of `[TO <AUDIENCE>] [<E_CODE>]` prefixes for errors.
  * `DomainError` delegates here, so header construction has exactly one site.
  */

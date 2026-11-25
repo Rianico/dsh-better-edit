@@ -248,6 +248,14 @@ _Avoid_: prompt, instructions ("instructions" is `dsh-agent-instructions`' term 
 A `<preset>/<section>.md` plain-markdown file in the plugin's shared home that overrides one prompt section's guidance and (optionally) its `order` via front-matter. The unit users edit and reset — distinct from the preset, which is a roster composition.
 _Avoid_: preset ("the preset file" is the composition row, not this override file), custom prompt
 
+**seeded identity**:
+The v1 projection of a seeded override file plus its `seedHash` (`src/guidance/seed.ts`, [ADR-0052](docs/adr/0052-guidance-seed-provenance-and-upgrade-lifecycle.md)): leading BOM run dropped, CRLF and lone CR normalized to LF, trailing blank lines stripped. Identity, not byte equality — EOL and trailing-newline noise never fork it, so the plugin can tell its own seed from a user edit.
+_Avoid_: file hash (a raw byte hash forks on EOL noise), checksum
+
+**seed provenance**:
+The hash the plugin last wrote for a shipped override file, recorded per `<preset>/<file>` in `<plugin-home>/.seeded.json`. Refresh is allowed only while the file's identity matches the recorded hash or a `KNOWN_HISTORICAL_SEEDS` entry ([ADR-0052](docs/adr/0052-guidance-seed-provenance-and-upgrade-lifecycle.md)); any other content is a customization and is preserved.
+_Avoid_: front-matter marker, provenance fence (provenance never lives in the markdown)
+
 **Order**:
 The numeric ordering of a prompt section within the assembled system prompt. A section without an explicit `order` takes the harness's canonical slot for its tool (`systemPrompt.getSectionOrder('TOOL_READ'|'TOOL_EDIT')`), falling back to `1100`/`1300`/`1310` when the registry predates that API. Overridable alongside guidance; equal orders sort by name.
 
