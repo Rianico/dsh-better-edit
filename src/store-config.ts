@@ -172,10 +172,10 @@ autoGitignore: false
 # encoding: deterministic BOM→UTF-8 first, guessing only when autoGuessEncoding:true
 # when true, FS_NOT_TEXT scores supportedEncodings and surfaces top-3 previews for model pick
 autoGuessEncoding: false
-# when true, legacy files (GBK etc.) migrate to UTF-8 on first write
+# legacy spelling for the migration consent below: true = "utf8" (no BOM); kept for existing configs
 normalizeToUtf8: false
-# encoding migration consent: refuse (default) | utf8 | utf8bom
-# utf8 = convert a legacy file to UTF-8 on write; utf8bom = convert and write a UTF-8 BOM (Windows-readable)
+# encoding migration consent (supported): refuse (default) | utf8 | utf8bom
+# utf8 = convert a legacy file to UTF-8 without a BOM; utf8bom = convert and write one leading UTF-8 BOM (BOM-aware readers decode it as UTF-8)
 # left commented out on purpose: an explicit value outranks the legacy normalizeToUtf8 spelling above
 # allowEncodingMigration: refuse
 # allowlist scored for top-3 previews when autoGuessEncoding:true

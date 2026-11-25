@@ -157,7 +157,7 @@ DSH_BETTER_EDIT_EOL=AUTO|LF|CRLF|CR          # 大小写不敏感
 
 **行尾。** 每次 `edit` 只写**一种**生效行尾，依次解析 `DSH_BETTER_EDIT_EOL` > 配置里的 `eol` > 文件的主导行尾（全文件；平局依次取 LF、CRLF、CR）> 系统行尾（Windows `\r\n`，其他 `\n`）。`AUTO` 沿用文件主导行尾；文件**完全没有**行尾符时落到**系统行尾**——同一个零行尾文件在 Windows 主机上写 `\r\n`，在 Linux 主机上写 `\n`。跨平台且依赖 `.gitattributes` 的仓库请设 `eol: LF`，让所有主机写出同一种拼写；`LF`/`CRLF`/`CR` 强制指定行尾。混合行尾的文件会在读取时说明——`[W_MIXED_EOL] Mixed EOL: 2 CRLF, 1 LF. All edits normalize to CRLF (file).`——而真正改写了行尾的编辑会报告 `[MODEL] [W_EOL_REWRITTEN] EOL normalized to CRLF (file): 1 terminators changed. Undo restores normalized content.`；`undo_last_edit` 在同一个生效行尾上恢复，并在编辑前是混合行尾时明确说明混合已无法还原。
 
-**文件编码。** 一次 `read` 会记录文件的 `{encoding, hasBOM}`，而后续写入必须经过永远编码为 UTF-8 的纯文本通道复现这些字节。无法往返的旧文件（UTF-16，或含非 ASCII 内容的 `windows-1251`）因此以 `[E_ENCODING_UNWRITABLE]` 拒绝——不写任何字节，不做静默转码，已提供的锚点仍然描述磁盘上的字节。在 `$DSH_HOME/plugins/dsh-better-edit/config.yaml` 中以 `normalizeToUtf8: true`（`DSH_BETTER_EDIT_NORMALIZE_TO_UTF8=true`，默认 `false`）选择启用：下一次编辑把文件迁移到 UTF-8——这是单向门，应用结果以 `[W_ENCODING_MIGRATED]` 载明，撤销会指名但永不反转（`undo_last_edit` 以 UTF-8 恢复文本；编码及其 BOM 已丢失）。以 `read({ encoding })`（例如 `windows-1251`）在另一种编码下重新打开字节；`autoGuessEncoding` 门（`DSH_BETTER_EDIT_AUTO_GUESS_ENCODING`，默认 `false`）只在确定性的 BOM → 严格 UTF-8 检测失败后才自动解码：它没有把握的猜测会随读取一并报告，并列出 Top-3 候选，而无法解码的文件则携带 Top-3 被拒绝，供模型挑选。猜测范围限于 `supportedEncodings`（`DSH_BETTER_EDIT_SUPPORTED_ENCODINGS`，默认 `gbk, big5, shift_jis, euc-kr, windows-1251, iso-8859-1`）；UTF-8 恒被接受，不在该名单之内——确定性的 BOM → 严格 UTF-8 通道先于任何猜测运行。挂着旧编码名的纯 ASCII 文件是字节忠实的，会静默编辑——它的字节本来就是 UTF-8。
+**文件编码。** 一次 `read` 会记录文件的 `{encoding, hasBOM}`，而后续写入必须经过永远编码为 UTF-8 的纯文本通道复现这些字节。无法往返的旧文件（UTF-16，或含非 ASCII 内容的 `windows-1251`）因此以 `[E_ENCODING_UNWRITABLE]` 拒绝——不写任何字节，不做静默转码，已提供的锚点仍然描述磁盘上的字节。转换需要显式同意并指定 UTF-8 目标，默认是 `refuse`：在 `edit` 载荷上为单次调用写 `allow_encoding_migration: "utf8"` 或 `"utf8bom"`，或设置常驻的 `allowEncodingMigration` 配置项（`DSH_BETTER_EDIT_ALLOW_ENCODING_MIGRATION`，取值 `refuse | utf8 | utf8bom`）；旧拼写 `normalizeToUtf8: true` 仍按 `"utf8"` 被接受。`"utf8"` 迁移后不写 BOM；`"utf8bom"` 写入一个前导 `EF BB BF`，BOM 感知的读取器会将其解码为 UTF-8。转换是单向门：应用结果以 `[W_ENCODING_MIGRATED]` 载明，撤销会指名但永不反转（`undo_last_edit` 以 UTF-8 恢复文本——`"utf8bom"` 迁移后在目标的 BOM 之前恢复——而原编码及其 BOM 已丢失）。以 `read({ encoding })`（例如 `windows-1251`）在另一种编码下重新打开字节；`autoGuessEncoding` 门（`DSH_BETTER_EDIT_AUTO_GUESS_ENCODING`，默认 `false`）只在确定性的 BOM → 严格 UTF-8 检测失败后才自动解码：它没有把握的猜测会随读取一并报告，并列出 Top-3 候选，而无法解码的文件则携带 Top-3 被拒绝，供模型挑选。猜测范围限于 `supportedEncodings`（`DSH_BETTER_EDIT_SUPPORTED_ENCODINGS`，默认 `gbk, big5, shift_jis, euc-kr, windows-1251, iso-8859-1`）；UTF-8 恒被接受，不在该名单之内——确定性的 BOM → 严格 UTF-8 通道先于任何猜测运行。挂着旧编码名的纯 ASCII 文件是字节忠实的，在任何同意下都静默编辑——它的字节本来就是 UTF-8，且不会添加 BOM。
 
 旧的 `<workspace>/.dsh_better_edit/` 在首次以 central 打开时一次性拷贝；`runtime/<name>-<hash8>/` 可通过 `ls` 查看，带 `.wsPath` 旁路文件。工作区身份跟随会话的**实时**工作目录（`working_directory` 工具），而不是会话创建时的目录。生命周期详见 `docs/specs/issue-24-store-tenancy.md`（janitor `mtime>storeMaxAgeS` 后 LRU、WAL checkpoint、`undo` TTL）。
 
@@ -310,7 +310,7 @@ token 基准测试衡量的是模型发出的负载——它假设模型每次�
 | `[E_NOT_FOUND]`           | 文件不存在                                                       | 检查父目录                                                                                                             |
 | `[E_FILE_EXISTS]`         | `create` 目标已存在                                              | 换一个路径                                                                                                             |
 | `[E_UNSUPPORTED_FILE]`    | 目录、二进制或非文本文件                                         | 选择文本文件                                                                                                           |
-| `[E_ENCODING_UNWRITABLE]` | 记录的编码无法由 UTF-8 文本写入复现                              | 设 `normalizeToUtf8: true` 迁移，或在插件外编辑                                                                        |
+| `[E_ENCODING_UNWRITABLE]` | 记录的编码无法由 UTF-8 文本写入复现                              | 在编辑中发送 `allow_encoding_migration: "utf8"` 或 `"utf8bom"`（或设置 `allowEncodingMigration`），或在插件外重新编码  |
 | `[E_UNSUPPORTED]`         | `str_replace_editor undo_edit` 未实现                            | 改用 `undo_last_edit`                                                                                                  |
 | `[E_BAD_COMMAND]`         | 未知的 `str_replace_editor` 命令                                 | 使用 `view`、`str_replace`、`insert` 或 `create`                                                                       |
 | `[E_LARGE_FILE]`          | 超过行数或锚点空间上限                                           | 改用 `write` 或拆分文件                                                                                                |
@@ -322,12 +322,12 @@ token 基准测试衡量的是模型发出的负载——它假设模型每次�
 
 ### 警告码
 
-| 代码                    | 含义                                                                 | 处理方式                                                                                   |
-| ----------------------- | -------------------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
-| `[W_UNSERVED_INTERIOR]` | `hint` 模式应用了一次编辑，其替换范围包含本会话从未提供的内部行      | 确认这次未经检视的替换符合意图；`spanMode: strict` 会改为拒绝                              |
-| `[W_EOL_REWRITTEN]`     | 一次编辑在同一个生效行尾上重写了文件的行尾                           | `undo_last_edit` 恢复规范化后的内容；强制档连均匀文件也会重写                              |
-| `[W_MIXED_EOL]`         | 一次读取提供了混合行尾的文件（无受众：读取只报告状态，不寻址任何人） | 无需处理；下一次编辑会规范化到指名的行尾                                                   |
-| `[W_ENCODING_MIGRATED]` | 一次编辑在 `normalizeToUtf8: true` 下把旧编码文件迁移到了 UTF-8      | `undo_last_edit` 只恢复文本；编辑前的编码与 BOM 已丢失——只有版本控制或外部重编码能恢复字节 |
+| 代码                    | 含义                                                                                                                                    | 处理方式                                                                                   |
+| ----------------------- | --------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
+| `[W_UNSERVED_INTERIOR]` | `hint` 模式应用了一次编辑，其替换范围包含本会话从未提供的内部行                                                                         | 确认这次未经检视的替换符合意图；`spanMode: strict` 会改为拒绝                              |
+| `[W_EOL_REWRITTEN]`     | 一次编辑在同一个生效行尾上重写了文件的行尾                                                                                              | `undo_last_edit` 恢复规范化后的内容；强制档连均匀文件也会重写                              |
+| `[W_MIXED_EOL]`         | 一次读取提供了混合行尾的文件（无受众：读取只报告状态，不寻址任何人）                                                                    | 无需处理；下一次编辑会规范化到指名的行尾                                                   |
+| `[W_ENCODING_MIGRATED]` | 一次编辑在编码迁移同意（`allow_encoding_migration` / `allowEncodingMigration`，或旧拼写 `normalizeToUtf8`）下把旧编码文件迁移到了 UTF-8 | `undo_last_edit` 只恢复文本；编辑前的编码与 BOM 已丢失——只有版本控制或外部重编码能恢复字节 |
 
 警告属于 applied 层通知：编辑已落地且文件有效；文本指出未被检视的内容。唯一的读取层代码仅为完整起见列出，不设受众——读取只报告所见状态，没有写入任何内容。
 

@@ -7,7 +7,7 @@
  * `read({ encoding })` is addressable by its anchors. When the bytes cannot be
  * written back byte-faithfully (UTF-16LE, windows-1251 non-ASCII), the mutation
  * fails BEFORE any write with `E_ENCODING_UNWRITABLE`, naming the text-only write
- * limitation and the `normalizeToUtf8: true` remedy. The file is left untouched.
+ * limitation and the `allow_encoding_migration` consent remedy. The file is left untouched.
  */
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
@@ -165,7 +165,7 @@ describe("prepareForSave — round-trip verdict", () => {
         { encoding: "utf16le", hasBOM: true, lineEnding: "\n", version: undefined },
         {},
       ),
-    ).toThrow(/E_ENCODING_UNWRITABLE[\s\S]*normalizeToUtf8/);
+    ).toThrow(/E_ENCODING_UNWRITABLE[\s\S]*allow_encoding_migration/);
   });
 
   it("refuses a recorded BOM when the recorded encoding is not UTF-8", () => {
@@ -251,7 +251,7 @@ describe("edit — recorded encoding round-trip", () => {
           anchor_to: anchors.get("первая строка")!,
           replace_with: "изменённая строка",
         }),
-      ).rejects.toThrow(/\[E_ENCODING_UNWRITABLE\][\s\S]*normalizeToUtf8/);
+      ).rejects.toThrow(/\[E_ENCODING_UNWRITABLE\][\s\S]*allow_encoding_migration/);
 
       expect((await readFile(path)).equals(before)).toBe(true);
     });
@@ -301,7 +301,7 @@ describe("edit — recorded encoding round-trip", () => {
           anchor_to: anchors.get("Привет")!,
           replace_with: "Пока",
         }),
-      ).rejects.toThrow(/\[E_ENCODING_UNWRITABLE\][\s\S]*normalizeToUtf8/);
+      ).rejects.toThrow(/\[E_ENCODING_UNWRITABLE\][\s\S]*allow_encoding_migration/);
 
       expect((await readFile(path)).equals(before)).toBe(true);
     });
@@ -405,7 +405,7 @@ describe("str_replace_editor — recorded encoding round-trip", () => {
           },
           exec({}) as never,
         ),
-      ).rejects.toThrow(/\[E_ENCODING_UNWRITABLE\][\s\S]*normalizeToUtf8/);
+      ).rejects.toThrow(/\[E_ENCODING_UNWRITABLE\][\s\S]*allow_encoding_migration/);
 
       expect((await readFile(path)).equals(before)).toBe(true);
     });
@@ -455,7 +455,7 @@ describe("undo_last_edit — staleness read consumes the recorded encoding", () 
       // unchanged since the undo record, so E_UNDO_STALE would be a false "modified". The
       // revert itself cannot be written back through the text seam, so it refuses instead.
       await expect(harness.undoTool.execute("u1", { path: "undo-cp.txt" })).rejects.toThrow(
-        /\[E_ENCODING_UNWRITABLE\][\s\S]*normalizeToUtf8/,
+        /\[E_ENCODING_UNWRITABLE\][\s\S]*allow_encoding_migration/,
       );
       expect((await readFile(path)).equals(before)).toBe(true);
     });
@@ -516,7 +516,7 @@ describe("transaction — the round-trip verdict precedes every write", () => {
             sandboxPolicy: undefined,
             undoUnavailableMessage: () => "[E_UNDO_UNAVAILABLE] unreachable",
           }),
-        ).rejects.toThrow(/E_ENCODING_UNWRITABLE[\s\S]*normalizeToUtf8/);
+        ).rejects.toThrow(/E_ENCODING_UNWRITABLE[\s\S]*allow_encoding_migration/);
       });
 
       // File A would have been written first; the refusal for B must land before it.

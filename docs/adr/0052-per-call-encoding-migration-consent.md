@@ -153,8 +153,7 @@ seam and every save-seam caller resolve the same ladder.
 
 ## What this deliberately does not do
 
-- **No `E_ENCODING_UNWRITABLE` change.** Its wording and remedy are untouched (ticket #210 owns the
-  remedy text, including how it names this key).
+- **No `E_ENCODING_UNWRITABLE` change in this record.** Its wording and remedy belong to ticket #210, which rewrites the message and remedy to name the per-call `allow_encoding_migration` value and the standing `allowEncodingMigration` setting (and drops the bare `normalizeToUtf8: true` phrase).
 - **No read-side or auto-guess change.** Admission, the lookup ladder and `autoGuessEncoding` keep
   their semantics; a consent is never consulted on a read.
 - **No store schema/version change and no new persistence.** The memo describes the bytes actually

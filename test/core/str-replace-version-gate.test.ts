@@ -194,7 +194,7 @@ describe("issue #69: ctxFsIO version semantics authorize shadow writes", () => {
     expect(getEncodingState(p)?.encoding).toBe("utf16le");
 
     await expect(io.writeText(p, "changed", undefined)).rejects.toThrow(
-      /\[E_ENCODING_UNWRITABLE\][\s\S]*normalizeToUtf8/,
+      /\[E_ENCODING_UNWRITABLE\][\s\S]*allow_encoding_migration/,
     );
 
     expect(fake.fs.writeText).not.toHaveBeenCalled();

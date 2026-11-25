@@ -121,6 +121,10 @@ _Avoid_: encoding handling (implies best-effort, not a gate)
 A write that replaced a legacy codec with UTF-8 — one-way and disclosed, never restored by undo. The verdict is taken once at the save seam (on the non-faithful arm only) and rides the undo pair, so the revert names the abandoned codec and its BOM state while restoring the text as UTF-8; the original bytes do not come back. See `effective EOL` (the revert's one ending) and `W_MIXED_EOL` (the sibling pre-image disclosure) for the mixture half of the same contract.
 _Avoid_: transcode (a byte operation, not the disclosed one-way write), migration notice (that is the warning's name, not the event)
 
+**encoding migration consent**:
+The explicit permission a write needs before it may replace a file's legacy codec with UTF-8, plus the UTF-8 shape it targets. Two distinct surfaces: the per-call `edit` payload key `allow_encoding_migration` (`"refuse" | "utf8" | "utf8bom"`, optional — omitted means the config decides) and the standing `allowEncodingMigration` config setting (`DSH_BETTER_EDIT_ALLOW_ENCODING_MIGRATION`), whose absence falls through to the legacy `normalizeToUtf8` spelling (`true` = `"utf8"`); with nothing set the consent is `"refuse"`. `"utf8"` writes no BOM; `"utf8bom"` writes one leading `EF BB BF` that BOM-aware readers decode as UTF-8. A byte-faithful ASCII body needs no consent and never gains a BOM.
+_Avoid_: normalize flag (the legacy boolean, not the consent), migration setting (ambiguous between the payload key and the config setting)
+
 **governed edit path**:
 Any tool path that enforces `encoding governance`: `read`/`edit`/`undo_last_edit` and the `str_replace_editor` shadow (`view` → `str_replace`/`insert`/`create`). The `str_replace_editor` shadow records `file encoding state` but never `served state` — it can feed `write` round-trips but cannot authorize hashline `edit` anchors.
 _Avoid_: native edit path (implies the built-in tools own the semantics; here the plugin does)

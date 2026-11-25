@@ -669,9 +669,12 @@ export const ERROR_REGISTRY: { [K in DomainErrorCode]: CodeSpec<ErrorPayloadMap[
   E_ENCODING_UNWRITABLE: {
     audience: "MODEL",
     format: ({ path, encoding }) =>
-      `Cannot write ${path}: it was read as ${encoding}, and this filesystem exposes only a text write that always encodes UTF-8. Writing now would transcode the file silently, and its anchors would no longer describe the bytes on disk. Nothing was written. Set normalizeToUtf8: true (DSH_BETTER_EDIT_NORMALIZE_TO_UTF8=true) to migrate the file to UTF-8 explicitly, then retry.`,
-    // WHY remedy: the recorded encoding proves the text seam cannot reproduce it, and normalizeToUtf8 is the one setting that makes the write legal.
-    remedy: "Set normalizeToUtf8: true to migrate the file to UTF-8 explicitly, then retry.",
+      `Cannot write ${path}: it was read as ${encoding}, and this filesystem exposes only a text write that always encodes UTF-8. Writing now would transcode the file silently, and its anchors would no longer describe the bytes on disk. Nothing was written. To migrate this file explicitly, send allow_encoding_migration: "utf8" (no BOM) or "utf8bom" (one leading UTF-8 BOM, which BOM-aware readers decode as UTF-8) on the edit; for a standing choice, set the allowEncodingMigration config setting to "utf8" or "utf8bom". Otherwise re-encode the file outside the plugin. Then retry.`,
+    // WHY remedy: the recorded encoding proves the text seam cannot reproduce it; the
+    // consent surface (per-call payload value or the standing config setting) is the
+    // plugin's own vocabulary, and re-encoding outside the plugin is the only other route.
+    remedy:
+      'Send allow_encoding_migration: "utf8" or "utf8bom" on the edit (or set the standing allowEncodingMigration setting to the same value), or re-encode the file outside the plugin, then retry.',
   },
   E_ACCESS: {
     audience: "MODEL",

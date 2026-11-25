@@ -116,7 +116,7 @@ Errors: `E_NOT_TEXT` (initial, with `candidates` when guessing), `E_BAD_ENCODING
 
 ### The refusal
 
-`E_ENCODING_UNWRITABLE` (new member of the shared vocabulary in `src/domain-errors.ts`, MODEL audience). It is deliberately **not** `E_STALE_ANCHOR` and **not** `E_UNSUPPORTED_FILE`: the read succeeded and the anchors are valid — only the write is impossible. Its rendered text names the limitation (the filesystem exposes only a text write that always encodes UTF-8; writing would transcode silently) and the remedy (`normalizeToUtf8: true` / `DSH_BETTER_EDIT_NORMALIZE_TO_UTF8=true`). Nothing is written; for a batch the verdict is computed for every file before the first write, so a multi-file edit never leaves one file transcoded and the next refused.
+`E_ENCODING_UNWRITABLE` (new member of the shared vocabulary in `src/domain-errors.ts`, MODEL audience). It is deliberately **not** `E_STALE_ANCHOR` and **not** `E_UNSUPPORTED_FILE`: the read succeeded and the anchors are valid — only the write is impossible. Its rendered text names the limitation (the filesystem exposes only a text write that always encodes UTF-8; writing would transcode silently) and the remedy (#210 rewrote it to name the `allow_encoding_migration` payload value and the standing `allowEncodingMigration` setting; the legacy `normalizeToUtf8: true` spelling is still honoured — see ADR-0052). Nothing is written; for a batch the verdict is computed for every file before the first write, so a multi-file edit never leaves one file transcoded and the next refused.
 
 ### `normalizeToUtf8: true` keeps its meaning
 
