@@ -111,7 +111,7 @@ dsh --profile <name> --dump-config   # shows "# == dsh-better-edit" layer
 
 | Requirement |                                                                                   |
 | ----------- | --------------------------------------------------------------------------------- |
-| Node        | `^22.19.0 \|\| >=24.0.0`                                                          |
+| Node        | `>=24` (per `engines.node`; a newer dsh host may require a higher minimum)        |
 | Profile     | `dsh` profile (`dsh plugin` creates one)                                          |
 | Backends    | sandboxed / remote `ctx.fs`                                                       |
 | dsh         | `0.2.1-rc.2` (verified end-to-end; `0.1.6-alpha.2` was the last pre-0.2 baseline) |
