@@ -221,10 +221,12 @@ export function buildBatchResult(sections: BatchSection[], dryRun = false): TRes
     const disclosure = disclosureBySection.get(s);
     return [...(s.warnings ?? []), ...(disclosure === undefined ? [] : [disclosure])];
   });
-  const driftNotice = sections
+  // An empty section is "that file reported no drift", so it must not contribute a blank paragraph
+  // to the join; an all-clean batch therefore has no notice at all to publish.
+  const notices = sections
     .map((s) => s.driftNotice)
-    .filter((d): d is string => d !== undefined)
-    .join("\n\n");
+    .filter((d): d is string => d !== undefined && d.length > 0);
+  const driftNotice = notices.length > 0 ? notices.join("\n\n") : undefined;
 
   if (allNoop) {
     // WHY (#145 T3): metrics keep the live vocabulary ("applied"/"noop") because it names the

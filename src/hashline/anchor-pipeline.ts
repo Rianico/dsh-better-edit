@@ -753,7 +753,14 @@ export function applyEdit(
       fileHashes,
       filePath,
     );
-    throw new AnchorMismatchError("E_STALE_ANCHOR", { headline, servedRows, servedBlock });
+    // WHY: "anchor staleness" now has a producer — this arm IS "the anchor no longer names a current
+    // line"; payload-only (staleAnchorFormat ignores it), so the batch envelope forwards/promotes it.
+    throw new AnchorMismatchError("E_STALE_ANCHOR", {
+      headline,
+      servedRows,
+      servedBlock,
+      cause: "anchor staleness",
+    });
   }
 
   warnUnicodeEsc(prefixFixed, warnings);

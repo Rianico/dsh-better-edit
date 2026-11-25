@@ -260,20 +260,22 @@ const TWIN_SCENARIO: Scenario = {
   anchorLine: TWIN_LINE,
   replacement: "  return changed;",
 };
-// Non-twin (i): windowed-then-full read, then an insert-only exterior change
-// above the served span. The inserted line duplicates a served line — that is
-// the minimal insert-only change that makes the edit reject at all: a plain
-// new-content insert rebases through the lease identity and applies.
+// Non-twin (i): windowed-then-full read, then an exterior REWRITE of the served
+// line's own bytes. A duplicate insert above the span no longer collides: T3 keeps
+// the served anchor and the edit applies. Only a change to the served line itself
+// leaves its anchor absent from the aligned buffer, so the refusal is the
+// stale-anchor arm — the minimal exterior change that still rejects.
 const INSERT_SCENARIO: Scenario = {
   file: INSERT_FILE,
   window: [1, 3],
   fullRead: true,
-  external: `beta\n${INSERT_FILE}`,
+  external: "alpha\nbetA\ngamma\ndelta\n",
   anchorLine: "beta",
   replacement: "BETA",
 };
 // Non-twin (ii): a WINDOWED-only read (the served span is a proper subset of
-// the file), then a change outside that span.
+// the file), then an exterior insert above that span. T3 applies this edit on the
+// served anchor — no longer a rejection — so the cell pins the applied contract.
 const WINDOW_SCENARIO: Scenario = {
   file: WINDOW_FILE,
   window: [1, 2],
@@ -294,6 +296,8 @@ type LeaseDump = Record<string, LeaseRow | null>;
 
 interface ScenarioRun {
   read1Anchors: string[];
+  /** The served anchor the attempt targets. */
+  targetAnchor: string;
   read2Anchors: string[];
   servedBefore: (string | null)[];
   servedAfterReject: (string | null)[];
@@ -303,6 +307,8 @@ interface ScenarioRun {
   message: string;
   /** One entry per attempted rejection: true = it rejected. */
   rejections: boolean[];
+  /** The file as it stands after the attempt(s) and the fresh read. */
+  fileAfter: string;
 }
 
 /** Parse the `HASH│content` read rows into the served anchor list. */
@@ -332,6 +338,33 @@ function grantOf(row: LeaseRow): Omit<LeaseRow, "retiredAt"> {
     lineNumber: row.lineNumber,
     canonHash: row.canonHash,
   };
+}
+
+/**
+ * The rejection granted nothing. With the exterior-rewrite geometry the served line's own
+ * bytes changed, so the pipeline's normalization retires THAT lease — the one attributable
+ * delta (the same attribution the twin cell spells out). Every other served anchor's row,
+ * `retiredAt` included, stays byte-identical, and the target's grant fields do not move.
+ */
+function expectGrantsUnchangedExceptRetirement(
+  before: LeaseDump,
+  after: LeaseDump,
+  anchors: string[],
+  targetAnchor: string,
+): void {
+  for (const anchor of anchors) {
+    const was = before[anchor] ?? null;
+    const now = after[anchor] ?? null;
+    if (anchor !== targetAnchor) {
+      expect(now).toEqual(was);
+      continue;
+    }
+    expect(was).not.toBeNull();
+    expect(now).not.toBeNull();
+    expect(grantOf(now!)).toEqual(grantOf(was!));
+    expect(was!.retiredAt).toBeNull();
+    expect(now!.retiredAt).not.toBeNull();
+  }
 }
 
 async function servedAt(
@@ -443,6 +476,7 @@ async function runScenario(
     );
     run = {
       read1Anchors,
+      targetAnchor: anchor,
       read2Anchors,
       servedBefore,
       servedAfterReject,
@@ -451,6 +485,7 @@ async function runScenario(
       rejected,
       message,
       rejections,
+      fileAfter: await readFile(path, "utf-8"),
     };
   });
   if (run === undefined) throw new Error("scenario did not run");
@@ -554,12 +589,16 @@ async function runNoopLoop(
 }
 
 const BATCH_FILE = "alpha\nbeta\ngamma\ndelta\n";
-// The same insert-only exterior change as INSERT_SCENARIO: the `beta` anchor goes
-// stale, so batch item 0 aborts while item 1 still resolves.
-const BATCH_EXTERNAL = `beta\n${BATCH_FILE}`;
+// The same exterior REWRITE as INSERT_SCENARIO: the served `beta` line's bytes change,
+// so its anchor is stale while item 1 (`gamma`, untouched) still resolves.
+const BATCH_EXTERNAL = "alpha\nbetA\ngamma\ndelta\n";
 
 interface BatchAbortRun {
   read2Anchors: string[];
+  /** Every anchor the first read served. */
+  read1Anchors: string[];
+  /** The served anchor item 0 targets. */
+  targetAnchor: string;
   servedBefore: (string | null)[];
   servedAfterAbort: (string | null)[];
   leasesBefore: LeaseDump;
@@ -615,12 +654,14 @@ async function runBatchAbort(withBatch: boolean): Promise<BatchAbortRun> {
     const leasesAfterAbort = await leasesAt(cwd, fullKey, path, read1Anchors);
     const read2Anchors = rowAnchors(getText(await readTool.execute("read", { path: "batch.txt" })));
     run = {
+      targetAnchor: beta,
       read2Anchors,
       servedBefore,
       servedAfterAbort,
       leasesBefore,
       leasesAfterAbort,
       aborted,
+      read1Anchors,
       message,
     };
   });
@@ -628,15 +669,18 @@ async function runBatchAbort(withBatch: boolean): Promise<BatchAbortRun> {
   return run;
 }
 
-// The TWIN geometry: the failure has to reach `applyOne`'s verification (a resolvable
-// anchor whose leased line identity no longer resolves) — a plain deleted-anchor
-// geometry throws in `resEdit` *before* `applyOne`, so it never reaches `onReject`.
+// The TWIN geometry: the anchored line's spelling is gone from the aligned buffer, so the
+// refusal lands at anchor resolution (`E_STALE_ANCHOR`) with rows and grants untouched —
+// the reject path never reaches `applyOne`. The lease-identity interception arm is pinned at
+// arm level by `test/core/lease-resolve-seam.test.ts`.
 
 describe("serve leases — a rejected edit is a no-op for the next read", () => {
   it("twin rejection records nothing — served rows byte-identical before/after", async () => {
     const run = await runScenario(TWIN_SCENARIO, true);
     expect(run.rejected).toBe(true);
-    expect(run.message).toMatch(/E_TARGET_LOST/);
+    // WHY (T3): the aligned load leaves the deleted twin's anchor absent, so the refusal is
+    // the stale-anchor arm, not the lease-identity interception.
+    expect(run.message).toMatch(/E_STALE_ANCHOR/);
     expect(run.servedAfterReject).toEqual(run.servedBefore);
   });
 
@@ -668,9 +712,9 @@ describe("serve leases — a rejected edit is a no-op for the next read", () => 
     // not the rejection: the edit pipeline's own file normalization commits a
     // snapshot of the externally changed content, and `commitSnapshot` retires
     // leases whose line_id left that snapshot — here, the deleted line's lease.
-    // The same rejection with an external change that preserves every served
-    // line_id (the insert-only and windowed cells below) leaves lease rows
-    // byte-identical INCLUDING `retiredAt`, which pins that attribution.
+    // The exterior-rewrite cells below show the same attribution from the other side:
+    // only the rewritten line's lease retires, every other row stays byte-identical
+    // INCLUDING `retiredAt`.
   });
 
   it("twin rejection → fresh read ≡ control (0 duplicates, no shifted labels)", async () => {
@@ -682,32 +726,30 @@ describe("serve leases — a rejected edit is a no-op for the next read", () => 
     expect(treatment.read2Anchors).toEqual(control.read2Anchors);
   });
 
-  it("non-twin insert-only exterior change → rejection → fresh read ≡ control", async () => {
+  it("non-twin exterior rewrite of the served line → rejection → fresh read ≡ control", async () => {
     const control = await runScenario(INSERT_SCENARIO, false);
     const treatment = await runScenario(INSERT_SCENARIO, true);
     expect(treatment.rejected).toBe(true);
     expect(duplicateAnchors(control.read2Anchors)).toEqual([]);
     expect(duplicateAnchors(treatment.read2Anchors)).toEqual([]);
     expect(treatment.read2Anchors).toEqual(control.read2Anchors);
-    for (const anchor of treatment.read1Anchors) {
-      expect(treatment.leasesAfterReject[anchor] ?? null).toEqual(
-        treatment.leasesBefore[anchor] ?? null,
-      );
-    }
+    // (b) grants — byte-identical except the rewrite's own retirement.
+    expectGrantsUnchangedExceptRetirement(
+      treatment.leasesBefore,
+      treatment.leasesAfterReject,
+      treatment.read1Anchors,
+      treatment.targetAnchor,
+    );
   });
 
-  it("non-twin windowed read + change outside the served span → rejection → fresh read ≡ control", async () => {
-    const control = await runScenario(WINDOW_SCENARIO, false);
+  it("non-twin windowed read + insert above the served span → applies on the served anchor (T3)", async () => {
+    // WHY (T3): the duplicate insert no longer collides — the served anchor keeps its
+    // identity, so the edit applies at the served line and the file holds the new bytes.
+    // The invariant that survives is the fresh read: no duplicate anchors.
     const treatment = await runScenario(WINDOW_SCENARIO, true);
-    expect(treatment.rejected).toBe(true);
-    expect(duplicateAnchors(control.read2Anchors)).toEqual([]);
+    expect(treatment.rejected).toBe(false);
     expect(duplicateAnchors(treatment.read2Anchors)).toEqual([]);
-    expect(treatment.read2Anchors).toEqual(control.read2Anchors);
-    for (const anchor of treatment.read1Anchors) {
-      expect(treatment.leasesAfterReject[anchor] ?? null).toEqual(
-        treatment.leasesBefore[anchor] ?? null,
-      );
-    }
+    expect(treatment.fileAfter).toBe("beta\nalpha\nBETA\ngamma\ndelta\nepsilon\n");
   });
 
   it("noop-loop rejection records nothing — served rows and grants byte-identical, next read ≡ control", async () => {
@@ -729,15 +771,20 @@ describe("serve leases — a rejected edit is a no-op for the next read", () => 
     expect(duplicateAnchors(control.read2Anchors)).toEqual([]);
     expect(duplicateAnchors(treatment.read2Anchors)).toEqual([]);
   });
-  it("consecutive rejections compose — reject → reject leaves served rows and grants byte-identical", async () => {
+  it("consecutive rejections compose — an exterior rewrite rejected twice leaves served rows and grants byte-identical", async () => {
     const control = await runScenario(INSERT_SCENARIO, false);
     const treatment = await runScenario(INSERT_SCENARIO, true, control.read2Anchors, 2);
     expect(treatment.rejections).toEqual([true, true]);
     expect(treatment.read2Anchors).toEqual(control.read2Anchors);
-    // (a)+(b) byte-identical to immediately before the FIRST rejection. The
-    // insert-only geometry keeps `retiredAt` clean, so this is the full row.
+    // (a) served rows byte-identical to immediately before the FIRST rejection.
     expect(treatment.servedAfterReject).toEqual(treatment.servedBefore);
-    expect(treatment.leasesAfterReject).toEqual(treatment.leasesBefore);
+    // (b) grants — byte-identical except the rewrite's own retirement.
+    expectGrantsUnchangedExceptRetirement(
+      treatment.leasesBefore,
+      treatment.leasesAfterReject,
+      treatment.read1Anchors,
+      treatment.targetAnchor,
+    );
     expect(duplicateAnchors(treatment.read2Anchors)).toEqual([]);
   });
 
@@ -748,7 +795,12 @@ describe("serve leases — a rejected edit is a no-op for the next read", () => 
     expect(treatment.message).toMatch(/E_BATCH_ABORT/);
     expect(treatment.read2Anchors).toEqual(control.read2Anchors);
     expect(treatment.servedAfterAbort).toEqual(treatment.servedBefore);
-    expect(treatment.leasesAfterAbort).toEqual(treatment.leasesBefore);
+    expectGrantsUnchangedExceptRetirement(
+      treatment.leasesBefore,
+      treatment.leasesAfterAbort,
+      treatment.read1Anchors,
+      treatment.targetAnchor,
+    );
     expect(duplicateAnchors(treatment.read2Anchors)).toEqual([]);
   });
 

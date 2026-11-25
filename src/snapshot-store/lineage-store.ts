@@ -30,11 +30,13 @@ import {
   CANON_VERSION,
   ANCHOR_GENERATION,
   canonDigest,
+  rawDigest,
   contentChecksum,
+  HASH_RE,
 } from "../hashline/hash-assign.js";
 import { splitLines } from "../utils.js";
 import { withBusyRetry } from "../store-retry.js";
-import { pairSnapshots } from "./pairing.js";
+import { pairLineage } from "./pairing.js";
 import { withTransaction } from "./txn.js";
 
 /**
@@ -94,6 +96,8 @@ export interface LineageRow {
   lineNumber: number;
   lineId: number;
   canonHash: string;
+  /** `xxh32` of the raw line; `undefined` on a legacy row, where the carry fails closed. */
+  rawHash?: string | undefined;
   anchor: string;
 }
 
@@ -109,6 +113,14 @@ export interface LineageStore {
   /** Create-or-adopt (path, snapshotHash) and grant leases in ONE BEGIN IMMEDIATE. */
   commitSnapshot(input: CommitSnapshotInput): void;
   lineageFor(path: string, snapshotHash: string): LineageRow[];
+  /**
+   * The newest committed lineage for `path`, in line order — the evidence a checksum-miss alignment
+   * pairs drifted content against. `undefined` when the path has no committed snapshot, its lineage
+   * is empty, or the rows are unusable (non-contiguous numbering, an anchor outside the hash
+   * alphabet, or a repeated anchor): alignment then loses its evidence and the caller falls back to
+   * fresh allocation, never to damaged coordinates. READ-ONLY.
+   */
+  latestLineageFor(path: string): LineageRow[] | undefined;
   /**
    * `line_id` -> current line number for `content` — the identity map the edit path resolves a
    * leased line through (CP2-r1). Prefers the committed lineage of `content`; otherwise pairs the
@@ -143,6 +155,7 @@ interface PrevLine {
   lineNumber: number;
   lineId: number;
   canonHash: string;
+  rawHash?: string | undefined;
 }
 
 interface CounterRow {
@@ -153,6 +166,7 @@ interface LineageRecord {
   line_number: number;
   line_id: number;
   canon_hash: string;
+  raw_hash: string | null;
   anchor: string;
 }
 
@@ -190,11 +204,20 @@ export function ensureLineageTables(db: DatabaseSync): void {
       "line_number INTEGER NOT NULL, " +
       "line_id INTEGER NOT NULL, " +
       "canon_hash TEXT NOT NULL, " +
+      "raw_hash TEXT, " +
       "anchor TEXT NOT NULL, " +
       "PRIMARY KEY (snapshot_id, line_number), " +
       "FOREIGN KEY (snapshot_id) REFERENCES file_snapshots(snapshot_id) ON DELETE CASCADE" +
       ")",
   );
+  // #188: additive and nullable — a pre-column row reads as no raw evidence (the carry fails
+  // closed), so no row is rewritten and nothing is dropped. Idempotent on a current store.
+  const lineageColumns = db
+    .prepare("SELECT name FROM pragma_table_info(?)")
+    .all("line_lineage") as { name: string }[];
+  if (!lineageColumns.some((column) => column.name === "raw_hash")) {
+    db.exec("ALTER TABLE line_lineage ADD COLUMN raw_hash TEXT");
+  }
   db.exec(
     "CREATE UNIQUE INDEX IF NOT EXISTS idx_lineage_snapshot_line_id " +
       "ON line_lineage (snapshot_id, line_id)",
@@ -232,21 +255,35 @@ export function ensureLineageTables(db: DatabaseSync): void {
 }
 
 /**
- * Adapter: the patience/LIS engine (`./pairing.js`) in the shape `commitSnapshot` needs.
- * Returns the inherited `line_id` per current line, or null for a fresh id. A current line
- * the engine left unpaired takes a fresh id, which is what retires the identity of a line
- * it could not prove moved — the fail-closed direction.
+ * Adapter: the ONE pairing owner (`pairLineage` — the pin-bounded engine plus the homogeneous-run
+ * carry) in the shape `commitSnapshot` needs. Returns the inherited `line_id` per current line, or
+ * null for a fresh id. A current line the pairing left unpaired takes a fresh id, which is what
+ * retires the identity of a line it could not prove moved — the fail-closed direction.
+ *
+ * WHY the same owner as the read path: a `line_id` and the anchor served for the same line must
+ * never be decided by different rules, or one line keeps its anchor while its identity retires.
  */
-function pairLineIds(prev: PrevLine[], curCanons: string[]): (number | null)[] {
+function pairLineIds(prev: PrevLine[], curLines: string[]): (number | null)[] {
   const prevById = new Map<number, number>();
   for (const line of prev) prevById.set(line.lineNumber, line.lineId);
-  const pairing = pairSnapshots(
-    prev.map((line) => ({ lineNumber: line.lineNumber, canonHash: line.canonHash })),
-    curCanons.map((canonHash, index) => ({ lineNumber: index + 1, canonHash })),
+  // ONE pairing owner: the engine plus the homogeneous-run carry the checksum-miss alignment uses,
+  // so a `line_id` and the anchor served for the same line can never be decided by different rules.
+  // Raw digests gate the carry exactly as they do on the read path; a legacy NULL row is no evidence.
+  const pairing = pairLineage(
+    prev.map((line) => ({
+      lineNumber: line.lineNumber,
+      canonHash: line.canonHash,
+      rawHash: line.rawHash,
+    })),
+    curLines.map((line, index) => ({
+      lineNumber: index + 1,
+      canonHash: canonDigest(line),
+      rawHash: rawDigest(line),
+    })),
   );
   const prevByCurr = new Map<number, number>();
   for (const [prevLine, currLine] of pairing) prevByCurr.set(currLine, prevLine);
-  return curCanons.map((_, index) => {
+  return curLines.map((_, index) => {
     const prevLine = prevByCurr.get(index + 1);
     if (prevLine === undefined) return null;
     return prevById.get(prevLine) ?? null;
@@ -309,7 +346,7 @@ export function createLineageStore(db: DatabaseSync): LineageStore {
     "SELECT snapshot_id, snapshot_hash FROM file_snapshots WHERE path = ? ORDER BY snapshot_id DESC LIMIT 1",
   );
   const prevLineageStmt = db.prepare(
-    "SELECT line_number, line_id, canon_hash FROM line_lineage WHERE snapshot_id = ? ORDER BY line_number ASC",
+    "SELECT line_number, line_id, canon_hash, raw_hash FROM line_lineage WHERE snapshot_id = ? ORDER BY line_number ASC",
   );
   const getCounterStmt = db.prepare("SELECT next_id FROM line_id_counters WHERE path = ?");
   const upsertCounterStmt = db.prepare(
@@ -321,11 +358,11 @@ export function createLineageStore(db: DatabaseSync): LineageStore {
       "VALUES (?, ?, ?, ?, 1)",
   );
   const insertLineageStmt = db.prepare(
-    "INSERT INTO line_lineage (snapshot_id, line_number, line_id, canon_hash, anchor) " +
-      "VALUES (?, ?, ?, ?, ?)",
+    "INSERT INTO line_lineage (snapshot_id, line_number, line_id, canon_hash, raw_hash, anchor) " +
+      "VALUES (?, ?, ?, ?, ?, ?)",
   );
   const snapshotLineageStmt = db.prepare(
-    "SELECT line_number, line_id, canon_hash, anchor FROM line_lineage " +
+    "SELECT line_number, line_id, canon_hash, raw_hash, anchor FROM line_lineage " +
       "WHERE snapshot_id = ? ORDER BY line_number ASC",
   );
   const upsertLeaseStmt = db.prepare(
@@ -465,23 +502,25 @@ export function createLineageStore(db: DatabaseSync): LineageStore {
           const latest = latestSnapshotStmt.get(input.path) as SnapshotRow | undefined;
           const prev: PrevLine[] = [];
           if (latest !== undefined) {
-            // SAFETY: prevLineageStmt's SELECT list (line_number, line_id, canon_hash) matches
-            // this inline shape field-for-field; node:sqlite returns one record per row with
+            // SAFETY: prevLineageStmt's SELECT list (line_number, line_id, canon_hash, raw_hash)
+            // matches this inline shape field-for-field; node:sqlite returns one record per row with
             // exactly those columns.
             const stored = prevLineageStmt.all(latest.snapshot_id) as unknown as {
               line_number: number;
               line_id: number;
               canon_hash: string;
+              raw_hash: string | null;
             }[];
             for (const row of stored) {
               prev.push({
                 lineNumber: row.line_number,
                 lineId: row.line_id,
                 canonHash: row.canon_hash,
+                rawHash: row.raw_hash ?? undefined,
               });
             }
           }
-          const inherited = pairLineIds(prev, curCanons);
+          const inherited = pairLineIds(prev, lines);
           // ONE counter upsert for the whole fresh block.
           const counter = getCounterStmt.get(input.path) as CounterRow | undefined;
           let fresh = counter === undefined ? 1 : counter.next_id;
@@ -508,6 +547,7 @@ export function createLineageStore(db: DatabaseSync): LineageStore {
                 index + 1,
                 lineId,
                 curCanons[index]!,
+                rawDigest(lines[index] ?? ""),
                 input.hashes[index]!,
               );
             });
@@ -533,9 +573,33 @@ export function createLineageStore(db: DatabaseSync): LineageStore {
           lineNumber: row.line_number,
           lineId: row.line_id,
           canonHash: row.canon_hash,
+          rawHash: row.raw_hash ?? undefined,
           anchor: row.anchor,
         }),
       );
+    },
+    latestLineageFor(path) {
+      const latest = latestSnapshotStmt.get(path) as SnapshotRow | undefined;
+      if (latest === undefined) return undefined;
+      // SAFETY: SELECT list matches LineageRecord field-for-field (same statement as grantLeases).
+      const records = snapshotLineageStmt.all(latest.snapshot_id) as unknown as LineageRecord[];
+      if (records.length === 0) return undefined;
+      const rows: LineageRow[] = [];
+      const anchors = new Set<string>();
+      for (let index = 0; index < records.length; index++) {
+        const row = records[index]!;
+        if (row.line_number !== index + 1) return undefined;
+        if (!HASH_RE.test(row.anchor) || anchors.has(row.anchor)) return undefined;
+        anchors.add(row.anchor);
+        rows.push({
+          lineNumber: row.line_number,
+          lineId: row.line_id,
+          canonHash: row.canon_hash,
+          rawHash: row.raw_hash ?? undefined,
+          anchor: row.anchor,
+        });
+      }
+      return rows;
     },
 
     positionsByIdentity(path, content) {
@@ -553,26 +617,26 @@ export function createLineageStore(db: DatabaseSync): LineageStore {
       }
       const latest = latestSnapshotStmt.get(path) as SnapshotRow | undefined;
       if (latest === undefined) return new Map();
-      // SAFETY: prevLineageStmt's SELECT list (line_number, line_id, canon_hash) matches this
-      // inline shape field-for-field; node:sqlite returns one record per row with those columns.
+      // SAFETY: prevLineageStmt's SELECT list (line_number, line_id, canon_hash, raw_hash) matches
+      // this inline shape field-for-field; node:sqlite returns one record per row with those columns.
       const previous = (
         prevLineageStmt.all(latest.snapshot_id) as unknown as {
           line_number: number;
           line_id: number;
           canon_hash: string;
+          raw_hash: string | null;
         }[]
       ).map((row) => ({
         lineNumber: row.line_number,
         lineId: row.line_id,
         canonHash: row.canon_hash,
+        rawHash: row.raw_hash ?? undefined,
       }));
       if (previous.length === 0) return new Map();
-      const inherited = pairLineIds(
-        previous,
-        splitLines(content).map((line) => canonDigest(line)),
-      );
+      const currentLines = splitLines(content);
+      const inherited = pairLineIds(previous, currentLines);
       const map = new Map<number, number>();
-      for (let index = 0; index < inherited.length; index++) {
+      for (let index = 0; index < currentLines.length; index++) {
         const lineId = inherited[index];
         if (lineId !== null) map.set(lineId, index + 1);
       }

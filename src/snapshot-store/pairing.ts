@@ -28,6 +28,15 @@ export interface LineDescriptor {
   canonHash: string;
 }
 
+/**
+ * One line's pairing evidence: `canonHash` for the engine, `rawHash` for the homogeneous-run carry.
+ * `rawHash` is absent on a legacy (pre-#188) lineage row, where the canon alone cannot prove the
+ * run's one spelling — the carry then fails closed instead of inferring.
+ */
+export interface LineageLine extends LineDescriptor {
+  rawHash?: string | undefined;
+}
+
 export interface AnchorPin {
   prevLine: number;
   currLine: number;
@@ -468,6 +477,82 @@ export function pairSnapshots(
   }
 
   alignRecursive(1, prevLines.length, 1, currLines.length);
+  assertMonotonicPairing(pairing);
+  return pairing;
+}
+
+/**
+ * Fill the gaps `pairSnapshots` leaves UNPAIRED when each side is one contiguous raw-uniform run.
+ * No unique pin exists inside such a run, so the ordinal is the only reading left: the k-th copy
+ * answers the k-th copy, a current tail allocates fresh, and prior overflow retires.
+ *
+ * Fail-closed gates: the CURRENT gap is raw-uniform by digest, and every PRIOR row of the gap
+ * carries the run's canon AND its raw digest. The canon folds the edge whitespace class, so only
+ * the raw digest separates `"    }"` from `"  }"`; an absent digest (a legacy row) is no evidence,
+ * so the gap is skipped. Pairs are appended in order, so monotonicity still holds.
+ */
+function carryHomogeneousRuns(
+  prev: readonly LineageLine[],
+  curr: readonly LineageLine[],
+  pairing: Map<number, number>,
+): void {
+  const bounds: AnchorPin[] = [{ prevLine: 0, currLine: 0 }];
+  for (const [prevLine, currLine] of [...pairing.entries()].sort((a, b) => a[0] - b[0])) {
+    bounds.push({ prevLine, currLine });
+  }
+  bounds.push({ prevLine: prev.length + 1, currLine: curr.length + 1 });
+
+  for (let i = 1; i < bounds.length; i++) {
+    const lower = bounds[i - 1]!;
+    const upper = bounds[i]!;
+    const pStart = lower.prevLine + 1;
+    const pEnd = upper.prevLine - 1;
+    const cStart = lower.currLine + 1;
+    const cEnd = upper.currLine - 1;
+    if (pStart > pEnd || cStart > cEnd) continue;
+
+    const first = curr[cStart - 1]!;
+    const runRaw = first.rawHash;
+    if (runRaw === undefined) continue;
+    let currentUniform = true;
+    for (let c = cStart + 1; c <= cEnd; c++) {
+      if (curr[c - 1]!.rawHash !== runRaw) {
+        currentUniform = false;
+        break;
+      }
+    }
+    if (!currentUniform) continue;
+
+    let carried = 0;
+    let priorUniform = true;
+    for (let p = pStart; p <= pEnd; p++) {
+      const row = prev[p - 1];
+      if (row === undefined || row.canonHash !== first.canonHash || row.rawHash !== runRaw) {
+        priorUniform = false;
+        break;
+      }
+      carried++;
+    }
+    if (!priorUniform) continue;
+
+    const carry = Math.min(carried, cEnd - cStart + 1);
+    for (let j = 0; j < carry; j++) pairing.set(pStart + j, cStart + j);
+  }
+}
+
+/**
+ * Pair a prior lineage against freshly-read lines: the pin-bounded engine first, then the
+ * homogeneous-run ordinal carry for the gaps it leaves UNPAIRED. A pair the engine proved is never
+ * overridden — the carry only fills gaps — and an ambiguous, mixed-spelling, or legacy-NULL gap
+ * stays unpaired, so those anchors retire fail-closed.
+ */
+export function pairLineage(
+  prev: LineageLine[],
+  curr: LineageLine[],
+  options?: PairingOptions,
+): Map<number, number> {
+  const pairing = pairSnapshots(prev, curr, options);
+  carryHomogeneousRuns(prev, curr, pairing);
   assertMonotonicPairing(pairing);
   return pairing;
 }

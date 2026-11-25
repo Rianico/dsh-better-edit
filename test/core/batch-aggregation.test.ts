@@ -138,10 +138,12 @@ describe("batch aggregation", () => {
   // envelope carries `details.cause` only on a unanimous diagnosis — `batchAbortFor` (:531-560)
   // forwards the one item's cause untouched, `batchAbortForMany` (:579-622) promotes it exactly
   // when every failing item agrees. These cells pin the three stages through the deleted-twin
-  // geometry (see test/core/deleted-twin-anchor.test.ts): the boundary interception's
-  // `E_TARGET_LOST` (`cause: "retirement"`, src/hashline/served-evidence.ts,
-  // `interceptLeaseBoundaries`) is the
-  // diagnosis this route surfaces; the position-check arms are cause-free by design.
+  // geometry (see test/core/deleted-twin-anchor.test.ts): T3's aligned edit load leaves the
+  // deleted twin's anchor ABSENT from the buffer, so the refusal is the stale-anchor arm —
+  // `E_STALE_ANCHOR`, which mints `cause: "anchor staleness"`, so forwarding (single) and
+  // promotion (unanimous) stay exercised from this route. The lease-identity interception
+  // (`E_TARGET_LOST`, `cause: "retirement"`) is pinned at arm level by
+  // `test/core/lease-resolve-seam.test.ts`.
   // The envelope's `.code` stays `E_BATCH_ABORT`: the local batch family keeps the header-code
   // coupling that upstream's plain-Error wrapper has no analogue for (retained deviation,
   // ADR-0014 dsh-family).
@@ -163,9 +165,10 @@ describe("batch aggregation", () => {
       "function delta() {\n" +
       "  return compute(other);\n" +
       "}\n";
-    // Out-of-band deletion of each pair's FIRST occurrence: the surviving twin shifts up and
-    // takes the deleted line's context hash, so the named anchor resolves to a look-alike —
-    // the identity is gone and the interception refuses with `E_TARGET_LOST`.
+    // Out-of-band deletion of each pair's FIRST occurrence. T3's read path aligns on the checksum
+    // miss, so the deleted line's spelling never returns: the named anchor is absent from the
+    // buffer and the refusal is `E_STALE_ANCHOR` at resolution — the stale-anchor arm, not a
+    // look-alike rebind (which the pre-T3 allocation allowed).
     const PAIRS_AFTER = PAIRS.replace("  return compute(value);\n", "").replace(
       "  return compute(other);\n",
       "",
@@ -196,8 +199,30 @@ describe("batch aggregation", () => {
       const rows = getText(await harness.readTool.execute("read", { path })).split("\n");
       const anchors = rows.filter((line) => /│.*compute/.test(line)).map(extractHash);
       expect(anchors).toHaveLength(4);
+      const anchorOf = (content: string, from = 0): string => {
+        const index = rows.findIndex((line, i) => i >= from && line.endsWith(`│${content}`));
+        if (index < 0) {
+          throw new Error(`envelope cause: no served row for ${JSON.stringify(content)}`);
+        }
+        return extractHash(rows[index]!);
+      };
+      // A torn served span for the mixed cell: the first function head through its closing
+      // brace. Both bounds resolve after the deletion while an interior line is gone, so the
+      // span verification refuses with a range-family code — a DIFFERENT diagnosis from the
+      // deleted twin's stale anchor.
+      const alphaHead = anchorOf("function alpha() {");
+      const alphaBrace = anchorOf(
+        "}",
+        rows.findIndex((line) => line.endsWith("│function alpha() {")),
+      );
       await writeFile(path, PAIRS_AFTER, "utf-8");
-      return { editTool: harness.editTool, firstValue: anchors[0]!, firstOther: anchors[2]! };
+      return {
+        editTool: harness.editTool,
+        firstValue: anchors[0]!,
+        firstOther: anchors[2]!,
+        alphaHead,
+        alphaBrace,
+      };
     }
 
     it("a single failing item with a diagnosis forwards its cause onto the envelope", async () => {
@@ -207,8 +232,11 @@ describe("batch aggregation", () => {
           file: "cause-single.ts",
           edits: [{ anchor_from: firstValue, anchor_to: firstValue, replace_with: "X" }],
         });
-        expect(envelope.message).toContain("[E_TARGET_LOST]");
-        expect(envelope.cause).toBe("retirement");
+        // WHY (T3): the aligned load leaves the deleted twin's anchor ABSENT from the buffer, so
+        // the refusal is `E_STALE_ANCHOR` at resolution — and that arm mints
+        // `cause: "anchor staleness"`, which the single item's envelope must forward untouched.
+        expect(envelope.message).toContain("[E_STALE_ANCHOR]");
+        expect(envelope.cause).toBe("anchor staleness");
         expect(envelope.details?.cause).toBe(envelope.cause);
         expect(await readFile(path, "utf-8")).toBe(PAIRS_AFTER);
       });
@@ -224,9 +252,11 @@ describe("batch aggregation", () => {
             { anchor_from: firstOther, anchor_to: firstOther, replace_with: "Y" },
           ],
         });
-        expect(envelope.message).toContain("- edits[0] (cause-unanimous.ts) [E_TARGET_LOST]:");
-        expect(envelope.message).toContain("- edits[1] (cause-unanimous.ts) [E_TARGET_LOST]:");
-        expect(envelope.cause).toBe("retirement");
+        // WHY (T3): both twins are absent from the aligned buffer, so both items report
+        // `E_STALE_ANCHOR` with `cause: "anchor staleness"`; unanimity promotes that one cause.
+        expect(envelope.message).toContain("- edits[0] (cause-unanimous.ts) [E_STALE_ANCHOR]:");
+        expect(envelope.message).toContain("- edits[1] (cause-unanimous.ts) [E_STALE_ANCHOR]:");
+        expect(envelope.cause).toBe("anchor staleness");
         expect(envelope.details?.cause).toBe(envelope.cause);
         expect(await readFile(path, "utf-8")).toBe(PAIRS_AFTER);
       });
@@ -234,16 +264,19 @@ describe("batch aggregation", () => {
 
     it("mixed diagnoses stay inline — the aggregated envelope carries no single cause", async () => {
       await withTempFile("cause-mixed.ts", PAIRS, async ({ cwd, path }) => {
-        const { editTool, firstValue } = await twinSetup(cwd, path);
+        const { editTool, firstValue, alphaHead, alphaBrace } = await twinSetup(cwd, path);
         const envelope = await rejectEnvelope(editTool, "cause-mixed", {
           file: "cause-mixed.ts",
           edits: [
             { anchor_from: firstValue, anchor_to: firstValue, replace_with: "X" },
-            { anchor_from: "ZZZ", anchor_to: "ZZZ", replace_with: "NEVER" },
+            // A torn served span: both bounds resolve after the deletion, but the deletion
+            // removed a line inside the span, so the range verification must refuse it with a
+            // range-family code — a DIFFERENT diagnosis from item 0's stale anchor.
+            { anchor_from: alphaHead, anchor_to: alphaBrace, replace_with: "Y" },
           ],
         });
-        expect(envelope.message).toContain("[E_TARGET_LOST]");
         expect(envelope.message).toContain("[E_STALE_ANCHOR]");
+        expect(envelope.message).toContain("[E_STALE_RANGE]");
         // The two items keep their own diagnoses inline; none is promoted over the other.
         expect(envelope.cause).toBeUndefined();
         expect(envelope.details?.cause).toBeUndefined();

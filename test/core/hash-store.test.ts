@@ -926,12 +926,13 @@ describe("hash-store — schema versioning", () => {
         | { value?: string }
         | undefined;
       check.close();
-      expect(version?.value).toBe("7");
+      expect(version?.value).toBe(String(HASH_STORE_VERSION));
     });
   });
 
-  it("accepts stamp 7 without a migration write and refuses stamp 8", async () => {
+  it("accepts the current stamp without a migration write and refuses the next one", async () => {
     await withTempHome(async (home) => {
+      const CURRENT = HASH_STORE_VERSION;
       const store = await loadHashStore();
       await put(store, "/p.ts", "x\n", ["XYZ"]);
       insertV6Undo(home, "/u.ts", {
@@ -967,7 +968,7 @@ describe("hash-store — schema versioning", () => {
       dropTrigger();
 
       const stampDb = rawConn();
-      stampDb.prepare("UPDATE meta SET value = '8' WHERE key = 'version'").run();
+      stampDb.prepare("UPDATE meta SET value = ? WHERE key = 'version'").run(String(CURRENT + 1));
       stampDb.close();
 
       const before = await readFile(sqlitePath(home));
@@ -984,7 +985,7 @@ describe("hash-store — schema versioning", () => {
       const version = check.prepare("SELECT value FROM meta WHERE key = 'version'").get() as
         | { value?: string }
         | undefined;
-      expect(version?.value).toBe("8");
+      expect(version?.value).toBe(String(CURRENT + 1));
       expect((check.prepare("SELECT COUNT(*) AS n FROM snapshots").get() as { n: number }).n).toBe(
         1,
       );
@@ -1060,7 +1061,7 @@ describe("hash-store — schema versioning", () => {
         | { value?: string }
         | undefined;
       check.close();
-      expect(version?.value).toBe("7");
+      expect(version?.value).toBe(String(HASH_STORE_VERSION));
     });
   });
 
