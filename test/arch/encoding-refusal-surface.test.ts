@@ -13,7 +13,8 @@ import { DEFAULT_CONFIG_YAML } from "../../src/store-config.js";
  * config-only spelling the caller cannot send on an `edit`, and the parenthesised env var is a
  * host detail no tool-argument surface accepts. The shipped text names what a caller can actually
  * do: the per-call `allow_encoding_migration` value (`"utf8"` / `"utf8bom"`), the standing
- * `allowEncodingMigration` setting, or a re-encode outside the plugin.
+ * `allowEncodingMigration` setting (its location, `$DSH_HOME/plugins/dsh-better-edit/config.yaml`,
+ * is named too so the standing route is actionable — #180 §3), or a re-encode outside the plugin.
  *
  * This is the refutable half: the surface is pinned in, and the environment vocabulary (plus the
  * retired plain-config spelling) is pinned out of both the message and the remedy, with positive
@@ -21,6 +22,8 @@ import { DEFAULT_CONFIG_YAML } from "../../src/store-config.js";
  */
 
 const ROOT = join(import.meta.dirname, "..", "..");
+/** The standing consent route lives here; naming it stops the caller guessing (#180 §3). */
+const CONFIG_PATH = "$DSH_HOME/plugins/dsh-better-edit/config.yaml";
 
 const message = formatError("E_ENCODING_UNWRITABLE", {
   path: "legacy.txt",
@@ -83,6 +86,7 @@ describe("the encoding refusal names the consent surface, not the caller environ
     expect(message).toContain('"utf8"');
     expect(message).toContain('"utf8bom"');
     expect(message).toContain("allowEncodingMigration");
+    expect(message).toContain(CONFIG_PATH);
     expect(message).toContain("outside the plugin");
     expect(message).not.toContain("normalizeToUtf8");
   });
@@ -116,6 +120,7 @@ describe("the encoding refusal names the consent surface, not the caller environ
     expect(remedy.trim().endsWith(".")).toBe(true);
     expect(remedy).toContain("allow_encoding_migration");
     expect(remedy).toContain("allowEncodingMigration");
+    expect(remedy).toContain(CONFIG_PATH);
     expect(remedy).toContain('"utf8"');
     expect(remedy).toContain('"utf8bom"');
     expect(remedy).toContain("outside the plugin");
@@ -137,6 +142,7 @@ describe("the docs name the payload surface and the config surface distinctly", 
       const row = rows[0] ?? "";
       expect(row).toContain("allow_encoding_migration");
       expect(row).toContain("allowEncodingMigration");
+      expect(row).toContain(CONFIG_PATH);
       expect(row).not.toContain("normalizeToUtf8");
     });
 
@@ -147,6 +153,7 @@ describe("the docs name the payload surface and the config surface distinctly", 
       const paragraph = paragraphs[0] ?? "";
       expect(paragraph).toContain("allow_encoding_migration");
       expect(paragraph).toContain("allowEncodingMigration");
+      expect(paragraph).toContain(CONFIG_PATH);
       // The legacy spelling stays named AS legacy — dropping it would hide a still-honoured knob.
       expect(paragraph).toContain("normalizeToUtf8");
       expect(paragraph).toContain('"utf8"');
