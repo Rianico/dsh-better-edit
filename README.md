@@ -263,9 +263,10 @@ Single stochastic run, `opencode-go/gpt-5.6-luna` high. [Artifact](https://githu
 
 ### Warning codes
 
-| Code                    | Meaning                                                                                           | What to do                                                                             |
-| ----------------------- | ------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------- |
-| `[W_UNSERVED_INTERIOR]` | `hint` mode applied an edit whose replaced span included interior lines this session never served | Verify the uninspected replacement was intended; `spanMode: strict` refuses it instead |
+| Code                    | Meaning                                                                                           | What to do                                                                                                                        |
+| ----------------------- | ------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| `[W_UNSERVED_INTERIOR]` | `hint` mode applied an edit whose replaced span included interior lines this session never served | Verify the uninspected replacement was intended; `spanMode: strict` refuses it instead                                            |
+| `[W_ENCODING_MIGRATED]` | An edit migrated a legacy file to UTF-8 under `normalizeToUtf8: true`                             | `undo` restores the text; the pre-edit codec and BOM are gone — version control or an external re-encode is the only byte restore |
 
 Warnings are applied-tier notices: the edit landed and the file is valid; the text names what was not inspected.
 

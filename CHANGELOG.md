@@ -11,6 +11,10 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Features
+
+* **edit:** announce an explicit encoding migration on the applied result — one `[MODEL] [W_ENCODING_MIGRATED]` per migrated file, pushed after the write lands, so the abandoned codec and its BOM state are visible where the write happened. (#192)
+
 ### Bug Fixes
 
 * **undo:** name the codec a migration edit abandoned when the revert lands — `Restored as UTF-8; the pre-edit <codec> encoding[ and its BOM] is not restored.` — from a verdict taken once at the save seam and carried on the undo pair as additive nullable columns (no version bump), so silence can no longer read as restoration (ADR-0050). (#191)

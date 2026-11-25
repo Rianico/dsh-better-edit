@@ -135,7 +135,8 @@ export type DomainWarningCode =
   | "W_LITERAL_BYPASS"
   | "W_NOOP"
   | "W_UNSERVED_INTERIOR"
-  | "W_EOL_REWRITTEN";
+  | "W_EOL_REWRITTEN"
+  | "W_ENCODING_MIGRATED";
 
 /**
  * Read-tier warning codes — a SEPARATE tier from `DomainWarningCode`, on purpose.
@@ -809,6 +810,19 @@ export interface WarningPayloadMap {
     from: number;
     to: number;
   };
+  /**
+   * A migration edit moved a legacy file to UTF-8. Spellings inlined on purpose,
+   * exactly as `W_EOL_REWRITTEN` inlines them: importing `EncodingMigration`
+   * (file-encoding-state) here would cycle that module back through this registry.
+   * The real guard is the call site — `formatWarning("W_ENCODING_MIGRATED",
+   * { path: displayPath, ...migration })` in `src/mutation.ts` — where `tsc` fails
+   * if `EncodingMigration` drifts from these spellings.
+   */
+  W_ENCODING_MIGRATED: {
+    path: string;
+    encoding: string;
+    hasBOM: boolean;
+  };
 }
 
 /**
@@ -882,6 +896,14 @@ function unservedInteriorFormat(payload: WarningPayloadMap["W_UNSERVED_INTERIOR"
   );
 }
 
+function encodingMigratedFormat(payload: WarningPayloadMap["W_ENCODING_MIGRATED"]): string {
+  return (
+    `Migrated ${payload.path} from ${payload.encoding} ` +
+    `(${payload.hasBOM ? "with BOM" : "no BOM"}) to UTF-8. ` +
+    `Undo restores the text, not the encoding.`
+  );
+}
+
 function eolRewrittenFormat(payload: WarningPayloadMap["W_EOL_REWRITTEN"]): string {
   return (
     `EOL normalized to ${payload.target} (${payload.source}): ` +
@@ -941,6 +963,10 @@ export const WARNING_REGISTRY: {
   W_EOL_REWRITTEN: {
     audience: "MODEL",
     format: eolRewrittenFormat,
+  },
+  W_ENCODING_MIGRATED: {
+    audience: "MODEL",
+    format: encodingMigratedFormat,
   },
 };
 

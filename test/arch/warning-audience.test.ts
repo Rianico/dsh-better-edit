@@ -50,6 +50,10 @@ const FIXTURES: WarningFixtures = {
     { count: 2, from: 3, to: 4 },
     { count: 1, from: 7, to: 7 },
   ],
+  W_ENCODING_MIGRATED: [
+    { path: "u16.txt", encoding: "utf16le", hasBOM: true },
+    { path: "cp.txt", encoding: "windows-1251", hasBOM: false },
+  ],
 };
 
 type Rendered = { code: DomainWarningCode; audience: Audience; text: string };

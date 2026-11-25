@@ -28,7 +28,7 @@ import type { ToolExecution } from "@deepseek-ai/dsh-tools";
 import type { SandboxExecutionPolicy } from "@deepseek-ai/dsh-sandbox";
 import type { FsSandboxController } from "./sandbox.js";
 
-import { formatError } from "./domain-errors.js";
+import { formatError, formatWarning } from "./domain-errors.js";
 import { canon } from "./hashline/hash-assign.js";
 import type { LineEnding } from "./edit-diff.js";
 import { recordServedTruncated, retireAnchors } from "./session-view.js";
@@ -349,11 +349,19 @@ export async function execute(opts: {
     result: fileResult.result,
   };
 
-  // WHY (#169): the EOL notice describes a write, so it is pushed only after one LANDED — an
-  // all-noop call rewrites nothing and must not claim it did. Both applied branches share this.
-  const pushEolNoticeAfterWrite = (): void => {
+  // WHY (#169, #192): the EOL and encoding notices describe a write, so they are pushed only
+  // after one LANDED — an all-noop call rewrites nothing and must not claim it did. The EOL
+  // notice stays first (it names the terminators the write used); one
+  // `W_ENCODING_MIGRATED` follows per file the write migrated, in batch order. Both applied
+  // branches share this.
+  const pushAppliedWriteNotices = (migrations: AppliedMigration[]): void => {
     if (fileResult.eolRewriteWarning !== undefined) {
       fileResult.warnings.push(fileResult.eolRewriteWarning);
+    }
+    for (const { displayPath, migration } of migrations) {
+      fileResult.warnings.push(
+        formatWarning("W_ENCODING_MIGRATED", { path: displayPath, ...migration }),
+      );
     }
   };
 
@@ -366,7 +374,7 @@ export async function execute(opts: {
     // WHY (#145): all three steps describe a write. A dry run performs none of them, or the preview
     // would leave an undo row, a retired anchor set, and an EOL notice for bytes that never landed.
     if (!dryRun) {
-      await persistUndoAndWrite({
+      const migrations = await persistUndoAndWrite({
         io,
         files: [commitFile],
         exec,
@@ -377,7 +385,7 @@ export async function execute(opts: {
           formatError("E_UNDO_UNAVAILABLE", { path: displayPath }),
       });
       await retireFreedAnchors();
-      pushEolNoticeAfterWrite();
+      pushAppliedWriteNotices(migrations);
     }
 
     const built = buildBatchResult([toSection()], dryRun);
@@ -390,7 +398,7 @@ export async function execute(opts: {
   } else if (fileResult.appliedCount > 0) {
     // Same gate as the single-call branch above: a dry run commits nothing, so it retires nothing.
     if (!dryRun) {
-      await persistUndoAndWrite({
+      const migrations = await persistUndoAndWrite({
         io,
         files: [commitFile],
         exec,
@@ -401,7 +409,7 @@ export async function execute(opts: {
           formatError("E_UNDO_UNAVAILABLE", { path: displayPath, batch: true }),
       });
       await retireFreedAnchors();
-      pushEolNoticeAfterWrite();
+      pushAppliedWriteNotices(migrations);
     }
   }
 
