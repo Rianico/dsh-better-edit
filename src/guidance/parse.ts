@@ -19,6 +19,11 @@ export interface ParsedSection {
   reason?: string;
 }
 
+/** Drop ONE leading byte-order mark; every other byte is preserved. */
+function stripBom(content: string): string {
+  return content.startsWith("\uFEFF") ? content.slice(1) : content;
+}
+
 function stripCR(line: string): string {
   return line.endsWith("\r") ? line.slice(0, -1) : line;
 }
@@ -34,13 +39,14 @@ function startsWithFenceLine(content: string): boolean {
  * anything else is pure prose (the whole file as text).
  */
 export function parseSectionFile(content: string): ParsedSection {
-  const lines = content.split("\n");
+  const stripped = stripBom(content);
+  const lines = stripped.split("\n");
   if (stripCR(lines[0] ?? "") !== "---") {
-    return { text: content };
+    return { text: stripped };
   }
   const close = lines.findIndex((line, index) => index > 0 && stripCR(line) === "---");
   if (close < 0) {
-    return { text: content, malformed: true, reason: "missing closing fence" };
+    return { text: stripped, malformed: true, reason: "missing closing fence" };
   }
   let order: number | undefined;
   for (let index = 1; index < close; index++) {
@@ -52,13 +58,13 @@ export function parseSectionFile(content: string): ParsedSection {
       if (key === "order") {
         const value = line.slice(line.indexOf(":") + 1).trim();
         return {
-          text: content,
+          text: stripped,
           malformed: true,
           reason: `non-integer order '${value}'`,
         };
       }
       return {
-        text: content,
+        text: stripped,
         malformed: true,
         reason: `unknown key '${key}'`,
       };
@@ -82,12 +88,13 @@ export function parseSectionFile(content: string): ParsedSection {
  * blank), and for malformed files.
  */
 export function isBlankOverride(content: string): boolean {
-  const parsed = parseSectionFile(content);
+  const stripped = stripBom(content);
+  const parsed = parseSectionFile(stripped);
   return (
     !parsed.malformed &&
     parsed.order === undefined &&
     parsed.text.trim() === "" &&
-    !startsWithFenceLine(content)
+    !startsWithFenceLine(stripped)
   );
 }
 

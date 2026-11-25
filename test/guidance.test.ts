@@ -65,6 +65,28 @@ async function readFixture(tag: string, file: string): Promise<string> {
 
 const bullets = (lines: readonly string[]) => lines.map((line) => `- ${line}`).join("\n");
 
+/** The two-line divergence notice the resolver appends to a diverged override. */
+const DIVERGED_NOTICE = [
+  "[USER] [W_PROMPT_DIVERGED]",
+  "Local guidance differs from the plugin defaults; follow the local instructions.",
+].join("\n");
+
+/** Assert `text` carries the divergence notice at its very end. */
+function expectDivergenceNotice(text: string): void {
+  expect(text).toContain("[USER] [W_PROMPT_DIVERGED]");
+  expect(text).toContain("Local guidance differs");
+  expect(text.endsWith(`\n\n${DIVERGED_NOTICE}`)).toBe(true);
+}
+
+function requireSection(
+  sections: readonly { name: string; order: number; text: string }[],
+  name: string,
+): { name: string; order: number; text: string } {
+  const section = sections.find((candidate) => candidate.name === name);
+  if (!section) throw new Error(`section ${name} missing`);
+  return section;
+}
+
 describe("guidance sections", () => {
   it("exposes the three sections with stable order, file names, and defaults", () => {
     expect(GUIDANCE_SECTIONS.map((s) => s.name)).toEqual([
@@ -158,6 +180,31 @@ describe("parseSectionFile", () => {
     });
   });
 
+  it("parses a BOM + LF order fence identically to its BOM-less twin", () => {
+    const twin = "---\norder: 150\n---\nbody line";
+    expect(parseSectionFile(`\uFEFF${twin}`)).toEqual(parseSectionFile(twin));
+    expect(parseSectionFile(`\uFEFF${twin}`)).toEqual({ order: 150, text: "body line" });
+  });
+
+  it("parses a BOM + CRLF order fence identically to its BOM-less twin", () => {
+    const twin = "---\r\norder: 201\r\n---\r\nbody";
+    expect(parseSectionFile(`\uFEFF${twin}`)).toEqual(parseSectionFile(twin));
+    expect(parseSectionFile(`\uFEFF${twin}`)).toEqual({ order: 201, text: "body" });
+  });
+
+  it("strips one leading BOM from prose", () => {
+    expect(parseSectionFile("\uFEFFprose line")).toEqual({ text: "prose line" });
+  });
+
+  it("treats a BOM + malformed fence as malformed", () => {
+    const body = "---\norder: abc\n---\nbody";
+    expect(parseSectionFile(`\uFEFF${body}`)).toEqual({
+      text: body,
+      malformed: true,
+      reason: "non-integer order 'abc'",
+    });
+  });
+
   it("returns an empty string for an empty file", () => {
     expect(parseSectionFile("")).toEqual({ text: "" });
   });
@@ -184,6 +231,18 @@ describe("guidance override predicates", () => {
     expect(parseSectionFile("---\n---\n")).toEqual({ text: "" });
     expect(isBlankOverride("---\n---\n")).toBe(false);
     expect(isMalformedOverride("---\n---\n")).toBe(false);
+  });
+
+  it("treats a BOM + keyless fenced blank as a deliberate blank", () => {
+    expect(parseSectionFile("\uFEFF---\n---\n")).toEqual({ text: "" });
+    expect(isBlankOverride("\uFEFF---\n---\n")).toBe(false);
+    expect(isMalformedOverride("\uFEFF---\n---\n")).toBe(false);
+  });
+
+  it("treats a BOM-only file as a bare blank", () => {
+    expect(parseSectionFile("\uFEFF")).toEqual({ text: "" });
+    expect(isBlankOverride("\uFEFF")).toBe(true);
+    expect(isMalformedOverride("\uFEFF")).toBe(false);
   });
 
   it("treats a valid empty-body fence with an order as not blank", () => {
@@ -227,7 +286,9 @@ describe("resolveSection", () => {
         presetId: "standard",
         homeDir: home,
       });
-      expect(resolved).toEqual({ order: 1300, text: "preset edit text" });
+      expect(resolved.order).toBe(1300);
+      expect(resolved.text).toContain("preset edit text");
+      expectDivergenceNotice(resolved.text);
     });
   });
 
@@ -238,7 +299,9 @@ describe("resolveSection", () => {
         presetId: "minimal",
         homeDir: home,
       });
-      expect(resolved).toEqual({ order: 300, text: "minimal text" });
+      expect(resolved.order).toBe(300);
+      expect(resolved.text).toContain("minimal text");
+      expectDivergenceNotice(resolved.text);
     });
   });
 
@@ -301,6 +364,7 @@ describe("resolveSection", () => {
         order: 1300,
         text: renderSectionDefault("tool:edit"),
       });
+      expect(resolved.text).not.toContain("[USER] [W_PROMPT_DIVERGED]");
     });
   });
 
@@ -315,6 +379,7 @@ describe("resolveSection", () => {
         order: 1300,
         text: renderSectionDefault("tool:edit"),
       });
+      expect(resolved.text).not.toContain("[USER] [W_PROMPT_DIVERGED]");
     });
   });
 
@@ -343,6 +408,7 @@ describe("resolveSection", () => {
       });
       expect(resolved.text).toBe(renderSectionDefault("tool:edit"));
       expect(resolved.text).not.toContain("NEVER-SHOW");
+      expect(resolved.text).not.toContain("[USER] [W_PROMPT_DIVERGED]");
     });
   });
 
@@ -359,6 +425,7 @@ describe("resolveSection", () => {
         reason: "missing closing fence",
       });
       expect(resolved.text).toBe(renderSectionDefault("tool:edit"));
+      expect(resolved.text).not.toContain("[USER] [W_PROMPT_DIVERGED]");
     });
   });
 
@@ -369,7 +436,8 @@ describe("resolveSection", () => {
         presetId: "standard",
         homeDir: home,
       });
-      expect(resolved).toEqual({ order: 1300, text: "   \nactual guidance\n" });
+      expect(resolved.order).toBe(1300);
+      expect(resolved.text).toBe(`   \nactual guidance\n\n${DIVERGED_NOTICE}`);
     });
   });
 
@@ -381,6 +449,7 @@ describe("resolveSection", () => {
         homeDir: home,
       });
       expect(resolved).toEqual({ order: 300, text: "" });
+      expect(resolved.text).not.toContain("[USER] [W_PROMPT_DIVERGED]");
     });
   });
 
@@ -392,6 +461,49 @@ describe("resolveSection", () => {
         homeDir: home,
       });
       expect(resolved).toEqual({ order: 1300, text: "" });
+      expect(resolved.text).not.toContain("[USER] [W_PROMPT_DIVERGED]");
+    });
+  });
+  it("does not mark a current-default override as diverged", async () => {
+    await withHome(async (home) => {
+      await writeSection(home, "standard", "edit.md", renderSectionDefault("tool:edit"));
+      const resolved = await resolveSection("tool:edit", {
+        presetId: "standard",
+        homeDir: home,
+      });
+      expect(resolved).toEqual({ order: 1300, text: renderSectionDefault("tool:edit") });
+      expect(resolved.text).not.toContain("[USER] [W_PROMPT_DIVERGED]");
+    });
+  });
+
+  it("does not mark a normally seeded preset dir as diverged in any section", async () => {
+    await withHome(async (home) => {
+      await ensurePresetGuidance(home);
+      for (const section of GUIDANCE_SECTIONS) {
+        const resolved = await resolveSection(section.name, {
+          presetId: "standard",
+          homeDir: home,
+        });
+        expect(resolved.text).toBe(section.renderDefault());
+        expect(resolved.text).not.toContain("[USER] [W_PROMPT_DIVERGED]");
+      }
+    });
+  });
+
+  it("marks a historical stale seed as diverged", async () => {
+    await withHome(async (home) => {
+      const staleSeed = await readFile(
+        fileURLToPath(new URL("./fixtures/guidance-seeds/v1.2.4/edit.md", import.meta.url)),
+        "utf-8",
+      );
+      await writeSection(home, "standard", "edit.md", staleSeed);
+      const resolved = await resolveSection("tool:edit", {
+        presetId: "standard",
+        homeDir: home,
+      });
+      expect(resolved.text).toContain("[USER] [W_PROMPT_DIVERGED]");
+      expect(resolved.text).toContain("Local guidance differs");
+      expectDivergenceNotice(resolved.text);
     });
   });
 });
@@ -414,11 +526,10 @@ describe("composeSections", () => {
     await withHome(async (home) => {
       await writeSection(home, "standard", "edit.md", "---\norder: 210\n---\ncode edits");
       const sections = await composeSections("standard", home);
-      expect(sections.find((s) => s.name === "tool:edit")).toEqual({
-        name: "tool:edit",
-        order: 210,
-        text: "code edits",
-      });
+      const edit = requireSection(sections, "tool:edit");
+      expect(edit.order).toBe(210);
+      expect(edit.text).toContain("code edits");
+      expectDivergenceNotice(edit.text);
       // Unoverridden sections keep their compiled defaults.
       expect(sections.find((s) => s.name === "tool:read")).toEqual({
         name: "tool:read",
@@ -502,10 +613,9 @@ describe("ensurePresetGuidance", () => {
         presetId: "standard",
         homeDir: home,
       });
-      expect(resolved).toEqual({
-        order: 151,
-        text: "custom code edit guidance",
-      });
+      expect(resolved.order).toBe(151);
+      expect(resolved.text).toContain("custom code edit guidance");
+      expectDivergenceNotice(resolved.text);
       // An unedited seeded section still equals the compiled default.
       const read = await resolveSection("tool:read", {
         presetId: "standard",
@@ -515,6 +625,7 @@ describe("ensurePresetGuidance", () => {
         order: 1100,
         text: renderSectionDefault("tool:read"),
       });
+      expect(read.text).not.toContain("[USER] [W_PROMPT_DIVERGED]");
     });
   });
 
@@ -742,19 +853,17 @@ describe("composeSections — harness slot resolution", () => {
     await withHome(async (home) => {
       await writeSection(home, "standard", "edit.md", "---\norder: 77\n---\npreset edit text");
       const sections = await composeSections("standard", home, () => 1401);
-      expect(sections.find((s) => s.name === "tool:edit")).toEqual({
-        name: "tool:edit",
-        order: 77,
-        text: "preset edit text",
-      });
+      const explicit = requireSection(sections, "tool:edit");
+      expect(explicit.order).toBe(77);
+      expect(explicit.text).toContain("preset edit text");
+      expectDivergenceNotice(explicit.text);
       // A keyless fence keeps the harness slot, not the compiled fallback.
       await writeSection(home, "minimal", "edit.md", "---\n---\nkeyless guidance");
       const keyless = await composeSections("minimal", home, () => 1401);
-      expect(keyless.find((s) => s.name === "tool:edit")).toEqual({
-        name: "tool:edit",
-        order: 1401,
-        text: "keyless guidance",
-      });
+      const keylessSection = requireSection(keyless, "tool:edit");
+      expect(keylessSection.order).toBe(1401);
+      expect(keylessSection.text).toContain("keyless guidance");
+      expectDivergenceNotice(keylessSection.text);
     });
   });
 
@@ -768,6 +877,9 @@ describe("composeSections — harness slot resolution", () => {
         text: renderSectionDefault("tool:edit"),
         malformed: { file: join(home, "standard", "edit.md"), reason: "non-integer order 'abc'" },
       });
+      expect(requireSection(sections, "tool:edit").text).not.toContain(
+        "[USER] [W_PROMPT_DIVERGED]",
+      );
     });
   });
 });

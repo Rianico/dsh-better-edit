@@ -28,8 +28,33 @@ vi.mock("../../src/self-heal.js", async (importOriginal) => {
   };
 });
 
+import { access, readFile, writeFile } from "node:fs/promises";
+import { join } from "node:path";
+
+import { resolveDshHome } from "@deepseek-ai/dsh-home-paths";
+
+import { ensurePresetGuidance, renderSectionDefault } from "../../src/guidance.js";
 import { apply } from "../../src/index.js";
 import { setupTestHome } from "../support/fixtures.js";
+
+/** The plugin shared home the boot-time guidance materializer writes into. */
+function pluginHome(): string {
+  return join(resolveDshHome(), "plugins", "dsh-better-edit");
+}
+
+/** Poll a predicate every 1ms until it holds or the deadline passes. */
+async function waitUntil(
+  predicate: () => boolean | Promise<boolean>,
+  what: string,
+  deadlineMs = 2000,
+): Promise<void> {
+  const deadline = Date.now() + deadlineMs;
+  while (Date.now() < deadline) {
+    if (await predicate()) return;
+    await new Promise((resolve) => setTimeout(resolve, 1));
+  }
+  throw new Error(`timed out after ${deadlineMs}ms waiting for ${what}`);
+}
 
 /** The layer shape the DSH registry exposes through `tools.layers.scoped`. */
 interface ScopedLayer {
@@ -321,6 +346,21 @@ describe("agent-layer tool install isolation (#123)", () => {
       "tool:edit",
       "tool:undo_last_edit",
     ]);
+
+    // The detached guidance materializer seeds the fresh home and reports
+    // nothing: every file it wrote is the current compiled default.
+    await waitUntil(
+      () =>
+        access(join(pluginHome(), ".seeded.json")).then(
+          () => true,
+          () => false,
+        ),
+      "the guidance seed ledger",
+    );
+    await drain(3);
+    expect(
+      host.warnCalls.filter((message) => message.includes("guidance override file(s)")),
+    ).toEqual([]);
   });
 
   it("S2 disposes the install when the agent dies while preset resolution is pending", async () => {
@@ -436,5 +476,27 @@ describe("agent-layer tool install isolation (#123)", () => {
 
     expect(host.layer.get("read")).not.toBe(intruder);
     expect(host.layer.get("read")).toBe(ownedRead);
+  });
+
+  it("warns once through the boot logger when a seeded file diverges from the defaults", async () => {
+    const home = pluginHome();
+    await ensurePresetGuidance(home);
+    const editFile = join(home, "standard", "edit.md");
+    const custom = `${renderSectionDefault("tool:edit")}\n\n- local divergence rule`;
+    await writeFile(editFile, custom, "utf-8");
+
+    const host = createHost();
+    mount(host);
+    await settle(host);
+    const diverged = () =>
+      host.warnCalls.filter((message) => message.includes("guidance override file(s)"));
+    await waitUntil(() => diverged().length > 0, "the aggregated guidance warning");
+
+    expect(diverged()).toHaveLength(1);
+    expect(diverged()[0]).toContain(editFile);
+    expect(await readFile(editFile, "utf-8")).toBe(custom);
+
+    // Restore the compiled default so later mounts and `afterAll` stay quiet.
+    await writeFile(editFile, renderSectionDefault("tool:edit"), "utf-8");
   });
 });

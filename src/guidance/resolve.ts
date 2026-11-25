@@ -8,9 +8,11 @@
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 
+import { PROMPT_DIVERGED_NOTICE } from "../domain-errors.js";
 import { EDIT_GUIDANCE, READ_GUIDANCE, UNDO_GUIDANCE, type ToolGuidance } from "../prompts.js";
 import { errCode } from "../utils.js";
 import { isBlankOverride, parseSectionFile } from "./parse.js";
+import { seedHash } from "./seed.js";
 
 /**
  * Render one tool's guidance as its intro line, a blank line, then bullets.
@@ -112,6 +114,12 @@ export interface GuidanceResolution {
  * falling back to the compiled default. A missing or blank file (ENOENT, or
  * whitespace-only with no fence) advances the chain; a malformed file resolves
  * to the compiled default and reports itself; any other read error propagates.
+ *
+ * A local override whose text differs from the compiled default body gets the
+ * `PROMPT_DIVERGED_NOTICE` footer. Its `[USER]` prefix is deliberate (issue
+ * #177): the notice is human-visible AND tells the model the local file is
+ * authoritative — an intentional exception to ADR-0014's `[USER]`-is-human-only
+ * convention, for the ADR follow-up to cite.
  */
 export async function resolveSection(
   name: string,
@@ -142,7 +150,24 @@ export async function resolveSection(
     // Blank (no fence, whitespace-only) means "use the default": advance the
     // fallback chain rather than render an empty section.
     if (isBlankOverride(content)) continue;
-    return { order: parsed.order ?? defaultOrder, text: parsed.text };
+    const order = parsed.order ?? defaultOrder;
+    // A valid fence over a whitespace-only body is a deliberate "disable this
+    // section" choice: render an empty string at its order, with no notice.
+    if (parsed.text.trim() === "") return { order, text: "" };
+    // Divergence compares the RESOLVED TEXT against the compiled default body,
+    // never the raw file bytes, so an order-only fence around the exact default
+    // body is not divergence.
+    if (seedHash(parsed.text) === seedHash(section.renderDefault())) {
+      return { order, text: parsed.text };
+    }
+    // Trim only trailing newlines before appending the notice; leading and
+    // interior content stay exactly as the user wrote it. The notice literal
+    // lives in `domain-errors.ts` (the vocabulary home) so this module holds no
+    // raw `[W_*]` header.
+    return {
+      order,
+      text: `${parsed.text.replace(/[\r\n]+$/, "")}\n\n${PROMPT_DIVERGED_NOTICE}`,
+    };
   }
   return { order: defaultOrder, text: section.renderDefault() };
 }
