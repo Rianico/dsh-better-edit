@@ -243,22 +243,13 @@ export function sanitizePath(value: unknown): string | null {
   return cleaned.length > 0 ? cleaned : null;
 }
 
-export const EDIT_PAYLOAD_HINT =
-  "Edit must be called with exactly one payload. Use the canonical payload " +
-  '{"file": file, "edits": [{ "anchor_from": anchor_from, "anchor_to": anchor_to, "replace_with": replace_with }, ...], "mode"?: "general" | "literal", "dry_run"?: boolean, "allow_encoding_migration"?: "refuse" | "utf8" | "utf8bom"}: ' +
-  '"file" is the text file to edit (a non-empty string, never a directory); each item names ' +
-  "two inclusive bare-3-char anchors and the full replacement " +
-  '(an empty string deletes the range); optional "mode" is "general" (default, reproduced served rows are refused) or "literal" (declared literal content); optional "dry_run" is boolean (omitted or null means false — a live edit); optional "allow_encoding_migration" consents to converting this file to UTF-8 on this write — "refuse" (never convert), "utf8" (no BOM) or "utf8bom" (with BOM) — and omitted means the config decides. ' +
-  "Legacy tuple items and legacy key spellings still fold; do not mix old and new key spellings.";
-
-function describeReceived(input: unknown): string {
-  if (input === undefined) return "Received no arguments.";
-  if (input === null) return "Received null.";
-  if (typeof input === "string") return `Received a bare string (${JSON.stringify(input)}).`;
-  const json = JSON.stringify(input);
-  const preview = typeof json === "string" && json.length > 160 ? `${json.slice(0, 160)}…` : json;
-  return `Received: ${preview}`;
-}
+/**
+ * The one shape line an admission refusal appends (spec #214): the root keys the payload
+ * contract accepts, then the item shape. Deliberately NOT the old canonical-payload paragraph
+ * and NOT the submitted input — the model already knows what it sent.
+ */
+const EDIT_PAYLOAD_SHAPE =
+  "Edit payload: { file, edits: [{ anchor_from, anchor_to, replace_with }], mode?, dry_run?, allow_encoding_migration? }";
 
 // ---- filed sets (declared once) ---------------------------------------------
 
@@ -329,7 +320,7 @@ export function prepareEditArguments(args: unknown): Record<string, unknown> {
     };
   }
   throw new DomainError("E_BAD_PAYLOAD", {
-    message: `${EDIT_PAYLOAD_HINT} ${describeReceived(args)}`,
+    message: `Edit arguments are malformed. ${EDIT_PAYLOAD_SHAPE}`,
   });
 }
 
@@ -416,9 +407,7 @@ export function assertEditRequest(request: unknown): asserts request is Normaliz
   }
   if (!isNormalizedEdit(request)) {
     throw new DomainError("E_BAD_PAYLOAD", {
-      message:
-        'Edit request must be exactly { file, edits: [{ anchor_from, anchor_to, replace_with }, ...], mode?: "general" | "literal", dry_run?: boolean, allow_encoding_migration?: "refuse" | "utf8" | "utf8bom" }. ' +
-        EDIT_PAYLOAD_HINT,
+      message: `Edit request is malformed. ${EDIT_PAYLOAD_SHAPE}`,
     });
   }
   rejectUnknownFields(request as Record<string, unknown>, EDIT_KS, "Edit request");

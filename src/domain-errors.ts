@@ -638,7 +638,7 @@ export const ERROR_REGISTRY: { [K in DomainErrorCode]: CodeSpec<ErrorPayloadMap[
   },
   E_MALFORMED_ANCHOR: {
     audience: "MODEL",
-    format: ({ rawAnchor, reason }) => `Invalid anchor "${rawAnchor}": ${reason}`,
+    format: ({ rawAnchor, reason }) => `Invalid anchor "${rawAnchor}": ${reason}.`,
     // WHY remedy: the parse rejected the token before any resolution — rawAnchor and reason name the shape failure.
     remedy: "Pass the bare 3-char anchor and retry.",
   },
