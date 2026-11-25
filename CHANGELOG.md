@@ -19,6 +19,12 @@ All notable changes to this project will be documented in this file.
 
 * **undo:** name the codec a migration edit abandoned when the revert lands — `Restored as UTF-8; the pre-edit <codec> encoding[ and its BOM] is not restored.` — from a verdict taken once at the save seam and carried on the undo pair as additive nullable columns (no version bump), so silence can no longer read as restoration (ADR-0050). (#191)
 
+### Documentation
+
+* **readme:** scope the undo promise to content-at-effective-EOL-as-UTF-8 with the migrated codec+BOM named and the original bytes unrecoverable, and document the encoding surface — refusal, the `normalizeToUtf8` opt-in, `read({ encoding })`, the auto-guess gate, the codec list and the byte-faithful ASCII case — in both READMEs. (#193)
+* **glossary:** add the `encoding migration` entry and the applied-tier `W_ENCODING_MIGRATED` entry beside the EOL disclosures. (#193)
+* **test:** drive `read`/`edit`/`undo_last_edit` over the 11-case encoding matrix — opt-in migration, byte-faithful silence, BOM control, refusal, restart, abort, pre-change row, staleness, multi-item notice and EOL-before-encoding order — pinning on-disk bytes and result text per case. (#193)
+
 ## [1.3.0] - 2026-11-25
 
 ### Features

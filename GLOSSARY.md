@@ -105,6 +105,10 @@ _Avoid_: EOL warning (unnamed), line-ending notice
 The read-tier notice that the pre-image it just served spells more than one terminator kind — the last cheap moment to learn that the first edit will collapse it. Bare `[<CODE>]` header with NO audience prefix (a read reports observed state; nothing has been written and nobody is addressed), appended as chrome after the read's rows and notes: `Mixed EOL: <n> CRLF, <n> LF, <n> CR. All edits normalize to <target> (<source>).` Counts are whole-file, taken once at decode, so `offset`/`limit`/`windows` change which rows render and never the counts; a kind with a zero count is omitted (never spelled `0`); the order is fixed CRLF, LF, CR. Never a served row, never file content, never an anchor.
 _Avoid_: mixed EOL warning (it carries no audience), drift notice (that reports a change on disk, this reports the bytes as served)
 
+**W_ENCODING_MIGRATED**:
+The applied-tier `[MODEL]` warning that an applied write migrated a legacy file to UTF-8: `Migrated <path> from <encoding> (with BOM) to UTF-8. Undo restores the text, not the encoding.` — or `(no BOM)` when the pre-image carried none. Pushed only after the write landed, so a refusal, a batch abort, a dry run, an all-noop call, a byte-faithful body and a non-migrating file never carry it. It never claims the original bytes come back: the revert restores the text as UTF-8 and names the abandoned codec, never its bytes.
+_Avoid_: encoding warning (unnamed), migration notice
+
 **manual override**:
 The status-bar-equivalent escape hatch: `read({encoding})` re-interprets bytes on disk (`Reopen with Encoding`) and `write({encoding})` transcodes the buffer on save (`Save with Encoding`). The agent-facing surface for correcting a `detection error` without corrupting disk.
 _Avoid_: force encoding
@@ -112,6 +116,10 @@ _Avoid_: force encoding
 **encoding governance**:
 The invariant that every agent-issued file mutation passes through `file encoding state` (recorded at open, inverted at save): BOM sniff → strict UTF-8 → `autoGuessEncoding` gate → Top-3 always surfaced. A mutation without prior observation fails loud instead of guessing bytes.
 _Avoid_: encoding handling (implies best-effort, not a gate)
+
+**encoding migration**:
+A write that replaced a legacy codec with UTF-8 — one-way and disclosed, never restored by undo. The verdict is taken once at the save seam (on the non-faithful arm only) and rides the undo pair, so the revert names the abandoned codec and its BOM state while restoring the text as UTF-8; the original bytes do not come back. See `effective EOL` (the revert's one ending) and `W_MIXED_EOL` (the sibling pre-image disclosure) for the mixture half of the same contract.
+_Avoid_: transcode (a byte operation, not the disclosed one-way write), migration notice (that is the warning's name, not the event)
 
 **governed edit path**:
 Any tool path that enforces `encoding governance`: `read`/`edit`/`undo_last_edit` and the `str_replace_editor` shadow (`view` → `str_replace`/`insert`/`create`). The `str_replace_editor` shadow records `file encoding state` but never `served state` — it can feed `write` round-trips but cannot authorize hashline `edit` anchors.
