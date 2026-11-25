@@ -13,7 +13,7 @@ All notable changes to this project will be documented in this file.
 
 ### Bug Fixes
 
-* **errors:** name where the standing encoding-migration consent lives — `$DSH_HOME/plugins/dsh-better-edit/config.yaml` — in the `[E_ENCODING_UNWRITABLE]` message and remedy, so the model is not left to guess the config location; the per-call `allow_encoding_migration` route is unchanged
+* **errors:** name where the standing encoding-migration consent lives — `$DSH_HOME/plugins/dsh-better-edit/config.yaml` — in the `[E_ENCODING_UNWRITABLE]` message and remedy, so the model is not left to guess the config location; the per-call `allow_encoding_migration` route is unchanged (#220)
 
 ## [1.3.0] - 2026-11-25
 
