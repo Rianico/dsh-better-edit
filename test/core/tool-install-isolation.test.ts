@@ -275,7 +275,19 @@ describe("agent-layer tool install isolation (#123)", () => {
   });
 
   afterAll(async () => {
-    await cleanup?.();
+    // The boot-time guidance materializer runs detached from `apply`; retry the
+    // recursive remove if it is still writing into the temp home.
+    let lastError: unknown;
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      try {
+        await cleanup?.();
+        return;
+      } catch (error: unknown) {
+        lastError = error;
+        await new Promise((resolve) => setTimeout(resolve, 100));
+      }
+    }
+    throw lastError;
   });
 
   it("S1 reclaims a peer-claimed edit and undo_last_edit and finishes the install", async () => {
