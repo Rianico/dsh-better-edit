@@ -11,25 +11,23 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
-### Features
-
-* **edit:** one batch-rejection assembler owns build → record → throw, so a refusal that shows rows always leases them; a multi-item call renders one `Batch rejected: K of N edits failed; nothing was written.` verdict and one `- edits[i] (path) [E_CODE]:` bullet per failure, and a one-item call throws that item's bare diagnosis instead (ADR-0046 amended). (#215)
-
 ### Bug Fixes
+
+* **edit:** one batch-rejection assembler owns build → record → throw, so a refusal that shows rows always leases them; a multi-item call renders one `Batch rejected: K of N edits failed; nothing was written.` verdict and one `- edits[i] (path) [E_CODE]:` bullet per failure, and a one-item call throws that item's bare diagnosis instead (ADR-0046 amended). (#225)
 
 * **errors:** name where the standing encoding-migration consent lives — `$DSH_HOME/plugins/dsh-better-edit/config.yaml` — in the `[E_ENCODING_UNWRITABLE]` message and remedy, so the model is not left to guess the config location; the per-call `allow_encoding_migration` route is unchanged (#220)
 
-* **edit:** a no-op-loop refusal joins the batch grammar and records the rows it shows, so a retry with a shown anchor resolves without a re-read; the changed-buffer variant stays rowless and names the read (ADR-0046 amended). (#216)
+* **edit:** a no-op-loop refusal joins the batch grammar and records the rows it shows, so a retry with a shown anchor resolves without a re-read; the changed-buffer variant stays rowless and names the read (ADR-0046 amended). (#225)
 
-* **edit:** admission refusals state the fault plus one `Edit payload: { … }` shape line instead of a 972-character canonical-payload paragraph and a `Received:` echo of the model's own input — a malformed payload drops from 1201 to 171 characters, and anchor reasons lose their terminal period so the registry supplies exactly one. (#217)
+* **edit:** admission refusals state the fault plus one `Edit payload: { … }` shape line instead of a 972-character canonical-payload paragraph and a `Received:` echo of the model's own input — a malformed payload drops from 1201 to 171 characters, and anchor reasons lose their terminal period so the registry supplies exactly one. (#225)
 
 ### Tests
 
-* **arch:** pin the rejection surface — ten full-message goldens through the real `edit` tool, the structural assembler/recorder ratchet, a producer ratchet for rejection and applied-tier warning headers, a region-oracle cell for the no-op-loop arm, and the admission budget at the tool boundary; each guard is demonstrated red by an injection that is then reverted. (#218)
+* **arch:** pin the rejection surface — ten full-message goldens through the real `edit` tool, the structural assembler/recorder ratchet, a producer ratchet for rejection and applied-tier warning headers, a region-oracle cell for the no-op-loop arm, and the admission budget at the tool boundary; each guard is demonstrated red by an injection that is then reverted. (#225)
 
 ### Documentation
 
-* **docs:** record the batch-rejection grammar in `GLOSSARY.md`, amend ADR-0046 (arity-one rule, the assembler seam, the no-op-loop lease, the `edits[i]` deviation from upstream, the served-prompt clause), align the README error tables, and add the served-prompt clause the model reads (spec #214). (#219)
+* **docs:** record the batch-rejection grammar in `GLOSSARY.md`, amend ADR-0046 (arity-one rule, the assembler seam, the no-op-loop lease, the `edits[i]` deviation from upstream, the served-prompt clause), align the README error tables, and add the served-prompt clause the model reads (spec #214). (#225)
 
 ## [1.3.0] - 2026-11-25
 
