@@ -19,6 +19,8 @@ All notable changes to this project will be documented in this file.
 
 ### Features
 
+* **edit:** admit an optional per-call encoding-migration consent on the `edit` payload — `allow_encoding_migration: "refuse" | "utf8" | "utf8bom"` (payload > `allowEncodingMigration` / `DSH_BETTER_EDIT_ALLOW_ENCODING_MIGRATION` > legacy `normalizeToUtf8` > `"refuse"`) — so one file can convert without changing fleet policy and `"utf8bom"` yields the Windows-readable target; byte-faithful ASCII stays silent and the memo records the chosen target (ADR-0052). (#213)
+
 * **edit:** announce an explicit encoding migration on the applied result — one `[MODEL] [W_ENCODING_MIGRATED]` per migrated file, pushed after the write lands, so the abandoned codec and its BOM state are visible where the write happened. (#198)
 
 * **edit:** add an opt-in `spanMode: hint|strict` served-span policy (`DSH_BETTER_EDIT_SPAN_MODE`, default `hint`). `strict` refuses an edit whose leased span replaces an interior line this session never served — before any write, with a rowless `[E_UNSERVED_RANGE]` that counts the replaced span and lists the unserved file lines; default `hint` still accepts and now discloses via a blank diff gutter and one `[W_UNSERVED_INTERIOR]` applied warning, removing the false blanket-refusal promise (ADR-0045, closes #141). (#173)
@@ -31,6 +33,8 @@ All notable changes to this project will be documented in this file.
 
 ### Bug Fixes
 
+* **errors:** rewrite `[E_ENCODING_UNWRITABLE]` so its message and remedy name a value a caller can actually send — the per-call `allow_encoding_migration: "utf8" | "utf8bom"` value and the standing `allowEncodingMigration` setting — and drop the bare `normalizeToUtf8: true` phrase that read like a payload key; no shell, command-line or OS token is named (#213)
+
 * **undo:** name the codec a migration edit abandoned when the revert lands — `Restored as UTF-8; the pre-edit <codec> encoding[ and its BOM] is not restored.` — from a verdict taken once at the save seam and carried on the undo pair as additive nullable columns (no version bump), so silence can no longer read as restoration (ADR-0051). (#198)
 
 * **store:** align checksum miss and carry anchors across homogeneous runs (#197)
@@ -41,6 +45,8 @@ All notable changes to this project will be documented in this file.
 * **edit:** pair duplicate lines in applied and undo diffs by anchor identity instead of Myers text position, so a removed row names the line actually removed and survivors keep their own anchor; the dead single-file `buildChanged` builder is retired, leaving `buildBatchResult` as the one batch projection (#176)
 
 ### Documentation
+
+* **readme:** document the encoding-migration consent surface in both READMEs — payload key vs config setting vs legacy spelling, and `"utf8"`/`"utf8bom"` described by the bytes they write — and add the `encoding migration consent` glossary entry (#213)
 
 * **readme:** scope the undo promise to content-at-effective-EOL-as-UTF-8 with the migrated codec+BOM named and the original bytes unrecoverable, and document the encoding surface — refusal, the `normalizeToUtf8` opt-in, `read({ encoding })`, the auto-guess gate, the codec list and the byte-faithful ASCII case — in both READMEs. (#198)
 * **glossary:** add the `encoding migration` entry and the applied-tier `W_ENCODING_MIGRATED` entry beside the EOL disclosures. (#198)

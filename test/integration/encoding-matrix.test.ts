@@ -19,7 +19,8 @@
  * round-trip unit (`undo-encoding.test.ts` owns the on-disk pair); case 6 drops only the
  * in-process memo, which is the restart-shaped half of that same guarantee.
  */
-import { readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import iconv from "iconv-lite";
@@ -42,17 +43,34 @@ beforeEach(() => {
   clearEncodingState();
   _resetConfigCache();
   delete process.env.DSH_BETTER_EDIT_NORMALIZE_TO_UTF8;
+  delete process.env.DSH_BETTER_EDIT_ALLOW_ENCODING_MIGRATION;
 });
 
 afterEach(() => {
   clearEncodingState();
   _resetConfigCache();
   delete process.env.DSH_BETTER_EDIT_NORMALIZE_TO_UTF8;
+  delete process.env.DSH_BETTER_EDIT_ALLOW_ENCODING_MIGRATION;
 });
 
 function setNormalizeToUtf8(value: boolean): void {
   if (value) process.env.DSH_BETTER_EDIT_NORMALIZE_TO_UTF8 = "true";
   else delete process.env.DSH_BETTER_EDIT_NORMALIZE_TO_UTF8;
+  _resetConfigCache();
+}
+
+/** The #209 config rung's env override; `undefined` means "not configured here". */
+function setConsentEnv(value: string | undefined): void {
+  if (value === undefined) delete process.env.DSH_BETTER_EDIT_ALLOW_ENCODING_MIGRATION;
+  else process.env.DSH_BETTER_EDIT_ALLOW_ENCODING_MIGRATION = value;
+  _resetConfigCache();
+}
+
+/** Seed the plugin YAML config, before any read (the config cache is process-wide). */
+async function writeConfigFile(cwd: string, body: string): Promise<void> {
+  const dir = join(cwd, ".dsh", "plugins", "dsh-better-edit");
+  await mkdir(dir, { recursive: true });
+  await writeFile(join(dir, "config.yaml"), body, "utf-8");
   _resetConfigCache();
 }
 
@@ -433,5 +451,399 @@ describe("EOL rewrite before the encoding notice", () => {
         );
       },
     );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// #211 — the migration TARGETS and the consent PRECEDENCE ladder, end to end.
+//
+// #209 admitted a per-call consent (`allow_encoding_migration: "refuse" | "utf8" | "utf8bom"`)
+// and put it above the config setting, which in turn outranks the legacy `normalizeToUtf8: true`
+// spelling. Those are claims about BYTES, so each row below reads the file back with `readFile`
+// and compares Buffers: the tool's own sentence is never the evidence for what landed. The
+// payload is always the canonical `{ file, edits: [...] }` shape — the fixture's legacy
+// single-edit fold keeps only `file`/`anchor_from`/`anchor_to`/`replace_with`, so a consent or a
+// `dry_run` sent the old way would be dropped silently and the row would prove nothing.
+//
+// Every fixture is the lowercase windows-1251 body "привет\nмир\n"; the edit replaces the line
+// "мир" with "пока", whose UTF-8 image starts 0xD0 0xBF — the matrix's `D0 BF…`. Each case reads
+// with `{ encoding: "windows-1251" }` first, so the in-process memo describes the legacy codec
+// from a plain read rather than from any memo API.
+//
+// One refusal row (#13) captures the thrown `[E_ENCODING_UNWRITABLE]` text: the arch guard in
+// `test/arch/encoding-refusal-surface.test.ts` pins the registry strings, this half pins what a
+// model actually receives through the tool seam.
+// ---------------------------------------------------------------------------
+
+/** The lowercase windows-1251 fixture every target row starts from, and the body "мир"→"пока". */
+const CP1251_LOWER = "привет\nмир\n";
+const CP1251_LOWER_EDITED = "привет\nпока\n";
+
+/** The applied-tier notice for one migrated file: its name, the codec it abandoned, its BOM state. */
+function migratedNotice(name: string, encoding: string, bomState: string): string {
+  return (
+    `[MODEL] ${MIGRATED_MARK} Migrated ${name} from ${encoding} (${bomState}) to UTF-8. ` +
+    "Undo restores the text, not the encoding."
+  );
+}
+
+/**
+ * Whole-word shell/OS token scan over the refusal text. `-` and `_` are word characters here so
+ * the codec name `windows-1251` never trips the `windows` token while a real host mention does.
+ */
+function namesCallerEnvironment(text: string): boolean {
+  return /(^|[^a-z0-9_-])(?:bash|zsh|powershell|pwsh|cmd|shell|terminal|windows|linux|macos|darwin|win32|unix)([^a-z0-9_-]|$)/i.test(
+    text,
+  );
+}
+
+interface EditCase {
+  /** Extra `read` params, e.g. the `encoding` that records the legacy codec. */
+  read?: Record<string, unknown>;
+  /** Extra payload keys: a consent, or `dry_run` — both survive only the canonical shape. */
+  edit?: Record<string, unknown>;
+}
+
+type EditOutcome =
+  | { ok: true; text: string }
+  | { ok: false; code: string | undefined; message: string };
+
+/**
+ * Read one row, then edit it with the canonical payload, and settle the result into an outcome:
+ * a refusal keeps its code and rendered message instead of surfacing as a rejected promise.
+ */
+async function settleEdit(
+  cwd: string,
+  name: string,
+  from: string,
+  to: string,
+  options: EditCase = {},
+): Promise<{ harness: ReturnType<typeof setupIntegrationTest>; outcome: EditOutcome }> {
+  const harness = setupIntegrationTest(cwd);
+  const anchors = anchorsByContent(
+    textOf(await harness.readTool.execute("r1", { path: name, ...options.read })),
+  );
+  const anchor = anchors.get(from);
+  expect(anchor, `read served no row for ${JSON.stringify(from)}`).toBeDefined();
+  try {
+    const text = textOf(
+      await harness.editTool.execute("e1", {
+        file: name,
+        edits: [{ anchor_from: anchor!, anchor_to: anchor!, replace_with: to }],
+        ...options.edit,
+      }),
+    );
+    return { harness, outcome: { ok: true, text } };
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : String(error);
+    const code = (error as { code?: unknown }).code;
+    return {
+      harness,
+      outcome: { ok: false, code: typeof code === "string" ? code : undefined, message },
+    };
+  }
+}
+
+/** The applied text of a settled edit; a refusal fails the case with its own message. */
+function appliedText(outcome: EditOutcome): string {
+  if (!outcome.ok) throw new Error(`expected an applied edit, got: ${outcome.message}`);
+  return outcome.text;
+}
+
+/** The refusal arm of a settled edit; an applied edit fails the case with its own text. */
+function refusalOf(outcome: EditOutcome): Extract<EditOutcome, { ok: false }> {
+  if (outcome.ok) throw new Error(`expected a refusal, got: ${outcome.text}`);
+  return outcome;
+}
+
+describe("#211 encoding-migration targets and the consent ladder, pinned by bytes", () => {
+  it("default: a windows-1251 non-ASCII edit refuses E_ENCODING_UNWRITABLE and leaves every byte alone", async () => {
+    const name = "cp-default.txt";
+    await withTempBytes(name, cp1251Bytes(CP1251_LOWER), async ({ cwd, path }) => {
+      const before = await readFile(path);
+
+      const { harness, outcome } = await settleEdit(cwd, name, "мир", "пока", {
+        read: { encoding: "windows-1251" },
+      });
+
+      const refusal = refusalOf(outcome);
+      expect(refusal.code).toBe("E_ENCODING_UNWRITABLE");
+      expect(refusal.message).toContain("Nothing was written");
+      expect((await readFile(path)).equals(before)).toBe(true);
+      expect(getText(await harness.undoTool.execute("u1", { path: name }))).toContain(NO_HISTORY);
+    });
+  });
+
+  it('payload "utf8": the bytes land UTF-8 without BOM, one notice names windows-1251 (no BOM), and a second consent-less edit needs no migration', async () => {
+    const name = "cp-utf8.txt";
+    await withTempBytes(name, cp1251Bytes(CP1251_LOWER), async ({ cwd, path }) => {
+      const first = await settleEdit(cwd, name, "мир", "пока", {
+        read: { encoding: "windows-1251" },
+        edit: { allow_encoding_migration: "utf8" },
+      });
+      const editText = appliedText(first.outcome);
+
+      expect(editText).toContain(migratedNotice(name, "windows-1251", "no BOM"));
+      expect(countOf(editText, MIGRATED_MARK)).toBe(1);
+
+      const edited = await readFile(path);
+      expect(edited.equals(Buffer.from(CP1251_LOWER_EDITED, "utf-8"))).toBe(true);
+      expect([...edited.subarray(0, 2)]).toEqual([0xd0, 0xbf]);
+      expect([...edited.subarray(0, 3)]).not.toEqual(UTF8_BOM);
+
+      // The post-write state is UTF-8 as the read ladder sees it: a SECOND canonical edit with
+      // NO consent is not refused (a legacy non-ASCII file would refuse), converts nothing, and
+      // announces nothing.
+      const second = await settleEdit(cwd, name, "пока", "ПОКА", {});
+      expect(appliedText(second.outcome)).not.toContain(MIGRATED_MARK);
+
+      const twice = await readFile(path);
+      expect(twice.equals(Buffer.from("привет\nПОКА\n", "utf-8"))).toBe(true);
+      expect([...twice.subarray(0, 3)]).not.toEqual(UTF8_BOM);
+    });
+  });
+
+  it('payload "utf8bom": the BOM is on disk exactly once, one notice, and the next read discloses nothing', async () => {
+    const name = "cp-bom.txt";
+    await withTempBytes(name, cp1251Bytes(CP1251_LOWER), async ({ cwd, path }) => {
+      const { harness, outcome } = await settleEdit(cwd, name, "мир", "пока", {
+        read: { encoding: "windows-1251" },
+        edit: { allow_encoding_migration: "utf8bom" },
+      });
+
+      expect(countOf(appliedText(outcome), MIGRATED_MARK)).toBe(1);
+
+      const edited = await readFile(path);
+      expect([...edited.subarray(0, 3)]).toEqual(UTF8_BOM);
+      expect(edited.subarray(3).equals(Buffer.from(CP1251_LOWER_EDITED, "utf-8"))).toBe(true);
+
+      const servedAgain = textOf(await harness.readTool.execute("r2", { path: name }));
+      expect(servedAgain).not.toContain(MIGRATED_MARK);
+      expect(servedAgain).toContain("пока");
+    });
+  });
+
+  it('payload outranks the config: env "utf8" with payload "utf8bom" lands the BOM', async () => {
+    const name = "cp-payload-wins.txt";
+    await withTempBytes(name, cp1251Bytes(CP1251_LOWER), async ({ cwd, path }) => {
+      setConsentEnv("utf8");
+
+      const { outcome } = await settleEdit(cwd, name, "мир", "пока", {
+        read: { encoding: "windows-1251" },
+        edit: { allow_encoding_migration: "utf8bom" },
+      });
+      appliedText(outcome);
+
+      const edited = await readFile(path);
+      expect([...edited.subarray(0, 3)]).toEqual(UTF8_BOM);
+      expect(edited.subarray(3).equals(Buffer.from(CP1251_LOWER_EDITED, "utf-8"))).toBe(true);
+    });
+  });
+
+  it('payload "refuse" vetoes the config: env "utf8" still refuses and writes nothing', async () => {
+    const name = "cp-refuse-veto.txt";
+    await withTempBytes(name, cp1251Bytes(CP1251_LOWER), async ({ cwd, path }) => {
+      const before = await readFile(path);
+      setConsentEnv("utf8");
+
+      const { harness, outcome } = await settleEdit(cwd, name, "мир", "пока", {
+        read: { encoding: "windows-1251" },
+        edit: { allow_encoding_migration: "refuse" },
+      });
+
+      expect(refusalOf(outcome).code).toBe("E_ENCODING_UNWRITABLE");
+      expect((await readFile(path)).equals(before)).toBe(true);
+      expect(getText(await harness.undoTool.execute("u1", { path: name }))).toContain(NO_HISTORY);
+    });
+  });
+
+  it('config allowEncodingMigration: utf8bom writes the same bytes as payload "utf8bom"', async () => {
+    const preImage = cp1251Bytes(CP1251_LOWER);
+    await withTempBytes("a.txt", preImage, async ({ cwd, path }) => {
+      const aPath = path;
+      const bPath = join(cwd, "b.txt");
+      await writeFile(bPath, preImage);
+      setConsentEnv(undefined);
+
+      // B first: the payload alone, while no config file exists yet.
+      const b = await settleEdit(cwd, "b.txt", "мир", "пока", {
+        read: { encoding: "windows-1251" },
+        edit: { allow_encoding_migration: "utf8bom" },
+      });
+      appliedText(b.outcome);
+
+      await writeConfigFile(cwd, "allowEncodingMigration: utf8bom\n");
+      const a = await settleEdit(cwd, "a.txt", "мир", "пока", {
+        read: { encoding: "windows-1251" },
+      });
+      appliedText(a.outcome);
+
+      const aBytes = await readFile(aPath);
+      const bBytes = await readFile(bPath);
+      for (const bytes of [aBytes, bBytes]) {
+        expect([...bytes.subarray(0, 3)]).toEqual(UTF8_BOM);
+        expect(bytes.subarray(3).equals(Buffer.from(CP1251_LOWER_EDITED, "utf-8"))).toBe(true);
+      }
+      expect(aBytes.equals(bBytes)).toBe(true);
+    });
+  });
+
+  it('legacy normalizeToUtf8: true writes the same bytes as payload "utf8"', async () => {
+    const preImage = cp1251Bytes(CP1251_LOWER);
+    await withTempBytes("a.txt", preImage, async ({ cwd, path }) => {
+      const aPath = path;
+      const bPath = join(cwd, "b.txt");
+      await writeFile(bPath, preImage);
+      setConsentEnv(undefined);
+      setNormalizeToUtf8(false);
+
+      // B first: the payload alone, with no legacy rung configured yet.
+      const b = await settleEdit(cwd, "b.txt", "мир", "пока", {
+        read: { encoding: "windows-1251" },
+        edit: { allow_encoding_migration: "utf8" },
+      });
+      appliedText(b.outcome);
+
+      setNormalizeToUtf8(true);
+      const a = await settleEdit(cwd, "a.txt", "мир", "пока", {
+        read: { encoding: "windows-1251" },
+      });
+      appliedText(a.outcome);
+
+      const aBytes = await readFile(aPath);
+      const bBytes = await readFile(bPath);
+      for (const bytes of [aBytes, bBytes]) {
+        expect([...bytes.subarray(0, 3)]).not.toEqual(UTF8_BOM);
+        expect(bytes.equals(Buffer.from(CP1251_LOWER_EDITED, "utf-8"))).toBe(true);
+      }
+      expect(aBytes.equals(bBytes)).toBe(true);
+    });
+  });
+
+  it('byte-faithful ASCII under payload "utf8bom": no BOM and no notice — the consent governs only non-faithful bodies', async () => {
+    const name = "ascii-bom.txt";
+    await withTempBytes(name, cp1251Bytes("alpha\nbeta\n"), async ({ cwd, path }) => {
+      const { outcome } = await settleEdit(cwd, name, "alpha", "ALPHA", {
+        read: { encoding: "windows-1251" },
+        edit: { allow_encoding_migration: "utf8bom" },
+      });
+
+      expect(appliedText(outcome)).not.toContain(MIGRATED_MARK);
+
+      const edited = await readFile(path);
+      expect(edited.equals(Buffer.from("ALPHA\nbeta\n", "utf-8"))).toBe(true);
+      expect([...edited.subarray(0, 3)]).not.toEqual(UTF8_BOM);
+    });
+  });
+
+  it("dry_run with consent previews only; a live no-consent edit still refuses on the unchanged legacy file", async () => {
+    const name = "cp-dry-run.txt";
+    await withTempBytes(name, cp1251Bytes(CP1251_LOWER), async ({ cwd, path }) => {
+      const before = await readFile(path);
+
+      const preview = await settleEdit(cwd, name, "мир", "пока", {
+        read: { encoding: "windows-1251" },
+        edit: { dry_run: true, allow_encoding_migration: "utf8" },
+      });
+      const previewText = appliedText(preview.outcome);
+      expect(previewText.split("\n")[0] ?? "").toMatch(/^\[DRY RUN\] /);
+      // A noop preview would satisfy "no notice" for the wrong reason: the change was real.
+      expect(previewText).toContain("would be applied");
+      expect(previewText).not.toContain(MIGRATED_MARK);
+      expect((await readFile(path)).equals(before)).toBe(true);
+      expect(getText(await preview.harness.undoTool.execute("u1", { path: name }))).toContain(
+        NO_HISTORY,
+      );
+
+      const live = await settleEdit(cwd, name, "мир", "пока", {
+        read: { encoding: "windows-1251" },
+      });
+      expect(refusalOf(live.outcome).code).toBe("E_ENCODING_UNWRITABLE");
+      expect((await readFile(path)).equals(before)).toBe(true);
+    });
+  });
+
+  it("a multi-item batch with consent and a bogus second anchor aborts E_BATCH_ABORT with nothing written", async () => {
+    const name = "cp-batch.txt";
+    await withTempBytes(name, cp1251Bytes(CP1251_LOWER), async ({ cwd, path }) => {
+      const before = await readFile(path);
+      const harness = setupIntegrationTest(cwd);
+      const anchors = anchorsByContent(
+        textOf(await harness.readTool.execute("r1", { path: name, encoding: "windows-1251" })),
+      );
+      const anchor = anchors.get("мир");
+      expect(anchor).toBeDefined();
+
+      await expect(
+        harness.editTool.execute("e1", {
+          file: name,
+          edits: [
+            { anchor_from: anchor!, anchor_to: anchor!, replace_with: "пока" },
+            { anchor_from: "ZZZ", anchor_to: "ZZZ", replace_with: "bogus" },
+          ],
+          allow_encoding_migration: "utf8",
+        }),
+      ).rejects.toMatchObject({ code: "E_BATCH_ABORT" });
+
+      expect((await readFile(path)).equals(before)).toBe(true);
+      expect(getText(await harness.undoTool.execute("u1", { path: name }))).toContain(NO_HISTORY);
+    });
+  });
+
+  it('undo after a "utf8bom" migration restores one BOM and the body, and names the lost codec without "its BOM"', async () => {
+    const name = "cp-undo.txt";
+    await withTempBytes(name, cp1251Bytes(CP1251_LOWER), async ({ cwd, path }) => {
+      const { harness, outcome } = await settleEdit(cwd, name, "мир", "пока", {
+        read: { encoding: "windows-1251" },
+        edit: { allow_encoding_migration: "utf8bom" },
+      });
+      appliedText(outcome);
+
+      const undoText = getText(await harness.undoTool.execute("u1", { path: name }));
+
+      const restored = await readFile(path);
+      expect(
+        restored.equals(Buffer.concat([Buffer.from(UTF8_BOM), Buffer.from(CP1251_LOWER, "utf-8")])),
+      ).toBe(true);
+      expect(undoText).toContain(CP1251_UNDO_CLAUSE);
+      expect(undoText).not.toContain("its BOM");
+    });
+  });
+
+  it("an out-of-enum consent is refused with all three accepted values named, and writes nothing", async () => {
+    const name = "cp-bad-value.txt";
+    await withTempBytes(name, cp1251Bytes(CP1251_LOWER), async ({ cwd, path }) => {
+      const before = await readFile(path);
+
+      const { outcome } = await settleEdit(cwd, name, "мир", "пока", {
+        read: { encoding: "windows-1251" },
+        edit: { allow_encoding_migration: "utf8BOM" },
+      });
+
+      const refusal = refusalOf(outcome);
+      expect(refusal.message).toContain("allow_encoding_migration");
+      for (const value of ['"refuse"', '"utf8"', '"utf8bom"']) {
+        expect(refusal.message).toContain(value);
+      }
+      expect((await readFile(path)).equals(before)).toBe(true);
+    });
+  });
+
+  it("the thrown refusal names the consent surface and no shell, command-line or OS token", async () => {
+    const name = "cp-hygiene.txt";
+    await withTempBytes(name, cp1251Bytes(CP1251_LOWER), async ({ cwd }) => {
+      const { outcome } = await settleEdit(cwd, name, "мир", "пока", {
+        read: { encoding: "windows-1251" },
+      });
+
+      const refusal = refusalOf(outcome);
+      expect(refusal.message).toContain("Nothing was written");
+      expect(refusal.message).toContain("allow_encoding_migration");
+      expect(refusal.message).toContain("allowEncodingMigration");
+      expect(refusal.message).not.toContain("normalizeToUtf8");
+      expect(namesCallerEnvironment(refusal.message)).toBe(false);
+      // Control: the scan fires on a host-naming sentence, so the empty result above is a fact.
+      expect(namesCallerEnvironment("run it in bash, then retry")).toBe(true);
+    });
   });
 });

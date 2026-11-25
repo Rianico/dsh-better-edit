@@ -35,6 +35,7 @@ import {
   recordOpenState,
 } from "./file-encoding-state.js";
 import { loadConfig } from "./store-config.js";
+import { resolveEncodingMigrationConsent } from "./encoding-consent.js";
 import { stripBOM } from "./edit-diff.js";
 import { renderTextWarning } from "./render-text-warning.js";
 import { execCwd, withWorkspace } from "./workspace-context.js";
@@ -172,7 +173,8 @@ function restoreForSave(content: string, absolutePath: string): string {
   // Throws E_ENCODING_UNWRITABLE before the write when the recorded encoding
   // cannot round-trip through the text-only seam (issue #112).
   return prepareForSave(content, getEncodingState(absolutePath), {
-    normalizeToUtf8: loadConfig().normalizeToUtf8,
+    // Same ladder as the edit path, so the fleet consent governs this shadow too (#209).
+    migrationConsent: resolveEncodingMigrationConsent(undefined, loadConfig()),
     displayPath: absolutePath,
   }).textToWrite;
 }

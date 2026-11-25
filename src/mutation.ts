@@ -41,6 +41,8 @@ import { buildBatchResult } from "./edit-response.js";
 import type { BatchSection } from "./edit-response.js";
 import { getEncodingState, prepareForSave } from "./file-encoding-state.js";
 import type { EncodingMigration, FileEncodingState } from "./file-encoding-state.js";
+import { resolveEncodingMigrationConsent } from "./encoding-consent.js";
+import type { EncodingMigrationConsent } from "./encoding-consent.js";
 import { loadConfig } from "./store-config.js";
 
 // Engine helpers are private to Mutation — not re-exported.
@@ -78,6 +80,11 @@ interface PersistWriteOptions {
   sandboxPolicy: SandboxExecutionPolicy | undefined;
   signal?: AbortSignal;
   undoUnavailableMessage: (displayPath: string) => string;
+  /**
+   * The raw per-call consent from the `edit` payload (#209), or absent. Resolved here against the
+   * config ladder, so every file in the batch converts (or refuses) under one answer.
+   */
+  allowEncodingMigration?: EncodingMigrationConsent;
 }
 
 /**
@@ -96,7 +103,7 @@ export async function persistUndoAndWrite(opts: PersistWriteOptions): Promise<Ap
   // E_ENCODING_UNWRITABLE when the recorded encoding cannot be reproduced through the
   // text-only write, so a batch never leaves file 1 transcoded and file 2 refused —
   // nothing (not even the undo rows) is written when the round-trip is impossible.
-  const normalizeToUtf8 = loadConfig().normalizeToUtf8;
+  const consent = resolveEncodingMigrationConsent(opts.allowEncodingMigration, loadConfig());
   const prepared: Array<{
     file: UndoWriteFile;
     textToWrite: string;
@@ -111,7 +118,7 @@ export async function persistUndoAndWrite(opts: PersistWriteOptions): Promise<Ap
       version: undefined,
     };
     const prep = prepareForSave(file.result, state, {
-      normalizeToUtf8,
+      migrationConsent: consent,
       displayPath: file.displayPath,
       lineEnding: file.effectiveEnding,
     });
@@ -173,7 +180,9 @@ export async function persistUndoAndWrite(opts: PersistWriteOptions): Promise<Ap
         opts.exec,
         opts.sandboxPolicy,
         undefined,
-        { lineEnding: u.file.effectiveEnding },
+        // The consent rides the forward write too: the IO seam re-prepares this same text against a
+        // memo that still names the pre-write codec, and a `"utf8bom"` target must not be dropped.
+        { lineEnding: u.file.effectiveEnding, migrationConsent: consent },
       );
       written.push(u);
     }
@@ -252,6 +261,8 @@ export async function execute(opts: {
    * no undo row, no anchor retirement, and no serve/lease for rows that were never written.
    */
   dryRun?: boolean;
+  /** Per-call encoding-migration consent from the payload (#209); absent means the config decides. */
+  allowEncodingMigration?: EncodingMigrationConsent;
 }): Promise<string> {
   const { io, items, sessionKey, signal, exec, sandbox, sandboxPolicy, dryRun = false } = opts;
 
@@ -381,6 +392,9 @@ export async function execute(opts: {
         sandbox,
         sandboxPolicy,
         signal,
+        ...(opts.allowEncodingMigration === undefined
+          ? {}
+          : { allowEncodingMigration: opts.allowEncodingMigration }),
         undoUnavailableMessage: (displayPath) =>
           formatError("E_UNDO_UNAVAILABLE", { path: displayPath }),
       });
@@ -405,6 +419,9 @@ export async function execute(opts: {
         sandbox,
         sandboxPolicy,
         signal,
+        ...(opts.allowEncodingMigration === undefined
+          ? {}
+          : { allowEncodingMigration: opts.allowEncodingMigration }),
         undoUnavailableMessage: (displayPath) =>
           formatError("E_UNDO_UNAVAILABLE", { path: displayPath, batch: true }),
       });

@@ -27,6 +27,8 @@ import {
 import type { CandidatePreview } from "./encoding.js";
 import { detectEnding, restoreEndings, toLF, type LineEnding } from "./edit-diff.js";
 import { DomainError, formatError } from "./domain-errors.js";
+import { assertNeverEncodingMigrationConsent } from "./encoding-consent.js";
+import type { EncodingMigrationConsent, EncodingMigrationTarget } from "./encoding-consent.js";
 
 /**
  * The decode hint a mutating re-read must pass to the byte seam: the encoding
@@ -404,6 +406,13 @@ export function recordFooter(filePath: string, footer: string | undefined): void
 
 export interface EncodeForSaveOptions {
   encodingHint?: string;
+  /**
+   * The resolved migration consent for this write (#209), or absent to fall back to the legacy
+   * `normalizeToUtf8` spelling. The callers resolve the one ladder
+   * (`resolveEncodingMigrationConsent`); this seam only honours the answer.
+   */
+  migrationConsent?: EncodingMigrationConsent;
+  /** Pre-#209 spelling of the `"utf8"` consent; `true` still migrates, `false` still just refuses. */
   normalizeToUtf8?: boolean;
   currentVersion?: string | undefined;
   /** Model-facing path for the round-trip refusal. */
@@ -455,6 +464,24 @@ export function isByteFaithfulAsUtf8(text: string, encoding: string): boolean {
 }
 
 /**
+ * The memo entry for a converted file: exactly the UTF-8 shape the consent chose (#209).
+ * Exhaustive over the target union so a third target cannot silently reuse one of these.
+ */
+function utf8TargetState(
+  target: EncodingMigrationTarget,
+  lineEnding: LineEnding,
+): FileEncodingState {
+  switch (target) {
+    case "utf8":
+      return { encoding: "utf8", hasBOM: false, lineEnding, version: undefined };
+    case "utf8bom":
+      return { encoding: "utf8bom", hasBOM: true, lineEnding, version: undefined };
+    default:
+      return assertNeverEncodingMigrationConsent(target);
+  }
+}
+
+/**
  * Decide what bytes (as text, since the write seam takes a string) to write and
  * what new state to record. BOM and lineEnding are restored here when a state
  * exists; otherwise defaults are UTF-8 without BOM and LF.
@@ -463,10 +490,10 @@ export function isByteFaithfulAsUtf8(text: string, encoding: string): boolean {
  * string, …)`, which every backend encodes as UTF-8. So the save side can
  * restore BOM + line ending for the UTF-8 family, and can write a legacy file
  * only when its UTF-8 byte image is identical (ASCII-only). Anything else
- * throws `E_ENCODING_UNWRITABLE` BEFORE the write, because writing UTF-8 would
- * silently transcode the file and leave the anchors describing other bytes.
- * `normalizeToUtf8: true` is the explicit migration: write UTF-8 and record
- * `utf8` so the next read agrees with the bytes.
+ * throws `E_ENCODING_UNWRITABLE` BEFORE the write unless the caller consented to
+ * convert it (#209): the `"utf8"` target writes UTF-8 without BOM and the
+ * `"utf8bom"` target writes one leading BOM, and either way the memo records the
+ * shape actually written so the next read agrees with the bytes.
  */
 export function prepareForSave(
   content: string,
@@ -474,7 +501,8 @@ export function prepareForSave(
   opts: EncodeForSaveOptions = {},
 ): { textToWrite: string; newState?: FileEncodingState; migration?: EncodingMigration } {
   const displayPath = opts.displayPath ?? "(unknown path)";
-  const normalize = opts.normalizeToUtf8 === true;
+  const consent: EncodingMigrationConsent =
+    opts.migrationConsent ?? (opts.normalizeToUtf8 === true ? "utf8" : "refuse");
 
   if (opts.encodingHint) {
     const norm = normalizeEncoding(opts.encodingHint);
@@ -532,28 +560,41 @@ export function prepareForSave(
     // reproduce (e.g. read({ encoding: "windows-1251" }) on a UTF-8-BOM file, or
     // utf16le's FF FE), so even an ASCII body is not byte-faithful there.
     const faithful = !existingState.hasBOM && isByteFaithfulAsUtf8(body, recorded);
-    if (!normalize && !faithful) {
+    // A byte-faithful body is byte-identical under both codecs: it lands unchanged — no BOM, no
+    // verdict, no conversion — whatever the consent says. The consent only decides what to do
+    // with a body this seam CANNOT write faithfully.
+    if (faithful) {
+      // The bytes are identical under both codecs, so they land as UTF-8 without BOM; the memo must
+      // describe those bytes — never a stale utf16le/legacy name.
+      return {
+        textToWrite: body,
+        newState: { encoding: "utf8", hasBOM: false, lineEnding, version: undefined },
+      };
+    }
+    if (consent === "refuse") {
       throw new DomainError("E_ENCODING_UNWRITABLE", { path: displayPath, encoding: recorded });
     }
-    // Migration (normalizeToUtf8) or a byte-faithful legacy image: both land UTF-8
-    // bytes, so the memo must describe UTF-8 — never a stale utf16le/legacy name.
     // #191: the verdict fires ONLY here, on the non-faithful arm: the write abandoned the
-    // recorded codec, so the undo names it. A faithful body changed nothing about the codec
-    // (its bytes are identical either way) and carries no verdict.
-    const migration: EncodingMigration | undefined = faithful
-      ? undefined
-      : { encoding: recorded, hasBOM: existingState.hasBOM };
-    return {
-      textToWrite: body,
-      newState: { encoding: "utf8", hasBOM: false, lineEnding, version: undefined },
-      ...(migration === undefined ? {} : { migration }),
-    };
+    // recorded codec, so the undo names it.
+    const migration: EncodingMigration = { encoding: recorded, hasBOM: existingState.hasBOM };
+    // #209: the migrated bytes take the CHOSEN UTF-8 shape — `utf8bom` adds one leading BOM.
+    const newState = utf8TargetState(consent, lineEnding);
+    // WHY (#209): this seam runs TWICE for one write — `persistUndoAndWrite` prepares the text, then
+    // `fs-bridge.writeText` re-prepares it against a memo that still names the legacy codec. A BOM
+    // the first pass added would be added again by the second, so the utf8bom branch strips one
+    // leading BOM before re-adding its own. The "utf8" branch writes the body unchanged; it never
+    // strips content.
+    const textToWrite = newState.hasBOM
+      ? `${UTF8_BOM}${body.startsWith(UTF8_BOM) ? body.slice(1) : body}`
+      : body;
+    return { textToWrite, newState, migration };
   }
 
   // UTF-8 family: restore the recorded BOM + lineEnding via the shared seam so
   // governed writers (e.g. the str_replace_editor shadow) don't re-implement the
   // round-trip locally and diverge on future lineEnding evolution.
-  // Only add, never strip: a missing BOM means UTF-8 without BOM.
+  // Only add, never strip: a missing BOM means UTF-8 without BOM. A consent never adds a BOM to a
+  // file that is already UTF-8 — the BOM is preserved, never introduced spontaneously (ADR-0012).
   let textToWrite = restoreEndings(toLF(content), lineEnding);
   if (existingState.hasBOM && !textToWrite.startsWith(UTF8_BOM)) {
     textToWrite = `${UTF8_BOM}${textToWrite}`;

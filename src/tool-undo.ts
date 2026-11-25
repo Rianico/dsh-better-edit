@@ -34,6 +34,7 @@ import { execCwd, execSessionKey } from "./workspace-context.js";
 import type { FsSandboxController, FsEscalationArgs } from "./sandbox.js";
 import { withWorkspace } from "./workspace-context.js";
 import { encodingHintAtVersion, getEncodingState, prepareForSave } from "./file-encoding-state.js";
+import { resolveEncodingMigrationConsent } from "./encoding-consent.js";
 import { loadConfig } from "./store-config.js";
 import { endingName } from "./eol-config.js";
 
@@ -128,7 +129,14 @@ export function buildUndoTool(io: FileIO, sandbox: FsSandboxController) {
           }
           throw error;
         }
-        if (currentRaw !== undo.bom + restoreEndings(undo.resultContent, effectiveEnding)) {
+        // WHY (#209): a `"utf8bom"` migration leaves post-image bytes carrying a UTF-8 BOM that the
+        // undo pair's pre-image `bom` column does not describe (it records the ABANDONED codec's
+        // BOM, e.g. utf16le's). A DSH backend restores that BOM on read, so the exact compare would
+        // blame an external write for the tool's own migration target.
+        const expectedResult = restoreEndings(undo.resultContent, effectiveEnding);
+        const matchesMigratedTarget =
+          undo.migration !== undefined && stripBOM(currentRaw).text === expectedResult;
+        if (currentRaw !== undo.bom + expectedResult && !matchesMigratedTarget) {
           await clearUndo(absolutePath);
           return formatError("E_UNDO_STALE", { path, reason: "modified" });
         }
@@ -242,7 +250,8 @@ export function buildUndoTool(io: FileIO, sandbox: FsSandboxController) {
           version: undefined,
         };
         const prepared = prepareForSave(undo.content, recorded, {
-          normalizeToUtf8: loadConfig().normalizeToUtf8,
+          // Same ladder as every other save seam, so the fleet consent applies to a revert too.
+          migrationConsent: resolveEncodingMigrationConsent(undefined, loadConfig()),
           displayPath: path,
           // #171: the memo still describes the PRE-edit bytes (its `lineEnding` is the pre-image's),
           // so the resolved ending has to be named or the restore would be re-spelled at the wrong

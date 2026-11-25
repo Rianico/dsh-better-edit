@@ -42,6 +42,8 @@ import { codeOf, errCode } from "./utils.js";
 import { SUPPORTED_ENCODINGS_LABEL } from "./encoding.js";
 import { DomainError } from "./domain-errors.js";
 import type { LineEnding } from "./edit-diff.js";
+import { resolveEncodingMigrationConsent } from "./encoding-consent.js";
+import type { EncodingMigrationConsent } from "./encoding-consent.js";
 // Re-export file encoding state seam for backward compat (file-view, read-and-serve, tests)
 export type { FileEncodingState } from "./file-encoding-state.js";
 export {
@@ -72,6 +74,12 @@ export interface WriteGuard {
 /** The terminator this write must use, decided by the caller's pre-image resolution (#169). */
 export interface WriteTextOptions {
   readonly lineEnding?: LineEnding;
+  /**
+   * The migration consent this write already resolved (#209). Omitted callers let the seam resolve
+   * it from the config (`allowEncodingMigration` > legacy `normalizeToUtf8` > `"refuse"`), so the
+   * fleet policy applies to `write` / `str_replace_editor` too.
+   */
+  readonly migrationConsent?: EncodingMigrationConsent;
 }
 
 /** Text-IO operations the hashline tools need, keyed by canonical absolute path. */
@@ -95,11 +103,11 @@ export interface FileIO {
    *   intent. The dsh backend turns it into the `{ kind: "createIfAbsent" }`
    *   write intent (and reports the refusal as `E_FILE_EXISTS`), the local
    *   backend opens the target exclusively.
-   * @param options - the resolved effective terminator for this write. The seam
-   *   re-prepares the text against the memo, which still describes the OLD
-   *   ending, so a planned EOL rewrite only survives the trip when it is named
-   *   here. `write` and `str_replace_editor` never pass it: their bytes are
-   *   unchanged.
+   * @param options - the resolved effective terminator for this write, and optionally the
+   *   migration consent it was decided under. The seam re-prepares the text against the memo,
+   *   which still describes the OLD ending, so a planned EOL rewrite only survives the trip when
+   *   it is named here. `write` and `str_replace_editor` never pass either: their bytes are
+   *   unchanged, and an unnamed consent is resolved from the config inside the seam.
    */
   writeText(
     absolutePath: string,
@@ -325,8 +333,10 @@ export function ctxFsIO(fs: FileSystem, ctx: Context): FileIO {
         // reproduced through the text-only write (issue #112).
         const cfgW = loadConfig();
         const existing = _getEncodingState(absolutePath);
+        const consent =
+          options?.migrationConsent ?? resolveEncodingMigrationConsent(undefined, cfgW);
         const prep = prepareForSave(content, existing, {
-          normalizeToUtf8: cfgW.normalizeToUtf8,
+          migrationConsent: consent,
           displayPath: absolutePath,
           lineEnding: options?.lineEnding,
         });
@@ -342,7 +352,7 @@ export function ctxFsIO(fs: FileSystem, ctx: Context): FileIO {
         const effectiveIntent =
           guard?.createIfAbsent === true ? ({ kind: "createIfAbsent" } as const) : intent;
         // The provider encodes the string as UTF-8; prep.textToWrite already carries
-        // the restored BOM + line endings (or the explicit normalizeToUtf8 migration).
+        // the restored BOM + line endings (or the consented migration's UTF-8 shape).
         const outcome = await fs.writeText(
           target,
           prep.textToWrite,
@@ -455,8 +465,9 @@ export function localIO(): FileIO {
       const info = await fileSnap(absolutePath).catch(() => undefined);
       invalidateIfStale(absolutePath, info?.snapshotId);
       const cfgL = loadConfig();
+      const consent = options?.migrationConsent ?? resolveEncodingMigrationConsent(undefined, cfgL);
       const prep = prepareForSave(content, _getEncodingState(absolutePath), {
-        normalizeToUtf8: cfgL.normalizeToUtf8,
+        migrationConsent: consent,
         displayPath: absolutePath,
         lineEnding: options?.lineEnding,
       });

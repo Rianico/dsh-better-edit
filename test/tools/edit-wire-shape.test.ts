@@ -69,7 +69,13 @@ function tupleItemBranch(params: JsonSchemaNode): JsonSchemaNode {
 describe("edit payload wire shape", () => {
   it("declares exactly the named-object keys and closes the item object", () => {
     const params = paramsOf(false);
-    expect(rootKeys(params)).toEqual(["dry_run", "edits", "file", "mode"]);
+    expect(rootKeys(params)).toEqual([
+      "allow_encoding_migration",
+      "dry_run",
+      "edits",
+      "file",
+      "mode",
+    ]);
 
     const named = namedItemBranch(params);
     expect(Object.keys(named.properties ?? {}).sort()).toEqual([
@@ -92,6 +98,7 @@ describe("edit payload wire shape", () => {
 
     // Escalation fields are the ONLY extra root keys a confining composition may add.
     expect(rootKeys(paramsOf(true))).toEqual([
+      "allow_encoding_migration",
       "dry_run",
       "edits",
       "file",
@@ -264,5 +271,74 @@ describe("edit payload wire shape — dry_run root field", () => {
     const forced: Record<string, unknown> = { ...payload, mode: "general", dry_run: "yes" };
     Object.defineProperty(forced, normalizedEdit, { value: true, enumerable: false });
     expect(() => assertEditRequest(forced)).toThrow(/"dry_run" must be a boolean/);
+  });
+});
+
+describe("edit payload wire shape — allow_encoding_migration root field", () => {
+  it("declares the consent as a plain string enum beside file and edits", () => {
+    const params = paramsOf(false);
+    const consent = params.properties?.allow_encoding_migration;
+    // No null branch: `null` is not a spelling of absent here, so the host refuses it as an
+    // out-of-enum value before the contract ever sees it (ADR-0052 §1).
+    expect(consent?.type).toBe("string");
+    expect(consent?.enum).toEqual(["refuse", "utf8", "utf8bom"]);
+    expect(consent?.oneOf).toBeUndefined();
+
+    expect(
+      validateJsonSchemaValue(params, { ...payload, allow_encoding_migration: "utf8bom" }),
+    ).toEqual([]);
+    expect(validateJsonSchemaValue(params, payload)).toEqual([]);
+
+    for (const bad of [null, "utf8BOM", "migrate", true, 1]) {
+      expect(
+        validateJsonSchemaValue(params, {
+          ...payload,
+          allow_encoding_migration: bad as never,
+        }).length,
+      ).toBeGreaterThan(0);
+    }
+  });
+
+  it("carries the consent only when the caller named one", () => {
+    expect(editRequestFrom({ ...payload, allow_encoding_migration: "utf8" })).toEqual({
+      ...payload,
+      mode: "general",
+      dry_run: false,
+      allow_encoding_migration: "utf8",
+    });
+    // Absent stays absent: the config ladder decides, so the fold materializes nothing (a folded
+    // "refuse" would outrank the config).
+    expect(editRequestFrom(payload)).not.toHaveProperty("allow_encoding_migration");
+    expect(prepareEditArguments({ ...payload, allow_encoding_migration: "refuse" })).toMatchObject({
+      allow_encoding_migration: "refuse",
+    });
+
+    // `null` is a present value outside the enum, never "absent": the fold refuses it and the
+    // admission gate names the three accepted values.
+    expect(editRequestFrom({ ...payload, allow_encoding_migration: null })).toBeUndefined();
+    expect(() =>
+      assertEditRequest(normalizeRequest({ ...payload, allow_encoding_migration: null })),
+    ).toThrow(/"refuse", "utf8", or "utf8bom"/);
+
+    const normalized = normalizeRequest({ ...payload, allow_encoding_migration: "utf8bom" });
+    assertEditRequest(normalized);
+    expect(normalized.allow_encoding_migration).toBe("utf8bom");
+  });
+
+  it("refuses an unknown value at admission with the three values named", () => {
+    for (const bad of [null, "utf8BOM", "migrate", true, 1]) {
+      const request = { ...payload, allow_encoding_migration: bad };
+      expect(editRequestFrom(request)).toBeUndefined();
+      let message = "";
+      try {
+        assertEditRequest(normalizeRequest(request));
+      } catch (error) {
+        message = (error as Error).message;
+      }
+      expect(message).toContain("E_BAD_PAYLOAD");
+      for (const consent of ["refuse", "utf8", "utf8bom"]) {
+        expect(message).toContain(`"${consent}"`);
+      }
+    }
   });
 });

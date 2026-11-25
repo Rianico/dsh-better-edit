@@ -13,6 +13,12 @@ import { z } from "zod";
 import { errCode } from "./utils.js";
 import { SUPPORTED_ENCODINGS } from "./encoding.js";
 import { parseSpanMode, SPAN_MODE_DEFAULT, SPAN_MODE_ENV_VAR } from "./span-mode.js";
+import {
+  ENCODING_MIGRATION_CONSENTS,
+  ENCODING_MIGRATION_ENV_VAR,
+  isEncodingMigrationConsent,
+  parseEnvEncodingMigrationConsent,
+} from "./encoding-consent.js";
 
 // ---- eol vocabulary (single source of truth for the `eol` setting) ----
 
@@ -120,6 +126,8 @@ const StoreConfigSchema = z.object({
   autoGitignore: z.boolean().default(false), // workspace only: auto-append ".dsh_better_edit/" to .gitignore when .git exists but entry missing (false = warn once)
   autoGuessEncoding: z.boolean().default(false), // VS Code files.autoGuessEncoding — deterministic BOM→UTF-8 first, model-assisted top-3 only when true
   normalizeToUtf8: z.boolean().default(false), // when true, legacy files (GBK etc.) migrate to UTF-8 on first edit/write
+  // ABSENT by default on purpose: absence falls through to legacy `normalizeToUtf8` (see encoding-consent)
+  allowEncodingMigration: z.enum(ENCODING_MIGRATION_CONSENTS).optional(),
   supportedEncodings: z.array(z.string()).default([...SUPPORTED_ENCODINGS]),
   spanMode: z.enum(["hint", "strict"]).default("hint"), // opt-in served-span policy for edit payloads: "hint" (default) | "strict"
   undo_ttl_s: z.number().int().min(-1).default(604800), // undo history TTL in seconds; -1 = keep forever (default 604800 = 7 days)
@@ -142,6 +150,7 @@ let cachedEnvNormalizeToUtf8: string | undefined;
 let cachedEnvSupportedEncodings: string | undefined;
 let cachedEnvSpanMode: string | undefined;
 let cachedEnvEol: string | undefined;
+let cachedEnvAllowEncodingMigration: string | undefined;
 
 function configYamlPath(): string {
   return join(resolveDshHome(), "plugins", "dsh-better-edit", "config.yaml");
@@ -163,8 +172,12 @@ autoGitignore: false
 # encoding: deterministic BOM→UTF-8 first, guessing only when autoGuessEncoding:true
 # when true, FS_NOT_TEXT scores supportedEncodings and surfaces top-3 previews for model pick
 autoGuessEncoding: false
-# when true, legacy files (GBK etc.) migrate to UTF-8 on first write
+# legacy spelling for the migration consent below: true = "utf8" (no BOM); kept for existing configs
 normalizeToUtf8: false
+# encoding migration consent (supported): refuse (default) | utf8 | utf8bom
+# utf8 = convert a legacy file to UTF-8 without a BOM; utf8bom = convert and write one leading UTF-8 BOM (BOM-aware readers decode it as UTF-8)
+# left commented out on purpose: an explicit value outranks the legacy normalizeToUtf8 spelling above
+# allowEncodingMigration: refuse
 # allowlist scored for top-3 previews when autoGuessEncoding:true
 supportedEncodings: [${SUPPORTED_ENCODINGS.join(", ")}]
 
@@ -318,6 +331,16 @@ function fsAdapter(): Partial<StoreConfig> {
         );
       else out.normalizeToUtf8 = b;
     }
+    if (parsed.allowEncodingMigration !== undefined) {
+      // config values are verbatim/case-sensitive, consistent with `eol`
+      if (isEncodingMigrationConsent(parsed.allowEncodingMigration)) {
+        out.allowEncodingMigration = parsed.allowEncodingMigration;
+      } else {
+        console.warn(
+          `dsh-better-edit: allowEncodingMigration "${parsed.allowEncodingMigration}" invalid — expected refuse|utf8|utf8bom`,
+        );
+      }
+    }
     if (parsed.spanMode !== undefined) {
       const mode = parseSpanMode(parsed.spanMode);
       if (mode === undefined) {
@@ -445,6 +468,17 @@ function envAdapter(base: StoreConfig): Partial<StoreConfig> {
       out.eol = setting;
     }
   }
+  const envConsent = process.env[ENCODING_MIGRATION_ENV_VAR];
+  if (envConsent !== undefined) {
+    const consent = parseEnvEncodingMigrationConsent(envConsent);
+    if (consent === undefined) {
+      console.warn(
+        `dsh-better-edit: ${ENCODING_MIGRATION_ENV_VAR} "${envConsent}" invalid — expected refuse|utf8|utf8bom, fallback to normalizeToUtf8`,
+      );
+    } else {
+      out.allowEncodingMigration = consent;
+    }
+  }
   return out;
 }
 
@@ -464,6 +498,9 @@ function complementMissingFieldsSync(yamlPath: string, yamlPartial: Partial<Stor
   if (yamlPartial.storeMaxTotalBytes === undefined)
     missingLines.push("storeMaxTotalBytes: 524288000");
   if (yamlPartial.eol === undefined) missingLines.push("eol: AUTO");
+  // `allowEncodingMigration` is deliberately NOT complemented: materializing `refuse` into an
+  // existing config would silently disable a legacy `normalizeToUtf8: true` (absence is what makes
+  // the legacy spelling reachable — see `src/encoding-consent.ts`).
   if (missingLines.length === 0) return;
   try {
     // Ensure we don't duplicate if file was concurrently complemented — re-read raw keys.
@@ -498,6 +535,7 @@ export function loadConfig(): StoreConfig {
   const envAuto = process.env.DSH_BETTER_EDIT_AUTO_GITIGNORE;
   const envSpanMode = process.env[SPAN_MODE_ENV_VAR];
   const envEol = process.env[EOL_ENV_VAR];
+  const envConsent = process.env[ENCODING_MIGRATION_ENV_VAR];
 
   if (
     cachedConfig !== undefined &&
@@ -509,7 +547,8 @@ export function loadConfig(): StoreConfig {
     cachedEnvNormalizeToUtf8 === envNorm &&
     cachedEnvSupportedEncodings === envSup &&
     cachedEnvSpanMode === envSpanMode &&
-    cachedEnvEol === envEol
+    cachedEnvEol === envEol &&
+    cachedEnvAllowEncodingMigration === envConsent
   ) {
     return cachedConfig;
   }
@@ -549,6 +588,7 @@ export function loadConfig(): StoreConfig {
   cachedEnvSupportedEncodings = envSup;
   cachedEnvSpanMode = envSpanMode;
   cachedEnvEol = envEol;
+  cachedEnvAllowEncodingMigration = envConsent;
   return cfg;
 }
 
@@ -564,4 +604,5 @@ export function _resetConfigCache(): void {
   cachedEnvSupportedEncodings = undefined;
   cachedEnvSpanMode = undefined;
   cachedEnvEol = undefined;
+  cachedEnvAllowEncodingMigration = undefined;
 }

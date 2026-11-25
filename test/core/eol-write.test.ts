@@ -362,10 +362,12 @@ describe("transaction — the rollback names the pre-image ending", () => {
       ).rejects.toThrow(/disk full/);
 
       const calls = (io.writeText as unknown as { mock: { calls: unknown[][] } }).mock.calls;
-      // Two forward writes name the resolved effective ending …
-      expect(calls[0]!.at(-1)).toEqual({ lineEnding: "\n" });
-      expect(calls[1]!.at(-1)).toEqual({ lineEnding: "\n" });
-      // … and the rollback (third call) retargets file 1 at its OWN pre-image ending.
+      // Two forward writes name the resolved effective ending (and the consent they were decided
+      // under, #209 — the default `refuse` here) …
+      expect(calls[0]!.at(-1)).toEqual({ lineEnding: "\n", migrationConsent: "refuse" });
+      expect(calls[1]!.at(-1)).toEqual({ lineEnding: "\n", migrationConsent: "refuse" });
+      // … and the rollback (third call) retargets file 1 at its OWN pre-image ending, naming no
+      // consent at all (a rollback restores bytes; it never converts).
       expect(calls[2]![0]).toBe("/tmp/eol-rollback-1.txt");
       expect(calls[2]!.at(-1)).toEqual({ lineEnding: "\r\n" });
     } finally {
