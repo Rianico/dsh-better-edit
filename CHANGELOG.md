@@ -17,6 +17,8 @@ All notable changes to this project will be documented in this file.
 
 ### Bug Fixes
 
+* **errors:** name where the standing encoding-migration consent lives — `$DSH_HOME/plugins/dsh-better-edit/config.yaml` — in the `[E_ENCODING_UNWRITABLE]` message and remedy, so the model is not left to guess the config location; the per-call `allow_encoding_migration` route is unchanged (#220)
+
 * **edit:** a no-op-loop refusal joins the batch grammar and records the rows it shows, so a retry with a shown anchor resolves without a re-read; the changed-buffer variant stays rowless and names the read (ADR-0046 amended). (#216)
 
 * **edit:** admission refusals state the fault plus one `Edit payload: { … }` shape line instead of a 972-character canonical-payload paragraph and a `Received:` echo of the model's own input — a malformed payload drops from 1201 to 171 characters, and anchor reasons lose their terminal period so the registry supplies exactly one. (#217)

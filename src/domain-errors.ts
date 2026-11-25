@@ -675,12 +675,14 @@ export const ERROR_REGISTRY: { [K in DomainErrorCode]: CodeSpec<ErrorPayloadMap[
   E_ENCODING_UNWRITABLE: {
     audience: "MODEL",
     format: ({ path, encoding }) =>
-      `Cannot write ${path}: it was read as ${encoding}, and this filesystem exposes only a text write that always encodes UTF-8. Writing now would transcode the file silently, and its anchors would no longer describe the bytes on disk. Nothing was written. To migrate this file explicitly, send allow_encoding_migration: "utf8" (no BOM) or "utf8bom" (one leading UTF-8 BOM, which BOM-aware readers decode as UTF-8) on the edit; for a standing choice, set the allowEncodingMigration config setting to "utf8" or "utf8bom". Otherwise re-encode the file outside the plugin. Then retry.`,
+      `Cannot write ${path}: it was read as ${encoding}, and this filesystem exposes only a text write that always encodes UTF-8. Writing now would transcode the file silently, and its anchors would no longer describe the bytes on disk. Nothing was written. To migrate this file explicitly, send allow_encoding_migration: "utf8" (no BOM) or "utf8bom" (one leading UTF-8 BOM, which BOM-aware readers decode as UTF-8) on the edit; for a standing choice, set allowEncodingMigration: "utf8" or "utf8bom" in $DSH_HOME/plugins/dsh-better-edit/config.yaml. Otherwise re-encode the file outside the plugin. Then retry.`,
     // WHY remedy: the recorded encoding proves the text seam cannot reproduce it; the
     // consent surface (per-call payload value or the standing config setting) is the
-    // plugin's own vocabulary, and re-encoding outside the plugin is the only other route.
+    // plugin's own vocabulary, its location is named so the caller does not guess
+    // $DSH_HOME/plugins/dsh-better-edit/config.yaml, and re-encoding outside the plugin
+    // is the only other route.
     remedy:
-      'Send allow_encoding_migration: "utf8" or "utf8bom" on the edit (or set the standing allowEncodingMigration setting to the same value), or re-encode the file outside the plugin, then retry.',
+      'Send allow_encoding_migration: "utf8" or "utf8bom" on the edit (or set the standing allowEncodingMigration setting to the same value in $DSH_HOME/plugins/dsh-better-edit/config.yaml), or re-encode the file outside the plugin, then retry.',
   },
   E_ACCESS: {
     audience: "MODEL",

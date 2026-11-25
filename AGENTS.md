@@ -8,7 +8,7 @@ Prefer issues + pull requests. See `CONTRIBUTING.md` for Conventional Commits (c
 
 ### Runtime
 
-TypeScript: pnpm v12 + .nvmrc (24) + TS v7 + Vite v8, verify via oxlint/oxfmt/tsc/vitest; see package.json
+TypeScript: pnpm v12 + .nvmrc (26) + TS v7 + Vite v8, verify via oxlint/oxfmt/tsc/vitest; see package.json
 
 DeepSeek Harness: dev baseline `@deepseek-ai/dsh-*@0.2.1-rc.2` + `@deepseek-ai/cordis@4.0.5` (issue #82).
 No peer range and no runtime probing — compatibility rides the plugin surface plus optional-service
