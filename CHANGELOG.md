@@ -11,10 +11,6 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
-### Tests
-
-* **test:** await the xxhash seam in the three hashing specs added by #197, so a pure spec cannot reach its first digest before the async wasm init settles on a cold runner (#200)
-
 ### Features
 
 * **edit:** announce an explicit encoding migration on the applied result — one `[MODEL] [W_ENCODING_MIGRATED]` per migrated file, pushed after the write lands, so the abandoned codec and its BOM state are visible where the write happened. (#198)
@@ -53,6 +49,8 @@ All notable changes to this project will be documented in this file.
 * **test:** drive `read`/`edit`/`undo_last_edit` over the 11-case encoding matrix — opt-in migration, byte-faithful silence, BOM control, refusal, restart, abort, pre-change row, staleness, multi-item notice and EOL-before-encoding order — pinning on-disk bytes and result text per case. (#198)
 
 * **eol:** drive the public `read`/`edit`/`undo_last_edit` tools over the end-to-end matrix — three mixed majorities, three uniform endings, a zero-terminator file (the `system` rung), and the `env` > `config` > `file` precedence on one mixed fixture — pinning the read notice, post-edit bytes, applied warning, post-undo bytes and undo mixture clause per case. (#175)
+
+* **test:** await the xxhash seam in the three hashing specs added by #197, so a pure spec cannot reach its first digest before the async wasm init settles on a cold runner (#202)
 
 ## [1.2.7] - 2026-11-24
 
