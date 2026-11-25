@@ -21,7 +21,7 @@ import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
 
 import { initHasher } from "../../src/hashline/hash-assign.js";
-import { loadHashStore, shutdownHashStore, type UndoRecord } from "../../src/hash-store.js";
+import { loadHashStore, shutdownHashStore } from "../../src/hash-store.js";
 import { getUndo, saveUndo } from "../../src/undo-edit.js";
 import { snapshotHashFor } from "../../src/snapshot-store/lineage-store.js";
 import { hashStorePath } from "../../src/store-tenancy.js";
@@ -196,10 +196,7 @@ describe("old rows — the two columns carrying NULL mean 'no mixture'", () => {
       // `addColumnIfMissing` ran, which is why no destructive step is needed.
       shutdownHashStore();
       const raw = new DatabaseSync(hashStorePath(cwd));
-      raw.exec(
-        "UPDATE undo SET effective_ending = NULL, pre_image_mixed = NULL; " +
-          "UPDATE file_undo SET effective_ending = NULL, pre_image_mixed = NULL;",
-      );
+      raw.exec("UPDATE file_undo SET effective_ending = NULL, pre_image_mixed = NULL;");
       raw.close();
 
       const entry = await withWorkspace(cwd, () => getUndo(path));
@@ -265,13 +262,13 @@ describe("staleness — the comparison uses the ending the restore writes", () =
   });
 });
 
-describe("corruption — a bad new column heals the pair", () => {
-  it("a non-numeric pre_image_mixed reads as a miss and deletes both rows", async () => {
+describe("corruption — a bad new column heals the row", () => {
+  it("a non-numeric pre_image_mixed reads as a miss and deletes the row", async () => {
     await withTempDir("undo-eol-heal-", async (dir) => {
       const path = join(dir, "a.txt");
       const content = "a\nb\n";
       const resultContent = "A\nb\n";
-      const legacy: UndoRecord = {
+      const record = {
         content,
         bom: "",
         ending: "\n",
@@ -279,8 +276,8 @@ describe("corruption — a bad new column heals the pair", () => {
         resultContent,
       };
       const store = await loadHashStore();
-      store.writeUndoPair(path, legacy, { ...legacy, snapshotHash: snapshotHashFor(content) });
-      // The pair is readable before the corruption, so the miss below is the healing, not a
+      store.writeUndo(path, { ...record, snapshotHash: snapshotHashFor(content) });
+      // The row is readable before the corruption, so the miss below is the healing, not a
       // generation refusal or a missing row.
       expect(store.getFileUndo(path)?.snapshotHash).toBe(snapshotHashFor(content));
 
@@ -292,7 +289,7 @@ describe("corruption — a bad new column heals the pair", () => {
       expect(await getUndo(path)).toBeUndefined();
       const reloaded = await loadHashStore();
       expect(reloaded.getFileUndo(path)).toBeUndefined();
-      // The healing is pair-wide: the legacy row does not survive its v7 half.
+      // The heal is row-wide: the corrupt row is deleted, so both readers miss.
       expect(reloaded.getUndo(path)).toBeUndefined();
     });
   });
@@ -313,7 +310,7 @@ describe("upgrade — an old store gains the pair on BOTH tables", () => {
     await withTempDir("undo-eol-upgrade-", async (dir) => {
       const path = join(dir, "a.txt");
       const content = "a\nb\n";
-      const legacy: UndoRecord = {
+      const record = {
         content,
         bom: "",
         ending: "\r\n",
@@ -321,12 +318,12 @@ describe("upgrade — an old store gains the pair on BOTH tables", () => {
         resultContent: "A\nb\n",
       };
       const store = await loadHashStore();
-      store.writeUndoPair(path, legacy, { ...legacy, snapshotHash: snapshotHashFor(content) });
+      store.writeUndo(path, { ...record, snapshotHash: snapshotHashFor(content) });
       shutdownHashStore();
 
-      // Model the pre-#171 store: neither half carries the pair. DROP COLUMN takes the values with
-      // it, so whatever the open path re-adds arrives NULL on the existing rows — which is exactly
-      // the upgrade state this ticket promises (no destructive migration, no version bump).
+      // Model the pre-#171 store: neither v7 row carries the pair. DROP COLUMN takes the values
+      // with it, so whatever the open path re-adds arrives NULL on the existing rows — exactly the
+      // upgrade state this ticket promises (no destructive migration here).
       const preChange = new DatabaseSync(hashStorePath());
       preChange.exec(
         "ALTER TABLE undo DROP COLUMN effective_ending; " +

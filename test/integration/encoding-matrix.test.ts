@@ -336,13 +336,10 @@ describe("pre-change row with both migration columns NULL", () => {
         const { harness } = await readAndEdit(cwd, "u16-old.txt", "вторая", "другая");
         const abs = await resolveTarget(path);
 
-        // Model the pre-change row: the pair exists but carries no verdict on either half.
+        // Model the pre-change row: it exists but carries no verdict.
         shutdownHashStore();
         const raw = new DatabaseSync(hashStorePath(cwd));
-        raw.exec(
-          "UPDATE undo SET migrated_from = NULL, migrated_from_bom = NULL; " +
-            "UPDATE file_undo SET migrated_from = NULL, migrated_from_bom = NULL;",
-        );
+        raw.exec("UPDATE file_undo SET migrated_from = NULL, migrated_from_bom = NULL;");
         raw.close();
 
         await withWorkspace(cwd, async () => {

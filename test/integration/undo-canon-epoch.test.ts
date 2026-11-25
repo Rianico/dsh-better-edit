@@ -57,11 +57,14 @@ async function plantPinnedUndo(
     lineHashesPure(POST),
     POST,
   );
-  store.writeUndoPair(
-    abs,
-    { content: PRE, bom: "", ending: "\n", hashes, resultContent: POST },
-    { content: PRE, bom: "", ending: "\n", hashes, resultContent: POST, snapshotHash },
-  );
+  store.writeUndo(abs, {
+    content: PRE,
+    bom: "",
+    ending: "\n",
+    hashes,
+    resultContent: POST,
+    snapshotHash,
+  });
 }
 
 interface ActiveLease {

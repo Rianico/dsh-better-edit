@@ -50,7 +50,6 @@ export {
   loadHashStore,
   shutdownHashStore,
   withStore,
-  findSnapshotPathsByHashes,
   upsertSnapshotFor,
 } from "../hash-store.js";
 export type { HashStore, InternalHashStore, ServedPersistence } from "../hash-store.js";

@@ -33,6 +33,10 @@ All notable changes to this project will be documented in this file.
 
 * **docs:** record the batch-rejection grammar in `GLOSSARY.md`, amend ADR-0046 (arity-one rule, the assembler seam, the no-op-loop lease, the `edits[i]` deviation from upstream, the served-prompt clause), align the README error tables, and add the served-prompt clause the model reads (spec #214). (#225)
 
+### Code Refactoring
+
+* **store:** consolidate live v7 state onto `served_session_meta` and retire the v6 shells from every v7 path. Store version 9 copies `served` → `served_session_meta` once inside the existing transaction (`ON CONFLICT DO NOTHING`); `served`, `snapshots` and `undo` keep their exact v6 shapes and are no longer read, written, swept or pruned by v7. The legacy snapshot adapter and JSON importer are removed, `file_undo` is the sole undo row, and prepared statements drop 43 → 33 (ADR-0055, closes #222).
+
 ## [1.3.0] - 2026-11-25
 
 ### Bug Fixes

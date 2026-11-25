@@ -1,20 +1,16 @@
 /**
- * The `snapshots` table's sole owner: storage detail (SQL, row encoding,
- * hash validation, busy-retry) hides behind a narrow domain interface.
+ * The snapshot family's module entry.
  *
- * Read-order contract: `get` returns hashes in line order (index *i* ↔ line
- * *i* + 1). Storage is a line-ordered JSON array by construction; this module
- * never sorts, reverses or otherwise reorders it — a normalized read must
- * preserve the same contract (e.g. `ORDER BY line_number ASC`).
- * The retention surface (`vacuum.ts`) is re-exported here so consumers never reach into the
- * eviction module directly. See also `./vacuum.js` for the policy constants.
+ * The legacy `snapshots` table is a v6 SHELL (ADR-0016): kept at its exact v6 shape for a v6
+ * process, never read or written by v7. v7 snapshots live in `file_snapshots` + `line_lineage`
+ * (`./lineage-store.js`), keyed by the epoch-carrying `snapshot_hash`.
+ *
+ * This entry owns the hash-list validator shared by every row family and the retention surface
+ * (`./vacuum.js`, re-exported so consumers never reach into the eviction module directly). See
+ * `./vacuum.js` for the policy constants.
  * @module dsh-better-edit/snapshot-store
  */
-import { DatabaseSync } from "node:sqlite";
-import { contentChecksum, HASH_RE } from "../hashline/hash-assign.js";
-import { snapshotEpochPrefix } from "./epoch.js";
-import { splitLines } from "../utils.js";
-import { withBusyRetry } from "../store-retry.js";
+import { HASH_RE } from "../hashline/hash-assign.js";
 
 export function isValidHashList(value: unknown): value is string[] {
   if (!Array.isArray(value)) return false;
@@ -22,86 +18,6 @@ export function isValidHashList(value: unknown): value is string[] {
     if (typeof hash !== "string" || !HASH_RE.test(hash)) return false;
   }
   return true;
-}
-
-/**
- * The legacy row key: the current snapshot epoch's prefix plus the content checksum. The shape is
- * owned by `./epoch.js`; this row and every v7 family key are minted the same way (ADR-0054).
- */
-function cacheKey(checksum: string): string {
-  return snapshotEpochPrefix() + checksum;
-}
-
-export interface SnapshotStore {
-  get(path: string, content: string, deleteCorrupt?: boolean): string[] | undefined;
-  upsert(path: string, checksum: string, lineCount: number, hashes: string[]): void;
-  allHashes(): { path: string; hashes: string }[];
-  deleteByPath(path: string): void;
-  findPathsContaining(hashes: string[]): string[];
-}
-
-export function createSnapshotStore(db: DatabaseSync): SnapshotStore {
-  const getStmt = db.prepare(
-    "SELECT hashes FROM snapshots WHERE path = ? AND checksum = ? AND line_count = ?",
-  );
-  const allHashesStmt = db.prepare("SELECT path, hashes FROM snapshots");
-  const delStmt = db.prepare("DELETE FROM snapshots WHERE path = ?");
-  const upsertStmt = db.prepare(
-    "INSERT INTO snapshots (path, checksum, line_count, hashes, updated_at) VALUES (?, ?, ?, ?, ?) " +
-      "ON CONFLICT(path) DO UPDATE SET checksum = excluded.checksum, line_count = excluded.line_count, hashes = excluded.hashes, updated_at = excluded.updated_at",
-  );
-  return {
-    get(path, content, deleteCorrupt = true) {
-      const checksum = cacheKey(contentChecksum(content));
-      const lineCount = splitLines(content).length;
-      const row = getStmt.get(path, checksum, lineCount) as Record<string, unknown> | undefined;
-      if (!row) return undefined;
-      try {
-        const parsed = JSON.parse(row.hashes as string);
-        if (isValidHashList(parsed)) return parsed;
-        if (deleteCorrupt) {
-          withBusyRetry(() => {
-            delStmt.run(path);
-          });
-        }
-        return undefined;
-      } catch (error) {
-        if (deleteCorrupt) {
-          withBusyRetry(() => {
-            delStmt.run(path);
-          });
-        }
-        return undefined;
-      }
-    },
-    upsert(path, checksum, lineCount, hashes) {
-      withBusyRetry(() => {
-        upsertStmt.run(path, cacheKey(checksum), lineCount, JSON.stringify(hashes), Date.now());
-      });
-    },
-    allHashes() {
-      return allHashesStmt.all() as { path: string; hashes: string }[];
-    },
-    deleteByPath(path) {
-      withBusyRetry(() => {
-        delStmt.run(path);
-      });
-    },
-    findPathsContaining(hashes) {
-      const rows = allHashesStmt.all() as { path: string; hashes: string }[];
-      const matches: string[] = [];
-      for (const row of rows) {
-        try {
-          const parsed = JSON.parse(row.hashes) as unknown;
-          if (!isValidHashList(parsed)) continue;
-          if (hashes.every((h) => parsed.includes(h))) matches.push(row.path);
-        } catch (error) {
-          console.warn(error); // unparseable row → skip it
-        }
-      }
-      return matches;
-    },
-  };
 }
 
 // WHY: the vacuum budgets are the store's retention policy constants, so the module entry keeps

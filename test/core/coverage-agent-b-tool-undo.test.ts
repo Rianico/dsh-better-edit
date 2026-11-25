@@ -124,14 +124,17 @@ describe("undo-edit persistence coverage", () => {
       // directly write invalid record via hash-store
       const { loadHashStore } = await import("../../src/hash-store.js");
       const store = await loadHashStore();
-      // Frozen v6 row (legacy-only, invalid ending): the pair face cannot express it.
+      // A v7 row with a CURRENT pin but an invalid ending: the pin gate passes, so the ending gate
+      // is the one under test.
+      const { snapshotHashFor } = await import("../../src/snapshot-store/lineage-store.js");
+      const pin = snapshotHashFor("a");
       const { DatabaseSync: RawSync } = await import("node:sqlite");
       const raw = new RawSync(hashStorePath());
       raw
         .prepare(
-          "INSERT OR REPLACE INTO undo (path, content, bom, ending, hashes, result_content, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+          "INSERT OR REPLACE INTO file_undo (path, content, bom, ending, hashes, result_content, snapshot_hash, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
         )
-        .run(abs, "a", "", "invalid", JSON.stringify(["h"]), "b", Date.now());
+        .run(abs, "a", "", "invalid", JSON.stringify(["h"]), "b", pin, Date.now());
       raw.close();
       const loaded = await getUndo(abs);
       expect(loaded).toBeUndefined();

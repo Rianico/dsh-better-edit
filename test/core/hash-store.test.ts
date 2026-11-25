@@ -15,7 +15,6 @@ import { loadServed, recordServed, recordServedTruncated } from "../../src/sessi
 import { snapshotHashFor } from "../../src/snapshot-store/lineage-store.js";
 import { DomainError } from "../../src/domain-errors.js";
 import { HASH_STORE_VERSION } from "../../src/constants.js";
-import { ANCHOR_GENERATION, CANON_VERSION } from "../../src/hashline/hash-assign.js";
 import { initHasher, contentChecksum } from "../../src/hashline/hash-assign.js";
 import { splitLines } from "../../src/utils.js";
 import type { UndoEntry } from "../../src/undo-edit.js";
@@ -35,9 +34,16 @@ const COUNT_SQL = {
   line_lineage: "SELECT COUNT(*) AS n FROM line_lineage",
   line_id_counters: "SELECT COUNT(*) AS n FROM line_id_counters",
   served_leases: "SELECT COUNT(*) AS n FROM served_leases",
+  served_session_meta: "SELECT COUNT(*) AS n FROM served_session_meta",
 } as const;
 
 type CountTable = keyof typeof COUNT_SQL;
+
+/**
+ * The released v6 `undo` column list. An open backfills the additive #171/#191 pair onto the
+ * shell, so a "byte-identical v6 row" claim is made on exactly these columns.
+ */
+const V6_UNDO_SELECT = "SELECT path, content, bom, ending, hashes, result_content, updated_at";
 
 /** The two undo-side tables that carry a `path` column. */
 const COUNT_BY_PATH_SQL = {
@@ -82,22 +88,13 @@ function sqlitePath(home: string): string {
   return join(configHome(home), "hash-store.sqlite");
 }
 
-function legacyPath(home: string): string {
-  return join(configHome(home), "hash-store.json");
-}
-
 async function put(
   store: HashStore,
   path: string,
   content: string,
   hashes: string[],
 ): Promise<void> {
-  store.upsertSnapshot(path, contentChecksum(content), splitLines(content).length, hashes);
-}
-
-async function writeLegacyStore(home: string, snapshots: unknown): Promise<void> {
-  await mkdir(configHome(home), { recursive: true });
-  await writeFile(legacyPath(home), JSON.stringify({ version: 1, snapshots }), "utf-8");
+  store.upsertSnapshot(path, contentChecksum(content), splitLines(content).length, hashes, content);
 }
 
 describe("hash-store — loadHashStore", () => {
@@ -118,147 +115,6 @@ describe("hash-store — loadHashStore", () => {
   });
 });
 
-describe("hash-store — migration from legacy hash-store.json", () => {
-  it("imports valid legacy snapshot rows and renames the file to .bak (rows are old-canon, so they rebuild on next read)", async () => {
-    await withTempHome(async (home) => {
-      await writeLegacyStore(home, {
-        "/valid.ts": { content: "ok\n", hashes: ["ABC"] },
-        "/also.ts": { content: "good\nmore\n", hashes: ["XYZ", "QWE"] },
-      });
-
-      const store = await loadHashStore();
-
-      expect(store.getSnapshot("/valid.ts", "ok\n")).toBeUndefined();
-      expect(store.getSnapshot("/also.ts", "good\nmore\n")).toBeUndefined();
-      expect(existsSync(legacyPath(home))).toBe(false);
-      expect(existsSync(`${legacyPath(home)}.bak`)).toBe(true);
-    });
-  });
-
-  it("drops structurally invalid legacy entries, imports valid rows (old-canon, rebuilt on next read)", async () => {
-    await withTempHome(async (home) => {
-      await writeLegacyStore(home, {
-        "/valid.ts": { content: "ok\n", hashes: ["ABC"] },
-        "/missing-hashes.ts": { content: "x\n" },
-        "/null-content.ts": { content: null, hashes: ["DEF"] },
-        "/hashes-not-array.ts": { content: "y\n", hashes: "not-an-array" },
-        "/hash-not-string.ts": { content: "z\n", hashes: [42] },
-        "/also-valid.ts": { content: "good\n", hashes: ["XYZ"] },
-      });
-
-      const store = await loadHashStore();
-
-      expect(store.getSnapshot("/valid.ts", "ok\n")).toBeUndefined();
-      expect(store.getSnapshot("/also-valid.ts", "good\n")).toBeUndefined();
-      expect(store.getSnapshot("/missing-hashes.ts", "x\n")).toBeUndefined();
-      expect(store.getSnapshot("/null-content.ts", "")).toBeUndefined();
-      expect(store.getSnapshot("/hashes-not-array.ts", "y\n")).toBeUndefined();
-      expect(store.getSnapshot("/hash-not-string.ts", "z\n")).toBeUndefined();
-      const paths = store.allKnownPaths().map((r) => r.path);
-      expect(paths).toEqual(expect.arrayContaining(["/valid.ts", "/also-valid.ts"]));
-    });
-  });
-
-  it("skips legacy snapshots with duplicate hashes so they re-hash on next read", async () => {
-    await withTempHome(async (home) => {
-      await writeLegacyStore(home, {
-        "/dup.ts": { content: "a\nb\n", hashes: ["AAA", "AAA"] },
-        "/valid.ts": { content: "ok\n", hashes: ["ABC"] },
-      });
-
-      const store = await loadHashStore();
-
-      expect(store.getSnapshot("/dup.ts", "a\nb\n")).toBeUndefined();
-      expect(store.getSnapshot("/valid.ts", "ok\n")).toBeUndefined();
-    });
-  });
-
-  it("skips legacy snapshots with malformed hashes so they re-hash on next read", async () => {
-    await withTempHome(async (home) => {
-      await writeLegacyStore(home, {
-        "/bad.ts": { content: "x\n", hashes: ["ZZ", "ZZZZ"] },
-        "/valid.ts": { content: "ok\n", hashes: ["ABC"] },
-      });
-
-      const store = await loadHashStore();
-
-      expect(store.getSnapshot("/bad.ts", "x\n")).toBeUndefined();
-      expect(store.getSnapshot("/valid.ts", "ok\n")).toBeUndefined();
-    });
-  });
-
-  it("ignores a legacy snapshots field that is an array", async () => {
-    await withTempHome(async (home) => {
-      await writeLegacyStore(home, ["not-an-object"]);
-
-      const store = await loadHashStore();
-      const paths = store.allKnownPaths();
-      expect(paths).toEqual([]);
-    });
-  });
-
-  it("does not run migration when no legacy file exists", async () => {
-    await withTempHome(async (home) => {
-      const store = await loadHashStore();
-      expect(store.allKnownPaths()).toEqual([]);
-      expect(existsSync(`${legacyPath(home)}.bak`)).toBe(false);
-    });
-  });
-
-  it("migrates only once even if legacy file reappears", async () => {
-    await withTempHome(async (home) => {
-      await writeLegacyStore(home, {
-        "/one.ts": { content: "1\n", hashes: ["AAA"] },
-      });
-      const first = await loadHashStore();
-      expect(first.getSnapshot("/one.ts", "1\n")).toBeUndefined();
-      expect(existsSync(`${legacyPath(home)}.bak`)).toBe(true);
-
-      await writeFile(
-        legacyPath(home),
-        JSON.stringify({
-          version: 1,
-          snapshots: { "/two.ts": { content: "2\n", hashes: ["BBB"] } },
-        }),
-        "utf-8",
-      );
-
-      const second = await loadHashStore();
-      expect(second.getSnapshot("/two.ts", "2\n")).toBeUndefined();
-      expect(second.getSnapshot("/one.ts", "1\n")).toBeUndefined();
-    });
-  });
-
-  it("imports legacy rows through the snapshot module with identical messages and the .bak rename", async () => {
-    await withTempHome(async (home) => {
-      await writeLegacyStore(home, {
-        "/valid.ts": { content: "ok\n", hashes: ["ABC"] },
-        "/dup.ts": { content: "a\nb\n", hashes: ["AAA", "AAA"] },
-        "/bad.ts": { content: "x\n", hashes: ["ZZ"] },
-      });
-      const warnings: unknown[][] = [];
-      const spy = vi.spyOn(console, "warn").mockImplementation((...args: unknown[]) => {
-        warnings.push(args);
-      });
-      const store = await loadHashStore();
-      spy.mockRestore();
-
-      const paths = store.allKnownPaths().map((row) => row.path);
-      expect(paths).toEqual(expect.arrayContaining(["/valid.ts"]));
-      expect(paths).not.toContain("/dup.ts");
-      expect(paths).not.toContain("/bad.ts");
-      expect(store.getSnapshot("/valid.ts", "ok\n")).toBeUndefined();
-      expect(existsSync(legacyPath(home))).toBe(false);
-      expect(existsSync(`${legacyPath(home)}.bak`)).toBe(true);
-      const messages = warnings.map((args) => String(args[0]));
-      expect(messages).toContain(
-        "Skipped legacy snapshot with duplicate hashes for /dup.ts; it will be re-hashed on next read.",
-      );
-      expect(messages.filter((message) => message.includes("/bad.ts"))).toEqual([]);
-    });
-  });
-});
-
 describe("hash-store — concurrency (issue #10)", () => {
   it("preserves snapshots written by a separately-opened connection", async () => {
     await withTempHome(async (home) => {
@@ -269,16 +125,19 @@ describe("hash-store — concurrency (issue #10)", () => {
         defensive: false,
       } as any);
       const ins = second.prepare(
-        "INSERT INTO snapshots (path, checksum, line_count, hashes, updated_at) VALUES (?, ?, ?, ?, ?)",
+        "INSERT INTO file_snapshots (path, snapshot_hash, line_count, created_at, committed) VALUES (?, ?, ?, ?, 1)",
+      );
+      const insLine = second.prepare(
+        "INSERT INTO line_lineage (snapshot_id, line_number, line_id, canon_hash, anchor) VALUES (?, 1, 1, 'ck', ?)",
       );
       second.exec("BEGIN IMMEDIATE");
-      ins.run(
+      const inserted = ins.run(
         "/b.ts",
-        `${CANON_VERSION}:${ANCHOR_GENERATION}:${contentChecksum("beta\n")}`,
+        snapshotHashFor("beta\n"),
         splitLines("beta\n").length,
-        JSON.stringify(["BBC"]),
         Date.now(),
-      );
+      ) as { lastInsertRowid: number | bigint };
+      insLine.run(Number(inserted.lastInsertRowid), "BBC");
       second.exec("COMMIT");
       second.close();
       shutdownHashStore();
@@ -310,7 +169,7 @@ describe("hash-store — incremental writes (issue #8)", () => {
     await withTempHome(async () => {
       const store = await loadHashStore();
       const bigContent = "x\n".repeat(2000);
-      const bigHashes = bigContent.split("\n").map((_, i) => i.toString(16).padStart(3, "0"));
+      const bigHashes = splitLines(bigContent).map((_, i) => i.toString(16).padStart(3, "0"));
       await put(store, "/big.ts", bigContent, bigHashes);
       const before = store.getSnapshot("/big.ts", bigContent);
 
@@ -346,7 +205,7 @@ describe("hash-store — corrupt database recovery", () => {
       const store = await loadHashStore();
       expect(store.getSnapshot("/x.ts", "a\n")).toBeUndefined();
 
-      store.upsertSnapshot("/x.ts", contentChecksum("a\n"), 1, ["AAA"]);
+      store.upsertSnapshot("/x.ts", contentChecksum("a\n"), 1, ["AAA"], "a\n");
       expect(store.getSnapshot("/x.ts", "a\n")).toEqual(["AAA"]);
     });
   });
@@ -367,7 +226,7 @@ describe("hash-store — corrupt database recovery", () => {
   it("keeps working when the store is healthy", async () => {
     await withTempHome(async (home) => {
       const store = await loadHashStore();
-      store.upsertSnapshot("/p.ts", contentChecksum("b\n"), 1, ["BBB"]);
+      store.upsertSnapshot("/p.ts", contentChecksum("b\n"), 1, ["BBB"], "b\n");
       expect(store.getSnapshot("/p.ts", "b\n")).toEqual(["BBB"]);
       const entries = await readdir(configHome(home));
       expect(entries.some((name) => name.includes(".corrupt-"))).toBe(false);
@@ -559,75 +418,37 @@ describe("hash-store — schema versioning", () => {
     await withTempHome(async (home) => {
       const store = await loadHashStore();
       await put(store, "/p.ts", "x\n", ["XYZ"]);
-      insertV6Undo(home, "/u.ts", {
-        content: "old",
-        bom: "",
-        ending: "\n",
-        hashes: ["UVW"],
-        resultContent: "new",
-      });
-      (await loadServedStore()).upsertServed("sessionA", "/p.ts", JSON.stringify(["XYZ"]));
       shutdownHashStore();
 
       const db = new DatabaseSync(sqlitePath(home), {
         defensive: false,
       } as any);
-      const stored = db
-        .prepare("SELECT checksum, line_count FROM snapshots WHERE path = ?")
-        .get("/p.ts") as {
-        checksum: string;
-        line_count: number;
-      };
-      const snapRow = db
-        .prepare("SELECT hashes FROM snapshots WHERE path = ? AND checksum = ? AND line_count = ?")
-        .get("/p.ts", stored.checksum, stored.line_count) as { hashes: string };
-      expect(JSON.parse(snapRow.hashes)).toEqual(["XYZ"]);
-      const undoRow = db
-        .prepare("SELECT content, bom, ending, hashes, result_content FROM undo WHERE path = ?")
-        .get("/u.ts") as {
-        content: string;
-        bom: string;
-        ending: string;
-        hashes: string;
-        result_content: string;
-      };
-      expect(undoRow).toMatchObject({
-        content: "old",
-        bom: "",
-        ending: "\n",
-        result_content: "new",
-      });
-      expect(JSON.parse(undoRow.hashes)).toEqual(["UVW"]);
-      const servedRow = db
-        .prepare(
-          "SELECT hashes, reported, retired, canons, cards FROM served WHERE session_id = ? AND path = ?",
-        )
-        .get("sessionA", "/p.ts") as { hashes: string };
-      expect(JSON.parse(servedRow.hashes)).toEqual(["XYZ"]);
-
       const now = Date.now();
+      // v6 write shapes — all three shells still prepare and run on a v9 store.
       db.prepare(
         "INSERT INTO snapshots (path, checksum, line_count, hashes, updated_at) VALUES (?, ?, ?, ?, ?) " +
           "ON CONFLICT(path) DO UPDATE SET checksum = excluded.checksum, line_count = excluded.line_count, " +
           "hashes = excluded.hashes, updated_at = excluded.updated_at",
       ).run("/v.ts", "ck", 2, JSON.stringify(["AAA", "BBB"]), now);
-      const vSnap = db
-        .prepare("SELECT hashes FROM snapshots WHERE path = ? AND checksum = ? AND line_count = ?")
-        .get("/v.ts", "ck", 2) as { hashes: string };
-      expect(JSON.parse(vSnap.hashes)).toEqual(["AAA", "BBB"]);
       db.prepare(
         "INSERT INTO undo (path, content, bom, ending, hashes, result_content, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?) " +
           "ON CONFLICT(path) DO UPDATE SET content = excluded.content, bom = excluded.bom, ending = excluded.ending, " +
           "hashes = excluded.hashes, result_content = excluded.result_content, updated_at = excluded.updated_at",
       ).run("/v2.ts", "c", "", "\n", JSON.stringify(["DDD"]), "r", now);
-      const vUndo = db
-        .prepare("SELECT content, bom, ending, hashes, result_content FROM undo WHERE path = ?")
-        .get("/v2.ts") as { hashes: string };
-      expect(JSON.parse(vUndo.hashes)).toEqual(["DDD"]);
       db.prepare(
         "INSERT INTO served (session_id, path, hashes, updated_at) VALUES (?, ?, ?, ?) " +
           "ON CONFLICT(session_id, path) DO UPDATE SET hashes = excluded.hashes, updated_at = excluded.updated_at",
       ).run("sessionB", "/v.ts", JSON.stringify(["CCC"]), now);
+
+      // v6 read shapes.
+      const vSnap = db
+        .prepare("SELECT hashes FROM snapshots WHERE path = ? AND checksum = ? AND line_count = ?")
+        .get("/v.ts", "ck", 2) as { hashes: string };
+      expect(JSON.parse(vSnap.hashes)).toEqual(["AAA", "BBB"]);
+      const vUndo = db.prepare("SELECT hashes FROM undo WHERE path = ?").get("/v2.ts") as {
+        hashes: string;
+      };
+      expect(JSON.parse(vUndo.hashes)).toEqual(["DDD"]);
       const vServed = db
         .prepare(
           "SELECT hashes, reported, retired, canons, cards FROM served WHERE session_id = ? AND path = ?",
@@ -647,33 +468,20 @@ describe("hash-store — schema versioning", () => {
         cards: null,
       });
 
+      // v6 delete shapes.
       db.prepare("DELETE FROM snapshots WHERE path = ?").run("/v.ts");
       db.prepare("DELETE FROM undo WHERE path = ?").run("/v2.ts");
       db.prepare("DELETE FROM served WHERE session_id = ?").run("sessionB");
       db.prepare("DELETE FROM served WHERE path = ?").run("/v.ts");
-      expect(
-        (
-          db.prepare("SELECT COUNT(*) AS n FROM snapshots WHERE path = ?").get("/v.ts") as {
-            n: number;
-          }
-        ).n,
-      ).toBe(0);
-      expect(
-        (db.prepare("SELECT COUNT(*) AS n FROM undo WHERE path = ?").get("/v2.ts") as { n: number })
-          .n,
-      ).toBe(0);
-      expect(
-        (
-          db.prepare("SELECT COUNT(*) AS n FROM served WHERE session_id = ?").get("sessionB") as {
-            n: number;
-          }
-        ).n,
-      ).toBe(0);
-      expect((db.prepare("SELECT COUNT(*) AS n FROM snapshots").get() as { n: number }).n).toBe(1);
+      expect((db.prepare("SELECT COUNT(*) AS n FROM snapshots").get() as { n: number }).n).toBe(0);
+      expect((db.prepare("SELECT COUNT(*) AS n FROM undo").get() as { n: number }).n).toBe(0);
+      expect((db.prepare("SELECT COUNT(*) AS n FROM served").get() as { n: number }).n).toBe(0);
       db.close();
 
+      // The replay wrote only shells: v7 readers stay on their own families.
       const reopened = await loadHashStore();
       expect(reopened.getSnapshot("/p.ts", "x\n")).toEqual(["XYZ"]);
+      expect(reopened.getUndo("/v2.ts")).toBeUndefined();
       shutdownHashStore();
     });
   });
@@ -686,7 +494,7 @@ describe("hash-store — schema versioning", () => {
         const db = rawConn();
         const rows = {
           snapshots: db.prepare("SELECT * FROM snapshots ORDER BY path").all(),
-          undo: db.prepare("SELECT * FROM undo ORDER BY path").all(),
+          undo: db.prepare(`${V6_UNDO_SELECT} FROM undo ORDER BY path`).all(),
           served: db.prepare("SELECT * FROM served ORDER BY session_id, path").all(),
         };
         db.close();
@@ -762,7 +570,7 @@ describe("hash-store — schema versioning", () => {
         );
       const before = {
         snapshots: fixture.prepare("SELECT * FROM snapshots ORDER BY path").all(),
-        undo: fixture.prepare("SELECT * FROM undo ORDER BY path").all(),
+        undo: fixture.prepare(`${V6_UNDO_SELECT} FROM undo ORDER BY path`).all(),
         served: fixture.prepare("SELECT * FROM served ORDER BY session_id, path").all(),
       };
       fixture.close();
@@ -770,14 +578,11 @@ describe("hash-store — schema versioning", () => {
       await loadHashStore();
       shutdownHashStore();
 
-      // #138 generation reclaim: every v6-era row is anchor-bearing under a pre-generation snapshot
-      // key (or, for `served`, under no key at all), so the open-time sweep reclaims it — a v6 anchor
-      // denotes a line this build derives differently, and replaying it would target other bytes. The
-      // SCHEMA and the v6 write path stay byte-compatible, which the cycle below asserts.
-      const reclaimed = { snapshots: [], undo: [], served: [] };
+      // ADR-0016's shell-retention contract: the open-time sweep reclaims only v7-owned state, so
+      // the v6 shells come through a v9 migration byte-identical. That is what makes a version flap
+      // survivable for an un-restarted v6 session.
       expect(before.snapshots.length).toBeGreaterThan(0);
-      expect(readAll()).toEqual(reclaimed);
-      shutdownHashStore();
+      expect(readAll()).toEqual(before);
 
       const db = rawConn();
       db.prepare(
@@ -804,10 +609,10 @@ describe("hash-store — schema versioning", () => {
       db.prepare("DELETE FROM served WHERE path = ?").run("/v.ts");
       db.close();
 
-      // ...and after a full v6 write/read/delete cycle the store is back to the reclaimed baseline:
+      // ...and after a full v6 write/read/delete cycle the shells are back to the same baseline:
       // the v6 writer's own key shapes still round-trip through their own statements.
       const after = readAll();
-      expect(after).toEqual(reclaimed);
+      expect(after).toEqual(before);
     });
   });
 
@@ -884,7 +689,7 @@ describe("hash-store — schema versioning", () => {
         );
       const before = {
         snapshots: fixture.prepare("SELECT * FROM snapshots ORDER BY path").all(),
-        undo: fixture.prepare("SELECT * FROM undo ORDER BY path").all(),
+        undo: fixture.prepare(`${V6_UNDO_SELECT} FROM undo ORDER BY path`).all(),
         served: fixture.prepare("SELECT * FROM served ORDER BY session_id, path").all(),
       };
       fixture.close();
@@ -895,19 +700,25 @@ describe("hash-store — schema versioning", () => {
       const check = new DatabaseSync(sqlitePath(home), {
         defensive: false,
       } as any);
-      // #138: the v6 rows are anchor-bearing and predate the identity generation, so the open-time
-      // sweep reclaims them. This test guards the SHELL (the columns and the v7 tables below), which
-      // the reclaim never touches.
+      // ADR-0016: the upgrade preserves the v6 shells byte-identically (the sweep reclaims only
+      // v7-owned state). This test guards the SHELL (the columns and the v7 tables below).
       expect(before.snapshots.length).toBeGreaterThan(0);
-      expect(check.prepare("SELECT * FROM snapshots ORDER BY path").all()).toEqual([]);
-      expect(check.prepare("SELECT * FROM undo ORDER BY path").all()).toEqual([]);
-      expect(check.prepare("SELECT * FROM served ORDER BY session_id, path").all()).toEqual([]);
+      expect(check.prepare("SELECT * FROM snapshots ORDER BY path").all()).toEqual(
+        before.snapshots,
+      );
+      expect(check.prepare(`${V6_UNDO_SELECT} FROM undo ORDER BY path`).all()).toEqual(before.undo);
+      expect(check.prepare("SELECT * FROM served ORDER BY session_id, path").all()).toEqual(
+        before.served,
+      );
+      // No anchor stamp was ever written, so the open-time sweep reclaims the copied served family
+      // too: every v7 table starts empty on this store.
       for (const table of [
         "file_snapshots",
         "line_id_counters",
         "line_lineage",
         "file_undo",
         "served_leases",
+        "served_session_meta",
       ]) {
         expect(countRows(check, table as CountTable)).toBe(0);
       }
@@ -989,11 +800,13 @@ describe("hash-store — schema versioning", () => {
         | { value?: string }
         | undefined;
       expect(version?.value).toBe(String(CURRENT + 1));
-      expect((check.prepare("SELECT COUNT(*) AS n FROM snapshots").get() as { n: number }).n).toBe(
-        1,
-      );
-      expect((check.prepare("SELECT COUNT(*) AS n FROM undo").get() as { n: number }).n).toBe(1);
-      expect((check.prepare("SELECT COUNT(*) AS n FROM served").get() as { n: number }).n).toBe(1);
+      // The refusal wrote nothing: each family still holds exactly the state the test seeded
+      // (a lineage snapshot, a legacy-only shell undo row the v6 client wrote, and a live meta row).
+      expect(countRows(check, "file_snapshots")).toBe(1);
+      expect(countRows(check, "undo")).toBe(1);
+      expect(countRows(check, "served_session_meta")).toBe(1);
+      expect(countRows(check, "snapshots")).toBe(0);
+      expect(countRows(check, "served")).toBe(0);
       check.close();
 
       const entries = await readdir(configHome(home));
@@ -1001,7 +814,7 @@ describe("hash-store — schema versioning", () => {
     });
   });
 
-  it("survives a v6 downgrade with v6 rows intact and v7 tables empty", async () => {
+  it("survives a v6 downgrade: v6 rows intact, live v7 rows kept, shell served copied", async () => {
     await withTempHome(async (home) => {
       const store = await loadHashStore();
       await put(store, "/p.ts", "x\n", ["XYZ"]);
@@ -1017,49 +830,40 @@ describe("hash-store — schema versioning", () => {
 
       const rawConn = (): DatabaseSync =>
         new DatabaseSync(sqlitePath(home), { defensive: false } as any);
-      const snapshotRows = (): unknown[] => {
+      const rowsOf = (table: "snapshots" | "undo" | "served"): unknown[] => {
         const db = rawConn();
-        const rows = db.prepare("SELECT * FROM snapshots ORDER BY path").all();
+        // Literal allowlist above: no caller data reaches this SQL.
+        const rows = db.prepare(`SELECT * FROM ${table}`).all();
         db.close();
         return rows;
       };
-      const beforeSnapshots = snapshotRows();
-      const beforeUndo = ((): unknown[] => {
-        const db = rawConn();
-        const rows = db.prepare("SELECT * FROM undo ORDER BY path").all();
-        db.close();
-        return rows;
-      })();
-      const beforeServed = ((): unknown[] => {
-        const db = rawConn();
-        const rows = db.prepare("SELECT * FROM served ORDER BY session_id, path").all();
-        db.close();
-        return rows;
-      })();
 
-      // Simulate a v6 process that opened the store and re-stamped it.
       const stampDb = rawConn();
+      // A v6 process re-stamps the store and writes its own shell rows (it never names v7 tables).
       stampDb.prepare("UPDATE meta SET value = '6' WHERE key = 'version'").run();
+      stampDb
+        .prepare("INSERT INTO served (session_id, path, hashes, updated_at) VALUES (?, ?, ?, ?)")
+        .run("v6-session", "/v6.ts", JSON.stringify(["V6A"]), Date.now());
       stampDb.close();
+
+      const beforeSnapshots = rowsOf("snapshots");
+      const beforeUndo = rowsOf("undo");
+      const beforeServed = rowsOf("served");
 
       await loadHashStore();
       shutdownHashStore();
 
       const check = rawConn();
+      // The v6 shells are untouched — the v6 client's own rows come through byte-identical.
       expect(check.prepare("SELECT * FROM snapshots ORDER BY path").all()).toEqual(beforeSnapshots);
       expect(check.prepare("SELECT * FROM undo ORDER BY path").all()).toEqual(beforeUndo);
       expect(check.prepare("SELECT * FROM served ORDER BY session_id, path").all()).toEqual(
         beforeServed,
       );
-      for (const table of [
-        "file_snapshots",
-        "line_id_counters",
-        "line_lineage",
-        "file_undo",
-        "served_leases",
-      ]) {
-        expect(countRows(check, table as CountTable)).toBe(0);
-      }
+      // Live v7 rows survive the downgrade bump; the re-migration copies the shell's new key.
+      expect(countRows(check, "file_snapshots")).toBe(1);
+      expect(countRows(check, "served_session_meta")).toBe(2);
+      expect(countRows(check, "file_undo")).toBe(0);
       const version = check.prepare("SELECT value FROM meta WHERE key = 'version'").get() as
         | { value?: string }
         | undefined;
@@ -1120,16 +924,15 @@ describe("hash-store — schema versioning", () => {
         | { value?: string }
         | undefined;
       expect(version?.value).toBe("999");
-      const snapshots = check.prepare("SELECT COUNT(*) AS n FROM snapshots").get() as {
-        n: number;
-      };
-      expect(snapshots.n).toBe(1);
-      const undos = check.prepare("SELECT COUNT(*) AS n FROM undo").get() as { n: number };
-      expect(undos.n).toBe(1);
-      const servedRow = check
-        .prepare("SELECT hashes FROM served WHERE session_id = ? AND path = ?")
+      // Every seeded row is still where its OWNER put it: lineage for the snapshot, the legacy
+      // shell undo row from the v6 client, and the live served mirror on the meta table.
+      expect(countRows(check, "file_snapshots")).toBe(1);
+      expect(countRows(check, "undo")).toBe(1);
+      expect(countRows(check, "served_session_meta")).toBe(1);
+      const metaRow = check
+        .prepare("SELECT hashes FROM served_session_meta WHERE session_id = ? AND file_path = ?")
         .get("sessionA", "/p.ts") as { hashes: string };
-      expect(JSON.parse(servedRow.hashes)).toEqual(["XYZ"]);
+      expect(JSON.parse(metaRow.hashes)).toEqual(["XYZ"]);
       check.close();
 
       const entries = await readdir(configHome(home));
@@ -1141,10 +944,11 @@ describe("hash-store — schema versioning", () => {
     await withTempHome(async (home) => {
       const store = await loadHashStore();
       await put(store, "/p.ts", "x\n", ["XYZ"]);
-      insertV6Undo(home, "/u.ts", {
+      const { saveUndo } = await import("../../src/undo-edit.js");
+      await saveUndo("/u.ts", {
         content: "old",
         bom: "",
-        ending: "\n",
+        originalEnding: "\n",
         hashes: ["UVW"],
         resultContent: "new",
       });
@@ -1179,10 +983,11 @@ describe("hash-store — schema versioning", () => {
     await withTempHome(async (home) => {
       const store = await loadHashStore();
       await put(store, "/p.ts", "x\n", ["XYZ"]);
-      insertV6Undo(home, "/u.ts", {
+      const { saveUndo } = await import("../../src/undo-edit.js");
+      await saveUndo("/u.ts", {
         content: "old",
         bom: "",
-        ending: "\n",
+        originalEnding: "\n",
         hashes: ["UVW"],
         resultContent: "new",
       });
@@ -1221,7 +1026,7 @@ describe("hash-store — schema versioning", () => {
       const readAll = async (): Promise<{ snapshots: number; undo: boolean; served: unknown }> => {
         const current = await loadHashStore();
         return {
-          snapshots: current.allSnapshotHashes().length,
+          snapshots: current.latestLineageFor("/p.ts")?.length ?? 0,
           undo: current.getUndo("/u.ts") !== undefined,
           served: (await loadServedStore()).getServed("sessionA", "/p.ts"),
         };
@@ -1236,11 +1041,15 @@ describe("hash-store — schema versioning", () => {
       armTrigger();
       await expect(loadHashStore()).rejects.toThrow(/blocked/);
       expect(stamp()).toBe("5");
-      expect(count("snapshots")).toBe(1);
-      expect(count("undo")).toBe(1);
+      // The blocked migration wrote nothing: the lineage/meta rows are where the v7 writer left
+      // them, and the legacy shells are untouched (they never held this store's live state).
+      expect(count("file_snapshots")).toBe(1);
+      expect(count("file_undo")).toBe(1);
+      expect(count("snapshots")).toBe(0);
+      expect(count("undo")).toBe(0);
       const blockedServed = raw();
       const blockedRow = blockedServed
-        .prepare("SELECT hashes FROM served WHERE session_id = ? AND path = ?")
+        .prepare("SELECT hashes FROM served_session_meta WHERE session_id = ? AND file_path = ?")
         .get("sessionA", "/p.ts") as { hashes: string };
       blockedServed.close();
       expect(JSON.parse(blockedRow.hashes)).toEqual(["XYZ"]);
@@ -1387,7 +1196,7 @@ describe("hash-store — pre-retired upgrade preserves rows", () => {
         )
         .run("sessionA", "/p.ts", JSON.stringify(["XYZ"]), null, null, null, null, now);
       const beforeSnapshots = fixture.prepare("SELECT * FROM snapshots ORDER BY path").all();
-      const beforeUndo = fixture.prepare("SELECT * FROM undo ORDER BY path").all();
+      const beforeUndo = fixture.prepare(`${V6_UNDO_SELECT} FROM undo ORDER BY path`).all();
       fixture.close();
 
       await loadHashStore();
@@ -1406,11 +1215,12 @@ describe("hash-store — pre-retired upgrade preserves rows", () => {
         (column) => column.name,
       );
       expect(cols).toContain("retired");
-      // #138: v6 anchor-bearing rows are reclaimed; the shell columns above are the survivor.
+      // ADR-0016: the column backfill is non-destructive AND the shells are untouched — the v6
+      // rows come through the upgrade byte-identically.
       expect(beforeSnapshots.length).toBeGreaterThan(0);
       expect(beforeUndo.length).toBeGreaterThan(0);
-      expect(check.prepare("SELECT * FROM snapshots ORDER BY path").all()).toEqual([]);
-      expect(check.prepare("SELECT * FROM undo ORDER BY path").all()).toEqual([]);
+      expect(check.prepare("SELECT * FROM snapshots ORDER BY path").all()).toEqual(beforeSnapshots);
+      expect(check.prepare(`${V6_UNDO_SELECT} FROM undo ORDER BY path`).all()).toEqual(beforeUndo);
       check.close();
     });
   });
@@ -1472,12 +1282,11 @@ describe("hash-store — v7 snapshot materialization", () => {
     });
   });
 
-  it("(e) lineage and legacy agree byte-for-byte on the same content", async () => {
+  it("(e) the v7 snapshot key names the current epoch and has no legacy mirror", async () => {
     await withTempHome(async (home) => {
       const store = await loadHashStore();
       store.upsertSnapshot("/e.ts", contentChecksum("x\n"), 1, ["XYZ"], "x\n");
       expect(store.getSnapshot("/e.ts", "x\n")).toEqual(["XYZ"]);
-      // Key oracle, both sides: the v7 snapshot hash names the legacy checksum.
       const keyed = new DatabaseSync(sqlitePath(home), {
         defensive: false,
       } as any);
@@ -1488,14 +1297,12 @@ describe("hash-store — v7 snapshot materialization", () => {
           v: string;
         }
       ).v;
-      const checksum = (
-        keyed.prepare("SELECT checksum AS v FROM snapshots WHERE path = ?").get("/e.ts") as {
-          v: string;
-        }
-      ).v;
-      expect(snapHash).toBe(checksum);
+      expect(snapHash).toBe(snapshotHashFor("x\n"));
+      // The v6 shell is not a mirror: v7 never writes it, so there is no fallback to disagree with.
+      expect(countRows(keyed, "snapshots")).toBe(0);
       keyed.close();
       shutdownHashStore();
+      // Remove the whole v7 family out of band: the read is a miss. No legacy row resurrects it.
       const raw = new DatabaseSync(sqlitePath(home), {
         defensive: false,
       } as any);
@@ -1508,7 +1315,7 @@ describe("hash-store — v7 snapshot materialization", () => {
       raw.prepare("DELETE FROM file_snapshots WHERE path = ?").run("/e.ts");
       raw.close();
       const reopened = await loadHashStore();
-      expect(reopened.getSnapshot("/e.ts", "x\n")).toEqual(["XYZ"]);
+      expect(reopened.getSnapshot("/e.ts", "x\n")).toBeUndefined();
     });
   });
 
@@ -1554,7 +1361,7 @@ describe("hash-store — v7 snapshot materialization", () => {
     });
   });
 
-  it("#5 snapshots ↔ file_snapshots: a lineage fault rolls back the legacy row and the v7 family", async () => {
+  it("#5 a lineage fault rolls back the whole v7 family (there is no legacy row to pair with)", async () => {
     await withTempHome(async (home) => {
       const store = await loadHashStore();
       const setup = new DatabaseSync(sqlitePath(home), {
@@ -1570,13 +1377,9 @@ describe("hash-store — v7 snapshot materialization", () => {
       expect(() =>
         store.upsertSnapshot("/g.ts", contentChecksum(content), 2, hashes, content),
       ).toThrow("injected");
-      // Pair #5 row contract: neither side of the pair may survive the fault.
+      // Pair contract: the whole v7 family is one unit — neither row may survive the fault, and
+      // the v6 shell was never a side of it.
       const pairCheck = new DatabaseSync(sqlitePath(home), { defensive: false } as any);
-      const legacyRows = (
-        pairCheck.prepare("SELECT COUNT(*) AS n FROM snapshots WHERE path = ?").get("/g.ts") as {
-          n: number;
-        }
-      ).n;
       const v7Rows = (
         pairCheck
           .prepare("SELECT COUNT(*) AS n FROM file_snapshots WHERE path = ?")
@@ -1593,7 +1396,6 @@ describe("hash-store — v7 snapshot materialization", () => {
           .get("/g.ts") as { n: number }
       ).n;
       pairCheck.close();
-      expect(legacyRows).toBe(0);
       expect(v7Rows).toBe(0);
       expect(lineageRows).toBe(0);
       // Same-connection proof: drop the trigger, then the same live handle must
@@ -1963,12 +1765,11 @@ it("getFileUndo propagates infrastructure failures instead of healing the pair a
         threw = true;
       }
 
-      // The heal must NOT have run — a live pair is still on disk. A blanket catch would
-      // have deleted both sides here.
+      // The heal must NOT have run — a live row is still on disk. A blanket catch would
+      // have deleted it here.
       failFileUndoGet = false;
       const check = new DatabaseSync(sqlitePath(home));
-      const count = (table: CountByPathTable) => countRowsByPath(check, table, path);
-      const pair = { fileUndo: count("file_undo"), undo: count("undo") };
+      const pair = { fileUndo: countRowsByPath(check, "file_undo", path) };
       check.close();
 
       // Through the real route the edit aborts rather than reporting a write whose prior
@@ -1987,7 +1788,7 @@ it("getFileUndo propagates infrastructure failures instead of healing the pair a
       expect({ threw, value, pair, after }).toEqual({
         threw: true,
         value: undefined,
-        pair: { fileUndo: 1, undo: 1 },
+        pair: { fileUndo: 1 },
         after: false,
       });
     } finally {
@@ -2019,23 +1820,20 @@ it("restore puts the prior v7 row back content-identical with a fresh pair stamp
     });
     expect(second.persisted).toBe(true);
     await second.restore();
-    // One-stamp rule: restore rewrites the pair now — content byte-identical,
-    // stamp refreshed once for both sides (P1: no per-side clocks).
+    // One-stamp rule: restore rewrites the row now — content byte-identical,
+    // stamp refreshed once (the store owns the clock).
     const after = internal.getFileUndo("/r.ts");
     expect({ ...after, updatedAt: 0 }).toEqual({ ...before, updatedAt: 0 });
     expect(after?.updatedAt ?? 0).toBeGreaterThanOrEqual(before?.updatedAt ?? 0);
     expect((await loadHashStore()).getUndo("/r.ts")).toBeDefined();
     const check = new DatabaseSync(sqlitePath(home));
-    const legacyTs = (
-      check.prepare("SELECT updated_at AS v FROM undo WHERE path = ?").get("/r.ts") as { v: number }
-    ).v;
     const v7Ts = (
       check.prepare("SELECT updated_at AS v FROM file_undo WHERE path = ?").get("/r.ts") as {
         v: number;
       }
     ).v;
     check.close();
-    expect(legacyTs).toBe(v7Ts);
+    expect(after?.updatedAt).toBe(v7Ts);
   });
 });
 
@@ -2052,8 +1850,7 @@ it("v7 write fault leaves the previous undo readable and reports failure", async
     };
     const t0 = Date.now();
     expect((await saveUndo("/f.ts", v1)).persisted).toBe(true);
-    const legacyBefore = (await loadHashStore()).getUndo("/f.ts");
-    const v7Before = internal.getFileUndo("/f.ts");
+    const before = internal.getFileUndo("/f.ts");
     const setup = new DatabaseSync(sqlitePath(home), {
       defensive: false,
     } as any);
@@ -2070,32 +1867,22 @@ it("v7 write fault leaves the previous undo readable and reports failure", async
       resultContent: "three\n",
     });
     expect(failed.persisted).toBe(false);
-    // Both rows atomic: the previous undo reads back byte-identical.
-    expect((await loadHashStore()).getUndo("/f.ts")).toEqual(legacyBefore);
-    expect(internal.getFileUndo("/f.ts")).toEqual(v7Before);
-    // One stamp, reconciled: the impl stamps both rows once per write, so after a
-    // failed write both must still carry the same sane stamp from the good save.
+    // One row, atomic: the previous undo reads back byte-identical.
+    expect((await loadHashStore()).getUndo("/f.ts")).toBeDefined();
+    expect(internal.getFileUndo("/f.ts")).toEqual(before);
     const check = new DatabaseSync(sqlitePath(home), {
       defensive: false,
     } as any);
-    const legacyTs = (
-      check.prepare("SELECT updated_at AS v FROM undo WHERE path = ?").get("/f.ts") as {
-        v: number;
-      }
-    ).v;
     const v7Ts = (
       check.prepare("SELECT updated_at AS v FROM file_undo WHERE path = ?").get("/f.ts") as {
         v: number;
       }
     ).v;
-    expect(legacyTs).toBe(v7Ts);
     check.close();
     const now = Date.now();
-    for (const ts of [legacyTs, v7Ts]) {
-      expect(typeof ts).toBe("number");
-      expect(ts).toBeGreaterThanOrEqual(t0);
-      expect(ts).toBeLessThanOrEqual(now);
-    }
+    expect(typeof v7Ts).toBe("number");
+    expect(v7Ts).toBeGreaterThanOrEqual(t0);
+    expect(v7Ts).toBeLessThanOrEqual(now);
   });
 });
 
@@ -2128,7 +1915,7 @@ it("pre-v7 NULL pin reads as null and is overwritten cleanly", async () => {
   });
 });
 
-it("corrupt legacy undo row heals both rows", async () => {
+it("a corrupt undo row heals (one row, one contract)", async () => {
   await withTempHome(async (home) => {
     const { saveUndo, getUndo } = await import("../../src/undo-edit.js");
     await saveUndo("/h.ts", {
@@ -2144,12 +1931,13 @@ it("corrupt legacy undo row heals both rows", async () => {
     const raw = new DatabaseSync(sqlitePath(home), {
       defensive: false,
     } as any);
-    raw.prepare("UPDATE undo SET ending = ? WHERE path = ?").run("??", "/h.ts");
+    raw.prepare("UPDATE file_undo SET ending = ? WHERE path = ?").run("??", "/h.ts");
     raw.close();
     await loadHashStore();
     expect(await getUndo("/h.ts")).toBeUndefined();
     const reopened = (await loadHashStore()) as unknown as InternalHashStore;
     expect(reopened.getFileUndo("/h.ts")).toBeUndefined();
+    expect(reopened.getUndo("/h.ts")).toBeUndefined();
   });
 });
 
@@ -2184,20 +1972,16 @@ it("store getUndo heals both rows on bad JSON", async () => {
     });
     const store = await loadHashStore();
     const raw = new DatabaseSync(sqlitePath(home));
-    raw.prepare("UPDATE undo SET hashes = ? WHERE path = ?").run("{not json", "/s1.ts");
+    raw.prepare("UPDATE file_undo SET hashes = ? WHERE path = ?").run("{not json", "/s1.ts");
     raw.close();
     expect(store.getUndo("/s1.ts")).toBeUndefined();
     const internal = store as unknown as InternalHashStore;
     expect(internal.getFileUndo("/s1.ts")).toBeUndefined();
     const check = new DatabaseSync(sqlitePath(home));
-    const legacy = check.prepare("SELECT COUNT(*) AS n FROM undo WHERE path = ?").get("/s1.ts") as {
-      n: number;
-    };
     const v7 = check
       .prepare("SELECT COUNT(*) AS n FROM file_undo WHERE path = ?")
       .get("/s1.ts") as { n: number };
     check.close();
-    expect(legacy.n).toBe(0);
     expect(v7.n).toBe(0);
   });
 });
@@ -2214,20 +1998,16 @@ it("store getUndo heals both rows on non-hashlist", async () => {
     });
     const store = await loadHashStore();
     const raw = new DatabaseSync(sqlitePath(home));
-    raw.prepare("UPDATE undo SET hashes = ? WHERE path = ?").run('["ZZ"]', "/s2.ts");
+    raw.prepare("UPDATE file_undo SET hashes = ? WHERE path = ?").run('["ZZ"]', "/s2.ts");
     raw.close();
     expect(store.getUndo("/s2.ts")).toBeUndefined();
     const internal = store as unknown as InternalHashStore;
     expect(internal.getFileUndo("/s2.ts")).toBeUndefined();
     const check = new DatabaseSync(sqlitePath(home));
-    const legacy = check.prepare("SELECT COUNT(*) AS n FROM undo WHERE path = ?").get("/s2.ts") as {
-      n: number;
-    };
     const v7 = check
       .prepare("SELECT COUNT(*) AS n FROM file_undo WHERE path = ?")
       .get("/s2.ts") as { n: number };
     check.close();
-    expect(legacy.n).toBe(0);
     expect(v7.n).toBe(0);
   });
 });
@@ -2249,16 +2029,11 @@ it("store getFileUndo heals both rows on bad JSON", async () => {
     const internal = store as unknown as InternalHashStore;
     expect(internal.getFileUndo("/s3.ts")).toBeUndefined();
     expect(store.getUndo("/s3.ts")).toBeUndefined();
-    expect(store.getUndo("/s3.ts")).toBeUndefined();
     const check = new DatabaseSync(sqlitePath(home));
-    const legacy = check.prepare("SELECT COUNT(*) AS n FROM undo WHERE path = ?").get("/s3.ts") as {
-      n: number;
-    };
     const v7 = check
       .prepare("SELECT COUNT(*) AS n FROM file_undo WHERE path = ?")
       .get("/s3.ts") as { n: number };
     check.close();
-    expect(legacy.n).toBe(0);
     expect(v7.n).toBe(0);
   });
 });
@@ -2281,21 +2056,17 @@ it("store getFileUndo heals both rows on non-hashlist", async () => {
     expect(internal.getFileUndo("/s4.ts")).toBeUndefined();
     expect(store.getUndo("/s4.ts")).toBeUndefined();
     const check = new DatabaseSync(sqlitePath(home));
-    const legacy = check.prepare("SELECT COUNT(*) AS n FROM undo WHERE path = ?").get("/s4.ts") as {
-      n: number;
-    };
     const v7 = check
       .prepare("SELECT COUNT(*) AS n FROM file_undo WHERE path = ?")
       .get("/s4.ts") as { n: number };
     check.close();
-    expect(legacy.n).toBe(0);
     expect(v7.n).toBe(0);
   });
 });
 
-it("prune keeps the pair when any side is newer than the cutoff", async () => {
+it("prune keeps the undo row when its stamp is newer than the cutoff", async () => {
   await withTempHome(async (home) => {
-    // Load first: the open-time TTL janitor must never see the forced stamps below.
+    // Load first: the open-time TTL janitor must never see the forced stamp below.
     const store = await loadHashStore();
     const { saveUndo } = await import("../../src/undo-edit.js");
     await saveUndo("/split.ts", {
@@ -2306,19 +2077,17 @@ it("prune keeps the pair when any side is newer than the cutoff", async () => {
       resultContent: "b\n",
     });
     const raw = new DatabaseSync(sqlitePath(home));
-    // Divergent stamps, no wall clock: legacy older than the cutoff, v7 newer.
-    raw.prepare("UPDATE undo SET updated_at = ? WHERE path = ?").run(1, "/split.ts");
+    // Forced stamp, no wall clock: newer than the cutoff.
     raw.prepare("UPDATE file_undo SET updated_at = ? WHERE path = ?").run(200, "/split.ts");
     raw.close();
     store.pruneUndoOlderThan(150);
-    // Newest-side rule: the young v7 row keeps the pair alive — never one side alone.
     expect(store.getUndo("/split.ts")).toBeDefined();
     const internal = store as unknown as InternalHashStore;
     expect(internal.getFileUndo("/split.ts")).toBeDefined();
   });
 });
 
-it("prune deletes the pair when both sides are older than the cutoff", async () => {
+it("prune deletes the undo row when its stamp is older than the cutoff", async () => {
   await withTempHome(async (home) => {
     const store = await loadHashStore();
     const { saveUndo } = await import("../../src/undo-edit.js");
@@ -2330,7 +2099,6 @@ it("prune deletes the pair when both sides are older than the cutoff", async () 
       resultContent: "b\n",
     });
     const raw = new DatabaseSync(sqlitePath(home));
-    raw.prepare("UPDATE undo SET updated_at = ? WHERE path = ?").run(1, "/old.ts");
     raw.prepare("UPDATE file_undo SET updated_at = ? WHERE path = ?").run(1, "/old.ts");
     raw.close();
     store.pruneUndoOlderThan(150);
@@ -2338,14 +2106,10 @@ it("prune deletes the pair when both sides are older than the cutoff", async () 
     const internal = store as unknown as InternalHashStore;
     expect(internal.getFileUndo("/old.ts")).toBeUndefined();
     const check = new DatabaseSync(sqlitePath(home));
-    const legacy = check
-      .prepare("SELECT COUNT(*) AS n FROM undo WHERE path = ?")
-      .get("/old.ts") as { n: number };
     const v7 = check
       .prepare("SELECT COUNT(*) AS n FROM file_undo WHERE path = ?")
       .get("/old.ts") as { n: number };
     check.close();
-    expect(legacy.n).toBe(0);
     expect(v7.n).toBe(0);
   });
 });
@@ -2419,7 +2183,6 @@ it("pruneMissing deletes the whole v7 lineage family for missing paths", async (
       expect(count("SELECT COUNT(*) AS n FROM line_id_counters WHERE path = ?", gone)).toBe(0);
       expect(count("SELECT COUNT(*) AS n FROM served_leases WHERE file_path = ?", gone)).toBe(0);
     }
-    expect(count("SELECT COUNT(*) AS n FROM undo WHERE path = ?", "/gone-fam.ts")).toBe(0);
     expect(count("SELECT COUNT(*) AS n FROM file_undo WHERE path = ?", "/gone-fam.ts")).toBe(0);
     expect(count("SELECT COUNT(*) AS n FROM file_snapshots WHERE path = ?", keep)).toBe(1);
     expect(lineageRows(keep)).toBe(2);
@@ -2432,49 +2195,13 @@ it("pruneMissing deletes the whole v7 lineage family for missing paths", async (
   });
 });
 
-it("legacy write fault leaves the previous undo readable and reports failure", async () => {
-  await withTempHome(async (home) => {
-    const { saveUndo } = await import("../../src/undo-edit.js");
-    const internal = (await loadHashStore()) as unknown as InternalHashStore;
-    const v1: UndoEntry = {
-      content: "one\n",
-      bom: "",
-      originalEnding: "\n",
-      hashes: ["H01"],
-      resultContent: "two\n",
-    };
-    expect((await saveUndo("/g.ts", v1)).persisted).toBe(true);
-    const legacyBefore = (await loadHashStore()).getUndo("/g.ts");
-    const v7Before = internal.getFileUndo("/g.ts");
-    const setup = new DatabaseSync(sqlitePath(home), {
-      defensive: false,
-    } as any);
-    setup.exec(
-      "CREATE TRIGGER t2b_undo_legacy BEFORE UPDATE ON undo " +
-        "BEGIN SELECT RAISE(ABORT, 'injected'); END;",
-    );
-    setup.close();
-    const failed = await saveUndo("/g.ts", {
-      content: "two\n",
-      bom: "",
-      originalEnding: "\n",
-      hashes: ["H02"],
-      resultContent: "three\n",
-    });
-    expect(failed.persisted).toBe(false);
-    // Rollback proven in the legacy direction: both rows read back byte-identical.
-    expect((await loadHashStore()).getUndo("/g.ts")).toEqual(legacyBefore);
-    expect(internal.getFileUndo("/g.ts")).toEqual(v7Before);
-  });
-});
-
 it("pruneMissing rolls back every table when a later delete faults", async () => {
   await withTempHome(async (home) => {
     const store = await loadHashStore();
     const { saveUndo } = await import("../../src/undo-edit.js");
-    // Missing path with a full family; `served` is last in the prune order, and
-    // legacy `snapshots` is the FIRST family — both sides of the sweep are covered.
-    store.upsertSnapshot("/gone-rb.ts", contentChecksum("a\n"), 1, ["H01"]);
+    // Missing path with a full family; `file_undo` and the served meta row follow lineage in the
+    // prune order, so a fault on the LAST delete must roll back every earlier one.
+    store.upsertSnapshot("/gone-rb.ts", contentChecksum("a\n"), 1, ["H01"], "a\n");
     (store as unknown as InternalHashStore).commitSnapshot({
       path: "/gone-rb.ts",
       content: "a\n",
@@ -2494,14 +2221,13 @@ it("pruneMissing rolls back every table when a later delete faults", async () =>
       defensive: false,
     } as any);
     setup.exec(
-      "CREATE TRIGGER t3a_served_fault BEFORE DELETE ON served " +
+      "CREATE TRIGGER t3a_served_fault BEFORE DELETE ON served_session_meta " +
         "BEGIN SELECT RAISE(ABORT, 'injected'); END;",
     );
     setup.close();
     await expect(store.pruneMissing()).rejects.toThrow("injected");
     const check = new DatabaseSync(sqlitePath(home));
     const count = (sql: string, p: string) => (check.prepare(sql).get(p) as { n: number }).n;
-    expect(count("SELECT COUNT(*) AS n FROM snapshots WHERE path = ?", "/gone-rb.ts")).toBe(1);
     expect(count("SELECT COUNT(*) AS n FROM file_snapshots WHERE path = ?", "/gone-rb.ts")).toBe(1);
     expect(
       count(
@@ -2515,14 +2241,15 @@ it("pruneMissing rolls back every table when a later delete faults", async () =>
     expect(
       count("SELECT COUNT(*) AS n FROM served_leases WHERE file_path = ?", "/gone-rb.ts"),
     ).toBe(1);
-    expect(count("SELECT COUNT(*) AS n FROM served WHERE path = ?", "/gone-rb.ts")).toBe(1);
-    expect(count("SELECT COUNT(*) AS n FROM undo WHERE path = ?", "/gone-rb.ts")).toBe(1);
+    expect(
+      count("SELECT COUNT(*) AS n FROM served_session_meta WHERE file_path = ?", "/gone-rb.ts"),
+    ).toBe(1);
     expect(count("SELECT COUNT(*) AS n FROM file_undo WHERE path = ?", "/gone-rb.ts")).toBe(1);
     check.close();
   });
 });
 
-it("reopen janitor prunes both undo sides when the TTL elapsed", async () => {
+it("reopen janitor prunes the undo row when the TTL elapsed", async () => {
   await withTempHome(async (home) => {
     await mkdir(configHome(home), { recursive: true });
     await writeFile(
@@ -2542,7 +2269,6 @@ it("reopen janitor prunes both undo sides when the TTL elapsed", async () => {
       resultContent: "b\n",
     });
     const raw = new DatabaseSync(sqlitePath(home));
-    raw.prepare("UPDATE undo SET updated_at = ? WHERE path = ?").run(1000, oldPath);
     raw.prepare("UPDATE file_undo SET updated_at = ? WHERE path = ?").run(1000, oldPath);
     raw.close();
     shutdownHashStore();
@@ -2550,19 +2276,15 @@ it("reopen janitor prunes both undo sides when the TTL elapsed", async () => {
     const store = await loadHashStore();
     expect(store.getUndo(oldPath)).toBeUndefined();
     const check = new DatabaseSync(sqlitePath(home));
-    const legacy = check.prepare("SELECT COUNT(*) AS n FROM undo WHERE path = ?").get(oldPath) as {
-      n: number;
-    };
     const v7 = check.prepare("SELECT COUNT(*) AS n FROM file_undo WHERE path = ?").get(oldPath) as {
       n: number;
     };
     check.close();
-    expect(legacy.n).toBe(0);
     expect(v7.n).toBe(0);
   });
 });
 
-it("reopen janitor keeps the pair when the v7 side is newer than the TTL", async () => {
+it("reopen janitor keeps the undo row when its stamp is newer than the TTL", async () => {
   await withTempHome(async (home) => {
     await mkdir(configHome(home), { recursive: true });
     await writeFile(
@@ -2581,8 +2303,7 @@ it("reopen janitor keeps the pair when the v7 side is newer than the TTL", async
       resultContent: "b\n",
     });
     const raw = new DatabaseSync(sqlitePath(home));
-    raw.prepare("UPDATE undo SET updated_at = ? WHERE path = ?").run(1000, splitPath);
-    // Young side stamped explicitly: newer than the cutoff by an hour margin, and the
+    // Young stamp named explicitly: newer than the cutoff by an hour margin, and the
     // exact value the row contract below is asserted against.
     const youngStamp = Date.now();
     raw.prepare("UPDATE file_undo SET updated_at = ? WHERE path = ?").run(youngStamp, splitPath);
@@ -2590,7 +2311,6 @@ it("reopen janitor keeps the pair when the v7 side is newer than the TTL", async
     // Force the reopen: the janitor (and its newest-side TTL rule) runs on open.
     shutdownHashStore();
     const store = await loadHashStore();
-    // Newest-side rule at open: the young v7 row keeps the legacy row alive.
     expect(store.getUndo(splitPath)).toBeDefined();
     // Row contract, field by field, with concrete expected values — no COUNT and no regex
     // on a hash prefix. `getFileUndo` is on the public HashStore face, so proving the
@@ -2612,40 +2332,6 @@ it("reopen janitor keeps the pair when the v7 side is newer than the TTL", async
   });
 });
 
-it("writeUndoPair rejects both-absent with a TypeError and writes no rows", async () => {
-  await withTempHome(async () => {
-    const store = await loadHashStore();
-    const { saveUndo } = await import("../../src/undo-edit.js");
-    const path = "/both-absent.ts";
-    // Seed a real pair so "writes nothing" is observable as a row contract.
-    await saveUndo(path, {
-      content: "a\n",
-      bom: "",
-      originalEnding: "\n",
-      hashes: ["H01"],
-      resultContent: "b\n",
-    });
-    const beforeUndo = store.getUndo(path);
-    const beforeV7 = store.getFileUndo(path);
-    expect(beforeUndo).toBeDefined();
-    expect(beforeV7).toBeDefined();
-
-    // Typed error, not a bare Error: this face already uses TypeError for contract
-    // violations (the anchor-reservation and canons guards).
-    expect(() => store.writeUndoPair(path, undefined, undefined)).toThrow(TypeError);
-    expect(() => store.writeUndoPair(path, undefined, undefined)).toThrow(
-      "writeUndoPair requires at least one side; use deleteUndoPair to clear the pair",
-    );
-
-    // Row contract, not a COUNT: both sides are byte-identical to the seeded pair...
-    expect(store.getUndo(path)).toEqual(beforeUndo);
-    expect(store.getFileUndo(path)).toEqual(beforeV7);
-    // ...and a never-written path stays absent, so the guard ran before any write.
-    expect(store.getUndo("/never-written.ts")).toBeUndefined();
-    expect(store.getFileUndo("/never-written.ts")).toBeUndefined();
-  });
-});
-
 it("deleteByPath removes only the lineage family and leaves the other families intact", async () => {
   await withTempHome(async (_home) => {
     const internal = (await loadHashStore()) as unknown as InternalHashStore;
@@ -2655,7 +2341,7 @@ it("deleteByPath removes only the lineage family and leaves the other families i
     const content = "alpha\nbeta\n";
     const hashes = ["AAA", "AAB"];
 
-    internal.upsertSnapshot(path, contentChecksum(content), 2, hashes);
+    internal.upsertSnapshot(path, contentChecksum(content), 2, hashes, content);
     internal.commitSnapshot({ path, content, hashes });
     await saveUndo(path, {
       content: "old\n",
@@ -2682,19 +2368,18 @@ it("deleteByPath removes only the lineage family and leaves the other families i
     expect(internal.getUndo(path)).toEqual(beforeUndo);
     expect(internal.getFileUndo(path)).toEqual(beforeV7);
     expect(await loadServed("narrow-session", path)).toEqual(["AAA"]);
-    // The legacy snapshot row survives, so getSnapshot falls back to it.
-    expect(internal.getSnapshot(path, content)).toEqual(hashes);
+    // The lineage family was the ONLY snapshot source, so the read is a miss now.
+    expect(internal.getSnapshot(path, content)).toBeUndefined();
   });
 });
 
-it("getSnapshot falls back to valid legacy anchors when the lineage family is corrupt", async () => {
+it("getSnapshot is a miss when the lineage family is corrupt (no legacy fallback)", async () => {
   await withTempHome(async (home) => {
     const internal = (await loadHashStore()) as unknown as InternalHashStore;
     const path = "/fallback.ts";
     const content = "alpha\nbeta\n";
     const hashes = ["AAA", "AAB"];
-    internal.upsertSnapshot(path, contentChecksum(content), 2, hashes);
-    internal.commitSnapshot({ path, content, hashes });
+    internal.upsertSnapshot(path, contentChecksum(content), 2, hashes, content);
 
     // Corrupt the lineage family: right row count, non-sequential line_number.
     const db = new DatabaseSync(sqlitePath(home));
@@ -2706,8 +2391,7 @@ it("getSnapshot falls back to valid legacy anchors when the lineage family is co
     shutdownHashStore();
 
     const reopened = await loadHashStore();
-    // The shape guard rejects the corrupt lineage and falls through to snapshotStore.get,
-    // which returns the valid legacy anchors. No throw.
-    expect(reopened.getSnapshot(path, content)).toEqual(hashes);
+    // The shape guard rejects the corrupt lineage, and there is no other source: a miss.
+    expect(reopened.getSnapshot(path, content)).toBeUndefined();
   });
 });

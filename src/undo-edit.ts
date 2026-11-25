@@ -9,40 +9,22 @@
  */
 
 import type { LineEnding } from "./edit-diff.js";
-import { loadHashStore, type FileUndoRecord, type UndoRecord } from "./hash-store.js";
+import { loadHashStore, type FileUndoRecord, type FileUndoWrite } from "./hash-store.js";
 import type { EncodingMigration } from "./file-encoding-state.js";
 import { snapshotHashFor } from "./snapshot-store/lineage-store.js";
 import { isCurrentRawAnchorGeneration, parseSnapshotEpoch } from "./snapshot-store/epoch.js";
 
 /** Load the last undo row for a path from the active store, if any. */
-async function readUndo(path: string): Promise<UndoRecord | undefined> {
-  const store = await loadHashStore();
-  return store.getUndo(path);
-}
-
-/** Persist the undo rows (legacy + v7 snapshot pin) for a path to the active store. */
-async function writeUndo(path: string, entry: UndoRecord): Promise<void> {
-  const store = await loadHashStore();
-  store.writeUndoPair(path, entry, {
-    content: entry.content,
-    bom: entry.bom,
-    ending: entry.ending,
-    hashes: entry.hashes,
-    resultContent: entry.resultContent,
-    snapshotHash: snapshotHashFor(entry.content),
-    // Same pair property on both halves (#171): the store falls back to `ending` when absent.
-    effectiveEnding: entry.effectiveEnding,
-    preImageMixed: entry.preImageMixed,
-    // Same pair property on both halves (#191): absent stays NULL, never a claim.
-    migratedFrom: entry.migratedFrom,
-    migratedFromBOM: entry.migratedFromBOM,
-  });
-}
-
-/** Load the v7 undo row for a path from the active store, if any. */
-async function readFileUndo(path: string): Promise<FileUndoRecord | undefined> {
+/** Load the last undo row for a path from the active store, if any. */
+async function readUndo(path: string): Promise<FileUndoRecord | undefined> {
   const store = await loadHashStore();
   return store.getFileUndo(path);
+}
+
+/** Persist the undo row (content plus the snapshot pin) for a path to the active store. */
+async function writeUndo(path: string, record: FileUndoWrite): Promise<void> {
+  const store = await loadHashStore();
+  store.writeUndo(path, record);
 }
 
 export interface UndoEntry {
@@ -86,26 +68,26 @@ export async function saveUndo(
   path: string,
   entry: UndoEntry,
 ): Promise<{ persisted: boolean; restore: () => Promise<void> }> {
-  let previous: UndoRecord | undefined;
-  let previousFileUndo: FileUndoRecord | undefined;
+  let previous: FileUndoRecord | undefined;
   try {
     previous = await readUndo(path);
-    previousFileUndo = await readFileUndo(path);
     await writeUndo(path, {
       content: entry.content,
       bom: entry.bom,
       ending: entry.originalEnding,
       hashes: entry.hashes,
       resultContent: entry.resultContent,
-      // #171: both halves record the edit's own ending and mixture flag. `=== true` reads an absent
-      // flag as 0 rather than storing undefined: the store coalesces absent to 0 anyway, so this is
-      // the same value without the nested ternary.
+      // #171: the row records the edit's own ending and mixture flag. `=== true` reads an absent
+      // flag as 0 rather than storing undefined: the store coalesces absent to 0 anyway.
       effectiveEnding: entry.effectiveEnding,
       preImageMixed: entry.preImageMixed === true ? 1 : 0,
-      // #191: the save seam's verdict rides the same pair. Absent stays undefined here; the store
-      // coalesces it to NULL ("not recorded") on both halves.
+      // #191: the save seam's verdict rides the same row. Absent stays undefined here; the store
+      // coalesces it to NULL ("not recorded").
       migratedFrom: entry.migration?.encoding,
       migratedFromBOM: entry.migration === undefined ? undefined : entry.migration.hasBOM ? 1 : 0,
+      // The pin is the undo producer's: the restore re-derives the snapshot key on the current
+      // epoch, so a canon-only-foreign pin stays usable (ADR-0054/#221).
+      snapshotHash: snapshotHashFor(entry.content),
     });
   } catch (error) {
     console.error("Failed to persist undo entry:", error);
@@ -115,9 +97,9 @@ export async function saveUndo(
     persisted: true,
     restore: async () => {
       try {
-        if (previous ?? previousFileUndo) {
+        if (previous) {
           const store = await loadHashStore();
-          store.writeUndoPair(path, previous, previousFileUndo);
+          store.writeUndo(path, previous);
         } else {
           const store = await loadHashStore();
           store.deleteUndoPair(path);
@@ -133,18 +115,16 @@ export async function saveUndo(
 export async function getUndo(path: string): Promise<UndoEntry | undefined> {
   try {
     const record = await readUndo(path);
-    if (!record) return undefined;
-    // Fail-closed anchor gate (#138, ADR-0054): the v7 pin records the epoch the stored anchors
+    // Fail-closed anchor gate (#138, ADR-0054): the pin records the epoch the stored anchors
     // were minted under. Raw anchors are a function of the raw bytes, so only the generation axis
     // invalidates them — a pin from another generation would replay anchors that denote lines this
     // build no longer derives the same way. A canon-only change leaves the stored anchors valid: the
     // restore re-materializes the snapshot under the CURRENT epoch (`upsertSnapshot` ->
-    // `commitSnapshot` recompute the key), so the pair is kept and its lease names today's canon. An
+    // `commitSnapshot` recompute the key), so the row is kept and its lease names today's canon. An
     // unparseable pin (the retired two-part shape, malformed text) has no evidence at all and stays
     // a delete. The pins carry the axes — no schema column, no migration.
-    const fileRecord = await readFileUndo(path);
-    const pinEpoch = parseSnapshotEpoch(fileRecord?.snapshotHash);
-    if (fileRecord === undefined || !isCurrentRawAnchorGeneration(pinEpoch?.anchorGeneration)) {
+    const pinEpoch = parseSnapshotEpoch(record?.snapshotHash);
+    if (record === undefined || !isCurrentRawAnchorGeneration(pinEpoch?.anchorGeneration)) {
       const store = await loadHashStore();
       store.deleteUndoPair(path);
       return undefined;

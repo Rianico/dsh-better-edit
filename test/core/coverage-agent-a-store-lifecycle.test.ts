@@ -43,7 +43,7 @@ describe("store-lifecycle coverage agent-a", () => {
     } as any;
     let servedPruneArgs: number[] = [];
     const stmts = {
-      servedPruneOlderThan: (ts: number) => servedPruneArgs.push(ts),
+      servedMetaPruneOlderThan: (ts: number) => servedPruneArgs.push(ts),
     };
     // ensure config exists
     const cfgDir = join(dir, ".dsh", "plugins", "dsh-better-edit");
@@ -68,7 +68,7 @@ describe("store-lifecycle coverage agent-a", () => {
     // different store path should trigger pruneMissing
     const store2 = { pruneMissing: vi.fn(async () => {}), vacuumSnapshots: vi.fn() } as any;
     const otherPath = join(dir, "other.sqlite");
-    await mod.onStoreOpen(otherPath, { servedPruneOlderThan: () => {} } as any, store2);
+    await mod.onStoreOpen(otherPath, { servedMetaPruneOlderThan: () => {} } as any, store2);
     expect(store2.pruneMissing).toHaveBeenCalledTimes(1);
   });
 
@@ -78,7 +78,7 @@ describe("store-lifecycle coverage agent-a", () => {
     await mkdir(cfgDir, { recursive: true });
     await writeFile(join(cfgDir, "config.yaml"), "storeDir: central\nundo_ttl_s: -1\n", "utf-8");
     const stmts = {
-      servedPruneOlderThan: () => {
+      servedMetaPruneOlderThan: () => {
         throw new Error("served fail");
       },
     };
@@ -111,7 +111,7 @@ describe("store-lifecycle coverage agent-a", () => {
     await mkdir(join(ws, ".dsh_better_edit"), { recursive: true });
     await writeFile(storePath, "", "utf-8");
     const spyWarn = vi.spyOn(console, "warn").mockImplementation(() => {});
-    const stmts = { servedPruneOlderThan: () => {} } as any;
+    const stmts = { servedMetaPruneOlderThan: () => {} } as any;
     const store = {
       pruneMissing: vi.fn(async () => {}),
       pruneUndoOlderThan: vi.fn(),
@@ -156,7 +156,7 @@ describe("store-lifecycle coverage agent-a", () => {
     await mkdir(join(ws, ".dsh_better_edit"), { recursive: true });
     await writeFile(storePath, "", "utf-8");
     const spy = vi.spyOn(console, "warn").mockImplementation(() => {});
-    const stmts = { servedPruneOlderThan: () => {} } as any;
+    const stmts = { servedMetaPruneOlderThan: () => {} } as any;
     const store = {
       pruneMissing: vi.fn(async () => {}),
       pruneUndoOlderThan: vi.fn(),

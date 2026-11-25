@@ -31,7 +31,7 @@ describe("extra store-lifecycle", () => {
     await lc.onStoreOpen(
       storePath,
       {
-        servedPruneOlderThan: (ts: number) => {
+        servedMetaPruneOlderThan: (ts: number) => {
           servedPruneArgs.push(ts);
         },
       },
@@ -130,15 +130,15 @@ describe("extra undo-edit", () => {
     expect(typeof r.persisted).toBe("boolean");
     const loaded = await mod.getUndo(p).catch(() => undefined);
     expect(loaded === undefined || typeof loaded?.content === "string").toBe(true);
-    try {
+    {
       const { DatabaseSync } = await import("node:sqlite");
       const { hashStorePath } = await import("../../src/store-tenancy.js");
       const db = new DatabaseSync(hashStorePath());
-      db.exec(`UPDATE undo SET ending='bad' WHERE path='${p.replace(/'/g, "''")}'`);
+      db.prepare("UPDATE file_undo SET ending = 'bad' WHERE path = ?").run(p);
       db.close();
       const bad = await mod.getUndo(p);
       expect(bad).toBeUndefined();
-    } catch {}
+    }
     await mod.clearUndo(p).catch(() => {});
     await rm(dir, { recursive: true, force: true });
   });
