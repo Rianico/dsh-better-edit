@@ -47,8 +47,8 @@ const FIXTURES: WarningFixtures = {
     { ref: "a.txt", anchorFrom: "aB3", anchorTo: "Zz9", batch: false, count: 2 },
   ],
   W_UNSERVED_INTERIOR: [
-    { count: 2, from: 3, to: 4 },
-    { count: 1, from: 7, to: 7 },
+    { unservedLines: [3, 4], replacedLineCount: 6 },
+    { unservedLines: [7], replacedLineCount: 9 },
   ],
   W_ENCODING_MIGRATED: [
     { path: "u16.txt", encoding: "utf16le", hasBOM: true },

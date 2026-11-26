@@ -22,6 +22,7 @@ import {
   terminatorKindsUsed,
 } from "../eol-config.js";
 import { normFromText } from "../file-view.js";
+import { isCurrentSnapshotEpoch } from "../snapshot-store/epoch.js";
 import { scanDrift, loadServed, loadServedCanons, loadRetiredAnchors } from "../session-view.js";
 import { applyEdit, resEdit, type HEdit, type NEdit } from "../hashline/anchor-pipeline.js";
 import type { LeaseSpanSource } from "../hashline/served-evidence.js";
@@ -740,6 +741,10 @@ function leaseSourceFrom(
     leaseFor: (anchor) => {
       const lease = internal.leaseFor(sessionKey, absolutePath, anchor);
       if (lease === undefined) return undefined;
+      // A lease served under a prior snapshot epoch is never honoured (ADR-0054): its `canon_hash`
+      // and paired `line_id` were written under a canon this build no longer uses, and the open-time
+      // sweep cannot cover rows written after it. Fail closed — the edit needs a fresh read.
+      if (!isCurrentSnapshotEpoch(lease.snapshotHash)) return undefined;
       return {
         lineId: lease.lineId,
         servedLineNumber: lease.lineNumber,

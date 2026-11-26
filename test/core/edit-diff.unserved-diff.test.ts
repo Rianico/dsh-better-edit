@@ -102,4 +102,19 @@ describe("genDiff unserved removed rows (#144 T3)", () => {
     expect(unservedRemovedLines).toEqual([3, 5, 10]);
     expect(diff.split("\n")).toContain(`${BLANK}l10`);
   });
+
+  it("reports the removed old-line count independently of the fold cap and the mirror", () => {
+    const hashes = TEN_HASHES();
+    const allNull: (string | null)[] = hashes.map(() => null);
+
+    const withoutMirror = genDiff(TEN, "", 2, undefined, hashes);
+    const folded = genDiff(TEN, "", 2, undefined, hashes, allNull);
+    const unchanged = genDiff(TEN, TEN, 2, undefined, hashes);
+
+    // Precondition: the renderer folds this deletion, so the count cannot be a rendered-row tally.
+    expect(10).toBeGreaterThan(DIFF_REMOVED_CAP);
+    expect(withoutMirror.removedLineCount).toBe(10);
+    expect(folded.removedLineCount).toBe(10);
+    expect(unchanged.removedLineCount).toBe(0);
+  });
 });

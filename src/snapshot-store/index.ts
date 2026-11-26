@@ -11,12 +11,8 @@
  * @module dsh-better-edit/snapshot-store
  */
 import { DatabaseSync } from "node:sqlite";
-import {
-  contentChecksum,
-  HASH_RE,
-  CANON_VERSION,
-  ANCHOR_GENERATION,
-} from "../hashline/hash-assign.js";
+import { contentChecksum, HASH_RE } from "../hashline/hash-assign.js";
+import { snapshotEpochPrefix } from "./epoch.js";
 import { splitLines } from "../utils.js";
 import { withBusyRetry } from "../store-retry.js";
 
@@ -29,13 +25,11 @@ export function isValidHashList(value: unknown): value is string[] {
 }
 
 /**
- * The row key: BOTH identity axes plus the content checksum.
- * Canon first (a canon-only change misses the cache without invalidating anchor-bearing state),
- * generation second (a generation change invalidates that state — `hash-store`'s open-time sweep
- * and the undo gate both match this prefix).
+ * The legacy row key: the current snapshot epoch's prefix plus the content checksum. The shape is
+ * owned by `./epoch.js`; this row and every v7 family key are minted the same way (ADR-0054).
  */
 function cacheKey(checksum: string): string {
-  return `${CANON_VERSION}:${ANCHOR_GENERATION}:${checksum}`;
+  return snapshotEpochPrefix() + checksum;
 }
 
 export interface SnapshotStore {

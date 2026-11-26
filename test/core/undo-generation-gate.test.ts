@@ -2,14 +2,19 @@
  * Issue #138 — anchor-bearing state is invalidated by the ANCHOR_GENERATION axis, with no schema
  * migration and no per-row generation column (the pair of the raw-byte identity change).
  *
- * The snapshot key carries `${CANON_VERSION}:${ANCHOR_GENERATION}:${checksum}`. Two reclaim paths
- * read that key prefix:
+ * The snapshot key carries `${CANON_VERSION}:${ANCHOR_GENERATION}:${checksum}`. Three paths read
+ * that key, and #221 split their questions along the two axes (ADR-0054):
  *
- *  1. the undo gate (`getUndo`) — fail-closed refusal: a pair whose v7 pin was minted under another
- *     generation is DELETED, never replayed, because replaying it would restore pre-change anchors;
+ *  1. the undo gate (`getUndo`) — fail-closed refusal on the RAW-ANCHOR axis: a pin from another
+ *     generation is DELETED, never replayed, because replaying it would restore pre-change anchors.
+ *     A canon-only change leaves the stored anchors valid, so its pin is KEPT and the restore
+ *     re-derives the snapshot key on the current epoch;
  *  2. the open-time sweep (`buildStore`) — one `BEGIN IMMEDIATE` that drops every row whose key was
- *     minted under a foreign generation, plus the rows that carry no key at all (`served`), then
- *     stamps `meta.anchor_generation` so a later open is a no-op.
+ *     minted under a foreign epoch, plus the rows that carry no key at all (`served`), then stamps
+ *     `meta.anchor_generation` so a later open is a no-op. Retention only, never validity: a row
+ *     that outlives the sweep is still refused at every reuse seam;
+ *  3. the reuse seams — `latestSnapshotStmt`, the lease source and undo's pin — ask the full epoch
+ *     for stored canon evidence and the generation alone for raw anchors.
  */
 import { describe, expect, it } from "vitest";
 import { DatabaseSync } from "node:sqlite";
@@ -17,10 +22,12 @@ import { join } from "node:path";
 import { loadHashStore, shutdownHashStore, type UndoRecord } from "../../src/hash-store.js";
 import { getUndo } from "../../src/undo-edit.js";
 import { ANCHOR_GENERATION, CANON_VERSION, contentChecksum } from "../../src/hashline/index.js";
+import { snapshotHashFor } from "../../src/snapshot-store/lineage-store.js";
 import {
-  isCurrentGenerationSnapshotHash,
-  snapshotHashFor,
-} from "../../src/snapshot-store/lineage-store.js";
+  isCurrentRawAnchorGeneration,
+  isCurrentSnapshotEpoch,
+  parseSnapshotEpoch,
+} from "../../src/snapshot-store/epoch.js";
 import { hashStorePath } from "../../src/store-tenancy.js";
 import { withTempDir } from "../support/fixtures.js";
 
@@ -38,18 +45,33 @@ function foreignPartTwoHash(content: string): string {
   return `${CANON_VERSION}:${contentChecksum(content)}`;
 }
 
-describe("isCurrentGenerationSnapshotHash — the key-prefix predicate", () => {
-  it("accepts the current canon+generation pair and refuses the retired two-part shape", () => {
-    expect(isCurrentGenerationSnapshotHash(snapshotHashFor(CONTENT))).toBe(true);
-    // A 2-part key is NOT current: a prefix-only check would accept it, the axes must both match.
-    expect(isCurrentGenerationSnapshotHash(foreignPartTwoHash(CONTENT))).toBe(false);
+describe("isCurrentSnapshotEpoch — the two-axis evidence predicate", () => {
+  it("accepts the current canon+generation pair and refuses a canon-only drift", () => {
+    expect(isCurrentSnapshotEpoch(snapshotHashFor(CONTENT))).toBe(true);
+    // A 2-part key is NOT an epoch: the axes must both be present and match.
+    expect(isCurrentSnapshotEpoch(foreignPartTwoHash(CONTENT))).toBe(false);
     const [canonAxis, generationAxis] = snapshotHashFor(CONTENT).split(":");
-    expect(isCurrentGenerationSnapshotHash(`${canonAxis}:${generationAxis}:abcd`)).toBe(true);
-    expect(isCurrentGenerationSnapshotHash(`${canonAxis}:${generationAxis}0:abcd`)).toBe(false);
-    expect(isCurrentGenerationSnapshotHash(`${canonAxis}0:${generationAxis}:abcd`)).toBe(false);
-    expect(isCurrentGenerationSnapshotHash(null)).toBe(false);
-    expect(isCurrentGenerationSnapshotHash(undefined)).toBe(false);
-    expect(isCurrentGenerationSnapshotHash("")).toBe(false);
+    expect(isCurrentSnapshotEpoch(`${canonAxis}:${generationAxis}:abcd`)).toBe(true);
+    expect(isCurrentSnapshotEpoch(`${canonAxis}:${generationAxis}0:abcd`)).toBe(false);
+    // A canon-only change still moves the epoch: stored canon evidence is not reusable across it.
+    expect(isCurrentSnapshotEpoch(`${canonAxis}0:${generationAxis}:abcd`)).toBe(false);
+    expect(isCurrentSnapshotEpoch(null)).toBe(false);
+    expect(isCurrentSnapshotEpoch(undefined)).toBe(false);
+    expect(isCurrentSnapshotEpoch("")).toBe(false);
+  });
+
+  it("keeps the raw-anchor axis for anchors, which no canon change can move", () => {
+    const [canonAxis, generationAxis] = snapshotHashFor(CONTENT).split(":");
+    expect(isCurrentRawAnchorGeneration(ANCHOR_GENERATION)).toBe(true);
+    expect(isCurrentRawAnchorGeneration(Number(generationAxis))).toBe(true);
+    expect(isCurrentRawAnchorGeneration(999)).toBe(false);
+    expect(isCurrentRawAnchorGeneration(null)).toBe(false);
+    expect(isCurrentRawAnchorGeneration(undefined)).toBe(false);
+    // The canon-only pin parses, and its generation component is what the undo gate asks.
+    expect(parseSnapshotEpoch(`${canonAxis}0:${generationAxis}:abcd`)?.anchorGeneration).toBe(
+      ANCHOR_GENERATION,
+    );
+    expect(parseSnapshotEpoch(foreignPartTwoHash(CONTENT))).toBeUndefined();
   });
 });
 
@@ -93,6 +115,38 @@ describe("undo gate — a foreign-generation pin is refused and the pair is recl
         hashes: ["AAA"],
         resultContent: "beta\n",
       });
+    });
+  });
+});
+
+describe("undo gate — stored canon evidence is fenced by the epoch, raw anchors by the generation", () => {
+  it("getUndo KEEPS a canon-only-foreign pin: its raw anchors are still current-generation", async () => {
+    await withTempDir("undo-canon-keep-", async (dir) => {
+      const path = join(dir, "a.ts");
+      const store = await loadHashStore();
+      const [canonAxis, generationAxis] = snapshotHashFor(CONTENT).split(":");
+      const canonDriftPin = `${Number(canonAxis) - 1}:${generationAxis}:${contentChecksum(CONTENT)}`;
+      store.writeUndoPair(path, LEGACY, { ...LEGACY, snapshotHash: canonDriftPin });
+
+      // The pair survives the gate: the restore re-derives the snapshot key on the current epoch.
+      expect(await getUndo(path)).toMatchObject({ content: CONTENT, hashes: ["AAA"] });
+      const reloaded = await loadHashStore();
+      expect(reloaded.getUndo(path)).toBeDefined();
+      expect(reloaded.getFileUndo(path)?.snapshotHash).toBe(canonDriftPin);
+    });
+  });
+
+  it("getUndo deletes a foreign-generation pin even when its canon matches", async () => {
+    await withTempDir("undo-generation-drift-", async (dir) => {
+      const path = join(dir, "a.ts");
+      const store = await loadHashStore();
+      const generationDriftPin = `${CANON_VERSION}:${ANCHOR_GENERATION + 1}:${contentChecksum(CONTENT)}`;
+      store.writeUndoPair(path, LEGACY, { ...LEGACY, snapshotHash: generationDriftPin });
+
+      expect(await getUndo(path)).toBeUndefined();
+      const reloaded = await loadHashStore();
+      expect(reloaded.getUndo(path)).toBeUndefined();
+      expect(reloaded.getFileUndo(path)).toBeUndefined();
     });
   });
 });
@@ -226,6 +280,56 @@ describe("open-time sweep — key-prefix reclaim of anchor-bearing rows", () => 
         )?.value,
       ).toBe(`${CANON_VERSION}:${ANCHOR_GENERATION}`);
       after.close();
+    });
+  });
+
+  it("a prior-canon row written after the open survives the sweep and is still refused at reuse", async () => {
+    await withTempDir("anchor-sweep-retention-", async () => {
+      const storePath = hashStorePath();
+      // The first open creates the schema and stamps the CURRENT epoch, so later opens are no-ops.
+      await loadHashStore();
+      shutdownHashStore();
+
+      // A concurrent mixed-version writer mints a prior-canon family AFTER the sweep ran. Nothing
+      // reclaims it until a future open whose stamp differs, so it is retained — and must still be
+      // refused as evidence: retention is not validity (ADR-0054).
+      const priorCanon = `${CANON_VERSION - 1}:${ANCHOR_GENERATION}:${contentChecksum("prior\n")}`;
+      const raw = new DatabaseSync(storePath);
+      const priorId = Number(
+        raw
+          .prepare(
+            "INSERT INTO file_snapshots (path, snapshot_hash, line_count, created_at, committed) VALUES (?, ?, 1, ?, 1)",
+          )
+          .run("/prior.ts", priorCanon, Date.now()).lastInsertRowid,
+      );
+      raw
+        .prepare(
+          "INSERT INTO line_lineage (snapshot_id, line_number, line_id, canon_hash, anchor) VALUES (?, 1, 1, '11', 'AAA')",
+        )
+        .run(priorId);
+      raw
+        .prepare(
+          "INSERT INTO served_leases (session_id, file_path, anchor, line_id, canon_hash, served_snapshot_hash, served_line_number, updated_at) VALUES ('s1', '/prior.ts', 'AAA', 1, '11', ?, 1, ?)",
+        )
+        .run(priorCanon, Date.now());
+      raw.close();
+
+      const store = await loadHashStore();
+      const after = new DatabaseSync(storePath);
+      const count = (sql: string): number => Number((after.prepare(sql).get() as { n: number }).n);
+      expect(count("SELECT COUNT(*) AS n FROM file_snapshots WHERE path = '/prior.ts'")).toBe(1);
+      expect(count("SELECT COUNT(*) AS n FROM served_leases WHERE file_path = '/prior.ts'")).toBe(
+        1,
+      );
+      after.close();
+
+      // Retained, never evidence: the read-path alignment and the identity map both decline it.
+      expect(store.latestLineageFor("/prior.ts")).toBeUndefined();
+      expect(
+        (
+          store as unknown as { positionsByIdentity(p: string, c: string): Map<number, number> }
+        ).positionsByIdentity("/prior.ts", "prior\n").size,
+      ).toBe(0);
     });
   });
 });

@@ -11,10 +11,8 @@
 import type { LineEnding } from "./edit-diff.js";
 import { loadHashStore, type FileUndoRecord, type UndoRecord } from "./hash-store.js";
 import type { EncodingMigration } from "./file-encoding-state.js";
-import {
-  isCurrentGenerationSnapshotHash,
-  snapshotHashFor,
-} from "./snapshot-store/lineage-store.js";
+import { snapshotHashFor } from "./snapshot-store/lineage-store.js";
+import { isCurrentRawAnchorGeneration, parseSnapshotEpoch } from "./snapshot-store/epoch.js";
 
 /** Load the last undo row for a path from the active store, if any. */
 async function readUndo(path: string): Promise<UndoRecord | undefined> {
@@ -136,12 +134,17 @@ export async function getUndo(path: string): Promise<UndoEntry | undefined> {
   try {
     const record = await readUndo(path);
     if (!record) return undefined;
-    // Fail-closed generation gate (#138): the v7 pin records the (canon, anchor generation) axes the
-    // stored anchors were minted under. A pin from another generation means the anchors in this pair
-    // denote lines this build no longer derives the same way, so replaying it would restore stale
-    // anchors. The pins carry the axes — no schema column, no migration.
+    // Fail-closed anchor gate (#138, ADR-0054): the v7 pin records the epoch the stored anchors
+    // were minted under. Raw anchors are a function of the raw bytes, so only the generation axis
+    // invalidates them — a pin from another generation would replay anchors that denote lines this
+    // build no longer derives the same way. A canon-only change leaves the stored anchors valid: the
+    // restore re-materializes the snapshot under the CURRENT epoch (`upsertSnapshot` ->
+    // `commitSnapshot` recompute the key), so the pair is kept and its lease names today's canon. An
+    // unparseable pin (the retired two-part shape, malformed text) has no evidence at all and stays
+    // a delete. The pins carry the axes — no schema column, no migration.
     const fileRecord = await readFileUndo(path);
-    if (fileRecord === undefined || !isCurrentGenerationSnapshotHash(fileRecord.snapshotHash)) {
+    const pinEpoch = parseSnapshotEpoch(fileRecord?.snapshotHash);
+    if (fileRecord === undefined || !isCurrentRawAnchorGeneration(pinEpoch?.anchorGeneration)) {
       const store = await loadHashStore();
       store.deleteUndoPair(path);
       return undefined;
