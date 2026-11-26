@@ -6,12 +6,6 @@
  * "this refusal shows rows" and "this refusal leases them", so a new call site could show anchors
  * it never recorded. This module owns that join: it records every failure's rows, then throws the
  * one shape the call's arity calls for.
- *
- * Arity rule: a one-item call (`total === 1`) throws the failure error itself, so the header code
- * is the actionable code and no batch vocabulary appears. A multi-item call throws one
- * `E_BATCH_ABORT` whose formatter renders the verdict and one bullet per failing item.
- *
- * Omission fails loud: rows with no recorder context throw `TypeError`, never a silent skip.
  */
 import { DomainError, type ErrorPayloadMap, type RangeCause } from "../domain-errors.js";
 import type { ServedRow } from "../hashline/anchor-pipeline.js";
@@ -76,8 +70,6 @@ export async function throwBatchRejection(args: {
   const first = failures[0];
   if (first === undefined) throw new TypeError("throwBatchRejection: failures must not be empty");
 
-  // Fail loud before recording anything: a refusal that shows rows but cannot record them would
-  // hand the model anchors it can never reuse.
   if (record === undefined) {
     for (const failure of failures) {
       const rows = carriedRows(failure);
@@ -104,7 +96,6 @@ export async function throwBatchRejection(args: {
       content: record.content,
       hashes: record.hashes,
     });
-    // Only one failing item renders the disposition; with several, each bullet owns its rows.
     if (failures.length === 1) serveNote = landed ? ROWS_SERVED_NOTE : ROWS_NOT_SERVED_NOTE;
     served.push(...rows);
     blocks.push(fmtServedRows(rows, splitLines(record.content)));

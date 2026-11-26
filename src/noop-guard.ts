@@ -12,10 +12,6 @@ type NoopLoopEntry = {
  * unchanged edit was refused for a loop it never ran (measured pre-fix:
  * session-A=1, session-A=2, session-B=3). The loop is a property of what a
  * session keeps resubmitting, not of the file.
- *
- * The key is an IDENTITY, not a second copy of the payload: the payload
- * (`noopPayloadKey`) already carries the absolute path as its first element, so
- * the entry's `payload` equality check is scoped by the same file the key names.
  */
 const noopLoopTracker = new Map<string, NoopLoopEntry>();
 

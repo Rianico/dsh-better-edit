@@ -31,7 +31,6 @@ interface OpenStoreFace {
   vacuumSnapshots(): VacuumResult;
 }
 
-// ---- throttling state (owned here) ----
 let lastPruneMsByStore = new Map<string, number>();
 let lastJanitorMs = 0;
 const PRUNE_THROTTLE_MS = 24 * 60 * 60 * 1000;
@@ -48,7 +47,6 @@ export function setStoresGetter(
   getOpenings = getO;
 }
 
-// ---- git pollution state ----
 const warnedGitWarn = new Set<string>();
 
 function gitignoreHasEntry(ws: string): boolean {
@@ -98,11 +96,9 @@ function handleGitPollution(storePath: string): void {
   } catch (error) {
     console.warn(
       `dsh-better-edit: handleGitPollution failed: ${error instanceof Error ? error.message : String(error)}`,
-    ); // best-effort, never throw at store open
+    );
   }
 }
-
-// ---- central janitor ----
 
 export async function runCentralJanitorIfDue(): Promise<void> {
   const now = Date.now();
@@ -165,7 +161,7 @@ export async function runCentralJanitorIfDue(): Promise<void> {
         try {
           totalBytes += (await stat(join(dir, file))).size;
         } catch {
-          // A missing WAL/SHM sibling is normal: the file contributes no bytes.
+          // HACK: a missing WAL/SHM sibling is normal: the file contributes no bytes
         }
       }
       infos.push({ name, dir, mtimeMs: st.mtimeMs, totalBytes });
@@ -224,7 +220,6 @@ export async function runCentralJanitorIfDue(): Promise<void> {
   }
 }
 
-// Called from hash-store openStore after db is ready
 export async function onStoreOpen(
   storePath: string,
   stmts: { servedMetaPruneOlderThan: (ts: number) => void },
@@ -232,7 +227,6 @@ export async function onStoreOpen(
 ): Promise<void> {
   handleGitPollution(storePath);
 
-  // Row TTL — always (not throttled) but cheap
   try {
     stmts.servedMetaPruneOlderThan(Date.now() - SERVED_TTL_MS);
   } catch (error) {
@@ -243,8 +237,6 @@ export async function onStoreOpen(
   try {
     const cfg = loadConfig();
     if (cfg.undo_ttl_s !== -1) {
-      // One undo row now, routed through the store face so the janitor keeps its single
-      // age-prune owner (P1).
       store.pruneUndoOlderThan(Date.now() - cfg.undo_ttl_s * 1000);
     }
   } catch (error) {
@@ -253,7 +245,6 @@ export async function onStoreOpen(
     );
   }
 
-  // pruneMissing throttled per-store 24h
   try {
     const lastPrune = lastPruneMsByStore.get(storePath) ?? 0;
     if (Date.now() - lastPrune > PRUNE_THROTTLE_MS) {
@@ -266,9 +257,6 @@ export async function onStoreOpen(
     );
   }
 
-  // Snapshot vacuum — the deterministic boundary (spec §3.6.1): on this store the open path is
-  // the only place that can reclaim a store that crashed over budget. This trigger owns the
-  // report (the single report owner is `reportVacuum`; the sweep never writes to the console).
   try {
     reportVacuum(store.vacuumSnapshots(), `store open ${storePath}`);
   } catch (error) {
@@ -286,7 +274,6 @@ export async function onSessionStart(): Promise<void> {
   await runCentralJanitorIfDue();
 }
 
-// For tests
 export function _resetLifecycleForTests(): void {
   lastPruneMsByStore = new Map<string, number>();
   lastJanitorMs = 0;

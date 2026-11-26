@@ -9,20 +9,6 @@
  *    note, fires per occurrence, never blocks, never rewrites;
  *  - anchor-shaped prefix never served (`W_NEVER_SERVED_SHAPE`) → shape-only soft
  *    hint, fires regardless of the literal declaration.
- *
- * Evidence adaptation (disclosed in ADR-0025's FU-5 amendment): upstream judges
- * the remainder against lease-derived canon DIGESTS (#151,
- * `canonDigest(remainder) === served_leases.canon_hash`); this tree's parallel
- * evidence is `servedCanons` — raw canon STRINGS recorded at serve time
- * (`read-and-serve.ts:173`), so the comparison is `canon(tail) === servedCanons[pos]`.
- * The tier semantics are identical; only the comparison space differs.
- *
- * Not ported (measured): upstream's `buildServedWritePrefixNote` stage
- * (`lifecycle-hooks/index.ts:188-197`) — the local write channel
- * (`src/write-hook.ts`) is outside this lane's target files; `findServedHashEcho`
- * — the local gate stays `findEditHashEcho`.
- *
- * @module dsh-better-edit/hashline/served-guard
  */
 
 import { formatWarning } from "../domain-errors.js";

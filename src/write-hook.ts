@@ -68,8 +68,6 @@ export async function servedHashEchoDenial(
   const served = await loadServed(sessionKey, absolutePath);
   const match = findServedHashEcho(content, served);
   if (!match) return undefined;
-  // A write echo names the same session/path/line the anchor was served for,
-  // so the served line equals the content line.
   return formatError("E_SUSPICIOUS_TEXT", {
     target: "write",
     path: rawPath,
@@ -99,9 +97,6 @@ export function registerWriteHook(rootCtx: Context, agentCtx: Context, io: FileI
       const rawPath = args?.file_path ?? args?.path;
       const content = args?.content;
       if (typeof rawPath !== "string" || typeof content !== "string") return next();
-      // F2: no mode escape here — the built-in write tool takes file_path /
-      // content only, so a mode branch would be dead and the refusal below
-      // must not promise it.
 
       const cwd = execCwd(exec);
       return withWorkspace(cwd, async () => {
@@ -152,11 +147,6 @@ export function registerWriteHook(rootCtx: Context, agentCtx: Context, io: FileI
             sessionKey,
             signal,
           });
-          // Record the present observation with the fs policy gate so later
-          // built-in write/edit calls see this file as observed at the version
-          // these rows describe — this block advertises every row above as an
-          // anchor, and the gate only knows a version it was told about
-          // (a no-op when no policy listens).
           await io.emitObserved(absolutePath, exec, signal);
           return {
             kind: "accept" as const,

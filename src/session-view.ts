@@ -6,21 +6,6 @@
  * "private to this seam, @internal". That mixed two invariants:
  * served-merge+drift vs context propagation. Now this seam owns ONLY
  * served state and drift; WorkspaceContext owns execution context.
- *
- * Public surface: _mergeServedRows, loadServed, recordServed,
- * recordServedTruncated, driftReported, markDriftReported,
- * clearDriftReported, wipeServedState, servedPositionsOf (re-exported from
- * hashline/served-evidence), currentPositionOfDrifted, computeDrift, scanDrift, and
- * hash-store persistence delegation (ServedPersistence).
- *
- * Ownership: This file OWNS the served-merge invariant
- * (_mergeServedRows — exact-write: a hash written at a new position leaves the
- * old slot intact, and a duplicate is rejected at verification rather than
- * healed), the position-reconstruction math, and the drift computation. Deleting
- * it would scatter the served+drift invariant across 4 files — it
- * concentrates (deep).
- *
- * @module dsh-better-edit/session-view
  */
 
 import { ALPH, HASH_LEN, HASH_SPACE, HASH_RE, canon } from "./hashline/hash-assign.js";
@@ -40,15 +25,11 @@ import { fmtServedRows, moreRowsHint, servedPositionsOf } from "./hashline/serve
 import type { ResolvedRange } from "./hashline/served-evidence.js";
 import { splitLines } from "./utils.js";
 
-// Re-exported from the served-evidence leaf (ADR-0037): the scan is pure and the
-// verifier needs it, so the seam that owns it is the evidence module.
 export { servedPositionsOf };
 
-// --- hash-store re-export (persistence note) ---
 export { loadHashStore, loadServedStore, shutdownHashStore, withStore } from "./hash-store.js";
 export type { HashStore } from "./hash-store.js";
 
-// --- served state (owned here) ---
 export type ServedEntry = { position: number; hash: string | null };
 
 /**
@@ -121,19 +102,11 @@ function addRetiredAnchors(
 ): void {
   const additions = [...hashes];
   if (additions.length === 0) return;
-  // Contract first, dedupe second: an invalid hash is rejected whether or not it is new.
   for (const hash of additions) {
     if (!HASH_RE.test(hash)) {
       throw new TypeError(`Invalid retired hash: ${hash}`);
     }
   }
-  // WHY (ADR-0036): ONE writer, ONE serialization. `sweepAndRetire` and
-  // `unretireAnchorsInStore` read and write `RetiredEntry[]`; this appender is the third
-  // writer of the same column, so it must too — an appended entry carries `deathPos: null`
-  // (unknown position) while every existing entry keeps its own death position. Writing
-  // bare strings here rewrote the whole column into the shape `parseRetiredJson` coerces to
-  // `deathPos: null`, which no incremental sweep can free (accumulation until a full read).
-  // `store.getRetiredAnchors` stays the READ-side projection and is not used for writing.
   const existing = store.getRetiredEntries(sessionKey, path);
   const known = new Set(existing.map((entry) => entry.hash));
   const appended: RetiredEntry[] = [];
@@ -142,7 +115,6 @@ function addRetiredAnchors(
     known.add(hash);
     appended.push({ hash, deathPos: null });
   }
-  // Idempotent retirement must not bump the row.
   if (appended.length === 0) return;
   store.upsertRetiredAnchors(sessionKey, path, JSON.stringify([...existing, ...appended]));
 }
@@ -161,11 +133,6 @@ function displacedEntries(
   }
   return entries;
 }
-
-// deathPos=null = legacy/unknown position (pre-GC String[] format or migration).
-// These entries are NOT swept incrementally — retained until a full-read serve (the `fullRead`
-// verdict) or major-GC promotion clears retired.
-// Incremental hazard sweep only frees deathPos (number) whose card was re-observed; null survives partial sweeps by design (minor leak documented here) and is drained only on epoch promotion/full read.
 
 function sweepAndRetire(
   store: ServedPersistence,
@@ -333,7 +300,6 @@ function grantServeLeases(
   if (content === undefined || hashes === undefined) return;
   if (splitLines(content).length !== hashes.length) return;
   // SAFETY: loadServedStore returns the makeDomainStore object, which implements
-  // InternalHashStore; ServedPersistence is its narrowed public view.
   const internal = store as unknown as InternalHashStore;
   internal.commitSnapshot({ path, content, hashes: [...hashes], leases: { sessionKey, rows } });
 }
@@ -357,13 +323,9 @@ export async function recordServed(
   lineCount?: number,
   full?: ServeContext,
 ): Promise<boolean> {
-  // Nothing to record, so nothing can fail: vacuously landed.
   if (rows.length === 0) return true;
   try {
     const store = await loadServedStore();
-    // The verdict is the caller's, not ours (ADR-0035): FileView knows the request shape, this
-    // seam only sees rows. The density check that used to decide here is the assertion below —
-    // it reports a FileView/rows disagreement and then gets out of the verdict's way.
     const isFullRead = full?.fullRead === true;
     if (isFullRead && full !== undefined) warnOnNonDenseFullReadMirror(path, rows, full);
     withStore(() => {
@@ -381,7 +343,6 @@ export async function recordServed(
         store.clearCards(sessionKey, path);
         if (full?.canons) store.upsertServedCanons(sessionKey, path, JSON.stringify(full.canons));
       } else {
-        // For partial reads, update canons for the served rows via hash-to-canon map (robust for partial views)
         if (full?.canons && full.hashes) {
           const canonByHash = new Map<string, string | null>();
           for (let i = 0; i < full.hashes.length; i++) {
@@ -403,15 +364,8 @@ export async function recordServed(
         }
         sweepAndRetire(store, sessionKey, path, current, updated, rows);
       }
-      // Pair #6: the lease grant and the `served` row it derives from are ONE unit.
       //
-      // WHY the grant is NOT gated on the full-read verdict (ADR-0035): a served anchor is
-      // editable only through its lease, and a lease is stamped with the snapshot it belongs to,
-      // so a page still commits the content it showed. Gate this and a displayed anchor becomes
-      // uneditable (`E_UNKNOWN_ANCHOR` on page-then-edit, 12 cells across 7 files).
       grantServeLeases(store, sessionKey, path, rows, full?.hashes, full?.content);
-      // AFTER the full-read clear above, so a full read clears the set and then re-adds the anchors
-      // its own alignment just retired; a partial read merges them into the set it kept.
       addRetiredAnchors(store, sessionKey, path, full?.retiredHashes ?? []);
     });
     return true;
@@ -439,7 +393,6 @@ export async function recordServedTruncated(
   fullCanons?: readonly (string | null)[],
   serveSnapshot?: ServeSnapshot,
 ): Promise<boolean> {
-  // Nothing to record, so nothing can fail: vacuously landed.
   if (rows.length === 0) return true;
   try {
     const store = await loadServedStore();
@@ -450,10 +403,6 @@ export async function recordServedTruncated(
         store.upsertServed(sessionKey, path, JSON.stringify(updated));
       }
       if (fullCanons) {
-        // #53: hashes without fresh canons leave the verify collision-guard
-        // comparing live content against stale metadata (false E_STALE_RANGE).
-        // Refresh canons for recorded rows; null where served is null so the
-        // parallel arrays stay consistent (canon null <=> served null).
         const currentCanons = store.getServedCanons(sessionKey, path);
         const rowCanon = new Map<number, string | null>();
         for (const row of rows) rowCanon.set(row.position, fullCanons[row.position] ?? null);
@@ -470,7 +419,6 @@ export async function recordServedTruncated(
         store.upsertServedCanons(sessionKey, path, JSON.stringify(updatedCanons));
       }
       sweepAndRetire(store, sessionKey, path, current, updated, rows);
-      // Pair #6: the lease grant and the `served` row it derives from are ONE unit.
       grantServeLeases(
         store,
         sessionKey,
@@ -581,13 +529,6 @@ export const DRIFT_NOTICE_HEADING = "[USER] drift:";
  * strings (schema unchanged); this base-62 encoding of the position, carrying the
  * `DRIFT_EPISODE_PREFIX` namespace so it can never equal a legacy bare-hash entry, is the KEY
  * VALUE.
- * Positions are bounded by `HASH_SPACE` (= |ALPH|^HASH_LEN, files larger cannot be hashed), so
- * the encoding is injective over every reachable position. Injection is over POSITIONS, not over
- * lines: two ambiguous duplicate-hash lines can rebase onto one position and therefore share one
- * episode key, so one marker reports both (fail-open: content is still served, and it is strictly
- * better than the old hash-only key, which silenced every line sharing the anchor). An out-of-file position (never
- * shown, never marked) keys on "" — not a valid stored entry, always "not yet reported",
- * matching the legacy behavior for unshown drift.
  */
 export function driftEpisodeKey(position: number): string {
   if (!Number.isInteger(position) || position < 0 || position >= HASH_SPACE) return "";
@@ -643,7 +584,6 @@ function buildRotatedSurvivorCheck(
 ): RotatedSurvivorCheck {
   const canons = input.servedCanons;
   if (!canons || !canons.some((c) => c !== null)) return () => false;
-  // Edited served interval mapped to result coordinates (single range).
   const spanFrom = Math.max(0, rangeFrom);
   const spanTo = Math.max(spanFrom - 1, rangeTo + delta);
   const remaining = new Map<string, number>();
@@ -658,9 +598,6 @@ function buildRotatedSurvivorCheck(
     remaining.set(c, left - 1);
     return true;
   };
-  // Pre-consume: served lines that survived under their own hash already
-  // account for their result content, so a deleted duplicate is not masked
-  // by a surviving twin (multiset difference, not per-hash presence).
   const currentPosOfHash = new Map<string, number>();
   for (let i = 0; i < input.resultHashes.length; i++) {
     currentPosOfHash.set(input.resultHashes[i]!, i);
@@ -718,9 +655,6 @@ export function computeDrift(input: ComputeDriftInput): DriftNoticeResult | unde
       p,
       range.delta,
     );
-    // WHY (#98, upstream CAND-9): key the episode on the rebased position, never the anchor
-    // spelling — a shared anchor must not silence a distinct line, and a rotation must not
-    // re-notice one.
     if (!reported.has(driftEpisodeKey(currentPos))) anyNotReported = true;
     if (currentPos >= 0 && currentPos < resultHashes.length && currentPos < resultLines.length) {
       driftedPositions.push(currentPos);
@@ -782,8 +716,6 @@ export async function scanDrift(input: {
     result.rows.map((row) => ({ position: row.position, hash: row.hash })),
     input.resultLines.length,
   );
-  // WHY (#98, upstream CAND-9): the episode key is the drifted row's rebased position, not its
-  // anchor hash (see `driftEpisodeKey`). The handle keeps its string[] storage contract.
   await markDriftReported(
     input.sessionKey,
     input.path,

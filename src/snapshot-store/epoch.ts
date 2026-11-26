@@ -7,10 +7,6 @@
  * beside an anchor — lineage and lease `canon_hash`, and the `line_id`s paired through it — is only
  * comparable to today's digest under the canon that wrote it, so every seam that reuses that
  * evidence asks the full epoch.
- *
- * Ref: docs/adr/0041-anchor-identity-from-raw-bytes.md,
- * docs/adr/0054-snapshot-epoch-fence.md
- * @module dsh-better-edit/snapshot-store/epoch
  */
 import { ANCHOR_GENERATION, CANON_VERSION } from "../hashline/hash-assign.js";
 

@@ -77,16 +77,10 @@ export async function saveUndo(
       ending: entry.originalEnding,
       hashes: entry.hashes,
       resultContent: entry.resultContent,
-      // #171: the row records the edit's own ending and mixture flag. `=== true` reads an absent
-      // flag as 0 rather than storing undefined: the store coalesces absent to 0 anyway.
       effectiveEnding: entry.effectiveEnding,
       preImageMixed: entry.preImageMixed === true ? 1 : 0,
-      // #191: the save seam's verdict rides the same row. Absent stays undefined here; the store
-      // coalesces it to NULL ("not recorded").
       migratedFrom: entry.migration?.encoding,
       migratedFromBOM: entry.migration === undefined ? undefined : entry.migration.hasBOM ? 1 : 0,
-      // The pin is the undo producer's: the restore re-derives the snapshot key on the current
-      // epoch, so a canon-only-foreign pin stays usable (ADR-0054/#221).
       snapshotHash: snapshotHashFor(entry.content),
     });
   } catch (error) {
@@ -115,14 +109,6 @@ export async function saveUndo(
 export async function getUndo(path: string): Promise<UndoEntry | undefined> {
   try {
     const record = await readUndo(path);
-    // Fail-closed anchor gate (#138, ADR-0054): the pin records the epoch the stored anchors
-    // were minted under. Raw anchors are a function of the raw bytes, so only the generation axis
-    // invalidates them — a pin from another generation would replay anchors that denote lines this
-    // build no longer derives the same way. A canon-only change leaves the stored anchors valid: the
-    // restore re-materializes the snapshot under the CURRENT epoch (`upsertSnapshot` ->
-    // `commitSnapshot` recompute the key), so the row is kept and its lease names today's canon. An
-    // unparseable pin (the retired two-part shape, malformed text) has no evidence at all and stays
-    // a delete. The pins carry the axes — no schema column, no migration.
     const pinEpoch = parseSnapshotEpoch(record?.snapshotHash);
     if (record === undefined || !isCurrentRawAnchorGeneration(pinEpoch?.anchorGeneration)) {
       const store = await loadHashStore();
@@ -135,8 +121,6 @@ export async function getUndo(path: string): Promise<UndoEntry | undefined> {
       store.deleteUndoPair(path);
       return undefined;
     }
-    // #191: the verdict rebuilds ONLY from a fully-typed stored pair — a codec name without its
-    // BOM flag (or vice versa) is a half-record, and a half-record claims nothing.
     const migration =
       typeof record.migratedFrom === "string" && typeof record.migratedFromBOM === "number"
         ? { encoding: record.migratedFrom, hasBOM: record.migratedFromBOM === 1 }
@@ -145,9 +129,6 @@ export async function getUndo(path: string): Promise<UndoEntry | undefined> {
       content: record.content,
       bom: record.bom,
       originalEnding,
-      // #171: the revert restores at the ending the EDIT used. A row written before the column
-      // existed carries null here and falls back to the pre-image's own ending — the old behaviour,
-      // never an invented mixture.
       effectiveEnding: knownEnding(record.effectiveEnding) ?? originalEnding,
       preImageMixed: record.preImageMixed === 1,
       ...(migration === undefined ? {} : { migration }),

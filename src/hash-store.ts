@@ -9,9 +9,6 @@
  *
  * Corrupt-row handling (parse the JSON column → validate against the hash
  * alphabet → delete the corrupt row) lives here, once, for every row family.
- * Cross-table cleanup (pruneMissing) lives here too — a sibling module never
- * reaches into another family's rows.
- * @module dsh-better-edit/hash-store
  */
 
 import { rename, mkdir, stat } from "node:fs/promises";
@@ -22,8 +19,6 @@ import { onStoreOpen, setStoresGetter } from "./store-lifecycle.js";
 import { workspaceCwd } from "./workspace-context.js";
 import { errCode, splitLines } from "./utils.js";
 import { initHasher, HASH_CLASS, HASH_RE } from "./hashline/hash-assign.js";
-// `SERVED_TTL_MS` was imported but never read here (the served-TTL prune lives in
-// `store-lifecycle`), so the import carries only what this module uses.
 import { HASH_STORE_VERSION, HASH_STORE_BUSY_TIMEOUT } from "./constants.js";
 import { DomainError } from "./domain-errors.js";
 import {
@@ -42,7 +37,6 @@ import {
 } from "./snapshot-store/lineage-store.js";
 import { snapshotEpochKey } from "./snapshot-store/epoch.js";
 import { withTransaction } from "./snapshot-store/txn.js";
-// ---- validators (owned here; the store's corruption handling uses them) ----
 
 /** A served-row array: per-position hash, or null for never-served slots. */
 export function isValidCanonsList(value: unknown): value is (string | null)[] {
@@ -142,14 +136,8 @@ function mapFileUndoRow(row: Record<string, unknown>): FileUndoRow {
   const resultContent = row["result_content"];
   const snapshotHash = row["snapshot_hash"];
   const updatedAt = row["updated_at"];
-  // The #171 pair: nullable BY DESIGN (an old store's row carries NULL and means "not recorded"),
-  // but a value of the wrong TYPE is shape corruption like any other column — the TypeError feeds
-  // the existing pair-healing path in `getFileUndo`.
   const effectiveEnding = row["effective_ending"];
   const preImageMixed = row["pre_image_mixed"];
-  // The #191 pair: nullable BY DESIGN (an old row carries NULL and means "not recorded"),
-  // but a value of the wrong TYPE is shape corruption like any other column — the TypeError
-  // feeds the existing pair-healing path in `getFileUndo`.
   const migratedFrom = row["migrated_from"];
   const migratedFromBOM = row["migrated_from_bom"];
   if (
@@ -182,8 +170,6 @@ function mapFileUndoRow(row: Record<string, unknown>): FileUndoRow {
   };
 }
 
-// ---- the domain interface --------------------------------------------------
-
 type SqlParams = (string | number)[];
 
 interface Prepared {
@@ -215,7 +201,6 @@ interface Prepared {
 export interface HashStore {
   readonly engine: "node:sqlite";
 
-  // ---- hash snapshots (stable anchors keyed by path + snapshot epoch) -------
   /**
    * The stored anchors for a path+content, or undefined on a miss. Lineage is the ONLY source:
    * a row family that does not tile the content exactly is a miss (the v7 repair-at-detection
@@ -246,9 +231,6 @@ export interface HashStore {
   /** Every path referenced by any v7 row family (`file_snapshots` ∪ `file_undo` ∪ served). */
   allKnownPaths(): { path: string }[];
 
-  // ---- undo entries (one per path) ----------------------------------------
-  // `file_undo` is the sole undo row. It carries the snapshot pin the #221 gate reads, so the
-  // legacy `undo` shell needs no v7 mirror (it stays a v6 shell, never read or written here).
   /** The undo row for a path, healing a corrupt row (parse → validate → delete). */
   getUndo(path: string): UndoRecord | undefined;
   pruneUndoOlderThan(ts: number): void;
@@ -258,7 +240,6 @@ export interface HashStore {
   deleteUndoPair(path: string): void;
   /** The v7 undo row for a path (same healing contract as `getUndo`, plus the pin/stamp). */
   getFileUndo(path: string): FileUndoRecord | undefined;
-  // ---- maintenance ---------------------------------------------------------
   /** Delete every row family's entries for paths that no longer exist on disk. */
   pruneMissing(): Promise<void>;
   /**
@@ -367,8 +348,6 @@ export function loadServedStore(cwd?: string): Promise<ServedPersistence> {
   return loadHashStore(cwd) as unknown as Promise<ServedPersistence>;
 }
 
-// ---- db plumbing (private) --------------------------------------------------
-
 export function isCorruptionError(error: unknown): boolean {
   if (error instanceof DomainError) return false;
   if (error && typeof error === "object") {
@@ -413,7 +392,7 @@ function openDb(storePath: string): { db: DatabaseSync; stmts: Prepared } {
     try {
       db.close();
     } catch (error) {
-      console.warn(error); // best-effort close when the store build fails
+      console.warn(error);
     }
     throw error;
   }
@@ -458,14 +437,11 @@ function addColumnIfMissing(db: DatabaseSync, table: string, column: string, typ
       throw new Error(`Refused schema backfill for non-identifier: ${identifier}`);
     }
   }
-  // Parameterized: `pragma_table_info` is a table-valued function, so the table name is a VALUE.
   const columns = db.prepare("SELECT name FROM pragma_table_info(?)").all(table) as {
     name: string;
   }[];
   if (!columns.some((entry) => entry.name === column)) {
-    // SAFETY: DDL identifiers cannot be bind parameters; every value below already passed
-    // SCHEMA_IDENTIFIER_RE (`[A-Za-z_][A-Za-z0-9_]*`), and all callers pass literals — invariant
-    // owned by this function, see the docblock above.
+    // HACK: DDL identifiers cannot be bind parameters; every value below already passed
     db.exec("ALTER TABLE " + table + " ADD COLUMN " + column + " " + type);
   }
 }
@@ -492,9 +468,6 @@ function ensureV7Tables(db: DatabaseSync): void {
       "updated_at INTEGER NOT NULL" +
       ")",
   );
-  // The live v7 served mirror. Column names are downstream's: `retired` (ADR-0028's vocabulary pin)
-  // and the hazard-card `canons`/`cards` pair, which upstream does not carry. No `epoch_id`:
-  // downstream's epoch evidence lives in `served_leases`/`file_snapshots` (ADR-0054).
   db.exec(
     "CREATE TABLE IF NOT EXISTS served_session_meta (" +
       "session_id TEXT NOT NULL, " +
@@ -521,12 +494,6 @@ function ensureSchema(db: DatabaseSync): void {
     "CREATE TABLE IF NOT EXISTS meta (" + "key TEXT PRIMARY KEY, " + "value TEXT NOT NULL" + ")",
   );
   ensureV7Tables(db);
-  // WHY the v6 shells stay whole: an un-restarted v6 session — or a v6
-  // process in a concurrent worktree — prepares statements against these
-  // exact tables, so they are created complete on every open and never
-  // dropped or reshaped here. v7 state stays isolated in the v7 tables
-  // above. `cards` is kept because the released v6 build names it at store
-  // open; porting upstream's column list would break it.
   db.exec(
     "CREATE TABLE IF NOT EXISTS snapshots (" +
       "path TEXT PRIMARY KEY, " +
@@ -551,9 +518,6 @@ function ensureSchema(db: DatabaseSync): void {
       "updated_at INTEGER NOT NULL" +
       ")",
   );
-  // #171: the pair columns are additive on BOTH halves, and an old store gets them here — a NULL
-  // means "not recorded" (fall back to `ending`, never claim a mixture), so no row is rewritten and
-  // HASH_STORE_VERSION does not move. Idempotent: `addColumnIfMissing` is a no-op on a current store.
   addColumnIfMissing(db, "undo", "effective_ending", "TEXT");
   addColumnIfMissing(db, "undo", "pre_image_mixed", "INTEGER");
   addColumnIfMissing(db, "undo", "migrated_from", "TEXT");
@@ -607,18 +571,11 @@ function assertNotNewer(stored: number | undefined, storePath: string): void {
  *
  * `DO NOTHING`, never `DO UPDATE`: a re-migration (stamp back to 8 after a downgrade) must keep
  * the live v7 row when a concurrent v6 writer has since rewritten the shell row for the same key.
- *
- * The legacy `snapshots` rows are deliberately NOT copied (ADR-0016): old-canon blobs carry no
- * line text, so no line identity can be derived from them — they are rebuilt from content on the
- * next read. The legacy `undo` rows are NOT copied either: v8 wrote every live pair's
- * `file_undo` half, and a legacy-only row is already refused by the undo gate's pin check.
  */
 function copyServedShellIntoMeta(db: DatabaseSync): void {
   db.prepare(
     "INSERT INTO served_session_meta " +
       "(session_id, file_path, hashes, reported, retired, canons, cards, updated_at) " +
-      // `WHERE true` is load-bearing SQLite syntax, not a predicate: without it the parser binds
-      // `ON` to the SELECT as a join constraint and the whole statement is a syntax error.
       "SELECT session_id, path, hashes, reported, retired, canons, cards, updated_at FROM served WHERE true " +
       "ON CONFLICT(session_id, file_path) DO NOTHING",
   ).run();
@@ -682,33 +639,12 @@ function anchorStamp(): string {
  * Retention only, never validity: the sweep keeps the FULL-epoch prefix (`${CANON_VERSION}:${ANCHOR_GENERATION}:`),
  * and a row that outlives it — one a concurrent mixed-version writer mints after this open — is still
  * refused as evidence by every reuse seam (`src/snapshot-store/epoch.ts`, ADR-0054).
- *
- * One `BEGIN IMMEDIATE`, one unit: a crash between two deletes would otherwise leave a lease
- * pointing at a snapshot that no longer exists (or lineage without its snapshot row) — exactly the
- * inconsistencies the v7 substrate commits atomically elsewhere.
- *
- * WHY `served_session_meta` is cleared wholesale: those rows hold anchors and canons but no key,
- * so a foreign generation is indistinguishable from the current one without a marker column —
- * which would need a migration. The stamp decides for the whole family; the next read re-serves
- * and re-records.
- *
- * WHY the v6 shells are NOT touched: `snapshots`, `undo` and `served` belong to a v6 process
- * (ADR-0016's shell-retention contract). v7 deletes nothing it does not own — a sweep that wiped
- * them would destroy a live v6 session's data on a version flap, which is the exact failure the
- * shell contract exists to prevent. The undo row is `file_undo` alone: it is the whole record
- * now, reclaimed by its own key side.
- *
- * pi-lens note (`sql-injection` probes `db.exec`/`db.prepare` for template substitutions): every
- * pattern below is a BOUND parameter, not interpolated text, and the stamp itself is built only
- * from the numeric constants behind `./snapshot-store/epoch.js` — no caller data reaches the SQL,
- * which is strictly stronger than the identifier allowlist `addColumnIfMissing` relies on.
  */
 function sweepForeignAnchorGeneration(db: DatabaseSync): void {
   const stamp = anchorStamp();
   const stamped = db.prepare("SELECT value FROM meta WHERE key = ?").get(ANCHOR_STAMP_KEY) as
     | { value?: string }
     | undefined;
-  // Idempotent: the stamp is the whole contract, so a stamped store is a no-op on every later open.
   if (stamped?.value === stamp) return;
   const prefix = `${stamp}:%`;
   let sweepOpen = false;
@@ -716,7 +652,6 @@ function sweepForeignAnchorGeneration(db: DatabaseSync): void {
     db.exec("BEGIN IMMEDIATE");
     sweepOpen = true;
     db.prepare("DELETE FROM file_snapshots WHERE snapshot_hash NOT LIKE ?").run(prefix);
-    // Lineage follows its snapshot: an FK-off opener leaves the rows behind, so delete them here.
     db.prepare(
       "DELETE FROM line_lineage WHERE snapshot_id NOT IN (SELECT snapshot_id FROM file_snapshots)",
     ).run();
@@ -747,14 +682,8 @@ function buildStore(db: DatabaseSync, storePath: string): { db: DatabaseSync; st
   assertNotNewer(stored, storePath);
   db.exec("PRAGMA journal_mode = WAL");
   db.exec("PRAGMA synchronous = NORMAL");
-  // Explicit intent: node:sqlite already enables FK constraints by default.
   db.exec("PRAGMA foreign_keys = ON");
   ensureSchema(db);
-  // The `retired` backfill runs BEFORE the forward migration: the v9 copy reads that column from
-  // the `served` shell, and an older store does not have it yet. The ALTER is single and idempotent
-  // and needs no transaction (ALTER TABLE is atomic); an upgrade must never destroy rows for SCHEMA
-  // reasons (ADR-0017 retires the wipe), and the one row-reclaim an upgrade does run is key-scoped,
-  // never wholesale: see the sweep below.
   const currentServedColumns = db.prepare("PRAGMA table_info(served)").all() as {
     name: string;
   }[];
@@ -762,14 +691,10 @@ function buildStore(db: DatabaseSync, storePath: string): { db: DatabaseSync; st
     db.exec("ALTER TABLE served ADD COLUMN retired TEXT");
   }
   if (stored !== HASH_STORE_VERSION) migrateForward(db, storePath);
-  // AFTER the migration and the column backfill, in its own unit: key-prefix reclaim of anchor-bearing
-  // rows minted under a foreign ANCHOR_GENERATION (no schema change — see the sweep's own docblock).
   sweepForeignAnchorGeneration(db);
   const allStmt = db.prepare(
     "SELECT path FROM file_undo UNION SELECT path FROM file_snapshots UNION SELECT path FROM line_id_counters UNION SELECT file_path FROM served_leases UNION SELECT file_path AS path FROM served_session_meta",
   );
-  // Age prune: `file_undo` is the whole undo record, so the row is pruned on its own stamp. One
-  // complete SQL literal — a shared constant would be interpolated back into the SQL.
   const fileUndoPruneOlderThanStmt = db.prepare("DELETE FROM file_undo WHERE updated_at < ?");
   const fileUndoUpsertStmt = db.prepare(
     "INSERT INTO file_undo (path, content, bom, ending, hashes, result_content, effective_ending, pre_image_mixed, migrated_from, migrated_from_bom, snapshot_hash, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) " +
@@ -821,8 +746,6 @@ function buildStore(db: DatabaseSync, storePath: string): { db: DatabaseSync; st
     "DELETE FROM served_session_meta WHERE file_path = ?",
   );
   const servedMetaWipeStmt = db.prepare("DELETE FROM served_session_meta WHERE session_id = ?");
-  // Retention keeps the pre-v9 whole-row delete: a stale `reported`/`cards` set must not outlive
-  // the mirror it describes. `store-lifecycle` stays the single caller (the open-time janitor).
   const servedMetaPruneOlderThanStmt = db.prepare(
     "DELETE FROM served_session_meta WHERE updated_at < ?",
   );
@@ -934,18 +857,6 @@ function makeDomainStore(
   lineageStore: LineageStore,
   db: DatabaseSync,
 ): InternalHashStore {
-  /**
-   * The post-materialization retention trigger. Runs the sweep after a v7 materialization has
-   * committed — outside that materialization's own `withTransaction` block — and reports the result
-   * through the sweep's single report owner. The deferral itself lives in `vacuumSnapshots` (TM
-   * probe M1: a joined sweep can be partially committed by its caller), so this site is safe from
-   * any caller-owned unit by construction and only decides whether there is a v7 row to protect:
-   * `content === undefined` means no v7 materialization happened, so there is nothing to protect.
-   *
-   * Best-effort but never silent: a retention fault can never fail the read or edit that already
-   * committed, and it is reported observably (spec §3.6.1; the storage-error-transparency rule).
-   * The just-committed row is protected because its lease does not exist yet.
-   */
   function vacuumAfterMaterialization(path: string, content: string | undefined): void {
     if (content === undefined) return;
     try {
@@ -963,17 +874,11 @@ function makeDomainStore(
       );
     }
   }
-  /**
-   * Transaction owner for the undo row: the store's own `db` handle (opened in
-   * buildStore). Delegates to the single re-entrant owner so an undo write or delete
-   * joins an outer unit (e.g. pruneMissing) instead of nesting a BEGIN.
-   */
   function withUndoTxn(fn: () => void): void {
     withTransaction(db, fn);
   }
 
   function writeUndoImpl(path: string, record: FileUndoWrite): void {
-    // One clock: the row's age is a store property, so the caller's `updatedAt` is advisory.
     const stamp = Date.now();
     withUndoTxn(() => {
       stmts.fileUndoUpsert(
@@ -983,11 +888,8 @@ function makeDomainStore(
         record.ending,
         JSON.stringify(record.hashes),
         record.resultContent,
-        // #171: the ending the EDIT wrote; absent falls back to the pre-image's own one.
         record.effectiveEnding ?? record.ending,
-        // `=== 1` keeps the flag total: absent means 0.
         record.preImageMixed === 1 ? 1 : 0,
-        // #191: the verdict has NO fallback — absent stays NULL ("not recorded", never a claim).
         record.migratedFrom ?? null,
         record.migratedFromBOM ?? null,
         record.snapshotHash,
@@ -1002,14 +904,7 @@ function makeDomainStore(
     });
   }
 
-  /**
-   * The one undo-row read, shared by `getUndo` and `getFileUndo`: SELECT, validate the JSON
-   * payload, map the row at the boundary, and heal on shape/payload corruption.
-   */
   function loadFileUndo(path: string): FileUndoRecord | undefined {
-    // The SELECT is inside the try: `stmts.fileUndoGet` validates the raw row
-    // (`mapFileUndoRow`) and throws on a shape-corrupt row, which must take the
-    // same healing path as a payload failure below.
     try {
       const row = stmts.fileUndoGet(path);
       if (!row) return undefined;
@@ -1032,11 +927,6 @@ function makeDomainStore(
         migratedFromBOM: row.migrated_from_bom,
       };
     } catch (error) {
-      // Shape corruption (`mapFileUndoRow` throws `TypeError`) and payload corruption
-      // (`JSON.parse` throws `SyntaxError`) heal; infrastructure failures (BUSY, IO)
-      // must propagate, because swallowing one would delete a live row and let
-      // `saveUndo` report `persisted: true` — undo silently destroyed, caller told it
-      // succeeded. Fail loud, never fail silent.
       const healable = error instanceof TypeError || error instanceof SyntaxError;
       if (!healable) throw error;
       deleteUndoImpl(path);
@@ -1048,8 +938,6 @@ function makeDomainStore(
     engine: "node:sqlite",
 
     getSnapshot(path, content) {
-      // Lineage is the only snapshot source: adopt refreshes stored anchors to the live
-      // assignment, so a hit tiles the content exactly and any other shape is a miss.
       const lineage = lineageStore.lineageFor(path, snapshotHashFor(content));
       if (
         lineage.length === splitLines(content).length &&
@@ -1060,15 +948,11 @@ function makeDomainStore(
       return undefined;
     },
     upsertSnapshot(path, _checksum, _lineCount, hashes, content) {
-      // `checksum`/`lineCount` stay in the signature for call-site compatibility; the snapshot
-      // key is derived from `content` by `commitSnapshot`. The legacy `snapshots` shell is a v6
-      // shell and is never written by v7, so a contentless write has nothing to store.
       if (content === undefined) {
         throw new Error(
           "upsertSnapshot requires content: the legacy snapshots shell is not written by v7",
         );
       }
-      // One write family: `commitSnapshot` owns its own unit (snapshot + lineage + leases).
       lineageStore.commitSnapshot({ path, content, hashes });
       vacuumAfterMaterialization(path, content);
     },
@@ -1094,13 +978,6 @@ function makeDomainStore(
     snapshotIdFor(path, snapshotHash) {
       return lineageStore.snapshotIdFor(path, snapshotHash);
     },
-    /**
-     * The `LineageStore` seam member — LINEAGE FAMILY ONLY (file_snapshots, line_lineage,
-     * line_id_counters, served_leases). It is deliberately narrower than `pruneMissing`,
-     * which is the sole owner of whole-path deletion and calls the sub-stores directly.
-     * The name reads as "delete everything for this path"; it does not, and widening it
-     * here would duplicate pruneMissing's ownership.
-     */
     deleteByPath(path) {
       lineageStore.deleteByPath(path);
     },
@@ -1117,12 +994,8 @@ function makeDomainStore(
         ending: record.ending,
         hashes: record.hashes,
         resultContent: record.resultContent,
-        // Null when absent (a pre-#171 row): the reader decides the fallback, the store only
-        // reports what is stored.
         effectiveEnding: record.effectiveEnding ?? null,
         preImageMixed: record.preImageMixed ?? null,
-        // #191: same contract — NULL is "not recorded"; the reconstruction decision belongs
-        // to the reader (`getUndo` in undo-edit).
         migratedFrom: record.migratedFrom ?? null,
         migratedFromBOM: record.migratedFromBOM ?? null,
       };
@@ -1286,7 +1159,6 @@ function makeDomainStore(
       const rows = stmts.allPaths() as { path: string }[];
       const missing = await statMissing(rows);
       if (missing.length === 0) return;
-      // Transaction owner: withStore — one unit for every v7 family (the shells are not v7's).
       withStore(() => {
         for (const path of missing) {
           lineageStore.deleteByPath(path);
@@ -1296,9 +1168,6 @@ function makeDomainStore(
       });
     },
     vacuumSnapshots() {
-      // WHY: the store-open boundary (spec §3.6.1) — on this store the open path is the only place
-      // that can reclaim a store that crashed over budget. The result goes back to the caller,
-      // which is the report owner; the sweep itself never writes to the console.
       return runVacuumSnapshots(db);
     },
   };
@@ -1333,7 +1202,7 @@ function shutdownDb(db: DatabaseSync): void {
   } catch (error) {
     console.warn(
       `dsh-better-edit: wal_checkpoint failed on shutdown: ${error instanceof Error ? error.message : String(error)}`,
-    ); // best-effort checkpoint before close
+    );
   }
   db.close();
 }
@@ -1362,8 +1231,6 @@ async function statMissing(rows: { path: string }[]): Promise<string[]> {
 }
 
 async function openStore(storePath: string): Promise<HashStore> {
-  // Multi-store: never close another workspace's store when opening this one.
-
   await initHasher();
   await mkdir(dirname(storePath), { recursive: true });
   let opened: { db: DatabaseSync; stmts: Prepared };
@@ -1447,8 +1314,6 @@ export function withStore(fn: () => void): void {
     fn();
   }
 }
-
-// ---- async convenience helpers (load the active store, then delegate) ------
 
 /** Persist a hash snapshot for one path (async over the active store). */
 export async function upsertSnapshotFor(
