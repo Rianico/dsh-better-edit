@@ -12,6 +12,7 @@ import { initHasher } from "../../src/hashline/hash-assign.js";
 import {
   extractHash,
   getText,
+  makeTag,
   setupIntegrationTest,
   useTestHome,
   withTempFile,
@@ -595,5 +596,67 @@ describe("read tool — windows", () => {
     // description can keep it discoverable to the model (see the FU-6 note in src/tool-read.ts).
     expect(windows, "the read schema advertises windows").toBeDefined();
     expect(windows?.description).toContain(`${MAX_READ_WINDOWS} line windows`);
+  });
+});
+
+describe("read tool — multi-window budget vs intrinsic line cap", () => {
+  const BIG = "x".repeat(160_000);
+  const MID = "y".repeat(100_000);
+  const CONTENT = [BIG, "skip", MID].join("\n") + "\n";
+
+  it("omits the over-budget window, refuses its unserved anchor, then edits after a standalone read", async () => {
+    await withTempFile("two-cap.txt", CONTENT, async ({ cwd, path }) => {
+      const { readTool, editTool } = setupIntegrationTest(cwd);
+      const windowed = getText(
+        await readTool.execute("r1", {
+          path: "two-cap.txt",
+          windows: [
+            { offset: 1, limit: 1 },
+            { offset: 3, limit: 1 },
+          ],
+        }),
+      );
+      // Downstream's read result carries no `details.metrics`: the honest omission signal is the
+      // notice text plus the absence of any served row for line 3, never a shrunken-limit claim.
+      expect(windowed).toContain(
+        "[Section does not fit in the remaining 43.7KB read budget; not shown. Re-read it on its own.]",
+      );
+      expect(windowed).not.toContain("cannot show");
+      expect(windowed).not.toContain(MID);
+
+      // The omitted line's anchor is real, but the windowed read never leased it.
+      const omitted = (await makeTag(CONTENT, 3, path)).hash;
+      let rejected: Error | undefined;
+      try {
+        await editTool.execute("e1", {
+          path: "two-cap.txt",
+          anchor_from: omitted,
+          anchor_to: omitted,
+          replace_with: "replaced",
+        });
+      } catch (error) {
+        rejected = error as Error;
+      }
+      expect(rejected?.message).toContain("[E_UNKNOWN_ANCHOR]");
+      expect(await readFile(path, "utf-8")).toBe(CONTENT);
+
+      // The notice's recommendation — a standalone read — is the recovery path.
+      const alone = getText(
+        await readTool.execute("r2", { path: "two-cap.txt", offset: 3, limit: 1 }),
+      );
+      expect(alone).toContain(MID);
+      const row = alone.split("\n").find((line) => /^[A-Za-z0-9]{3}│/.test(line));
+      expect(row).toBeDefined();
+      const anchor = extractHash(row!);
+
+      const edited = await editTool.execute("e3", {
+        path: "two-cap.txt",
+        anchor_from: anchor,
+        anchor_to: anchor,
+        replace_with: "replaced",
+      });
+      expect(getText(edited)).toContain("Successfully edited");
+      expect(await readFile(path, "utf-8")).toBe([BIG, "skip", "replaced"].join("\n") + "\n");
+    });
   });
 });

@@ -380,40 +380,66 @@ function buildOversizedPreview(params: {
   selectedHashes: string[];
   startLine: number;
   totalLines: number;
-  maxBytes: number;
+  /** The intrinsic per-line cap: a row longer than this is never rendered. */
+  maxLineBytes: number;
+  /** The response budget left for this page's rows: truncation stops here. */
+  remainingBytes: number;
   maxTruncLines: number;
   // WHY: a window is a bounded ask, so its section must not advertise a page it never owed
   // WHY: (mirrors buildNormalPreview); a genuinely truncated window still keeps its own hint.
   hintRemainder?: boolean;
+  /** Cite only the oversized rows the shown prefix reached (multi-window sections). */
+  listedWithinShownPrefix?: boolean;
 }): { text: string; truncation?: TruncationResult; nextOffset?: number; served: ServedRow[] } {
-  const { rowSizes, selected, selectedHashes, startLine, totalLines, maxBytes, maxTruncLines } =
-    params;
-  const oversized = rowSizes.filter((row) => row.bytes > maxBytes);
+  const {
+    rowSizes,
+    selected,
+    selectedHashes,
+    startLine,
+    totalLines,
+    maxLineBytes,
+    remainingBytes,
+    maxTruncLines,
+  } = params;
+  const oversized = rowSizes.filter((row) => row.bytes > maxLineBytes);
   const rows = rowSizes.map((row, index) =>
-    row.bytes > maxBytes
+    row.bytes > maxLineBytes
       ? `[Line ${row.lineNumber}: ${formatSize(row.bytes)}; not shown.]`
       : fmtRegion([selectedHashes[index]!], [selected[index]!]),
   );
-  const skippedTruncation = truncateHead(rows.join("\n"), { maxBytes, maxLines: maxTruncLines });
+  const skippedTruncation = truncateHead(rows.join("\n"), {
+    maxBytes: remainingBytes,
+    maxLines: maxTruncLines,
+  });
   const shownRowCount =
     skippedTruncation.content === "" ? 0 : skippedTruncation.content.split("\n").length;
   const lastShownLine = shownRowCount > 0 ? startLine + shownRowCount - 1 : startLine - 1;
-  const { lineLabel, verb, pronoun } = oversizedLineFacts(oversized);
-  const warning = `[${lineLabel} ${verb} the ${formatSize(maxBytes)} limit; the read tool cannot show ${pronoun}.]`;
+  // WHY: a section that spent the shared budget must not blame a row the shown prefix never reached;
+  // WHY: the warning names the intrinsic cap, so a recoverable row is never described as unshowable.
+  const listed =
+    params.listedWithinShownPrefix === true && shownRowCount > 0
+      ? oversized.filter((row) => row.lineNumber < startLine + shownRowCount)
+      : oversized;
+  const { lineLabel, verb, pronoun } = oversizedLineFacts(listed);
+  const warning =
+    listed.length === 0
+      ? undefined
+      : `[${lineLabel} ${verb} the ${formatSize(maxLineBytes)} limit; the read tool cannot show ${pronoun}.]`;
+  const warningBlock = warning === undefined ? "" : `\n\n${warning}`;
   let preview = skippedTruncation.content;
   let nextOffset: number | undefined;
   if (shownRowCount > 0 && skippedTruncation.truncated) {
     nextOffset = lastShownLine + 1;
-    preview += `\n\n${warning}\n${formatPaginationHint(startLine, lastShownLine, totalLines, nextOffset, skippedTruncation.maxBytes)}`;
+    preview += `${warningBlock}\n\n${formatPaginationHint(startLine, lastShownLine, totalLines, nextOffset, skippedTruncation.maxBytes)}`;
   } else if (shownRowCount > 0 && params.hintRemainder !== false && lastShownLine < totalLines) {
     nextOffset = lastShownLine + 1;
-    preview += `\n\n${warning}\n${formatPaginationHint(startLine, lastShownLine, totalLines, nextOffset)}`;
+    preview += `${warningBlock}\n\n${formatPaginationHint(startLine, lastShownLine, totalLines, nextOffset)}`;
   } else {
-    preview += `\n\n${warning}`;
+    preview += warningBlock;
   }
   const served: ServedRow[] = [];
   for (let index = 0; index < shownRowCount; index++) {
-    if (rowSizes[index]!.bytes <= maxBytes) {
+    if (rowSizes[index]!.bytes <= maxLineBytes) {
       served.push({
         position: startLine - 1 + index,
         hash: selectedHashes[index]!,
@@ -521,12 +547,11 @@ function mergeWindowRuns(windows: readonly ReadWindow[], totalLines: number): Wi
 }
 
 /**
- * Renders one window through the same oversized/truncation pipeline a single-window read uses, but
- * against the shared budget actually LEFT to this window: `maxBytes`/`maxTruncLines` are the
- * caller's remaining bytes/lines, not the single-read caps. The render arm is identical while the
- * measurement is not — a 120KB line under a 200KB single-read cap is reported oversized as
- * "exceeds the 80KB limit" once earlier windows spent the shared budget down to 80KB. A window degrades like
- * the same range read alone only while the shared budget is still unspent.
+ * Renders one window through the same oversized/truncation pipeline a single-window read uses, except
+ * that the intrinsic per-line cap (`maxLineBytes`) and the shared response budget (`remainingBytes`)
+ * stay separate: a recoverable row that misses the budget truncates or omits the section instead of
+ * being mistaken for an oversized line. Only a row longer than the intrinsic cap is oversized, so its
+ * placeholder and warning always cite that cap, never the budget the earlier sections spent.
  */
 function buildWindowSection(params: {
   rowSizes: { lineNumber: number; bytes: number }[];
@@ -535,8 +560,12 @@ function buildWindowSection(params: {
   startLine: number;
   endIdx: number;
   totalLines: number;
-  maxBytes: number;
-  maxTruncLines: number;
+  /** The full single-read line cap, so a section classifies oversized lines like a lone read. */
+  maxLineBytes: number;
+  /** The response budget left for this section's rows. */
+  remainingBytes: number;
+  /** The line budget left for this section's rows. */
+  remainingLines: number;
 }): { text: string; truncation?: TruncationResult; served: ServedRow[] } {
   const {
     rowSizes,
@@ -545,19 +574,35 @@ function buildWindowSection(params: {
     startLine,
     endIdx,
     totalLines,
-    maxBytes,
-    maxTruncLines,
+    maxLineBytes,
+    remainingBytes,
+    remainingLines,
   } = params;
-  if (rowSizes.some((row) => row.bytes > maxBytes)) {
+  const [firstRow] = rowSizes;
+  // WHY: the row fits a lone read but not what is left of the shared budget — the section is omitted
+  // WHY: with a budget notice, never reported as an intrinsically unshowable line.
+  if (firstRow !== undefined && firstRow.bytes <= maxLineBytes && firstRow.bytes > remainingBytes) {
+    return {
+      text: `[Section does not fit in the remaining ${formatSize(remainingBytes)} read budget; not shown. Re-read it on its own.]`,
+      truncation: truncateHead(fmtRegion(selectedHashes, selected), {
+        maxBytes: remainingBytes,
+        maxLines: remainingLines,
+      }),
+      served: [],
+    };
+  }
+  if (rowSizes.some((row) => row.bytes > maxLineBytes)) {
     return buildOversizedPreview({
       rowSizes,
       selected,
       selectedHashes,
       startLine,
       totalLines,
-      maxBytes,
-      maxTruncLines,
+      maxLineBytes,
+      remainingBytes,
+      maxTruncLines: remainingLines,
       hintRemainder: false,
+      listedWithinShownPrefix: true,
     });
   }
   const normal = buildNormalPreview({
@@ -565,8 +610,8 @@ function buildWindowSection(params: {
     startLine,
     endIdx,
     totalLines,
-    maxBytes,
-    maxTruncLines,
+    maxBytes: remainingBytes,
+    maxTruncLines: remainingLines,
     selectedHashes,
     hintRemainder: false,
   });
@@ -595,14 +640,15 @@ function buildWindowedPreview(params: {
   allLines: string[];
   allHashes: string[];
   totalLines: number;
-  maxBytes: number;
+  /** The full single-read line cap, shared with every section's intrinsic oversized check. */
+  maxLineBytes: number;
   maxTruncLines: number;
 }): { text: string; truncation?: TruncationResult; served: ServedRow[] } {
-  const { windows, allLines, allHashes, totalLines, maxBytes, maxTruncLines } = params;
+  const { windows, allLines, allHashes, totalLines, maxLineBytes, maxTruncLines } = params;
   const sections: string[] = [];
   const servedRows: ServedRow[] = [];
   let truncation: TruncationResult | undefined;
-  let remainingBytes = maxBytes;
+  let remainingBytes = maxLineBytes;
   let remainingLines = maxTruncLines;
 
   for (const plan of mergeWindowRuns(windows, totalLines)) {
@@ -639,8 +685,9 @@ function buildWindowedPreview(params: {
       startLine: plan.startLine,
       endIdx: plan.endLine,
       totalLines,
-      maxBytes: remainingBytes,
-      maxTruncLines: remainingLines,
+      maxLineBytes,
+      remainingBytes,
+      remainingLines,
     });
     sections.push(`${header}\n${built.text}`);
     for (const row of built.served) servedRows.push(row);
@@ -703,7 +750,7 @@ export async function fmtReadPreview(
       allLines,
       allHashes,
       totalLines,
-      maxBytes: maxLineBytes,
+      maxLineBytes,
       maxTruncLines,
     });
   }
@@ -731,7 +778,8 @@ export async function fmtReadPreview(
       selectedHashes,
       startLine,
       totalLines,
-      maxBytes,
+      maxLineBytes: maxBytes,
+      remainingBytes: maxBytes,
       maxTruncLines,
     });
   }
