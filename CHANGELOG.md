@@ -39,6 +39,10 @@ All notable changes to this project will be documented in this file.
 
 * **store:** consolidate live v7 state onto `served_session_meta` and retire the v6 shells from every v7 path. Store version 9 copies `served` → `served_session_meta` once inside the existing transaction (`ON CONFLICT DO NOTHING`); `served`, `snapshots` and `undo` keep their exact v6 shapes and are no longer read, written, swept or pruned by v7. The legacy snapshot adapter and JSON importer are removed, `file_undo` is the sole undo row, and prepared statements drop 43 → 33 (ADR-0055, closes #222). (#228)
 
+### Build System
+
+* **lint:** arm `harness/no-comments` as a shrink-only CI ratchet. One shared predicate owns the settled comment grammar (anchored `SAFETY:`/`TODO(#N):`/`HACK:`/`Ref:`, strict Gherkin, module-scope `/** */` blocks at most 12 lines, `SAFETY:` within two non-blank lines of a cast, `#!` treated as an interpreter directive) and retires `WHY:`, `Invariant:`, `See ADR-` and `via https://` even inside a docblock; only `eslint-disable*`/`oxlint-disable*` may state a free-form reason after `--`. Root configs and `scripts/` drain to zero, the 3,692 legacy `src/`+`test/` violations ride a committed baseline, and a literal ceiling in the arch suite makes growth a visible edit (ADR-0056, closes #232). (#232)
+
 ## [1.3.0] - 2026-11-25
 
 ### Bug Fixes
