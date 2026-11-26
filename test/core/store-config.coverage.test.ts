@@ -24,7 +24,6 @@ describe("store-config — complement, env, aliases, cache", () => {
     vi.stubEnv("HOME", tmpHome);
     vi.stubEnv("DSH_HOME", join(tmpHome, ".dsh"));
     for (const k of envKeys) vi.stubEnv(k, "");
-    // clear the stubbed empties so they behave as undefined
     for (const k of envKeys) {
       const v = process.env[k];
       if (v === "") delete process.env[k];
@@ -49,12 +48,10 @@ describe("store-config — complement, env, aliases, cache", () => {
   it("loadConfig complements missing keys by appending defaults", async () => {
     const cfgDir = join(tmpHome, ".dsh", "plugins", "dsh-better-edit");
     await mkdir(cfgDir, { recursive: true });
-    // only one key
     await writeFile(join(cfgDir, "config.yaml"), "storeDir: central\n", "utf-8");
     _resetConfigCache();
     const cfg = loadConfig();
     expect(cfg.storeDir).toBe("central");
-    // complement should have appended
     const after = await readFile(join(cfgDir, "config.yaml"), "utf-8");
     expect(after).toContain("autoGuessEncoding: false");
     expect(after).toContain("normalizeToUtf8: false");
@@ -62,7 +59,6 @@ describe("store-config — complement, env, aliases, cache", () => {
     expect(after).toContain("undo_ttl_s: 604800");
     expect(after).toContain("storeMaxAgeS: 2592000");
     expect(after).toContain("storeMaxTotalBytes: 524288000");
-    // second load uses updated mtime cache, still works
     const cfg2 = loadConfig();
     expect(cfg2.autoGuessEncoding).toBe(false);
   });
@@ -87,7 +83,7 @@ describe("store-config — complement, env, aliases, cache", () => {
     const spy = vi.spyOn(console, "warn").mockImplementation(() => {});
     _resetConfigCache();
     const cfg = loadConfig();
-    expect(cfg.autoGuessEncoding).toBe(false); // default, invalid env ignored
+    expect(cfg.autoGuessEncoding).toBe(false);
     expect(spy).toHaveBeenCalled();
     spy.mockRestore();
   });
@@ -96,22 +92,18 @@ describe("store-config — complement, env, aliases, cache", () => {
     const cfgDir = join(tmpHome, ".dsh", "plugins", "dsh-better-edit");
     await mkdir(cfgDir, { recursive: true });
 
-    // store_max_age_s (snake seconds)
     await writeFile(join(cfgDir, "config.yaml"), "store_max_age_s: 100\n", "utf-8");
     _resetConfigCache();
     expect(loadConfig().storeMaxAgeS).toBe(100);
 
-    // storeMaxAgeDays (days -> seconds)
     await writeFile(join(cfgDir, "config.yaml"), "storeMaxAgeDays: 2\n", "utf-8");
     _resetConfigCache();
     expect(loadConfig().storeMaxAgeS).toBe(2 * 86400);
 
-    // store_max_age_days (snake days)
     await writeFile(join(cfgDir, "config.yaml"), "store_max_age_days: 1\n", "utf-8");
     _resetConfigCache();
     expect(loadConfig().storeMaxAgeS).toBe(86400);
 
-    // canonical takes precedence, alias ignored
     await writeFile(
       join(cfgDir, "config.yaml"),
       "storeMaxAgeS: 123\nstore_max_age_s: 999\n",
@@ -151,7 +143,7 @@ describe("store-config — complement, env, aliases, cache", () => {
     _resetConfigCache();
     const a = loadConfig();
     const b = loadConfig();
-    expect(a).toBe(b); // same cached object
+    expect(a).toBe(b);
     expect(a.autoGuessEncoding).toBe(true);
   });
 
@@ -162,7 +154,6 @@ describe("store-config — complement, env, aliases, cache", () => {
     _resetConfigCache();
     const a = loadConfig();
     expect(a.autoGuessEncoding).toBe(false);
-    // wait a tick and rewrite with different value, ensure mtime changes
     await new Promise((r) => setTimeout(r, 20));
     await writeFile(join(cfgDir, "config.yaml"), "autoGuessEncoding: true\n", "utf-8");
     const b = loadConfig();
@@ -178,7 +169,6 @@ describe("store-config — complement, env, aliases, cache", () => {
     expect(loadConfig().autoGuessEncoding).toBe(false);
     process.env.DSH_BETTER_EDIT_AUTO_GUESS_ENCODING = "true";
     expect(loadConfig().autoGuessEncoding).toBe(true);
-    // back to false via env removal
     delete process.env.DSH_BETTER_EDIT_AUTO_GUESS_ENCODING;
     expect(loadConfig().autoGuessEncoding).toBe(false);
   });

@@ -163,12 +163,8 @@ describe("undo-store — raw entries", () => {
       ending: "\r\n",
       hashes: ["abc", "def"],
       resultContent: "new",
-      // #171: the store reports both pair columns; a caller that named no effective ending
-      // records the pre-image's own one and never claims a mixture.
       effectiveEnding: "\r\n",
       preImageMixed: 0,
-      // #191: the store reports the verdict pair too; a caller that migrated nothing stores
-      // NULL on both — "not recorded", never a claim.
       migratedFrom: null,
       migratedFromBOM: null,
     });

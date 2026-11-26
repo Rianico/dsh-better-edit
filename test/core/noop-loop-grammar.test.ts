@@ -70,7 +70,6 @@ describe("noop-loop refusal joins the batch grammar (#216)", () => {
         ],
       };
 
-      // First submission: both items are noops (the second arms the warn tier); no refusal.
       const first = await attempt(harness, call);
       expect(first.applied).toBe(true);
 
@@ -83,16 +82,13 @@ describe("noop-loop refusal joins the batch grammar (#216)", () => {
         expect(
           outcome.message.match(/- edits\[0\] \(noop-two\.txt\) \[E_NOOP_LOOP\]:/g),
         ).toHaveLength(1);
-        // The body must not repeat the item prefix the bullet already names.
         expect(outcome.message).not.toContain("edits[0] (noop-two.txt):");
         expect(outcome.message.match(/edits\[0\] \(noop-two\.txt\)/g)).toHaveLength(1);
       }
 
-      // The refusal recorded the rows it shows: the never-served interior anchors are now leased.
       const after = await withWorkspace(cwd, () => loadServed(fullKey, path));
       expect(after.slice(0, 4)).toEqual(full);
 
-      // ... so the interior anchor applies with no intervening read.
       const retry = await attempt(harness, {
         path: "noop-two.txt",
         anchor_from: full[1]!,
@@ -115,9 +111,9 @@ describe("noop-loop refusal joins the batch grammar (#216)", () => {
         edits: [{ anchor_from: from, anchor_to: to, replace_with: NOOP_REPLACEMENT }],
       };
 
-      expect((await attempt(harness, call)).applied).toBe(true); // count 1
-      expect((await attempt(harness, call)).applied).toBe(true); // count 2: warn tier only
-      const third = await attempt(harness, call); // count 3: reject
+      expect((await attempt(harness, call)).applied).toBe(true);
+      expect((await attempt(harness, call)).applied).toBe(true);
+      const third = await attempt(harness, call);
       expect(third.applied).toBe(false);
       expect(third.message).toMatch(/^\[TO MODEL\] \[E_NOOP_LOOP\] /m);
       expect(third.message).not.toContain("Batch rejected:");

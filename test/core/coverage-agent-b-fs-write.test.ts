@@ -1,15 +1,5 @@
-import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import {
-  mkdtemp,
-  writeFile,
-  readFile,
-  rm,
-  stat,
-  mkdir,
-  readdir,
-  symlink,
-  open,
-} from "node:fs/promises";
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { mkdtemp, writeFile, readFile, rm, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { writeAtomic } from "../../src/fs-write.js";
@@ -39,10 +29,9 @@ describe("writeAtomic coverage", () => {
   it("preserves mode from existing file", async () => {
     const p = join(dir, "mode.txt");
     await writeFile(p, "old");
-    const before = await stat(p);
+    const _before = await stat(p);
     await writeAtomic(p, "newcontent");
     const after = await stat(p);
-    // mode lower bits should be preserved (allow)
     expect(typeof after.mode).toBe("number");
     expect(await readFile(p, "utf-8")).toBe("newcontent");
   });
@@ -57,7 +46,6 @@ describe("writeAtomic coverage", () => {
     const p = join(dir, "orig.txt");
     const link = join(dir, "link.txt");
     await writeFile(p, "orig");
-    // try to create hardlink; skip if not supported
     try {
       const { link: hlink } = await import("node:fs/promises");
       await hlink(p, link);
@@ -65,11 +53,9 @@ describe("writeAtomic coverage", () => {
       if (st.nlink > 1) {
         await writeAtomic(p, "updated");
         expect(await readFile(p, "utf-8")).toBe("updated");
-        // link should also see updated because hardlink (or writeFile path triggers)
-        // but we at least check no error
       }
     } catch {
-      /* ignore on unsupported */
+      // HACK: the test ignores this cleanup failure by design.
     }
   });
 
@@ -83,23 +69,18 @@ describe("writeAtomic coverage", () => {
   });
 
   it("stale temp file older than 1h is removed on next write", async () => {
-    // create a fake stale temp
     const stale = join(dir, ".tmp-00000000-0000-4000-a000-000000000000");
     await writeFile(stale, "stale");
-    // make mtime old by futzing time? We can't easily set old mtime without utimes, but sweep will check mtimeMs; we can use utimes
     const { utimes } = await import("node:fs/promises");
     const old = new Date(Date.now() - 2 * 60 * 60 * 1000);
     await utimes(stale, old, old);
     const p = join(dir, "next.txt");
     await writeAtomic(p, "next");
-    // stale should be gone (or at least next write succeeded)
     expect(await readFile(p, "utf-8")).toBe("next");
-    // stale may have been removed
     try {
       await stat(stale);
-      // if still exists, it was not stale enough or dir already swept; not failure
     } catch {
-      // removed - good
+      // HACK: the test ignores this cleanup failure by design.
     }
   });
 

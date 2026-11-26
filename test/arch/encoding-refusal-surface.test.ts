@@ -15,10 +15,6 @@ import { DEFAULT_CONFIG_YAML } from "../../src/store-config.js";
  * do: the per-call `allow_encoding_migration` value (`"utf8"` / `"utf8bom"`), the standing
  * `allowEncodingMigration` setting (its location, `$DSH_HOME/plugins/dsh-better-edit/config.yaml`,
  * is named too so the standing route is actionable — #180 §3), or a re-encode outside the plugin.
- *
- * This is the refutable half: the surface is pinned in, and the environment vocabulary (plus the
- * retired plain-config spelling) is pinned out of both the message and the remedy, with positive
- * controls proving the guards fire at all.
  */
 
 const ROOT = join(import.meta.dirname, "..", "..");
@@ -154,7 +150,6 @@ describe("the docs name the payload surface and the config surface distinctly", 
       expect(paragraph).toContain("allow_encoding_migration");
       expect(paragraph).toContain("allowEncodingMigration");
       expect(paragraph).toContain(CONFIG_PATH);
-      // The legacy spelling stays named AS legacy — dropping it would hide a still-honoured knob.
       expect(paragraph).toContain("normalizeToUtf8");
       expect(paragraph).toContain('"utf8"');
       expect(paragraph).toContain('"utf8bom"');

@@ -19,8 +19,6 @@ describe("configDir", () => {
     const previousDsh = process.env.DSH_HOME;
     process.env.DSH_HOME = "/custom/dsh";
     try {
-      // resolveDshHome() resolves the env value with node:path.resolve, so the
-      // expectation applies the same resolution to stay platform-neutral.
       expect(configDir()).toBe(join(resolve("/custom/dsh"), "plugins", "dsh-better-edit"));
     } finally {
       if (previousDsh === undefined) delete process.env.DSH_HOME;

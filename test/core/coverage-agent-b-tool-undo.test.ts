@@ -1,11 +1,11 @@
 import { describe, it, expect } from "vitest";
 import { readFile, writeFile } from "node:fs/promises";
 import { withTempFile, setupIntegrationTest, getText } from "../support/fixtures.js";
-import { buildUndoTool } from "../../src/tool-undo.js";
+import "../../src/tool-undo.js";
 import { saveUndo, clearUndo, getUndo } from "../../src/undo-edit.js";
 import { hashStorePath } from "../../src/store-tenancy.js";
 
-function makeExec(cwd: string, sessionKey = "test-session") {
+function _makeExec(cwd: string, sessionKey = "test-session") {
   return {
     signal: new AbortController().signal,
     agent: { id: sessionKey, session: { id: sessionKey, header: { cwd } } },
@@ -78,7 +78,7 @@ describe("tool-undo coverage", () => {
   });
 
   it("second undo after success has no history", async () => {
-    await withTempFile("t.txt", "a\nb\nc\n", async ({ cwd, path }) => {
+    await withTempFile("t.txt", "a\nb\nc\n", async ({ cwd, path: _path }) => {
       const harness = setupIntegrationTest(cwd);
       const served = await harness.readTool.execute("read", { path: "t.txt" });
       const hash = getText(served)
@@ -121,11 +121,8 @@ describe("undo-edit persistence coverage", () => {
     await withTempFile("t.txt", "x\n", async ({ cwd }) => {
       const { join } = await import("node:path");
       const abs = join(cwd, "t.txt");
-      // directly write invalid record via hash-store
       const { loadHashStore } = await import("../../src/hash-store.js");
-      const store = await loadHashStore();
-      // A v7 row with a CURRENT pin but an invalid ending: the pin gate passes, so the ending gate
-      // is the one under test.
+      const _store = await loadHashStore();
       const { snapshotHashFor } = await import("../../src/snapshot-store/lineage-store.js");
       const pin = snapshotHashFor("a");
       const { DatabaseSync: RawSync } = await import("node:sqlite");

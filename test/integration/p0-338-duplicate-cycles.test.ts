@@ -115,8 +115,6 @@ describe("#338 — a deleted twin's anchor is retired, not re-issued", () => {
       const drifted = await read(harness, "twins.txt");
       expect(anchorsOf(drifted)).toContain(survivor);
       expect(anchorsOf(drifted)).not.toContain(deleted);
-      // The store is workspace-scoped, so the read must be inspected in the same workspace the tool
-      // call used (the bare call would open the shared-home store instead).
       expect([...(await withWorkspace(cwd, () => loadRetiredAnchors(key, path)))]).toContain(
         deleted,
       );
@@ -148,8 +146,6 @@ describe("#338 — a deleted twin's anchor is retired, not re-issued", () => {
   });
 });
 
-// The notice is payload-only (`finalizeResult` never renders it) and this tool surface exposes no
-// `details` channel, so the omission rule is pinned in test/core/drift-notice-omission.test.ts.
 describe("#338 — drift notice shape", () => {
   it("applies a clean edit on a served anchor", async () => {
     await withTempFile("clean.txt", "alpha\nbeta\ngamma\n", async ({ cwd, path }) => {

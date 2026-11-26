@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { mkdtemp, rm, mkdir, writeFile, readFile } from "node:fs/promises";
+import { mkdtemp, rm, mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { existsSync, appendFileSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { getWritableTempRoot } from "../support/fixtures.js";
 
 describe("coverage-agent-g lifecycle", () => {
@@ -19,7 +19,6 @@ describe("coverage-agent-g lifecycle", () => {
     await writeFile(join(ws, ".gitignore"), "node_modules\n", "utf-8");
     const storePath = join(ws, ".dsh_better_edit", "hash-store.sqlite");
     await mkdir(join(ws, ".dsh_better_edit"), { recursive: true });
-    // mock loadConfig to return workspace + autoGitignore true
     const storeCfgMod = await import("../../src/store-config.js");
     const spyLoad = vi.spyOn(storeCfgMod, "loadConfig").mockReturnValue({
       storeDir: "workspace",
@@ -30,7 +29,6 @@ describe("coverage-agent-g lifecycle", () => {
     const spyWorkspace = vi
       .spyOn(await import("../../src/workspace-context.js"), "workspaceCwd")
       .mockReturnValue(ws);
-    // need to trigger handleGitPollution via onStoreOpen
     const lc = await import("../../src/store-lifecycle.js");
     lc._resetLifecycleForTests();
     const fakeStmts: any = {
@@ -73,7 +71,6 @@ describe("coverage-agent-g lifecycle", () => {
     };
     await lc.onStoreOpen(storePath, fakeStmts, fakeStore);
     expect(warnSpy).toHaveBeenCalled();
-    // second call should not warn again (has check)
     warnSpy.mockClear();
     await lc.onStoreOpen(storePath, fakeStmts, fakeStore);
     expect(warnSpy).not.toHaveBeenCalled();
@@ -192,7 +189,6 @@ describe("coverage-agent-g lifecycle", () => {
     };
     await lc.onStoreOpen("/tmp/p1", stmts, store);
     expect(pruneMock).toHaveBeenCalledTimes(1);
-    // second call throttled (same storePath, within 24h)
     await lc.onStoreOpen("/tmp/p1", stmts, store);
     expect(pruneMock).toHaveBeenCalledTimes(1);
     vi.restoreAllMocks();

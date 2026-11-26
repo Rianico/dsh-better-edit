@@ -213,9 +213,6 @@ describe("pairSnapshots — budget guard", () => {
     const prev = descs(["H", ...run, "T"]);
     const curr = descs(["H", ...run, "T"]);
 
-    // WHY: the top-level interval costs 84, leaving 16 < 80 for the duplicate middle run,
-    // WHY: so the two unanimous pins still pair while the over-budget rigid run is retired
-    // WHY: instead of being zipped; the default scaled budget aligns all 42 lines.
     expect(asPairs(pairSnapshots(prev, curr, { scanBudget: 100 }))).toEqual([
       [1, 1],
       [42, 42],

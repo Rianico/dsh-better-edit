@@ -7,13 +7,6 @@
  * ("use bare \"set\" next time", "use only the first hash \"wUp\" … \"AU6\"") steered a model into
  * an unrelated line. This file holds the runtime half; the source half is
  * `test/arch/unverified-anchor-hints.test.ts`.
- *
- * Refutability: the corpus below reproduces each defect shape (a paste whose first alnum run is a
- * real anchor, a fabricated pair, a no-alnum block). On `009b922` the same corpus produced quoted
- * `set` / `x` / `wUp` / `AU6` tokens and this property fails; the canned pre-fix control proves the
- * checker flags that string regardless of the current `src/` state.
- *
- * @module dsh-better-edit/test/anchor-hint-quoted-tokens
  */
 import { describe, expect, it, beforeAll } from "vitest";
 import { DomainError } from "../../src/domain-errors.js";
@@ -74,23 +67,16 @@ function collect(ref: string, via: Refusal["via"]): Refusal | undefined {
  * blocks, and the single-line shapes that reach `diagRef`.
  */
 const CORPUS: string[] = [
-  // The T1 reproduction: `settlementStatus` yielded the pseudo-anchor "set".
   "settlementStatus: '',\n      remark: ''\n    })\n  })",
-  // Collision: the first 3-char run is a real hash (`wUp` = `"site": {`, `AU6` = `}` in src/).
   'wUp│  "site": {\nconst beta = 2;',
   "AU6│}\nconst gamma = 3;",
-  // No 3-char alnum run anywhere — the deleted extractor's `undefined` arm, then the raw tail.
   '— —"\n"││"',
   "│\n│",
-  // Fabricated pairs: a plausible-looking hash on each side of the newline.
   "x│y\nz│w",
   "abc│a\ndef│b",
   "1│2\n3│4",
-  // Documented example masquerading as a block.
   "aB3\nxyz",
-  // The T1 redaction fixture, with a trailing blank line.
   "const a = 1;\nconst b = 2;\n",
-  // Single-line shapes that reach `diagRef` (the T2 seam).
   "abc│content",
   "x│y",
   "+abc│x",
@@ -122,14 +108,11 @@ beforeAll(async () => {
 
 describe("#108 no refusal quotes an unverified anchor", () => {
   it("the checker is refutable: the canned pre-fix hint is flagged", () => {
-    // Verbatim shape of the deleted T1 message; independent of the current `src/`.
     const preFix = 'extracted first hash "set" from 4-line block — use bare "set" next time';
     expect(offendingTokens(preFix)).toEqual(["set", "set"]);
-    // ... and the T2 shape.
     const preFixPipe =
       'Received 2 lines starting "abc│line one…" — use only the first hash "wUp" as anchor_from and "AU6" as anchor_to';
     expect(offendingTokens(preFixPipe)).toEqual(["wUp", "AU6"]);
-    // The documented example is the one allowlisted literal.
     expect(offendingTokens('Expected a 3-char alphanumeric anchor (e.g. "aB3").')).toEqual([]);
   });
 
@@ -139,10 +122,8 @@ describe("#108 no refusal quotes an unverified anchor", () => {
       ...CORPUS.map((ref) => collect(ref, "parseHashRef")),
     ].filter((refusal): refusal is Refusal => refusal !== undefined);
 
-    // Guard against a vacuous pass: the corpus must actually produce refusals.
     expect(refusals.length).toBeGreaterThanOrEqual(CORPUS.length);
     expect(offendingTokens(refusals.map((r) => r.reason).join("\n"))).toEqual([]);
-    // Positive reach: the allowlist is exercised, not merely declared.
     expect(refusals.some((r) => quotedTokens(r.reason).includes("aB3"))).toBe(true);
   });
 

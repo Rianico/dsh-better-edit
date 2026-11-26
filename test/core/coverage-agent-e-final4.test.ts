@@ -3,19 +3,16 @@ import { describe, it, expect } from "vitest";
 describe("coverage-agent-e final4", () => {
   it("covers sandbox and tool branches", async () => {
     const { FsSandboxController } = await import("../../src/sandbox.js");
-    // Test with different sandbox modes
     const c1 = new FsSandboxController({
       fs: { sandboxMode: undefined } as any,
       get: () => undefined,
     } as any);
     expect(c1).toBeDefined();
-    // Test with readOnly and policy
     const c2 = new FsSandboxController({
       fs: { sandboxMode: "readOnly" } as any,
       get: (k: string) => (k === "sandboxPolicy" ? { root: "/tmp", mode: "readOnly" } : undefined),
     } as any);
     expect(c2).toBeDefined();
-    // Test with workspace
     const c3 = new FsSandboxController({
       fs: { sandboxMode: "workspace" } as any,
       get: (k: string) =>

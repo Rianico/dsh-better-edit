@@ -17,7 +17,6 @@ import { shutdownHashStore } from "../../src/hash-store.js";
 import { localIO, type FileIO } from "../../src/fs-bridge.js";
 import { buildEditTool } from "../../src/tool-edit.js";
 import { buildReadTool } from "../../src/tool-read.js";
-// batch_edit removed (ADR-0007) — shim via edit tuples for test compatibility
 import { buildUndoTool } from "../../src/tool-undo.js";
 import { FsSandboxController } from "../../src/sandbox.js";
 
@@ -192,7 +191,6 @@ function wrapTool(
 } {
   return {
     async execute(_callId, params) {
-      // Partial fake: session/signal/arguments only — the tools under test never touch deferContext/concludeTurn.
       const result = (await tool.execute(
         params,
         makeExecFor(params) as unknown as ToolRunContext,
@@ -234,7 +232,6 @@ export function setupIntegrationTest(cwd: string, io: FileIO = localIO()) {
         if (rec && "edits" in rec) {
           return (base as any).execute(_callId, params);
         }
-        // old shape {file, anchor_from,...} → {file, edits:[[h,h,t]]}
         if (rec && typeof rec.anchor_from === "string") {
           const converted = {
             file: (rec.file ?? rec.path ?? (rec as any).file_path ?? null) as string | null,
@@ -263,7 +260,6 @@ export function setupIntegrationTest(cwd: string, io: FileIO = localIO()) {
         const edits = rec.edits ?? [];
         if (edits.length === 0) throw new Error("[E_BAD_PAYLOAD] batch_edit shim: edits empty");
         const path = (edits[0] as any).path ?? (edits[0] as any).file_path ?? null;
-        // verify all same file (new edit is single-file)
         for (const e of edits) {
           const ep = (e as any).path ?? (e as any).file_path ?? path;
           if (ep !== path)

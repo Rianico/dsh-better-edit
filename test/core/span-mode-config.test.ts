@@ -25,7 +25,6 @@ describe("span mode — config policy seam", () => {
     vi.stubEnv("HOME", tmpHome);
     vi.stubEnv("DSH_HOME", join(tmpHome, ".dsh"));
     vi.stubEnv("DSH_BETTER_EDIT_SPAN_MODE", "");
-    // clear the stubbed empty so it behaves as undefined
     const stubbed = process.env.DSH_BETTER_EDIT_SPAN_MODE;
     if (stubbed === "") delete process.env.DSH_BETTER_EDIT_SPAN_MODE;
     _resetConfigCache();

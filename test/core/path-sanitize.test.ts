@@ -46,7 +46,6 @@ describe("gemma-4 tool-call bleed hardening (#55)", () => {
     const req = editRequestFrom({ path: "<|>a.py<|>", edits: [["a", "b", "c"]] });
     expect(req?.file).toBe("a.py");
     expect(editRequestFrom({ path: "a.py", edits: [["a", "b", "c"]] })?.file).toBe("a.py");
-    // #117: a null file is an admission error, never inferred from anchors.
     expect(editRequestFrom({ path: null, edits: [["a", "b", "c"]] })).toBeUndefined();
     expect(editRequestFrom({ file: null, edits: [["a", "b", "c"]] })).toBeUndefined();
   });

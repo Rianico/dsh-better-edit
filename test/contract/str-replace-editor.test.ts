@@ -20,7 +20,6 @@ function fakeExec(cwd: string, session = "sre-contract") {
 describe("str_replace_editor contract parity", () => {
   function paramsOf(tool: unknown): Record<string, unknown> {
     const p = (tool as { parameters: unknown }).parameters as Record<string, unknown>;
-    // defineTool compiles ValueSchemaSpec into JSON Schema: {type:'object', properties:{...}}
     if (p && typeof p === "object" && "properties" in p)
       return p["properties"] as Record<string, unknown>;
     return p;

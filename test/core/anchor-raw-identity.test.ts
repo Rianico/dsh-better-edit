@@ -15,23 +15,16 @@ import { ANCHOR_GENERATION, canon, initHasher, lineHashesPure } from "../../src/
  */
 const CANON_EQUAL_LINES = ["const a = 1;", "\tconst a = 1;", "   const a = 1;  "];
 
-// WHY: `lineHashesPure` reads the wasm hasher synchronously and the hasher is a worker-level
-// WHY: singleton (`isolate: false`). Initialise it here rather than inheriting it from whichever
-// WHY: suite the runner happened to execute first.
 beforeAll(async () => {
   await initHasher();
 });
 
 describe("anchor identity derives from raw bytes (#138)", () => {
   it("pins ANCHOR_GENERATION at 2 — the raw-byte seeding generation", () => {
-    // WHY: the generation is the only invalidation axis that covers the (path, content) seeding.
-    // WHY: Generation 2 seeds on raw bytes; a silent return to canon seeding would leave stale
-    // WHY: anchors resolvable against content they no longer denote.
     expect(ANCHOR_GENERATION).toBe(2);
   });
 
   it("#138: three canon-equal lines derive three distinct, content-derived anchors", () => {
-    // Premise: the trio IS canon-equal (edge runs only — v4 keeps interior runs significant).
     const folded = canon("const a = 1;");
     for (const line of CANON_EQUAL_LINES) expect(canon(line)).toBe(folded);
 
@@ -40,15 +33,10 @@ describe("anchor identity derives from raw bytes (#138)", () => {
       const [anchor] = lineHashesPure(`${line}\n`);
       solo.push(anchor);
     }
-    // Measured, not recomputed from the allocator: each raw line's own spelling. Before the fix
-    // all three spelled `7rq` (one canon → one base slot → positional probes).
     expect(solo).toEqual(["7rq", "nzW", "olD"]);
 
     const inFile = lineHashesPure(`${CANON_EQUAL_LINES.join("\n")}\n`);
     expect(new Set(inFile).size).toBe(3);
-    // WHY: equality with the solo derivation is the observable form of "identity is a function of
-    // WHY: the line's own bytes". A canon-keyed allocator fails it: the second and third lines get
-    // WHY: probe spellings that depend on their siblings.
     expect(inFile).toEqual(solo);
   });
 });

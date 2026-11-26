@@ -12,7 +12,6 @@ function asPairs(pairing: Map<number, number>): [number, number][] {
 
 describe("pairLineage — checksum-miss alignment entry (T1)", () => {
   it("pairs the surviving twin of a deleted duplicate by the unique pins around it", () => {
-    // x a y a z -> x y a z: the FIRST twin is deleted, so the second `a` keeps its coordinate.
     expect(
       asPairs(pairLineage(descs(["X", "A", "Y", "A", "Z"]), descs(["X", "Y", "A", "Z"]))),
     ).toEqual([
@@ -24,8 +23,6 @@ describe("pairLineage — checksum-miss alignment entry (T1)", () => {
   });
 
   it("retires an ambiguous homogeneous shrink instead of guessing which copy survived", () => {
-    // a a a b -> a a b: `b` is the only forced pin; the 3-to-2 duplicate run is ambiguous, so it
-    // stays UNPAIRED and those anchors retire (the ordinal carry is T2's rule, not T1's).
     expect(asPairs(pairLineage(descs(["A", "A", "A", "B"]), descs(["A", "A", "B"])))).toEqual([
       [4, 3],
     ]);

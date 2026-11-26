@@ -14,7 +14,6 @@ describe("strict hashline contract", () => {
   it("folds edge whitespace but keeps interior ASCII whitespace significant (ADR-0002 / ADR-0040)", async () => {
     const hashes = await lineHashes("a b", home.testPath);
     const hashes2 = await lineHashes("ab", home.testPath);
-    // v4 canon is trim-only: the interior space of `a b` survives, so the lines never pair.
     expect(canon("  a b  ")).toBe(canon("a b"));
     expect(canon("a b")).not.toBe(canon("ab"));
     expect(hashes[0]).not.toBe(hashes2[0]);
@@ -23,9 +22,7 @@ describe("strict hashline contract", () => {
   it("derives the anchor from the raw line, so an edge run rotates it (#138)", async () => {
     const hashes = await lineHashes("  a b", home.testPath);
     const hashes2 = await lineHashes("a b", home.testPath);
-    // The canon folds the edge run (alignment/verification evidence)...
     expect(canon("  a b")).toBe(canon("a b"));
-    // ...while the anchor keys on the line's own bytes, so the two identities differ.
     expect(hashes[0]).not.toBe(hashes2[0]);
   });
 
@@ -168,8 +165,6 @@ describe("pure hasher", () => {
   it("lineHashesPure agrees with the pathless wrapper and needs no store", async () => {
     const content = "alpha\nbeta\ngamma";
     const pure = lineHashesPure(content);
-    // The wrapper without a path never touches the hash store — it is
-    // exactly the pure path.
     const wrapper = await lineHashes(content);
     expect(pure).toEqual(wrapper);
     expect(new Set(pure).size).toBe(pure.length);

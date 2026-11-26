@@ -79,7 +79,6 @@ describe("line_id inheritance shares the pairing owner", () => {
     commit(store, "/legacy.ts", RUN_TWO);
     const after = store.latestLineageFor("/legacy.ts")!;
 
-    // No raw evidence, no ordinal carry: the run takes fresh ids.
     expect(after[1]!.lineId).not.toBe(prior[1]!.lineId);
     expect(after[2]!.lineId).not.toBe(prior[2]!.lineId);
     expect(after[0]!.lineId).toBe(prior[0]!.lineId);

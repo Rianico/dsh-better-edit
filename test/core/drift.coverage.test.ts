@@ -23,7 +23,6 @@ describe("drift shim re-export", () => {
 
 describe("drift — file-view roundtrip", () => {
   it("computes drift with served hash vs current for file-view roundtrip", () => {
-    // exercise session-view path used by file-view consumers
     const served = ["h00", "h01"];
     const resultHashes = ["h00", "hX1"];
     const resultLines = ["a", "changed"];

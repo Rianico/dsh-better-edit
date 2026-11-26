@@ -11,9 +11,6 @@ import { describe, expect, it } from "vitest";
  * appear in `src/`: upstream's end state after `3e1f6dc` is a cause vocabulary with no
  * tombstone/blocked-hash member, and downstream reaches that same end state by deleting the dead
  * `"tombstone"` RangeCause member rather than renaming it.
- *
- * This is the refutable half of the ADR: the banned words are pinned out, and the surviving
- * `retirement` cause is pinned in, so a wholesale rename to a third name cannot pass silently.
  */
 
 const SRC_ROOT = join(import.meta.dirname, "..", "..", "src");
@@ -63,8 +60,6 @@ describe("blocked-hash vocabulary (ADR-0028)", () => {
   });
 
   it("keeps the freed-hash cause named `retirement`", async () => {
-    // The two bans above only exclude names; without this positive half a wholesale rename to a
-    // third name (or a silent drop of the member) would pass.
     expect(await rangeCauseUnion()).toMatch(/^\s*\| "retirement"$/m);
   });
 });

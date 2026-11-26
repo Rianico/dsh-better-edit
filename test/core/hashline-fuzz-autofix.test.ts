@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { applyEdit, lineHashes, resEdit, canon } from "../../src/hashline/index.js";
-import { firstNonEmptyIndex, lastNonEmptyIndex, splitLines } from "../../src/utils.js";
+import { splitLines } from "../../src/utils.js";
 import { useTestHome, expectedEditContent } from "../support/fixtures.js";
 
 const home = useTestHome();
@@ -76,7 +76,7 @@ function randRepl(rnd: () => number, lines: string[], s: number, e: number): str
   return repl;
 }
 
-function sectionCount(lines: string[], start: number, length: number): number {
+function _sectionCount(lines: string[], start: number, length: number): number {
   const canonLines = lines.map((line) => canon(line));
   let count = 0;
   for (let i = 0; i + length <= canonLines.length; i++) {
@@ -89,11 +89,10 @@ function sectionCount(lines: string[], start: number, length: number): number {
 
 function applyAutoFix(
   repl: string[],
-  fileLines: string[],
-  s: number,
-  e: number,
+  _fileLines: string[],
+  _s: number,
+  _e: number,
 ): { fixed: string[]; fixes: { kind: string; removedLine: string; removedLineIndex: number }[] } {
-  // boundaryDups removed — no auto-fix, pure replacement
   return { fixed: [...repl], fixes: [] };
 }
 

@@ -3,7 +3,6 @@ import {
   parseHashRef,
   resEdit,
   applyEdit,
-  parseText,
   findEditHashEcho,
 } from "../../src/hashline/anchor-pipeline.js";
 import {
@@ -50,7 +49,6 @@ describe("coverage-f: anchor-pipeline fmtMismatch", () => {
     const content = "a\nb\nc\nd\ne";
     const hashes = lineHashesPure(content);
     const served: any = [...hashes];
-    // make first hash stale
     const edit: any = {
       hash_bounds: [{ hash: "zzz" }, { hash: hashes[2]! }],
       content_lines: ["X"],
@@ -61,17 +59,13 @@ describe("coverage-f: anchor-pipeline fmtMismatch", () => {
   });
   it("triggers E_STALE_ANCHOR", () => {
     const content = "a\nb\na\nb\na";
-    const hashes = lineHashesPure(content);
-    // create duplicate hashes scenario: use lineHashesPure on content with duplicate lines will produce different hashes per line content, but we can forge served with duplicate
-    // Instead trigger via duplicate file lines: "a" appears multiple times, hashes for "a" lines will be same, so ambiguous
+    const _hashes = lineHashesPure(content);
     const dupContent = "dup\ndup\ndup";
     const dupHashes = lineHashesPure(dupContent);
-    // dupHashes[0] == dupHashes[1] == dupHashes[2] because same content "dup" but hashes are per line content via xxhash, so they are same => ambiguous
     const edit: any = {
       hash_bounds: [{ hash: dupHashes[0]! }, { hash: dupHashes[0]! }],
       content_lines: ["X"],
     };
-    // This should either succeed or throw ambiguous - both cover branches
     try {
       const res = applyEdit(dupContent, edit, undefined, dupHashes);
       expect(res.content).toBeDefined();
@@ -125,14 +119,12 @@ describe("coverage-f: anchor-pipeline no boundary dups (removed)", () => {
   it("keeps trailing/leading dup (no autoFix)", () => {
     const content = "a\nb\nc\nd\ne";
     const hashes = lineHashesPure(content);
-    // trailing dup: replacement includes next line's content — now kept
     const edit1: any = {
       hash_bounds: [{ hash: hashes[1]! }, { hash: hashes[2]! }],
       content_lines: ["B", "C", "d"],
     };
     const r1 = applyEdit(content, edit1, undefined, hashes);
     expect((r1 as any).autoFixes ?? (r1 as any).nes).toBeUndefined();
-    // leading dup
     const edit2: any = {
       hash_bounds: [{ hash: hashes[1]! }, { hash: hashes[2]! }],
       content_lines: ["a", "B", "C"],
@@ -166,10 +158,7 @@ describe("coverage-f: anchor-pipeline no boundary dups (removed)", () => {
     ).toThrow();
   });
   it("covers assertAligned via fmtMismatch", async () => {
-    // trigger assertAligned by mismatched lengths
-    const { applyEdit: ae } = await import("../../src/hashline/anchor-pipeline.js");
-    // Directly test via stale anchor with mismatched fileHashes/fileLines lengths
-    // Use verifyServedRange with mismatched lengths
+    const { applyEdit: _ae } = await import("../../src/hashline/anchor-pipeline.js");
     try {
       verifyServedRange({
         served: ["a", "b"] as any,

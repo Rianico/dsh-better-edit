@@ -210,7 +210,6 @@ describe("write auto-read post-execute", () => {
 
       expect(decision.kind).toBe("accept");
       if (decision.kind !== "accept") return;
-      // The anchors above are only usable if the policy gate knows this version was seen.
       expect(emitObserved).toHaveBeenCalledOnce();
       expect(emitObserved).toHaveBeenCalledWith(await io.resolve(path, cwd), exec, exec.signal);
       expect(JSON.stringify(decision.content)).toContain("Auto-read (hashline anchors)");
@@ -256,7 +255,6 @@ describe("write auto-read post-execute", () => {
 
       const decision = await post(makeWriteExec(cwd, path), writeResult(), async () => original);
 
-      // Fail-open: the write result stands and the fault is only logged.
       expect(decision).toBe(original);
       expect(warn).toHaveBeenCalledOnce();
       expect(String(warn.mock.calls[0]?.[0])).toContain("auto-read after write failed");
@@ -282,8 +280,6 @@ describe("write auto-read post-execute", () => {
         expect(decision.kind).toBe("accept");
         if (decision.kind !== "accept") return;
         const rendered = JSON.stringify(decision.content);
-        // The rows are advertised as unusable, yet the observation still lands:
-        // observation and anchor-usability are orthogonal gates.
         expect(rendered).toContain("NOT recorded as served");
         expect(emitObserved).toHaveBeenCalledOnce();
         expect(warn).not.toHaveBeenCalled();

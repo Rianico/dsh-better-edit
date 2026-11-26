@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect } from "vitest";
 
 describe("coverage-agent-e final2", () => {
   it("store-lifecycle covers git pollution and janitor", async () => {
@@ -7,13 +7,9 @@ describe("coverage-agent-e final2", () => {
 
   it("encoding covers chardet empty and low confidence", async () => {
     const m: any = await import("../../src/encoding.js");
-    // empty allowlist
     expect(m.top3Candidates(Buffer.from("hello"), [])).toEqual([]);
-    // isValidUtf8 with empty
     expect(m.isValidUtf8(new Uint8Array([]))).toBe(true);
-    // decode with invalid
     expect(m.decodeBytes(Buffer.from([0xff]), "utf8")).toBeUndefined();
-    // chardet with empty should return undefined or empty
     const res = await m.detectWithChardet(Buffer.from([0xff, 0xfe]), []);
     expect(res === undefined || typeof res === "string").toBe(true);
   });

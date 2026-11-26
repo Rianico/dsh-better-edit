@@ -7,10 +7,6 @@
  * and how many terminators the write actually rewrites. A rewrite is lossless but
  * not invisible: the applied result carries one `W_EOL_REWRITTEN` line, pushed
  * only after the write landed, and never for an all-noop call.
- *
- * `write` and `str_replace_editor` never pass the new option, so their bytes are
- * unchanged; this spec measures the `edit` path byte-for-byte in both directions
- * (what landed, and what the model was told).
  */
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -143,7 +139,6 @@ describe("no terminator in the pre-image", () => {
     await withTempFile("t.txt", "a", async ({ cwd, path }) => {
       const text = await readAndEditLine(cwd, "t.txt", "a", "A\nB");
 
-      // The new terminator is not a pre-image terminator, so nothing was rewritten.
       expect(await readFile(path, "utf-8")).toBe(`A${SYSTEM_ENDING}B`);
       expect(countOf(text, WARNING_MARK)).toBe(0);
     });
@@ -240,7 +235,6 @@ describe("batch and identity", () => {
   it("a rewritten EOL does not move an untouched line's anchor", async () => {
     await withTempFile("t.txt", "a\nb\r\nc\r\nd\r\n", async ({ cwd, path }) => {
       const { readTool, editTool } = setupIntegrationTest(cwd);
-      // ONE read: both edits resolve against the anchors it served (no re-read in between).
       const anchors = anchorsByContent(textOf(await readTool.execute("r1", { path: "t.txt" })));
 
       await editTool.execute("e1", {
@@ -256,7 +250,6 @@ describe("batch and identity", () => {
         replace_with: "B",
       });
 
-      // The second write's pre-image is uniform CRLF, so the resolved target is the file's own.
       expect(await readFile(path, "utf-8")).toBe("A\r\nB\r\nc\r\nd\r\n");
     });
   });
@@ -296,8 +289,6 @@ describe("engine contract — the resolved ending and the mixed flag ride the re
       const anchors = anchorsByContent(textOf(await readTool.execute("r1", { path: "t.txt" })));
       const absolutePath = await resolveTarget(path);
 
-      // The tools materialize a workspace-scoped store; the served rows this edit resolves
-      // against live there, so the direct engine call reads it inside the same workspace.
       const result = await withWorkspace(cwd, async () =>
         runFileEdits(
           localIO(),
@@ -318,7 +309,6 @@ describe("engine contract — the resolved ending and the mixed flag ride the re
       expect(result.effectiveEnding).toBe("\r\n");
       expect(result.preImageMixed).toBe(true);
       expect(result.eolRewriteWarning).toContain("1 terminators changed");
-      // The engine plans the write; the Transaction performs it, so nothing moved yet.
       expect(result.result).toBe("A\nb\nc\n");
       expect(await readFile(path, "utf-8")).toBe("a\nb\r\nc\r\n");
     });
@@ -362,12 +352,8 @@ describe("transaction — the rollback names the pre-image ending", () => {
       ).rejects.toThrow(/disk full/);
 
       const calls = (io.writeText as unknown as { mock: { calls: unknown[][] } }).mock.calls;
-      // Two forward writes name the resolved effective ending (and the consent they were decided
-      // under, #209 — the default `refuse` here) …
       expect(calls[0]!.at(-1)).toEqual({ lineEnding: "\n", migrationConsent: "refuse" });
       expect(calls[1]!.at(-1)).toEqual({ lineEnding: "\n", migrationConsent: "refuse" });
-      // … and the rollback (third call) retargets file 1 at its OWN pre-image ending, naming no
-      // consent at all (a rollback restores bytes; it never converts).
       expect(calls[2]![0]).toBe("/tmp/eol-rollback-1.txt");
       expect(calls[2]!.at(-1)).toEqual({ lineEnding: "\r\n" });
     } finally {

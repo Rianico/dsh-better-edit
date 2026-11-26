@@ -1,8 +1,8 @@
 import { describe, it, expect } from "vitest";
-import { mkdtemp, rm, writeFile, readFile } from "node:fs/promises";
+import { mkdtemp, rm, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import iconv from "iconv-lite";
+import "iconv-lite";
 
 describe("final90 encoding", () => {
   it("covers normalizeEncoding and isSupported", async () => {
@@ -40,7 +40,6 @@ describe("final90 encoding", () => {
   it("covers chardet branches via direct call", async () => {
     const m: any = await import("../../src/encoding.js");
     const bytes = Buffer.from("hello");
-    // call with allowlist that includes gbk, should handle chardet if available
     const res = await m.detectWithChardet(bytes, ["gbk", "utf8"]);
     expect(res === undefined || typeof res === "string").toBe(true);
     const res2 = await m.chardetTop3Candidates?.(bytes, ["gbk"]).catch(() => []);
@@ -75,7 +74,6 @@ describe("final90 fs-write", () => {
       expect(await readFile(p, "utf-8")).toBe("first");
       await writeAtomic(p, "second");
       expect(await readFile(p, "utf-8")).toBe("second");
-      // test with directory that needs mkdir
       const nested = join(dir, "nested", "b.txt");
       await writeAtomic(nested, "nested");
       expect(await readFile(nested, "utf-8")).toBe("nested");
@@ -92,7 +90,6 @@ describe("final90 anchor large", () => {
     const lines = Array.from({ length: 200 }, (_, i) => `line ${i}`);
     const content = lines.join("\n");
     const hashes = lineHashesPure(content);
-    // edit middle range
     const edit: any = {
       hash_bounds: [{ hash: hashes[10]! }, { hash: hashes[20]! }],
       content_lines: ["replaced"],
@@ -140,7 +137,9 @@ describe("final90 hash-store", () => {
     const p = join(tmpdir(), "final90-" + Date.now() + ".txt");
     try {
       await store.upsertSnapshot?.(p, "abc123", 2, ["aB1", "cD2"]);
-    } catch {}
+    } catch {
+      // HACK: the test ignores this cleanup failure by design.
+    }
     let snap: any;
     try {
       snap = await store.getSnapshot?.(p, "abc123", 2);

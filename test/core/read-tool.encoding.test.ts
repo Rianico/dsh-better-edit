@@ -53,11 +53,10 @@ describe("read tool — encoding integration (replaces manual dsh paste)", () =>
     expect(typeof result).toBe("object");
     const r = result as { text: string; warning?: string };
     expect(r.text).toContain("こんにちは世界");
-    expect(r.text).toContain("│"); // hash-anchored
+    expect(r.text).toContain("│");
     expect(r.text).not.toContain("Auto-guessed");
     expect(r.warning).toBeDefined();
     expect(r.warning).toContain("Auto-guessed");
-    // render splits into two blocks
     const blocks = (tool as any).output.render({ path: p }, result);
     expect(blocks).toHaveLength(2);
     expect(blocks[0].text).toBe(r.text);
@@ -74,7 +73,6 @@ describe("read tool — encoding integration (replaces manual dsh paste)", () =>
     const io = localIO();
     const { result, tool } = await readViaTool(io, cwd, p, "shift_jis");
     const r = result as { text: string; warning?: string };
-    // explicit path always returns object {text} (no warning), even with autoGuess true
     expect(r.text).toContain("こんにちは世界");
     expect(r.warning).toBeUndefined();
     const blocks = (tool as any).output.render({ path: p }, result);
@@ -91,10 +89,8 @@ describe("read tool — encoding integration (replaces manual dsh paste)", () =>
     const io = localIO();
     const { result } = await readViaTool(io, cwd, p);
     const r = result as { text: string; warning?: string };
-    // localIO with autoGuess off falls back to readFile utf-8 → contains U+FFFD, no warning
     expect(r.text).toContain("\uFFFD");
     expect(r.warning).toBeUndefined();
-    // Top-3 via E_UNSUPPORTED_FILE is the ctxFsIO (DSH web) path; localIO never throws E_UNSUPPORTED_FILE for this case
   });
 
   it("autoGuess=true: gbk without encoding decodes and warning second block", async () => {

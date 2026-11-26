@@ -60,8 +60,6 @@ function makeCtx() {
   const ctx = {
     waterfall: vi.fn(async (name: string, ...args: unknown[]) => {
       events.push({ kind: "waterfall", name, args });
-      // The single-slot default: the listener "decides" — simulate a
-      // policy returning a version-guarded write intent.
       return { kind: "replaceIfVersion", version: "v1" };
     }),
     emit: vi.fn((name: string, ...args: unknown[]) => {
@@ -186,10 +184,7 @@ describe("ctxFsIO readText", () => {
     const io: FileIO = ctxFsIO(fs as never, ctx);
 
     await expect(io.readText("/abs/file.txt")).resolves.toBe(text);
-    // No byte probe: BOM restoration must not read raw bytes when already preserved.
     expect(fs.readBytes).not.toHaveBeenCalled();
-    // A version-only stat is required so the read-first gate records the real
-    // version instead of undefined (issue #69 fix 2) — drift stays detectable.
     expect(getEncodingState("/abs/file.txt")?.version).toBe("v1");
   });
 });
@@ -329,7 +324,6 @@ function makeDiskFs() {
         intent?: { kind: string; version?: string },
       ) => {
         const current = versions.get(target.targetKey) ?? "v0";
-        // The backend answers a create on an existing file exactly like dsh-fs.
         if (intent?.kind === "createIfAbsent" && versions.has(target.targetKey)) {
           throw Object.assign(new Error("file exists but was never observed"), {
             code: "FS_NOT_OBSERVED",
@@ -349,7 +343,6 @@ function makeDiskFs() {
   };
   return {
     fs,
-    /** The host `write` outcome: bytes land, no `fs/observed` is recorded. */
     async hostWrite(path: string, content: string) {
       await writeFile(path, content, "utf-8");
       versions.set(resolve(path), nextVersion());
@@ -371,7 +364,6 @@ function makeObservationPolicy() {
     waterfall: vi.fn(async (name: string, target: never, exec: never, fallback: () => unknown) => {
       if (name !== "fs/write-intent") return fallback();
       const seen = observed.get(keyOf(target, exec));
-      // Never observed: the policy admits a create only, which fails on an existing file.
       return seen === undefined
         ? { kind: "createIfAbsent" }
         : { kind: "replaceIfVersion", version: seen };
@@ -400,10 +392,8 @@ describe("post-write auto-read records the fs observation (#109)", () => {
       const disk = makeDiskFs();
       const policy = makeObservationPolicy();
       const io = ctxFsIO(disk.fs as never, policy.ctx);
-      // setupIntegrationTest drives the plugin `edit` tool under this session key.
       const sessionKey = "test-session";
 
-      // The host `write` lands the new bytes and records no observation (the premise).
       await disk.hostWrite(path, "alpha\nbeta\ngamma\n");
 
       const listeners = new Map<string, unknown>();
@@ -442,7 +432,6 @@ describe("post-write auto-read records the fs observation (#109)", () => {
       const anchor = /^([A-Za-z0-9]{3})│/m.exec(autoRead)?.[1];
       expect(anchor).toBeTruthy();
 
-      // The reporter's shape: no re-read, so only the auto-read rows may carry the anchor.
       const { editTool } = setupIntegrationTest(cwd, io);
       await editTool.execute("call-1", { file: path, edits: [[anchor, anchor, "ALPHA"]] });
       await expect(readFile(path, "utf-8")).resolves.toBe("ALPHA\nbeta\ngamma\n");

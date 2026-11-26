@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
-import { join } from "node:path";
-import { tmpdir } from "node:os";
+import "node:fs/promises";
+import "node:path";
+import "node:os";
 
 describe("coverage-agent-e last", () => {
   it("utils errCode and splitLines", async () => {

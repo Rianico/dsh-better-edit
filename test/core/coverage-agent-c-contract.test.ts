@@ -27,10 +27,8 @@ describe("coverage: contract.ts", () => {
 
   it("editRequestFrom validates path and edits", () => {
     expect(editRequestFrom({ path: "file.txt", edits: [["a", "b", "c"]] })).toBeDefined();
-    // #117: a null file is an admission error, never inferred
     expect(editRequestFrom({ path: null, edits: [["a", "b", "c"]] })).toBeUndefined();
     expect(editRequestFrom({ file: null, edits: [["a", "b", "c"]] })).toBeUndefined();
-    // empty path string -> undefined
     expect(editRequestFrom({ path: "", edits: [["a", "b", "c"]] })).toBeUndefined();
     expect(editRequestFrom({ path: 123 as any, edits: [["a", "b", "c"]] })).toBeUndefined();
     expect(editRequestFrom({ path: "a", edits: [] })).toBeUndefined();
@@ -39,7 +37,6 @@ describe("coverage: contract.ts", () => {
     expect(editRequestFrom({ notPath: "a" } as any)).toBeUndefined();
     expect(editRequestFrom(null as any)).toBeUndefined();
     expect(editRequestFrom("string" as any)).toBeUndefined();
-    // file_path alias handling (just ensures not throwing, returns undefined due to invalid shape after alias? but should handle)
     expect(
       editRequestFrom({ path: "a", edits: [["a", "b", "c"]], file_path: "other" } as any),
     ).toBeDefined();
@@ -58,26 +55,20 @@ describe("coverage: contract.ts", () => {
     expect(norm.file).toBe("a.txt");
     expect(norm.edits[0].anchor_from).toBe("h1");
     expect(norm[normalizedEdit]).toBe(true);
-    // F9: sandbox fields survive normalization unchanged and the
-    // normalized record is accepted by the contract gate (refutable:
-    // deleting the preservation loop in normalizeRequest goes red here).
     expect(norm.sandbox_permissions).toBe("rw");
     expect(norm.justification).toBe("test");
     expect(() => assertEditRequest(norm)).not.toThrow();
-    // file_path alias
-    const withAlias = {
+    const _withAlias = {
       file_path: "b.txt",
       path: undefined as any,
       edits: [["h1", "h2", "x"]],
     } as any;
-    // normalizeFilePath will map file_path to path - test via normalizeRequest
     const normAlias = normalizeRequest({
       file_path: "b.txt",
       path: "b.txt",
       edits: [["h1", "h2", "x"]],
     } as any) as any;
     expect(normAlias.file).toBe("b.txt");
-    // invalid shape returns record unchanged
     const invalid = normalizeRequest({ path: "a", edits: [] } as any) as any;
     expect(invalid.path).toBe("a");
   });
@@ -95,15 +86,12 @@ describe("coverage: contract.ts", () => {
     const tool = buildEditTool(localIO() as any, sandbox);
     const params = tool.parameters as any;
     const item = { anchor_from: "a", anchor_to: "a", replace_with: "b" };
-    // F1: the declared mode enum admits literal on object and tuple payloads
-    // (refutable: removing mode from parameters fails admission here).
     expect(
       validateJsonSchemaValue(params, { file: "f.ts", edits: [item], mode: "literal" }),
     ).toEqual([]);
     expect(
       validateJsonSchemaValue(params, { file: "f.ts", edits: [["a", "a", "b"]], mode: "literal" }),
     ).toEqual([]);
-    // F9: sandbox fields pass admission under an escalating backend.
     expect(
       validateJsonSchemaValue(params, {
         file: "f.ts",
@@ -112,9 +100,6 @@ describe("coverage: contract.ts", () => {
         justification: "need wider access for this exact file operation",
       }),
     ).toEqual([]);
-    // Discoverability: the schema must DECLARE the enum — the open root
-    // admits undeclared fields, so this structural assertion is the
-    // refutable half (removing `mode` from parameters fails here).
     expect((tool.parameters as any).properties?.mode?.enum).toEqual(["general", "literal"]);
     expect(() =>
       assertEditRequest({ file: "f.ts", edits: [item], mode: "verbatim" } as any),
@@ -162,7 +147,6 @@ describe("coverage: contract.ts", () => {
     const good = normalizeRequest({ path: "a.txt", edits: [["h1", "h2", "content"]] } as any);
     expect(() => assertEditRequest(good)).not.toThrow();
 
-    // not normalized
     expect(() =>
       assertEditRequest({
         path: "a",
@@ -170,13 +154,10 @@ describe("coverage: contract.ts", () => {
       } as any),
     ).toThrow(/E_BAD_PAYLOAD/);
 
-    // unknown fields
     const withExtra = { ...(good as any), extraField: "bad" };
-    // need to add symbol again because spread loses symbol
     Object.defineProperty(withExtra, normalizedEdit, { value: true, enumerable: false });
     expect(() => assertEditRequest(withExtra)).toThrow();
 
-    // empty path
     const emptyPath: any = {
       file: "",
       edits: [{ anchor_from: "a", anchor_to: "b", replace_with: "c" }],
@@ -184,12 +165,10 @@ describe("coverage: contract.ts", () => {
     Object.defineProperty(emptyPath, normalizedEdit, { value: true, enumerable: false });
     expect(() => assertEditRequest(emptyPath)).toThrow(/file must be a non-empty string/);
 
-    // empty edits
     const emptyEdits: any = { file: "a", edits: [] };
     Object.defineProperty(emptyEdits, normalizedEdit, { value: true, enumerable: false });
     expect(() => assertEditRequest(emptyEdits)).toThrow(/non-empty/);
 
-    // too many edits
     const many: any = {
       file: "a",
       edits: Array.from({ length: 33 }, () => ({
@@ -201,7 +180,6 @@ describe("coverage: contract.ts", () => {
     Object.defineProperty(many, normalizedEdit, { value: true, enumerable: false });
     expect(() => assertEditRequest(many)).toThrow(/at most/);
 
-    // bad edit item type
     const badItem: any = {
       file: "a",
       edits: [{ anchor_from: 123 as any, anchor_to: "b", replace_with: "c" }],

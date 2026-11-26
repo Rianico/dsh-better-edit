@@ -9,11 +9,6 @@ import { describe, expect, it } from "vitest";
  * on every session start; that whole pipeline (build script, freshness/mutation guards, esbuild
  * dependency, import-ratio gate, CI matrix) is DECLINED here, because a dsh plugin's entry is the
  * tsc-built `lib/` and the bundle patch rides `cordis.patch.yml`.
- *
- * What survives is the manifest contract both install surfaces depend on, expressed for this
- * package: the entry is ONE built artifact reachable through both `main` and `exports`, the tarball
- * ships it together with the declared bundle patch, and neither `prepare` nor `prepublishOnly` may
- * swallow a failed build. A manifest alone cannot keep those true — this can.
  */
 
 const ROOT = join(import.meta.dirname, "..", "..");
@@ -61,7 +56,6 @@ describe("install surface (manifest)", () => {
     const entry = exportEntry();
     expect(entry).toBeDefined();
     expect(sameEntry(pkg.main, entry), "main and exports must name one entry").toBe(true);
-    // The entry is the tsc output, never TypeScript source (upstream's artifact rule, adapted).
     expect(pkg.main?.endsWith(".ts"), "main must point at built JS, not source").toBe(false);
     expect(pkg.main?.startsWith("lib/"), "main must live under the built lib/ tree").toBe(true);
   });
@@ -72,16 +66,12 @@ describe("install surface (manifest)", () => {
     const shipped = pkg.files ?? [];
     expect(shipped).toContain("lib");
     expect(shipped).toContain(patch?.replace(/^\.\//, ""));
-    // The declared patch must exist on disk: a `dsh.bundle.patch` that dangles makes the
-    // plugin surface unresolvable after install.
     expect(existsSync(join(ROOT, patch!))).toBe(true);
   });
 
   it("cannot swallow a failed build in prepare or prepublishOnly", () => {
     const prepare = pkg.scripts?.prepare ?? "";
     const prepublish = pkg.scripts?.prepublishOnly ?? "";
-    // Reach through the script references, so the pin is "tsc runs and nothing
-    // swallows its exit" rather than "`prepare` spells `tsc` inline".
     const prepareChain = expandScript(prepare);
     const prepublishChain = expandScript(prepublish);
     expect(prepareChain, "prepare must reach tsc, directly or via a script it runs").toContain(

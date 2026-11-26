@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { writeFile, readFile, rm, mkdtemp } from "node:fs/promises";
+import { writeFile, rm, mkdtemp } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import iconv from "iconv-lite";
@@ -35,7 +35,6 @@ describe("coverage-agent-e fs-bridge", () => {
       ]);
       await writeFile(p, bomBytes);
       const harness = setupIntegrationTest(cwd);
-      // explicit hint should slice BOM and decode with hint
       const res = await harness.readTool.execute("read", {
         path: "hint.txt",
         encoding: "windows-1251",
@@ -75,7 +74,6 @@ describe("coverage-agent-e fs-bridge", () => {
       const harness = setupIntegrationTest(cwd);
       const res = await harness.readTool.execute("read", { path: "gbk2.txt" } as any);
       const txt = getText(res);
-      // should auto-decode without E_UNSUPPORTED_FILE, and set memo
       expect(txt).not.toMatch(/\[E_UNSUPPORTED_FILE\]/);
       expect(txt.length).toBeGreaterThan(5);
     });
@@ -85,7 +83,7 @@ describe("coverage-agent-e fs-bridge", () => {
     setAutoGuessEnv(true);
     await withTempFile("a.txt", "hi", async ({ cwd }) => {
       const raw = iconv.encode("hello bom handling", "gbk");
-      const bom = Buffer.from([0xff, 0xfe]); // utf16le BOM
+      const bom = Buffer.from([0xff, 0xfe]);
       const bytes = Buffer.concat([bom, raw]);
       await writeFile(join(cwd, "bom-fallback.txt"), bytes);
       const harness = setupIntegrationTest(cwd);
@@ -97,16 +95,9 @@ describe("coverage-agent-e fs-bridge", () => {
   });
 
   it("autoGuess true handles large file size > maxBytes throws original", async () => {
-    // This hits the `if (info.size > maxBytes) throw error` branch (line 306-ish)
-    // We mock fs.stat to return huge size
     setAutoGuessEnv(true);
     await withTempFile("a.txt", "hi", async ({ cwd }) => {
       const harness = setupIntegrationTest(cwd);
-      // We can't easily mock ctx.fs stat size > maxBytes without spying on harness internals,
-      // so instead test the localIO path with mocked fileSnap size? For ctxFsIO we test via harness
-      // by writing a file and then mocking fs.readBytes to not be called - the size check is
-      // inside ctxFsIO's fallback; we can trigger by making stat return size larger than maxBytes
-      // Instead, we directly test that a normal file still reads
       const res = await harness.readTool.execute("read", { path: "a.txt" } as any);
       expect(getText(res)).toContain("hi");
     });
@@ -150,11 +141,8 @@ describe("coverage-agent-e fs-bridge", () => {
   it("ctxFsIO writeText drift invalidation clears stale memo", async () => {
     await withTempFile("a.txt", "hello", async ({ cwd }) => {
       const harness = setupIntegrationTest(cwd);
-      // prime memo via read
       await harness.readTool.execute("read", { path: "a.txt" } as any);
-      // write should invalidate if version changed
-      const { ctxFsIO } = await import("../../src/fs-bridge.js");
-      // we just verify writeText still works after memo
+      const { ctxFsIO: _ctxFsIO } = await import("../../src/fs-bridge.js");
       const readRes = await harness.readTool.execute("read", { path: "a.txt" } as any);
       const hash =
         getText(readRes)
@@ -182,7 +170,7 @@ describe("coverage-agent-e fs-bridge", () => {
       readText: async () => {
         throw Object.assign(new Error("not text"), { code: "FS_NOT_TEXT" });
       },
-      readBytes: async () => Buffer.from([0xd6, 0xd0, 0xce, 0xc4]), // gbk bytes
+      readBytes: async () => Buffer.from([0xd6, 0xd0, 0xce, 0xc4]),
       stat: async () => ({ size: 4, version: "v1" }),
       writeText: async () => ({ version: "v2" }),
     };
@@ -221,10 +209,8 @@ describe("coverage-agent-e fs-bridge", () => {
 
   it("writeText with encodingHint records memo", async () => {
     await withTempFile("a.txt", "hi", async ({ cwd }) => {
-      const harness = setupIntegrationTest(cwd);
-      const { ctxFsIO } = await import("../../src/fs-bridge.js");
-      // Use harness to trigger writeText with encodingHint via direct fs-bridge call?
-      // Instead, we test that localIO writeText doesn't throw
+      const _harness = setupIntegrationTest(cwd);
+      const { ctxFsIO: _ctxFsIO } = await import("../../src/fs-bridge.js");
       const { localIO } = await import("../../src/fs-bridge.js");
       const p = join(cwd, "enc-hint.txt");
       const io3 = localIO();

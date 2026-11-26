@@ -126,7 +126,6 @@ describe("issue #221 — the undo producer re-derives a prior-canon pin", () => 
       expect(getText(undoResult)).not.toContain("No undo history");
       expect(await readFile(abs, "utf-8")).toBe(PRE);
 
-      // The restore re-materialized PRE under the current epoch, so its lease names today's canon.
       const leases = activeLeases(cwd, abs);
       expect(leases.length).toBeGreaterThan(0);
       expect(leases.every((lease) => lease.servedSnapshotHash === snapshotHashFor(PRE))).toBe(true);

@@ -58,7 +58,7 @@ describe("isSupportedEncoding", () => {
     expect(isSupportedEncoding("utf8bom")).toBe(true);
     expect(isSupportedEncoding("utf16le")).toBe(true);
     expect(isSupportedEncoding("utf16be")).toBe(true);
-    expect(isSupportedEncoding("cp1251")).toBe(true); // alias
+    expect(isSupportedEncoding("cp1251")).toBe(true);
   });
 
   it("rejects unsupported", () => {
@@ -103,7 +103,6 @@ describe("detectBom", () => {
   });
 
   it("prefers 4-byte BOM over 2-byte when overlapping (FF FE 00 00)", () => {
-    // FF FE could be utf16le, but with 00 00 it's utf32le — ensure 4-byte wins
     const b = new Uint8Array([0xff, 0xfe, 0x00, 0x00]);
     expect(detectBom(b)?.encoding).toBe("utf32le");
   });
@@ -127,7 +126,6 @@ describe("isValidUtf8", () => {
   });
 
   it("rejects GBK bytes and lone 0xFF", () => {
-    // GBK for 你好 = C4E3 BAC3 — not valid UTF-8
     expect(isValidUtf8(Buffer.from([0xc4, 0xe3, 0xba, 0xc3]))).toBe(false);
     expect(isValidUtf8(Buffer.from([0xff]))).toBe(false);
     expect(isValidUtf8(Buffer.from([0x68, 0xff, 0x69]))).toBe(false);
@@ -161,8 +159,6 @@ describe("decodeBytes / encodeText", () => {
   });
 
   it("returns undefined on invalid enc for decodeBytes? no throw", () => {
-    // unknown enc should fall through iconv and return undefined or throw caught
-    // iconv-lite throws for unknown, so we expect undefined
     expect(decodeBytes(Buffer.from([0x00]), "not-an-enc")).toBeUndefined();
   });
 
@@ -216,11 +212,9 @@ describe("top3Candidates", () => {
     const gbkBytes = iconv.encode("你好世界 hello", "gbk");
     const cands = top3Candidates(gbkBytes, [...SUPPORTED_ENCODINGS]);
     expect(cands.length).toBe(3);
-    // best should be gbk or big5 (both CJK), but gbk should be top for GBK-encoded bytes
     expect(cands.map((c) => c.encoding)).toContain("gbk");
     expect(cands[0]!.sample.length).toBeLessThanOrEqual(50);
     expect(cands[0]!.sample.length).toBeGreaterThan(0);
-    // sorted descending
     expect(cands[0]!.score).toBeGreaterThanOrEqual(cands[1]!.score);
     expect(cands[1]!.score).toBeGreaterThanOrEqual(cands[2]!.score);
   });
@@ -234,7 +228,6 @@ describe("top3Candidates", () => {
   it("returns top 3 for Shift_JIS bytes", () => {
     const sj = iconv.encode("こんにちは world", "shift_jis");
     const cands = top3Candidates(sj, [...SUPPORTED_ENCODINGS]);
-    // shift_jis should be in top 3, ideally top
     const encs = cands.map((c) => c.encoding);
     expect(encs).toContain("shift_jis");
   });
@@ -252,11 +245,10 @@ describe("top3Candidates", () => {
   it("normalizes allowlist entries", () => {
     const gbkBytes = iconv.encode("你好", "gbk");
     const cands = top3Candidates(gbkBytes, ["GBK", "CP1251"]);
-    expect(cands.map((c) => c.encoding)).toContain("gbk"); // canonical lowercased
+    expect(cands.map((c) => c.encoding)).toContain("gbk");
   });
 
   it("smart slice seeks first non-ASCII ±32", () => {
-    // 30 ascii then CJK then ascii — slice should include CJK
     const text = "a".repeat(30) + "你好" + "b".repeat(30);
     const gbkBytes = iconv.encode(text, "gbk");
     const cands = top3Candidates(gbkBytes, ["gbk"]);
@@ -267,7 +259,6 @@ describe("top3Candidates", () => {
 describe("BOM integration via decodeBytes", () => {
   it("decodes UTF-16LE bytes with BOM stripped correctly", () => {
     const withBom = Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from("hi", "utf16le")]);
-    // detectBom would have stripped BOM, but decodeBytes with utf16le should still decode payload
     const payload = withBom.subarray(2);
     expect(decodeBytes(payload, "utf16le")).toBe("hi");
   });

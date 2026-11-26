@@ -11,12 +11,6 @@ import { describe, expect, it } from "vitest";
  *
  *   T1 (`firstHashFromBlock`):  `extracted first hash "<hash>" from <n>-line block — use bare "<hash>" next time`
  *   T2 (`diagRef` pipe+newline): `… — use only the first hash "<first>" as anchor_from and "<last>" as anchor_to …`
- *
- * The prefixes are also the phrases the repair removed, so this file is the durable
- * `rg -n 'extracted first hash|use bare "|use only the first hash' src/` empty contract.
- *
- * Scope is `src/` only: the fixtures and the neighbouring tests quote these phrases on
- * purpose, and a scan that included `test/` would ban its own evidence.
  */
 
 const SRC_ROOT = join(import.meta.dirname, "..", "..", "src");
@@ -83,7 +77,6 @@ describe("unverified-anchor hints are banned from src/ (#108)", () => {
     for (const hint of BANNED_HINTS) {
       expect(hint.pattern.test(hint.preFixSample), hint.name).toBe(true);
     }
-    // One planted line per hint: T1's sample twice (two patterns reach it) then T2's.
     expect(offenderLines(BANNED_HINTS.map((hint) => hint.preFixSample).join("\n"))).toEqual([
       1, 2, 3,
     ]);
@@ -96,7 +89,6 @@ describe("unverified-anchor hints are banned from src/ (#108)", () => {
   });
 
   it("keeps these hint shapes out of src/", async () => {
-    // A vacuous pass (an empty or broken walk) must not read as green; src/ holds ~66 modules.
     expect((await sourceFiles(SRC_ROOT)).length).toBeGreaterThan(50);
     expect(await offenders()).toEqual([]);
   });

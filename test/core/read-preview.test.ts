@@ -245,10 +245,8 @@ describe("fmtReadPreview — multi-window budget vs intrinsic line cap", () => {
     expect(result.text).toContain(
       "[Section does not fit in the remaining 43.7KB read budget; not shown. Re-read it on its own.]",
     );
-    // The row is recoverable: neither the shrunken budget nor the read tool is blamed.
     expect(result.text).not.toContain("43.7KB limit");
     expect(result.text).not.toContain("cannot show");
-    // Window 2 serves 0 rows, and the omitted content never enlarges the answer.
     expect(result.served.map((row) => row.position)).toEqual([0]);
     expect(result.text).not.toContain("y".repeat(1000));
     expect(result.text.length).toBeLessThan(161_000);
@@ -282,7 +280,6 @@ describe("fmtReadPreview — multi-window budget vs intrinsic line cap", () => {
     expect(result.text).toContain(
       "[Section does not fit in the remaining 43.7KB read budget; not shown. Re-read it on its own.]",
     );
-    // The omitted section spent only its own notice bytes, so a later small section still renders.
     expect(result.text).toContain("=== Lines 5-5 of 5 ===");
     expect(result.text).toContain("│tiny");
     expect(result.served.map((row) => row.position)).toEqual([0, 4]);
@@ -304,7 +301,6 @@ describe("fmtReadPreview — multi-window budget vs intrinsic line cap", () => {
     );
     expect(result.text).toContain("=== Lines 3-4 of 4 ===");
     expect(result.text).toContain("│small");
-    // A recoverable row that misses the budget stops the section; it is never called oversized.
     expect(result.text).not.toContain("[Line 4: ");
     expect(result.text).not.toContain("exceeds the");
     expect(result.text).not.toContain("y".repeat(1000));
@@ -330,7 +326,6 @@ describe("fmtReadPreview — multi-window budget vs intrinsic line cap", () => {
     expect(result.text).toContain(
       "[Line 3 exceeds the 200.0KB limit; the read tool cannot show it.]",
     );
-    // The shrunken remaining budget is never cited as the line limit.
     expect(result.text).not.toContain("43.7KB limit");
     expect(result.served.map((row) => row.position)).toEqual([0]);
   });
@@ -351,7 +346,6 @@ describe("fmtReadPreview — multi-window budget vs intrinsic line cap", () => {
     );
     expect(result.text).toContain("=== Lines 3-5 of 5 ===");
     expect(result.text).toContain("│a");
-    // Budget stops before line 5, so neither its placeholder nor its warning is owed.
     expect(result.text).not.toContain("[Line 5: ");
     expect(result.text).not.toContain("exceeds the");
     expect(result.text).not.toContain("│b");

@@ -530,7 +530,6 @@ describe("composeSections", () => {
       expect(edit.order).toBe(210);
       expect(edit.text).toContain("code edits");
       expectDivergenceNotice(edit.text);
-      // Unoverridden sections keep their compiled defaults.
       expect(sections.find((s) => s.name === "tool:read")).toEqual({
         name: "tool:read",
         order: 1100,
@@ -616,7 +615,6 @@ describe("ensurePresetGuidance", () => {
       expect(resolved.order).toBe(151);
       expect(resolved.text).toContain("custom code edit guidance");
       expectDivergenceNotice(resolved.text);
-      // An unedited seeded section still equals the compiled default.
       const read = await resolveSection("tool:read", {
         presetId: "standard",
         homeDir: home,
@@ -747,12 +745,9 @@ describe("ensurePresetGuidance", () => {
       const warn = vi.fn();
       await ensurePresetGuidance(home, warn);
 
-      // Both customized files survive byte-identically.
       expect(await readFile(editFile, "utf-8")).toBe(customizedEdit);
       expect(await readFile(readOverride, "utf-8")).toBe(customizedRead);
 
-      // One call, not one per file: the count is the first thing after the
-      // plugin prefix and both absolute paths are named below it.
       expect(warn).toHaveBeenCalledTimes(1);
       const message = warn.mock.calls[0]?.[0] as string;
       expect(message).toContain("2 guidance override file(s)");
@@ -857,7 +852,6 @@ describe("composeSections — harness slot resolution", () => {
       expect(explicit.order).toBe(77);
       expect(explicit.text).toContain("preset edit text");
       expectDivergenceNotice(explicit.text);
-      // A keyless fence keeps the harness slot, not the compiled fallback.
       await writeSection(home, "minimal", "edit.md", "---\n---\nkeyless guidance");
       const keyless = await composeSections("minimal", home, () => 1401);
       const keylessSection = requireSection(keyless, "tool:edit");

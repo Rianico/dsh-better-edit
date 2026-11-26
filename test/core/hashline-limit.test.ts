@@ -48,23 +48,13 @@ describe("hashline limits", () => {
 });
 
 describe("anchor-space-exhaustion predicates (exhaustion vs. promotion)", () => {
-  // WHY this pin exists: `isAnchorSpaceExhaustion` answers "is this exhaustion" (the two
-  // translate blocks in hash-assign), while `isPromotableAnchorSpaceExhaustion` answers "can
-  // clearing retired anchors and retrying help" (read, edit, undo). A rewording of an allocator or
-  // line-cap message must redden HERE instead of silently changing a promotion decision at
-  // whichever site kept a private copy of the test.
   const TYPED = new AnchorSpaceExhaustedError(2, 3);
   const PROBE = new Error(
     `Anchor space exhausted — probing failed over ${HASH_SPACE} slots (reserved full).`,
   );
-  // The hash-space headline: `AnchorSpaceExhaustedError`'s own text, which survives a re-wrap that
-  // costs the error its class. (Arch-T8 called this "the line-cap wording"; the live line cap is
-  // the fixture below.) Exhaustion — yes. Promotable — no: the file is too long to hash at all.
   const HASH_SPACE_HEADLINE = new Error(
     `[TO MODEL] [E_LARGE_FILE] Cannot allocate a unique hash anchor: the file exceeds the ${HASH_SPACE}-line limit`,
   );
-  // The live maxLines refusal read-and-serve actually receives, composed by the producer itself so
-  // this fixture cannot drift from the thrown text.
   const LINE_CAP = new Error(eLargeFileMsg("huge.ts", MAX_HASH_LINES + 1, MAX_HASH_LINES));
 
   it.each([
@@ -108,10 +98,6 @@ describe("read tool line cap", () => {
     });
   }, 300_000);
 
-  // WHY: the promotion branch of `readAndServe` is a retired-anchor GC, not a line-count escape
-  // hatch. An uncurable refusal must therefore reach the model with hazard state intact — the
-  // read failed, so degrading its own stale-anchor checks would be a silent cost, and the retry
-  // would throw the identical error.
   it("clears no hazard state on the uncurable line-cap refusal", async () => {
     const content = Array.from({ length: MAX_HASH_LINES + 1 }, () => "x").join("\n");
     await withTempFile("huge.txt", content, async ({ cwd, path }) => {
@@ -125,8 +111,6 @@ describe("read tool line cap", () => {
       );
       store.clearCards(sessionKey, path);
       store.upsertCards(sessionKey, path, JSON.stringify([7]));
-      // `loadServedStore` is `loadHashStore` for this store path (hash-store.ts:314), so these
-      // spies sit on the very object the call under test reaches.
       const clearRetired = vi.spyOn(store, "clearRetiredAnchors");
       const clearCards = vi.spyOn(store, "clearCards");
 
@@ -137,8 +121,6 @@ describe("read tool line cap", () => {
         (e: unknown) => e,
       );
       expect(String(refused)).toContain("E_LARGE_FILE");
-      // The refusal the reader actually receives answers "no" to promotion's question — that is
-      // what keeps the store untouched below, and it is refutable independently of the spy.
       expect(isPromotableAnchorSpaceExhaustion(refused)).toBe(false);
 
       expect(clearRetired).not.toHaveBeenCalled();
