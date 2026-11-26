@@ -22,6 +22,7 @@ import { onStoreOpen, setStoresGetter } from "./store-lifecycle.js";
 import {
   awaitDrainingClose,
   configureStoreLifecycle,
+  releaseStore,
   withStoreScope,
 } from "./store-lifecycle-slot.js";
 import { workspaceCwd } from "./workspace-context.js";
@@ -403,6 +404,8 @@ const stores = new Map<
   { path: string; db: DatabaseSync; stmts: Prepared; store: InternalHashStore }
 >();
 const openings = new Map<string, Promise<HashStore>>();
+/** Bumped by every release: a load that overlaps a release must not resurrect a released handle. */
+let releaseEpoch = 0;
 setStoresGetter(
   () => stores as Map<string, { path: string }>,
   () => openings as Map<string, Promise<any>>,
@@ -1465,17 +1468,20 @@ export function loadHashStore(cwd?: string): Promise<HashStore> {
 }
 
 async function loadHashStoreAtPath(storePath: string): Promise<HashStore> {
+  // Capture the release epoch before yielding: a release that lands while this load is in flight
+  // must be visible to `reopenIfDrained` (see `releaseEpoch`).
+  const epoch = releaseEpoch;
   // Outside any scope: a pending drain must finish before a bare open can publish onto it.
   await awaitDrainingClose(storePath);
   const cached = stores.get(storePath);
   if (cached && cached.db.isOpen) return cached.store;
   const existing = openings.get(storePath);
-  if (existing) return reopenIfDrained(existing, storePath);
+  if (existing) return reopenIfDrained(existing, storePath, epoch);
   const promise = withStoreScope(storePath, () => openStore(storePath)).finally(() => {
     openings.delete(storePath);
   });
   openings.set(storePath, promise);
-  return reopenIfDrained(promise, storePath);
+  return reopenIfDrained(promise, storePath, epoch);
 }
 
 /**
@@ -1484,13 +1490,20 @@ async function loadHashStoreAtPath(storePath: string): Promise<HashStore> {
  * open again. Termination holds because the retry awaits the drain first, and a fresh drain
  * needs a fresh external detach or release.
  */
-async function reopenIfDrained(opened: Promise<HashStore>, storePath: string): Promise<HashStore> {
+async function reopenIfDrained(
+  opened: Promise<HashStore>,
+  storePath: string,
+  epoch: number,
+): Promise<HashStore> {
   const store = await opened;
   // Liveness is read through the same hook the registry uses: the public store face exposes no
   // handle, and `stores` holds exactly one entry per path, so the entry the open just published is
   // the connection this promise resolved with.
   if (isStoreOpenAtPath(storePath)) return store;
   await awaitDrainingClose(storePath);
+  // A release that overlapped this load fails it loudly rather than reopening a handle the host
+  // asked to close. The drain above still settled, so the failure names the release, not the drain.
+  if (epoch !== releaseEpoch) throw new Error("hash store: released while the store was opening");
   return loadHashStoreAtPath(storePath);
 }
 
@@ -1529,6 +1542,41 @@ export function shutdownHashStore(): void {
   }
   openings.clear();
   if (failed) throw firstError;
+}
+
+/**
+ * Release store handles on behalf of the HOST (escape hatch + plugin teardown).
+ *
+ * With a `cwd`, releases that workspace's store path. Without one, releases every path with an
+ * OPEN entry and then every path the registry still knows about. The open set must be enumerated
+ * here, not by `releaseStore()` alone: the registry prunes a slot as soon as a bare open's scope
+ * ends, so a token-unowned handle (a host script's `loadHashStore`) is invisible to the registry
+ * while it still holds the file.
+ *
+ * Without `force` an attached path is refused (`false`) and left untouched; otherwise the release
+ * joins or starts a cancellable drain and closes. With `force` the owners are cleared, in-flight
+ * scopes drain, and the close follows. The boolean is `true` only when every targeted path settled
+ * its drain and closed. A close failure is contained per path and reported as `false` for that
+ * path, so one bad handle cannot strand the rest.
+ *
+ * Every call also bumps the release epoch: a load that overlapped it fails loudly instead of
+ * reopening the handle this call closed.
+ */
+export async function releaseHashStore(
+  cwd?: string,
+  options?: { force?: boolean },
+): Promise<boolean> {
+  // Invalidate every load that started before this release: its `reopenIfDrained` must fail rather
+  // than reopen the handle this call closes (see `releaseEpoch`).
+  releaseEpoch += 1;
+  const settle = (pending: Promise<boolean>): Promise<boolean> => pending.catch(() => false);
+  if (cwd !== undefined) return settle(releaseStore(storePathFor(cwd), options));
+  // Open entries first: their slots may already be pruned. The registry pass then covers claims
+  // that never opened a handle (attach before a failed body) and is vacuous when none remain.
+  const openPaths = [...stores.keys()];
+  const outcomes = await Promise.all(openPaths.map((path) => settle(releaseStore(path, options))));
+  const registryReleased = await settle(releaseStore(undefined, options));
+  return registryReleased && outcomes.every((released) => released);
 }
 
 /**

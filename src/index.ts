@@ -42,7 +42,7 @@ import {
   type GuidanceSection,
   type SectionOverride,
 } from "./guidance.js";
-import { configDir } from "./store/index.js";
+import { configDir, releaseHashStore } from "./store/index.js";
 import { ensureDefaultConfig } from "./store-config.js";
 import { detachAgent } from "./store-lifecycle-slot.js";
 import { onAppStart, onSessionStart } from "./store/index.js";
@@ -415,6 +415,18 @@ export function apply(rootCtx: Context): void {
       );
     }
   });
+
+  // Root plugin disposal rides the fiber effect: Cordis 4.0.5 treats a function plugin as a
+  // constructor (`new apply(...)`) and DISCARDS its return value, so a returned disposer never
+  // runs. Hosts that expose no `effect` (test stubs, minimal harnesses) skip the hook.
+  rootCtx.effect?.(() => () => {
+    void releaseHashStore(undefined, { force: true }).then((released) => {
+      if (!released) {
+        rootCtx.logger.warn("dsh-better-edit: plugin dispose left a store path unreleased");
+      }
+    });
+  });
 }
 
+export { releaseHashStore } from "./store/index.js";
 export type { AgentTools };

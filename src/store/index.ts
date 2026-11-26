@@ -48,6 +48,7 @@ export {
 export {
   isCorruptionError,
   loadHashStore,
+  releaseHashStore,
   shutdownHashStore,
   withStore,
   upsertSnapshotFor,
