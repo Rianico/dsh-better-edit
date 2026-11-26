@@ -13,7 +13,22 @@ All notable changes to this project will be documented in this file.
 
 ### Features
 
+* **lifecycle:** public releaseHashStore + root dispose (T4) (#237)
+* **lifecycle:** attach agents on tool calls, detach on dispose (T3) (#237)
+* **lifecycle:** wire per-store slots into the store map (T2) (#237)
+* **comment-gate:** enforce settled comment grammar across repo (#236)
+* **lifecycle:** per-storePath slot registry (T1) (#237)
 * **comment-gate:** hold every comment in the repo to the settled grammar with one shared predicate and two parsers. `harness/no-comments` is armed as `"error"` over root configs, `src/`, `test/` and `scripts/`, the `@babel/parser` generator owns the suppression file, and the arch suite pins the rule to Babel with a literal ceiling. `src/` and `test/` drain to zero legacy violations, so the baseline is empty and the ceiling is `0`; `benchmark/**` is out of scope and `pi-lens-ignore` is not accepted (ADR-0056, closes #232, #233, #234, #235). (#236)
+
+### Bug Fixes
+
+* **lifecycle:** gate release epochs per path and contain dispose rejection (T4R) (#237)
+* **lifecycle:** keep close retryable and shut down every path (T2R) (#237)
+* **lifecycle:** prune-on-reject hardening (T1R) (#237)
+
+### Documentation
+
+* **lifecycle:** record the store lifecycle port (T5) (#237)
 
 ## [1.3.1] - 2026-11-26
 

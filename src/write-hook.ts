@@ -17,6 +17,7 @@ import { readAndServe } from "./read-and-serve.js";
 import type { FileIO } from "./fs-bridge.js";
 import { execCwd, execSessionKey, withWorkspace } from "./workspace-context.js";
 import { loadServed } from "./session-view.js";
+import { withAgentStore } from "./agent-store.js";
 import { HASH_SEP } from "./hashline/hash-assign.js";
 import { abortIf, splitLines } from "./utils.js";
 import { formatError } from "./domain-errors.js";
@@ -101,13 +102,11 @@ export function registerWriteHook(rootCtx: Context, agentCtx: Context, io: FileI
       const cwd = execCwd(exec);
       return withWorkspace(cwd, async () => {
         try {
-          const reason = await servedHashEchoDenial(
-            io,
-            rawPath,
-            content,
-            cwd,
-            execSessionKey(exec),
-            exec.signal,
+          const reason = await withAgentStore(
+            exec,
+            () =>
+              servedHashEchoDenial(io, rawPath, content, cwd, execSessionKey(exec), exec.signal),
+            (message) => rootCtx.logger.warn(message),
           );
           return reason === undefined ? next() : { kind: "deny", reason };
         } catch (error) {
@@ -139,28 +138,34 @@ export function registerWriteHook(rootCtx: Context, agentCtx: Context, io: FileI
           (exec.arguments as Record<string, unknown> | undefined)?.path;
         if (typeof rawPath !== "string") return decision;
 
-        try {
-          const cwd = execCwd(exec);
-          const sessionKey = execSessionKey(exec);
-          const signal = exec.signal;
-          const { text, absolutePath } = await readAndServe(io, rawPath, cwd, {
-            sessionKey,
-            signal,
-          });
-          await io.emitObserved(absolutePath, exec, signal);
-          return {
-            kind: "accept" as const,
-            content: [
-              ...decisionContent,
-              { type: "text", text: `\n\n${AUTO_READ_HEADING}\n${text}` },
-            ],
-          };
-        } catch (error) {
-          rootCtx.logger.warn(
-            `dsh-better-edit: auto-read after write failed: ${error instanceof Error ? error.message : String(error)}`,
-          );
-          return decision;
-        }
+        return withAgentStore(
+          exec,
+          async () => {
+            try {
+              const cwd = execCwd(exec);
+              const sessionKey = execSessionKey(exec);
+              const signal = exec.signal;
+              const { text, absolutePath } = await readAndServe(io, rawPath, cwd, {
+                sessionKey,
+                signal,
+              });
+              await io.emitObserved(absolutePath, exec, signal);
+              return {
+                kind: "accept" as const,
+                content: [
+                  ...decisionContent,
+                  { type: "text", text: `\n\n${AUTO_READ_HEADING}\n${text}` },
+                ],
+              };
+            } catch (error) {
+              rootCtx.logger.warn(
+                `dsh-better-edit: auto-read after write failed: ${error instanceof Error ? error.message : String(error)}`,
+              );
+              return decision;
+            }
+          },
+          (message) => rootCtx.logger.warn(message),
+        );
       });
     },
   );

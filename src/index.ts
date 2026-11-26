@@ -13,6 +13,7 @@
 import type { Context } from "@deepseek-ai/cordis";
 import type { Agent } from "@deepseek-ai/dsh-agent";
 import type { FileSystem } from "@deepseek-ai/dsh-fs";
+import { wrapToolWithAgentStore } from "./agent-store.js";
 import { ctxFsIO } from "./fs-bridge.js";
 import { FsSandboxController } from "./sandbox.js";
 import { buildReadTool } from "./tool-read.js";
@@ -36,8 +37,9 @@ import {
   type GuidanceSection,
   type SectionOverride,
 } from "./guidance.js";
-import { configDir } from "./store/index.js";
+import { configDir, releaseHashStore } from "./store/index.js";
 import { ensureDefaultConfig } from "./store-config.js";
+import { detachAgent } from "./store-lifecycle-slot.js";
 import { onAppStart, onSessionStart } from "./store/index.js";
 
 /** Cordis plugin name used by loader diagnostics. */
@@ -147,7 +149,9 @@ function installAgentTools(rootCtx: Context, agent: Agent): void {
     const io = ctxFsIO(rootCtx.fs as FileSystem, rootCtx);
     const sandbox = new FsSandboxController(rootCtx);
 
-    const hashReadDef = buildReadTool(io);
+    const hashReadDef = wrapToolWithAgentStore(buildReadTool(io), (message) =>
+      rootCtx.logger.warn(message),
+    );
     try {
       registerDisposer(
         registerWithReclaim({
@@ -180,7 +184,9 @@ function installAgentTools(rootCtx: Context, agent: Agent): void {
       let hashEditDef: unknown;
       if (toolset.edit) {
         try {
-          hashEditDef = buildEditTool(io, sandbox);
+          hashEditDef = wrapToolWithAgentStore(buildEditTool(io, sandbox), (message) =>
+            rootCtx.logger.warn(message),
+          );
           registerDisposer(
             registerWithReclaim({
               toolsSvc,
@@ -223,7 +229,9 @@ function installAgentTools(rootCtx: Context, agent: Agent): void {
 
       if (toolset.undo) {
         try {
-          const hashUndoDef = buildUndoTool(io, sandbox);
+          const hashUndoDef = wrapToolWithAgentStore(buildUndoTool(io, sandbox), (message) =>
+            rootCtx.logger.warn(message),
+          );
           registerDisposer(
             registerWithReclaim({
               toolsSvc,
@@ -300,6 +308,12 @@ function installAgentTools(rootCtx: Context, agent: Agent): void {
         }
       }
       disposers.length = 0;
+
+      detachAgent(agent.id).catch((error) =>
+        rootCtx.logger.warn(
+          `dsh-better-edit: store detach failed for agent ${agent.id}: ${error instanceof Error ? error.message : String(error)}`,
+        ),
+      );
     };
   });
 }
@@ -347,6 +361,21 @@ export function apply(rootCtx: Context): void {
       );
     }
   });
+
+  rootCtx.effect?.(() => () => {
+    void releaseHashStore(undefined, { force: true })
+      .then((released) => {
+        if (!released) {
+          rootCtx.logger.warn("dsh-better-edit: plugin dispose left a store path unreleased");
+        }
+      })
+      .catch((error) => {
+        rootCtx.logger.warn(
+          `dsh-better-edit: plugin dispose failed: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      });
+  });
 }
 
+export { releaseHashStore } from "./store/index.js";
 export type { AgentTools };
