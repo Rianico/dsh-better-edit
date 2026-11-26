@@ -110,8 +110,6 @@ describe("strict span mode — leased-route interior refusal (#144 T2)", () => {
   });
 
   it("strict span mode: a second run renders after the first without merging", () => {
-    // WHY the 10-line window: the unserved set must stay strictly interior, so line 9 cannot be
-    // the window's closing boundary — a `null` boundary keeps its own `E_STALE_RANGE` arm.
     const rejection = rejectionOf(() => verifyWindow(windowWithHoles(10, [4, 5, 6, 9]), "strict"));
     expect(rejection.message).toContain("Unserved file lines: 4-6, 9");
   });

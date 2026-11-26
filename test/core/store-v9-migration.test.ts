@@ -58,7 +58,6 @@ function seededServed(path: string) {
     retired: JSON.stringify([{ hash: "CCC", deathPos: null }]),
     canons: JSON.stringify(["ca", "cb"]),
     cards: JSON.stringify([1, 2]),
-    // A RECENT stamp: the store-open TTL prune would otherwise reclaim the copied row immediately.
     updated_at: Date.now(),
   };
 }
@@ -145,7 +144,6 @@ describe("store v9 forward migration — served shell copied into served_session
           updated_at: seeded.updated_at,
         });
 
-        // The shell is a v6 client's property: the migration READS it and never writes it.
         expect(check.prepare("SELECT * FROM served ORDER BY session_id, path").all()).toEqual(
           shellBefore,
         );
@@ -168,12 +166,9 @@ describe("store v9 forward migration — served shell copied into served_session
       await writeFile(path, "x\n", "utf-8");
       const seeded = seedStampEightStore(home, path);
 
-      // First open: copies and stamps 9.
       await loadHashStore();
       shutdownHashStore();
 
-      // A v6 process re-stamps the store and writes a CONFLICTING row for the same key. The
-      // re-migration must keep the live v7 row (DO NOTHING), and must still not write the shell.
       const raw = new DatabaseSync(sqlitePath(home));
       raw.prepare("UPDATE meta SET value = '8' WHERE key = 'version'").run();
       raw

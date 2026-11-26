@@ -252,7 +252,7 @@ Releasing every attachment one agent id holds at its Cordis tear-down. The last 
 _Avoid_: store shutdown (the process close-all), store eviction
 
 **store release**:
-The host-level close over one store path or all of them (`releaseHashStore(cwd?, { force? })`), graceful or forced. It reports whether every targeted path settled its drain and closed — a refusal while an agent still holds the path reads `false`. See [ADR-0056](docs/adr/0056-session-scoped-per-workspace-store-lifecycle.md).
+The host-level close over one store path or all of them (`releaseHashStore(cwd?, { force? })`), graceful or forced. It reports whether every targeted path settled its drain and closed — a refusal while an agent still holds the path reads `false`. See [ADR-0057](docs/adr/0057-session-scoped-per-workspace-store-lifecycle.md).
 _Avoid_: detach (that is the agent claim)
 
 ### Guidance

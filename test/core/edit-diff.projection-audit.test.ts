@@ -1,10 +1,3 @@
-// Ported from pi-better-edit 71e0107 (feat(edit-diff): formalize single-projection contract with
-// counted span markers, #174; closes #169) and ab06895 (fix(edit-diff): render ctx-0 middle gaps
-// marker-only with correct skip, #175; closes #170) — adapted to dsh-better-edit conventions
-// (.js import specifiers, the hashline barrel `src/hashline/index.js`, `lineHashesPure` in place
-// of upstream's `_lineHashesPure`, and the unchanged (oldContent, newContent, contextLines,
-// newContentHashes, oldContentHashes) genDiff signature). Cases, corpus and expected strings are
-// unchanged.
 import { beforeAll, describe, expect, it } from "vitest";
 import { genDiff } from "../../src/edit-diff.js";
 import { ANCHOR_LEN, HASH_SEP, lineHashesPure, initHasher } from "../../src/hashline/index.js";
@@ -38,10 +31,6 @@ function deletedRunCase(runSize: number): { oldContent: string; newContent: stri
   };
 }
 
-// Audits the full #169 projection contract of one emitted projection:
-// every anchor row's hash equals the true new-file (resp. old-file) line content hash at the
-// position its cursor says it occupies, every marker's count is the exact span it hides, and
-// servedRows mirror exactly the rendered context/addition rows.
 function auditProjection(oldContent: string, newContent: string, contextLines: number) {
   const newHashes = lineHashesPure(newContent);
   const oldHashes = lineHashesPure(oldContent);
@@ -56,9 +45,6 @@ function auditProjection(oldContent: string, newContent: string, contextLines: n
   rows.forEach((line, idx) => {
     const at = `context=${contextLines} row ${idx} ${JSON.stringify(line)}`;
     if (line === " ...") {
-      // Leading-edge silent trim (#169 exception): the bare ellipsis hides an uncounted span.
-      // Recover its length by matching the next anchored row against the true hashes, and
-      // require the hidden span to be identical untouched context on both sides.
       expect(idx, `${at}: bare ellipsis away from the leading edge`).toBe(0);
       const next = rows[idx + 1];
       if (next === undefined) expect.fail(`${at}: ellipsis without a following row`);
@@ -88,8 +74,6 @@ function auditProjection(oldContent: string, newContent: string, contextLines: n
     }
     const untouched = UNTOUCHED_MARKER.exec(line);
     if (untouched) {
-      // The hidden span must be lease-covered and exact: the audit advances both cursors by
-      // exactly the stated count and later anchor rows must still carry true hashes.
       newPos += Number(untouched[1]);
       oldPos += Number(untouched[1]);
       return;
@@ -126,9 +110,6 @@ function auditProjection(oldContent: string, newContent: string, contextLines: n
     expect.fail(`${at}: unrecognised projection row`);
   });
 
-  // Cursors walking the projection must land exactly at each file's end, or stop short by the
-  // same untouched trailing span (the trailing-edge silent trim exception): any marker count
-  // that disagrees with its hidden span, or any desynced anchor, lands short or overshoots.
   const newShort = newLines.length - newPos;
   const oldShort = oldLines.length - oldPos;
   expect(oldShort, `context=${contextLines}: old cursor`).toBe(newShort);
@@ -158,7 +139,6 @@ describe("projection contract audit — middle-gap corpus (#169/#170)", () => {
         const diff = auditProjection(oldContent, newContent, contextLines);
         const markers = diff.split("\n").filter((line) => UNTOUCHED_MARKER.test(line));
         if (whole) {
-          // #166/#172 guard: a middle gap below 2×context+1 renders whole — no collapse marker.
           expect(markers).toEqual([]);
         } else {
           expect(markers).toEqual([` ... [${hidden} lines untouched] ...`]);
@@ -182,7 +162,6 @@ describe("projection contract audit — middle-gap corpus (#169/#170)", () => {
   });
 
   it("gate 1: a middle gap hiding exactly 275 lines renders ` ... [275 lines untouched] ...` with aligned anchors", () => {
-    // context 2 → the gap must be 275 + 2×2 rows so the hidden span is exactly 275.
     const { oldContent, newContent } = gapCase(279);
     const diff = auditProjection(oldContent, newContent, 2);
     const rows = diff.split("\n");
@@ -195,7 +174,6 @@ describe("projection contract audit — middle-gap corpus (#169/#170)", () => {
 });
 
 describe("projection contract audit — deleted-run corpus (#169/#170)", () => {
-  // Context 0 exercises the leading/trailing edge trims alongside the deleted-span markers.
   for (const contextLines of [0, 1, 2]) {
     for (const run of [7, 12, 40]) {
       it(`deleted run ${run} at context ${contextLines} keeps old-side anchors aligned`, () => {
@@ -213,7 +191,6 @@ describe("projection contract audit — deleted-run corpus (#169/#170)", () => {
     const rows = diff.split("\n");
     const markerIdx = rows.findIndex((line) => DELETED_MARKER.test(line));
     expect(rows[markerIdx]).toBe(" - ... [36 lines deleted] ...");
-    // The two tail rows after the marker keep their true old-file hashes (the run is x1..x40).
     const oldHashes = lineHashesPure(oldContent);
     expect(rows[markerIdx + 1]).toBe(`-${oldHashes[39]}│x39`);
     expect(rows[markerIdx + 2]).toBe(`-${oldHashes[40]}│x40`);

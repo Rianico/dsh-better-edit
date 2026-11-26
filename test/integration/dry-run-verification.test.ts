@@ -4,15 +4,6 @@
  * The admission half (#183) and the execution half (#184) are only trustworthy together if the
  * disclosure the model reads matches the bytes that did (not) land. This spec drives `read`, `edit`
  * and `undo_last_edit` through their tool seams — never the engine — and pins five columns:
- *
- *  1. the `[DRY RUN]` header and the would-be wording,
- *  2. byte and mtime equality after the preview,
- *  3. the absence of an undo row,
- *  4. the preview diff's rows against the live diff's rows (same content, different gutter),
- *  5. the noop tally and the EOL notice staying live-only.
- *
- * Nothing here imports a module the pre-fix base lacks, and every case fails if a preview regains
- * a commit effect: a write, a lease, a noop-count advance, or a terminator promise it cannot keep.
  */
 import { readFile, stat, writeFile } from "node:fs/promises";
 import { beforeAll, describe, expect, it } from "vitest";
@@ -218,7 +209,6 @@ describe("edit dry_run — disclosure acceptance", () => {
       const harness = setupIntegrationTest(cwd);
       const served = await servedRows(harness, "t.txt");
       const absolutePath = await harness.io.resolve("t.txt", cwd, undefined);
-      // The serve store is per-workspace, so every mirror probe runs inside the workspace context.
       const mirror = () =>
         withWorkspace(cwd, async () =>
           JSON.stringify(await loadServed(harness.sessionKey, absolutePath)),

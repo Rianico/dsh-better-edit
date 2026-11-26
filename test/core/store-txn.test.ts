@@ -9,9 +9,6 @@
  * 3. inner does not roll back — a nested throw caught inside the outer `fn` still
  *    commits the outer work (the "inner callers never swallow; the outermost owner
  *    is the only one that rolls back" half of the documented contract);
- * 4. retry policy, against a plain-object fake — busy BEGIN, busy COMMIT, exhausted busy
- *    COMMIT, and a non-busy COMMIT error: exactly two acquisition points, at most 4
- *    attempts each, and the body attempted once.
  */
 import { DatabaseSync } from "node:sqlite";
 import { describe, expect, it } from "vitest";
@@ -103,7 +100,6 @@ describe("store-txn — withTransaction re-entrancy contract", () => {
         });
       }),
     ).toThrow("inner-boom");
-    // Row contract first: the outer unit's write must be gone, not merely invisible.
     expect(rows(db)).toBe(0);
     expect(db.isTransaction).toBe(false);
     db.close();
@@ -118,8 +114,7 @@ describe("store-txn — withTransaction re-entrancy contract", () => {
           throw new Error("inner-boom");
         });
       } catch {
-        // Swallowed by the CALLER of the nested call, never by the owner: the
-        // nested branch has no ROLLBACK of its own.
+        // HACK: the test ignores this cleanup failure by design.
       }
       db.prepare("INSERT INTO t (v) VALUES (?)").run("after");
     });
@@ -135,7 +130,7 @@ describe("store-txn — withTransaction re-entrancy contract", () => {
       bodyRuns++;
     });
     expect(execs.filter((sql) => sql === "COMMIT")).toHaveLength(2);
-    expect(bodyRuns).toBe(1); // the body is never retried
+    expect(bodyRuns).toBe(1);
     expect(handle.isTransaction).toBe(false);
   });
 

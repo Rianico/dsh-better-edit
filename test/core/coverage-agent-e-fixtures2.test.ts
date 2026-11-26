@@ -5,13 +5,11 @@ describe("coverage-agent-e fixtures2", () => {
   it("wrapTool handles warning and string result", async () => {
     await withTempFile("a.txt", "hello", async ({ cwd }) => {
       const harness: any = setupIntegrationTest(cwd);
-      // Test wrapEdit old shape
       const readRes = await harness.readTool.execute("read", { path: "a.txt" } as any);
       const hash = getText(readRes)
         .split("\n")
         .find((l: string) => l.includes("│"))!
         .split("│")[0]!;
-      // old shape: anchor_from etc directly - may succeed or fail depending on hash state, just ensure no unhandled throw
       try {
         const oldRes = await harness.editTool.execute("edit", {
           path: "a.txt",
@@ -23,10 +21,8 @@ describe("coverage-agent-e fixtures2", () => {
       } catch (e: any) {
         expect(String(e.message ?? e).length).toBeGreaterThan(0);
       }
-      // Test wrapTool with warning: we can simulate by having edit return warning via large file?
-      // Instead, test that setupIntegrationTest with custom io that returns warning
       const { buildReadTool } = await import("../../src/tool-read.js");
-      const { localIO } = await import("../../src/fs-bridge.js");
+      const { localIO: _localIO } = await import("../../src/fs-bridge.js");
       const customIo: any = {
         resolve: async (p: string) => p,
         readText: async () => "hi",
@@ -34,15 +30,11 @@ describe("coverage-agent-e fixtures2", () => {
         emitObserved: async () => {},
         statVersion: async () => undefined,
       };
-      const readTool: any = buildReadTool(customIo);
-      // Mock tool that returns object with warning
-      const fakeTool: any = {
+      const _readTool: any = buildReadTool(customIo);
+      const _fakeTool: any = {
         execute: async () => ({ text: "hello", warning: "warn text" }),
       };
       const { setupIntegrationTest: _ } = await import("../support/fixtures.js");
-      // Directly test wrapTool via harness that returns warning
-      // We can test by calling harness with a tool that returns warning via edit that triggers warning (e.g., noop)
-      // re-read for fresh hash to avoid stale
       const readRes2 = await harness.readTool.execute("read", { path: "a.txt" } as any);
       const hash2 = getText(readRes2)
         .split("\n")
@@ -59,7 +51,6 @@ describe("coverage-agent-e fixtures2", () => {
   it("withTempFile handles string result", async () => {
     await withTempFile("a.txt", "test", async ({ cwd }) => {
       const harness = setupIntegrationTest(cwd);
-      // Test that wrapTool handles string result (when tool returns string directly)
       const res = await harness.readTool.execute("read", { path: "a.txt" } as any);
       expect(getText(res)).toBeDefined();
     });

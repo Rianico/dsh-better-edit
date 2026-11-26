@@ -145,7 +145,6 @@ function createStubHost(): StubHost {
     warnings,
     effects,
     async disposeRoot() {
-      // Unload runs each disposer once; awaiting one waits the release promise it returns, if any.
       const disposers = effects.splice(0).reverse();
       for (const dispose of disposers) await dispose();
     },
@@ -176,10 +175,7 @@ describe("releaseHashStore — host release + root dispose", () => {
   });
 
   afterEach(async () => {
-    // A spy on `DatabaseSync.prototype.close` must never outlive its case: the cleanup below has
-    // to run real closes.
     vi.restoreAllMocks();
-    // Owners first: a detach is what drives the close, so it must run before the close-all.
     for (const token of attached.splice(0)) await detachAgent(token);
     shutdownHashStore();
     vi.unstubAllEnvs();
@@ -205,12 +201,10 @@ describe("releaseHashStore — host release + root dispose", () => {
 
     await expect(releaseHashStore(workspace)).resolves.toBe(false);
 
-    // Refused, not half-released: the handle is live and the claim is intact.
     expect(handleIsOpen(store)).toBe(true);
     expect(ownerCount(storePath)).toBe(1);
 
     const detached = detachAgent("agent-owned");
-    // The detach owns the close, and it runs synchronously inside that call.
     expect(handleIsOpen(store)).toBe(false);
     await detached;
   });
@@ -221,7 +215,6 @@ describe("releaseHashStore — host release + root dispose", () => {
     await expect(releaseHashStore(workspace)).resolves.toBe(true);
     expect(handleIsOpen(store)).toBe(false);
 
-    // The cached entry went with the close, so this is a fresh open, not the dead handle.
     const reopened = await loadHashStore(workspace);
     expect(reopened).not.toBe(store);
     expect(handleIsOpen(reopened)).toBe(true);
@@ -255,7 +248,6 @@ describe("releaseHashStore — host release + root dispose", () => {
     expect(handleIsOpen(storeA)).toBe(false);
     expect(handleIsOpen(storeB)).toBe(false);
     expect(handleIsOpen(storeC)).toBe(false);
-    // The forced release dropped the claim with the handle.
     expect(agentPathCount("agent-c")).toBe(0);
   });
 
@@ -272,7 +264,6 @@ describe("releaseHashStore — host release + root dispose", () => {
 
     expect(handleIsOpen(storeA)).toBe(false);
     expect(handleIsOpen(storeB)).toBe(false);
-    // The refused path is untouched; its owner still holds it.
     expect(handleIsOpen(storeC)).toBe(true);
     expect(ownerCount(pathC)).toBe(1);
   });
@@ -287,16 +278,12 @@ describe("releaseHashStore — host release + root dispose", () => {
     attach(hashStorePath(ownedWorkspace), "host-owned");
 
     const pending = host.disposeRoot();
-    // The idle fast path runs inside the call: no await has happened yet, so both handles are
-    // already closed here. A disposer that waited on a timer would fail this pair.
     expect(handleIsOpen(bare)).toBe(false);
     expect(handleIsOpen(owned)).toBe(false);
     await pending;
-    // The disposer returns nothing (`void release…`), so the chain finishes a few hops later.
     await drainMicrotasks();
     expect(host.warnings.filter((message) => message.includes("plugin dispose"))).toEqual([]);
 
-    // A second dispose has nothing left to release: it resolves and changes nothing.
     await expect(host.disposeRoot()).resolves.toBeUndefined();
     await drainMicrotasks();
     expect(host.warnings.filter((message) => message.includes("plugin dispose"))).toEqual([]);
@@ -310,19 +297,14 @@ describe("releaseHashStore — host release + root dispose", () => {
     const otherWorkspace = await workspaceAt("workspace-other");
     const other = await loadHashStore(otherWorkspace);
 
-    // Installed with no await in between, so the first close this consumes is the dispose's own
-    // (open entries are visited in insertion order: `first`, then `other`).
     const closeSpy = vi.spyOn(DatabaseSync.prototype, "close").mockImplementationOnce(() => {
       throw new Error("close exploded in dispose");
     });
 
     const pending = host.disposeRoot();
-    // The root dispose promise never rejects: the failure is contained per path and reported false.
     await expect(pending).resolves.toBeUndefined();
     closeSpy.mockRestore();
 
-    // The failed path kept its entry, so its handle is still live and still closeable; the rest
-    // closed anyway.
     expect(handleIsOpen(first)).toBe(true);
     expect(handleIsOpen(other)).toBe(false);
     await until(
@@ -338,15 +320,12 @@ describe("releaseHashStore — host release + root dispose", () => {
   it("H. a release that races an open fails the load instead of resurrecting the handle", async () => {
     const storePath = hashStorePath(workspace);
     const pending = loadHashStore(workspace);
-    // Stage the overlap deterministically: the release lands while the open still holds its scope.
     await waitForOpenScope(storePath);
 
     const released = releaseHashStore(workspace, { force: true });
-    // The refusal is the pin: the load fails rather than reopening the handle the release closed.
     await expect(pending).rejects.toThrow(/released while the store was opening/i);
     await expect(released).resolves.toBe(true);
 
-    // No handle survived the release: a later load is a fresh open, and it is live.
     const reopened = await loadHashStore(workspace);
     expect(handleIsOpen(reopened)).toBe(true);
   });
@@ -356,11 +335,10 @@ describe("releaseHashStore — host release + root dispose", () => {
     const pending = loadHashStore(workspace);
     await waitForOpenScope(storePath);
     attach(storePath, "keeper");
-    // Refused: no close, no epoch bump.
     await expect(releaseHashStore(workspace)).resolves.toBe(false);
 
-    const detached = detachAgent("keeper"); // this drain closes the handle at the open scope's end
-    const store = await pending; // the loader must REOPEN, not throw
+    const detached = detachAgent("keeper");
+    const store = await pending;
     expect(handleIsOpen(store)).toBe(true);
     await detached;
   });
@@ -392,7 +370,7 @@ describe("releaseHashStore — host release + root dispose", () => {
     await loadHashStore(workspace);
 
     const closeSpy = vi.spyOn(DatabaseSync.prototype, "close").mockImplementationOnce(() => {
-      throw new Error("close exploded"); // forces released === false → the .then warning throws
+      throw new Error("close exploded");
     });
     host.disposeRoot();
     closeSpy.mockRestore();
@@ -405,20 +383,13 @@ describe("releaseHashStore — host release + root dispose", () => {
   });
 
   it("M. a no-arg release bumps only the path it can close", async () => {
-    // The mixed case there is no one-path test for: one OPEN path nobody claims (the release can
-    // close it, so it bumps that path's epoch) beside one path a token holds (refused, untouched).
-    // A load in flight on the first must therefore fail loudly; a load on the second must not.
     const bareWorkspace = await workspaceAt("workspace-bare");
     const ownedWorkspace = await workspaceAt("workspace-owned");
     const barePath = hashStorePath(bareWorkspace);
     const ownedPath = hashStorePath(ownedWorkspace);
 
-    // Publish the bare path first: the no-arg release enumerates OPEN entries, and only a path it
-    // counts there can have its epoch bumped (a path with no entry never closes here).
     await loadHashStore(bareWorkspace);
 
-    // Held scope + a detach: the drain is deferred, so the load issued next blocks on it while the
-    // entry — the thing the release enumerates — is still published.
     let releaseGate!: () => void;
     const gate = new Promise<void>((resolve) => {
       releaseGate = resolve;
@@ -433,20 +404,15 @@ describe("releaseHashStore — host release + root dispose", () => {
     attach(ownedPath, "keeper");
 
     const released = releaseHashStore(undefined);
-    // The bump happened synchronously inside that call; its SETTLEMENT waits for the bare drain,
-    // because a release joins the drain instead of closing out from under the scope.
     releaseGate();
     await expect(released).resolves.toBe(false);
 
-    // The bumped side: the overlapping load fails loudly instead of resurrecting the closed handle.
     await expect(barePending).rejects.toThrow(/released while the store was opening/i);
 
-    // The refused side: no bump, no close, claim intact — the load it overlapped opens normally.
     const owned = await ownedPending;
     expect(handleIsOpen(owned)).toBe(true);
     expect(ownerCount(ownedPath)).toBe(1);
 
-    // The claim owns the close: only the detach ends it.
     const detachedKeeper = detachAgent("keeper");
     expect(handleIsOpen(owned)).toBe(false);
     await detachedKeeper;
@@ -464,15 +430,11 @@ describe("releaseHashStore — host release + root dispose", () => {
     });
     const scope = withStoreScope(storePath, () => gate);
 
-    // Unowned, so the release starts a cancellable drain; the held scope keeps it from finishing.
     const released = releaseHashStore(workspace);
-    // An attach at zero owners is the one case that revokes a decided close (a forced drain never
-    // is) — it takes no epoch involvement, which is the teardown-only limit this case pins.
     attach(storePath, "late");
 
     releaseGate();
     await expect(released).resolves.toBe(false);
-    // Cancelled, not closed-then-reopened: the same handle is live and the new claim owns it.
     expect(handleIsOpen(store)).toBe(true);
     expect(ownerCount(storePath)).toBe(1);
     await scope;

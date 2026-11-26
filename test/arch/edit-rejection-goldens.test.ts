@@ -19,13 +19,6 @@ beforeAll(async () => {
  * formatters — the verdict (`batchAbortFormat`), the list entry (`batchAbortItem`), the range
  * headings (`staleRangeFormat`, `noopLoopFormat`), the row renderer (`fmtServedRows`) and the two
  * serve dispositions (`ROWS_SERVED_NOTE`/`ROWS_NOT_SERVED_NOTE` in `src/mutation/batch-rejection.ts`)
- * — never pasted from a capture. Anchors are deterministic (raw-byte derived), so every hash below
- * is interpolated from `lineHashesPure`; the display path in a bullet is the submitted `file` value,
- * so the goldens are cwd-stable (the one exception is the foreign-anchor home, which the lease store
- * reports as an absolute path — interpolated from the fixture's own cwd there).
- *
- * The assembler indents continuation lines of a bullet by two spaces (`indentContinuation`); the
- * helpers below keep that indent explicit.
  */
 
 const verdict = (failed: number, total: number): string =>
@@ -77,7 +70,6 @@ describe("edit rejection goldens (#218)", () => {
     await withTempFile("s1.txt", content, async ({ cwd, path }) => {
       const harness = setupIntegrationTest(cwd);
       const anchors = await anchorsOf(harness.readTool.execute("read", { path: "s1.txt" }));
-      // Premise: read anchors are the content-derived hashes this golden interpolates.
       expect(anchors).toEqual(served);
       await writeFile(path, disk, "utf-8");
       const message = await capture(() =>
@@ -103,7 +95,6 @@ describe("edit rejection goldens (#218)", () => {
           ),
         ].join("\n"),
       );
-      // The refusal wrote nothing.
       expect(await readFile(path, "utf-8")).toBe(disk);
     });
   });
@@ -129,7 +120,6 @@ describe("edit rejection goldens (#218)", () => {
             file: "s2.txt",
             edits: [
               { anchor_from: window1[0]!, anchor_to: window1[0]!, replace_with: "L1" },
-              // Span lines 3..7: boundaries served, interior 4-6 never served.
               { anchor_from: window1[2]!, anchor_to: window2[0]!, replace_with: "R" },
             ],
           }),
@@ -158,8 +148,6 @@ describe("edit rejection goldens (#218)", () => {
       await writeFile(join(cwd, "b3.txt"), "shared\nright\n", "utf-8");
       const harness = setupIntegrationTest(cwd);
       const a = await anchorsOf(harness.readTool.execute("read", { path: "a3.txt" }));
-      // Serve ONLY b3's second line: b3's line 1 stays unleased here, so the shared anchor's one
-      // lease belongs to a3 — the foreign home the rejection must name.
       const b = await anchorsOf(
         harness.readTool.execute("read", { path: "b3.txt", offset: 2, limit: 1 }),
       );
@@ -175,7 +163,6 @@ describe("edit rejection goldens (#218)", () => {
       expect(message).toBe(
         [
           verdict(1, 2),
-          // `foreignAnchorFormat`: the home is the lease store's absolute file_path.
           bullet(
             1,
             "b3.txt",
@@ -189,8 +176,6 @@ describe("edit rejection goldens (#218)", () => {
   });
 
   it("s4-malformed-anchor-item: a shape-invalid anchor is one bullet naming the fault", async () => {
-    // The ticket's literal `"zzz"` is shape-valid alphanumeric (3 chars), so it lands on
-    // E_UNKNOWN_ANCHOR; the MALFORMED arm needs a token that fails `parseRef`'s shape gate.
     const content = "one\ntwo\n";
     const hashes = lineHashesPure(content.trimEnd());
     await withTempFile("s4.txt", content, async ({ cwd }) => {
@@ -226,7 +211,6 @@ describe("edit rejection goldens (#218)", () => {
     const lines = content.split("\n").slice(0, -1);
     await withTempFile("s5.txt", content, async ({ cwd }) => {
       const harness = setupIntegrationTest(cwd);
-      // Bounds-only geometry: line 1 and line 4 are served, lines 2-3 are not.
       const first = await anchorsOf(
         harness.readTool.execute("read", { path: "s5.txt", offset: 1, limit: 1 }),
       );
@@ -243,8 +227,6 @@ describe("edit rejection goldens (#218)", () => {
             { anchor_from: first[0]!, anchor_to: last[0]!, replace_with: "one\ntwo\nthree\nfour" },
           ],
         });
-      // WHY two calls: the two identical items advance the per-(session,file) counter twice, so the
-      // second submission reaches NOOP_LOOP_THRESHOLD (3) — the first is already the warn tier.
       expect(getText(await call())).toContain("was a noop");
       const message = await capture(call);
       expect(message).toBe(
@@ -279,7 +261,6 @@ describe("edit rejection goldens (#218)", () => {
       );
       const hashes = lineHashesPure(disk.trimEnd());
       const lines = disk.split("\n").slice(0, -1);
-      // Arity one throws the failure error itself: no verdict, no bullet, no indent.
       expect(message).toBe(
         `[TO MODEL] [E_STALE_RANGE] line 2 in s6.txt no longer resolves to the line identity ` +
           `it was served with.\n${rowBlock("Current range:", hashes, lines, "")}`,
@@ -330,9 +311,6 @@ describe("edit rejection goldens (#218)", () => {
   });
 
   it("s8-rowless-stale-anchor: a one-item stale anchor renders the bare rowless refusal", async () => {
-    // Substitution note: downstream's `E_TARGET_LOST` needs store surgery (a retired lease with a
-    // live counterpart), so this cell pins the other rowless single-item refusal the budget list
-    // names — `E_STALE_ANCHOR` when an external rewrite removes both anchors' identities.
     const content = "one\ntwo\nthree\nfour\n";
     const served = lineHashesPure(content.trimEnd());
     const disk = "ONE\nTWO\nTHREE\nFOUR\n";
@@ -366,7 +344,6 @@ describe("edit rejection goldens (#218)", () => {
         harness.editTool.execute("s9", {
           file: "s9.txt",
           edits: [
-            // Item 0 grows line 2, so item 1's served span is no longer current-file geometry.
             { anchor_from: served[1]!, anchor_to: served[1]!, replace_with: "beta\nINSERTED" },
             { anchor_from: served[0]!, anchor_to: served[2]!, replace_with: "R" },
           ],

@@ -1,27 +1,3 @@
-/**
- * The dsh `str_replace_editor` shadow: a governed agent-layer replacement for
- * the built-in `@deepseek-ai/dsh-tool-str-replace-editor` with identical
- * contract (`view` / `str_replace` / `insert` / `create`, no new `encoding`
- * param) but routed through the file-encoding-state seam.
- *
- * - `view` is observation: decode via the `ctxFsIO` path (`decodeForOpen`
- *   inside `io.readText`), records file encoding state, emits `fs/observed`,
- *   and never records served state (so it can feed `write` round-trips but
- *   cannot authorize hashline `edit` anchors).
- * - `str_replace` / `insert` without a prior `view`/`read` fail loud with
- *   `E_BAD_PAYLOAD` (unviewed file) — no disk write.
- * - `create` defaults to UTF-8 without BOM.
- * - `undo_edit` is out of scope → `E_BAD_PAYLOAD` (use `undo_last_edit`).
- *
- * - `create` / `str_replace` / `insert` stamp the per-call sandbox policy from
- *   `FsSandboxController` (the calling session's workspace root plus any
- *   approved one-shot escalation), matching the built-in and the hashline
- *   `edit` / `undo_last_edit` paths; unconfined deployments stamp `undefined`.
- *
- * See ADR-0015.
- * @module dsh-better-edit/tool-str-replace-editor
- */
-
 import { defineTool } from "@deepseek-ai/dsh-tools";
 import type { ToolExecution } from "@deepseek-ai/dsh-tools";
 import type { FsEscalationArgs, FsSandboxController } from "./sandbox.js";
@@ -107,9 +83,6 @@ function requireViewRange(args: Record<string, unknown>): [number, number] | und
  * must describe the bytes actually written, #112), so the model's own write
  * authorizes a follow-up non-anchored edit without a re-`view`. An EXTERNAL change
  * still drifts the version and fails with E_BLIND_REPLACE.
- *
- * Never writes; returns the version it validated so the caller can reuse it as the
- * decode-hint guard instead of stat'ing twice.
  */
 async function requireObserved(
   io: FileIO,
@@ -170,10 +143,7 @@ function countOccurrences(haystack: string, needle: string): number {
  * Replaces the former local `restoreBom` so the shadow can't diverge from
  * the file-encoding-state round-trip (report #2). */
 function restoreForSave(content: string, absolutePath: string): string {
-  // Throws E_ENCODING_UNWRITABLE before the write when the recorded encoding
-  // cannot round-trip through the text-only seam (issue #112).
   return prepareForSave(content, getEncodingState(absolutePath), {
-    // Same ladder as the edit path, so the fleet consent governs this shadow too (#209).
     migrationConsent: resolveEncodingMigrationConsent(undefined, loadConfig()),
     displayPath: absolutePath,
   }).textToWrite;
@@ -248,19 +218,9 @@ export function buildStrReplaceEditorTool(io: FileIO, sandbox: FsSandboxControll
         const absolutePath = await io.resolve(rawPath, cwd, signal);
 
         if (cmd === "view") {
-          // Issue #112: consume the encoding recorded by read({ encoding }) so a
-          // re-view decodes the same text instead of re-detecting (or failing).
           const viewVersion = await io.statVersion(absolutePath, signal);
           const viewHint = encodingHintAtVersion(absolutePath, viewVersion);
           const text = await io.readText(absolutePath, signal, viewHint);
-          // Observation only: encoding state is recorded by readText;
-          // served state is never touched here.
-          // NOTE (report #10): the readText + emitObserved pair costs two
-          // RPCs by design — readText decodes + records encoding state with
-          // no session, while emitObserved emits fs/observed with exec + a
-          // fresh stat version. Piggy-backing would need readText to take
-          // exec / return a version (FileIO contract break); same pattern
-          // as tool-read.ts, so documented, not collapsed.
           await io.emitObserved(absolutePath, exec, signal);
           const display = stripBOM(text).text;
           const range = requireViewRange(rec);
@@ -286,16 +246,11 @@ export function buildStrReplaceEditorTool(io: FileIO, sandbox: FsSandboxControll
 
         if (cmd === "create") {
           const fileText = requireString(rec, "file_text");
-          // The stat is only the early refusal (it answers before any write is
-          // attempted); the enforcement is the provider's `createIfAbsent` /
-          // the local backend's exclusive open, so a file created inside this
-          // stat→write window is refused instead of overwritten.
           const ver = await io.statVersion(absolutePath, signal);
           const exists = ver !== undefined;
           if (exists) {
             throw new DomainError("E_FILE_EXISTS", { path: rawPath });
           }
-          // Governed default: UTF-8 without BOM (no memo → no BOM).
           await writeGoverned(io, sandbox, absolutePath, fileText, rec as FsEscalationArgs, exec, {
             createIfAbsent: true,
           });
@@ -303,23 +258,12 @@ export function buildStrReplaceEditorTool(io: FileIO, sandbox: FsSandboxControll
             const version = await io.statVersion(absolutePath, signal);
             recordOpenState(absolutePath, fileText, "utf8", false, version);
           } catch {
-            // best-effort: the write succeeded; state is a hint.
+            // HACK: the write succeeded; state is a hint
           }
           return { text: `Created ${rawPath}.` };
         }
 
-        // str_replace / insert — strict read-first gate, no disk write on failure.
-        // NOTE (report #9): requireObserved's statVersion + the readText below
-        // cost two RPCs by design — the stat invalidates stale encoding memos
-        // BEFORE the read so a drifted file fails loud with E_BAD_PAYLOAD
-        // without paying for the read, and collapsing them (Promise.all or
-        // skipping the stat) reintroduces TOCTOU: a stale memo could authorize
-        // an edit on drifted bytes. Returning the version from readText would
-        // need a FileIO contract break for an unmeasured hot-path nit; same
-        // pattern as the view double-RPC above, so documented, not collapsed.
         const guardedVersion = await requireObserved(io, absolutePath, rawPath, signal);
-        // Issue #112: the mutating read consumes the encoding recorded by
-        // read({ encoding }), version-guarded by requireObserved just above.
         const encodingHint = encodingHintAtVersion(absolutePath, guardedVersion);
         const current = await io.readText(absolutePath, signal, encodingHint);
 
@@ -341,7 +285,6 @@ export function buildStrReplaceEditorTool(io: FileIO, sandbox: FsSandboxControll
           return { text: `Replaced 1 occurrence in ${rawPath}.` };
         }
 
-        // insert
         const line = rec["insert_line"];
         if (!Number.isInteger(line) || (line as number) < 1) {
           throw argError(

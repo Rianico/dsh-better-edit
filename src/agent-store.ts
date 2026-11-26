@@ -1,33 +1,12 @@
 /**
  * AgentStore — the attach + scope seam between one tool execution and the store lifecycle.
  *
- * Two jobs, one wrapper. ATTACH records that the calling agent uses the store for this call's
- * directory; SCOPE keeps that directory's handle open for the whole call, so a concurrent
- * disposal (the agent's Cordis effect) can only decide the close, never run it under the body.
- * The attach is best-effort by design: store bookkeeping must never fail a tool call.
+ * ATTACH records the calling agent's use of the store for this call's directory; SCOPE keeps that
+ * handle open for the whole call, so a concurrent disposal only decides the close. The token is the
+ * agent's stable id and the path is resolved per call, because one agent can move workspaces.
+ * Attach is best-effort, and only bodies that touch the store are decorated.
  *
- * The token is the agent's stable id (`exec.agent.id`) — the same string the install's teardown
- * detaches — because one agent re-attaches idempotently on every call and detaches once. The
- * store path is resolved per CALL from `execCwd(exec)`, because one agent can move workspaces
- * through the `workingDirectory` service; the reverse index accumulates every path it touched.
- *
- * WHY A WRAPPER, NOT A REGISTRY HOOK. The registry owns dispatch, so the only per-call seam the
- * plugin owns is its own tool bodies. Wrapping `execute` in place keeps the definition object
- * identity the self-heal watcher compares against, so the guarded watch still recognises its own
- * tools after registration.
- *
- * APPLIED ONLY WHERE THE BODY TOUCHES THE STORE. Every decoration costs a path resolution, and in
- * central/custom mode that resolution creates the runtime directory and writes the `.wsPath`
- * sidecar — so a definition whose body never resolves or opens the store (`str_replace_editor`, a
- * governed mutation with no `hash-store` import) is registered undecorated.
- *
- * SCOPES MAY NEST ON ONE PATH, and nesting is safe because a scope never awaits a drain:
- * `withStoreScope` only moves the path's in-flight counter, `awaitDrainingClose` is a no-op inside its
- * own slot's scope, and the LAST scope to end is the one that finishes the pending close. Today the
- * write hook's scope and a tool body's scope are sequential, never nested; a future site that nests
- * inside one of them inherits the deferral for free — the close waits for the outermost scope.
- *
- * @module dsh-better-edit/agent-store
+ * Ref: docs/adr/0057-session-scoped-per-workspace-store-lifecycle.md
  */
 
 import type { ToolExecution, ToolRunContext } from "@deepseek-ai/dsh-tools";
@@ -39,19 +18,9 @@ import { attachStore, withStoreScope } from "./store-lifecycle-slot.js";
 export type AttachErrorReporter = (message: string) => void;
 
 /**
- * Attach + scope seam for one tool execution.
- *
- * The token is the agent's stable id (`exec.agent.id`), the same string `installAgentTools`
- * detaches with. The store path is resolved per CALL from `execCwd(exec)`, because one agent can
- * move workspaces through the `workingDirectory` service; the reverse index accumulates every
- * path the agent touched. Attach is best-effort: store lifecycle bookkeeping must never fail a
- * tool call.
- *
- * The body runs inside the per-path in-flight scope, so a concurrent disposal defers the close to
- * the end of this call instead of closing the handle under it. A close that fails exactly when
- * this call's scope ends rejects the CALL — the registry's documented contract — because the
- * scope's `finally` supersedes the body result; the failed close leaves the handle retryable, so
- * a later release closes it, and a teardown's detached detach promise carries the warning.
+ * Attach + scope seam for one tool execution: the body runs inside the path's in-flight scope, so a
+ * concurrent disposal defers the close to the end of this call. A close that fails when this scope
+ * ends rejects the call, and the failed close leaves the handle retryable.
  *
  * @param exec - the execution context; its `agent.id` is the store token.
  * @param run - the tool body, run inside the attach + scope.

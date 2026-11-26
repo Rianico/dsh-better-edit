@@ -1,12 +1,11 @@
 import { describe, it, expect } from "vitest";
-import { mkdtemp, rm, writeFile, readFile } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
 describe("easy2 sandbox", () => {
   it("FsSandboxController basic", async () => {
     const { FsSandboxController } = await import("../../src/sandbox.js");
-    // missing policy with confined fs should throw
     expect(
       () =>
         new FsSandboxController({
@@ -14,7 +13,6 @@ describe("easy2 sandbox", () => {
           get: () => undefined,
         } as any),
     ).toThrow();
-    // with undefined mode should not throw
     const ctrl = new FsSandboxController({
       fs: { sandboxMode: undefined } as any,
       get: () => undefined,
@@ -45,7 +43,6 @@ describe("easy2 undo-edit", () => {
     expect(mod.saveUndo).toBeDefined();
     expect(mod.getUndo).toBeDefined();
     expect(mod.clearUndo).toBeDefined();
-    // test with temp file
     const dir = await mkdtemp(join(tmpdir(), "easy2-undo-"));
     try {
       const p = join(dir, "a.txt");
@@ -114,7 +111,9 @@ describe("easy2 hash-store", () => {
     expect(snap === undefined || Array.isArray(snap)).toBe(true);
     try {
       await shutdownHashStore();
-    } catch {}
+    } catch {
+      // HACK: the test ignores this cleanup failure by design.
+    }
   });
 });
 
@@ -123,7 +122,6 @@ describe("easy2 guidance materialize", () => {
     const mod: any = await import("../../src/guidance/materialize.js");
     expect(mod).toBeDefined();
     if (mod.materialize) {
-      // try to call with temp dir
       const dir = await mkdtemp(join(tmpdir(), "easy2-guid-"));
       try {
         const res = await mod

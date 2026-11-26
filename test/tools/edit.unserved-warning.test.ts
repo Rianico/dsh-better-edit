@@ -8,9 +8,6 @@
  * unserved count, and the compressed absolute file lines (#223). A fully served replacement is
  * silent; strict mode refuses the same span before any diff; a noop branch has no applied section,
  * so it can carry no disclosure.
- *
- * The tool seam returns text only, so the `details` cells project the same section shape through
- * `buildBatchResult` directly (the public function the tool calls).
  */
 import { beforeAll, describe, expect, it } from "vitest";
 
@@ -120,7 +117,6 @@ describe("edit unserved-interior disclosure (#144 T3)", () => {
       expect(removed.find((line) => line.endsWith(`${HASH_SEP}c`))).toBe(`${BLANK}c`);
       expect(removed.find((line) => line.endsWith(`${HASH_SEP}d`))).toBe(`${BLANK}d`);
 
-      // details live behind the tool seam, so the same section shape is projected directly.
       const hashes = lineHashesPure(SIX);
       const built = buildBatchResult([
         spanSection("X\n", [hashes[0]!, hashes[1]!, null, null, hashes[4]!, hashes[5]!]),
@@ -215,8 +211,6 @@ describe("edit unserved-interior disclosure (#144 T3)", () => {
           path: "t.txt",
           edits: [[anchors.get("a")!, anchors.get("f")!, "X"]],
         });
-        // A one-item call renders the item's bare diagnosis, so the span refusal arrives as its
-        // own `E_UNSERVED_RANGE` header (#144 T2 producer).
         await expect(attempt).rejects.toMatchObject({ code: "E_UNSERVED_RANGE" });
         const error = await attempt.catch((e: unknown) => e);
         expect((error as Error).message).toContain("[E_UNSERVED_RANGE]");

@@ -16,7 +16,6 @@ export const SUPPORTED_ENCODINGS = [
 ] as const;
 export type SupportedEncoding = (typeof SUPPORTED_ENCODINGS)[number];
 
-// Rejection-message roster: utf8 is always accepted (see ALIASES), the roster is the six model codecs.
 export const SUPPORTED_ENCODINGS_LABEL = `utf8, ${SUPPORTED_ENCODINGS.join(", ")}`;
 
 const ALIASES: Record<string, string> = {
@@ -46,13 +45,11 @@ const ALIASES: Record<string, string> = {
 /** Canonicalize case-insensitive encoding param, strip -_ . */
 export function normalizeEncoding(input: string): string | undefined {
   const key = input.trim().toLowerCase().replace(/[-_]/g, "");
-  // need original with dashes for lookup: try both
   const candidates = [key, input.trim().toLowerCase()];
   for (const c of candidates) {
     const v = ALIASES[c] ?? ALIASES[key];
     if (v) return v;
   }
-  // also try direct lowercased
   const lower = input.trim().toLowerCase();
   if (ALIASES[lower]) return ALIASES[lower];
   return undefined;
@@ -115,7 +112,7 @@ function printableRatio(text: string): number {
     const code = ch.charCodeAt(0);
     if (code === 10 || code === 13 || code === 9) printable += 1;
     else if (code >= 32 && code !== 127) printable += 1;
-    else if (code > 127) printable += 1; // non-ascii considered printable if not replacement
+    else if (code > 127) printable += 1;
   }
   return printable / text.length;
 }
@@ -134,7 +131,6 @@ function scriptBonus(text: string, enc: string): number {
 }
 
 function smartSlice(text: string): string {
-  // seek first non-ascii char, slice ±32 around it, truncate to 50
   let idx = -1;
   for (let i = 0; i < text.length; i += 1) {
     if (text.charCodeAt(i) > 127) {
@@ -170,7 +166,6 @@ export function decodeBytes(bytes: Uint8Array, enc: string): string | undefined 
       return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
     if (enc === "utf16le") return new TextDecoder("utf-16le").decode(bytes);
     if (enc === "utf16be") return new TextDecoder("utf-16be").decode(bytes);
-    // iconv-lite for legacy
     return iconv.decode(Buffer.from(bytes), enc);
   } catch {
     return undefined;
@@ -182,7 +177,6 @@ export function encodeText(text: string, enc: string): Uint8Array | undefined {
     if (enc === "utf8" || enc === "utf8bom") return new TextEncoder().encode(text);
     if (enc === "utf16le") return new Uint8Array(Buffer.from(text, "utf16le"));
     if (enc === "utf16be") {
-      // Node no utf16be, use iconv
       return new Uint8Array(iconv.encode(text, "utf16be"));
     }
     return new Uint8Array(iconv.encode(text, enc));
@@ -194,7 +188,6 @@ export function encodeText(text: string, enc: string): Uint8Array | undefined {
 /** Top-3 candidates for autoGuess: decode each allowlist enc, score, sort. */
 export function top3Candidates(bytes: Uint8Array, allowlist: string[]): CandidatePreview[] {
   const candidates: CandidatePreview[] = [];
-  // handle BOM case separately? caller should handle BOM before calling.
   for (const raw of allowlist) {
     const enc = normalizeEncoding(raw) ?? raw;
     const text = decodeBytes(bytes, enc);
@@ -223,7 +216,6 @@ export async function detectWithChardet(
 ): Promise<string | undefined> {
   try {
     const mod: unknown = await import("chardet");
-    // chardet ESM: default export has analyse, CJS: named
     const chardetLike = (mod as Record<string, unknown>).default ?? mod;
     const analyse = (
       chardetLike as {
@@ -241,13 +233,11 @@ export async function detectWithChardet(
       const norm = normalizeEncoding(r.name);
       if (!norm) continue;
       if (!allowNorm.has(norm)) continue;
-      // iconv-lite existence check (use try decode)
       const encForCheck = norm;
       if (!iconv.encodingExists(encForCheck) && !iconv.encodingExists(r.name)) continue;
       const text = decodeBytes(bytes, encForCheck);
       if (text === undefined) continue;
       if (text.includes("\uFFFD")) continue;
-      // extra guard: printable ratio
       if (text.length > 0) {
         let printable = 0;
         for (const ch of text) {

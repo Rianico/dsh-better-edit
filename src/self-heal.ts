@@ -11,7 +11,7 @@
 import { getAgentScopedToolLayer, reclaimToolEntry } from "./reclaim.js";
 
 export interface SelfHealOptions {
-  // SAFETY: Cordis Context.get is service-specific and returns an untyped service instance — narrow immediately at use site to the tools service shape
+  // HACK: Cordis Context.get is service-specific and returns an untyped service instance — narrow immediately at use site to the tools service shape
   agentId: string;
   rootCtx: {
     logger: { warn(msg: string): void; error(msg: string): void };
@@ -66,8 +66,6 @@ export function createSelfHealWatcher(options: SelfHealOptions): () => void {
       const currentRead = layer?.get?.("read") ?? layer?.data?.get?.("read");
       const currentEdit = layer?.get?.("edit") ?? layer?.data?.get?.("edit");
       const readOk = currentRead === hashReadDef;
-      // A declined edit has no definition to restore: a layer that happens to
-      // hold a built-in `edit` is the preset's own tool, not a takeover.
       const editOk = !watchEdit || currentEdit === hashEditDef;
       const currentStrReplace = watchStrReplace
         ? (layer?.get?.("str_replace_editor") ?? layer?.data?.get?.("str_replace_editor"))
@@ -83,7 +81,7 @@ export function createSelfHealWatcher(options: SelfHealOptions): () => void {
             `dsh-better-edit: repeated takeover of edit detected; self-heal disabled for agent ${agentId} \u2014 edit will remain built-in for this session \u2014 see Rianico/dsh-better-edit#43`,
           );
         } catch {
-          // ignore — logger may throw in mock
+          // HACK: ignore — logger may throw in mock
         }
         return;
       }
@@ -98,8 +96,6 @@ export function createSelfHealWatcher(options: SelfHealOptions): () => void {
           const currentLayer = getAgentScopedToolLayer(toolsSvc, agent);
           if (!currentLayer) return;
           const restoreTool = (name: string, def: unknown, toolLabel: string): boolean => {
-            // Best-effort delete of an intruding entry; a failed delete
-            // surfaces through the register throw below.
             reclaimToolEntry(currentLayer, name);
             try {
               agentCtx.tools.register(def);
@@ -130,7 +126,7 @@ export function createSelfHealWatcher(options: SelfHealOptions): () => void {
       try {
         rootCtx.logger.warn(formatFailMsg(error));
       } catch {
-        // ignore — logger may throw in mock
+        // HACK: ignore — logger may throw in mock
       }
     }
   });

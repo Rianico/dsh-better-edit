@@ -3,56 +3,12 @@ import { AsyncLocalStorage } from "node:async_hooks";
 /**
  * StoreLifecycleSlot — per-`storePath` registry that owns WHEN a store handle closes.
  *
- * ONE BOUNDARY. This module decides when a close becomes due: the owner count crossing
- * `1 → 0`, gated by in-flight scopes. THE close itself is injected through
- * `StoreLifecycleHooks.close` and is owned elsewhere — this module never checkpoints a WAL,
- * never closes a handle and never deletes an entry from the caller's handle map. T2 binds that
- * callback to the real checkout + close + deletion path, so the injection point is the seam and
- * not a stub.
+ * ONE BOUNDARY: this module decides when a close becomes due (owners crossing `1 → 0`, gated by
+ * in-flight scopes); the close itself is injected through `StoreLifecycleHooks.close` and owned by
+ * the caller's handle map. A close runs at most once per drain, and only while `isOpen` reports a
+ * live handle. Only `node:async_hooks` is imported, so the store cycle stays acyclic.
  *
- * A close runs at most once per drain and only while `isOpen(storePath)` still reports a live
- * handle, so the registry cannot double-close. Recovery paths that close on their own account
- * stay callable; `isOpen` is the overlap guard between the two.
- *
- * WHEN A CLOSE THROWS. The throw leaves the drain record retired (`isDraining` is false) and is
- * re-raised by whatever ran the close. When a caller ran it, that call's promise rejects. When a
- * scope's end ran it, the error supersedes the scope's body result: the scope promise rejects
- * with the close error while the drain waiters already resolved, because the drain finished
- * either way. `isOpen` still reports the handle, so a later release retries the close.
- *
- * CALLING RULE FOR DRAIN WAITERS. A caller that awaits a drain must be outside that path's
- * `withStoreScope`: a drain started inside a scope cannot finish before the scope ends, so an
- * in-scope wait can never settle. Only a call that must AWAIT a drain can throw — a detach that
- * removes the last owner, and a release that starts or joins a drain — and it throws there
- * instead of deadlocking, because the drain was already started and its close still runs when
- * the scope ends. A non-forced release refused by an attached owner returns `false` without
- * throwing, and a detach that leaves another owner returns silently. `awaitDrainingClose` stays
- * a silent no-op there, because a bare load only needs the refusal, not a diagnostic.
- *
- * PER PATH, NOT PER AGENT. Scopes are per path and the `AsyncLocalStorage` that marks one is per
- * slot, so a detach called from inside A's scope still detaches and closes an idle B
- * synchronously; only A's own drain wait rejects. That asymmetry is the one deliberate
- * multi-store deviation — the upstream referent tracks a single store, so it has no analogue.
- *
- * WHY A LEAF MODULE. Only `node:async_hooks` is imported — no `hash-store`, no
- * `store-lifecycle`, nothing else under `src/`. `store-retry.ts` is the same shape for the same
- * reason: when T2 wires the callbacks from `hash-store` through `store-lifecycle`, a shared
- * leaf is what keeps `hash-store ↔ store-lifecycle` acyclic.
- *
- * WHY STRING TOKENS. A downstream agent carries a stable id (`SessionId` is a string brand) that
- * re-attaches on every tool call and detaches once when its Cordis effect tears down. Upstream
- * mints a fresh `Symbol` per session activation, which only works while the caller holds that
- * symbol for the whole activation. Here the same agent must attach idempotently across many
- * calls without threading a symbol, so the token is the agent id string. A forced release
- * clears the slot's owners and the registry purges its reverse index for that path, so a stale
- * token cannot strand a claim: its next detach simply finds nothing.
- *
- * Call `configureStoreLifecycle` once at process start — tests call it once per case, after
- * `_resetForTests`. It also clears the registry, so a reconfigure never inherits slots built
- * against the previous hooks. Anything that could run a close fails loud with a plain `Error`
- * when hooks are missing: a skipped close is never silent.
- *
- * @module dsh-better-edit/store-lifecycle-slot
+ * Ref: docs/adr/0057-session-scoped-per-workspace-store-lifecycle.md
  */
 
 /** The two injected operations the registry needs. Both are synchronous by contract. */
@@ -132,8 +88,6 @@ class Slot {
    * already-started drain still closes when the scope ends.
    */
   async detach(token: string): Promise<void> {
-    // Defensive: the registry is the only caller and it never leaves an idle empty slot, so an
-    // unknown token is unreachable from there; its reachable no-op is the registry early return.
     if (!this.#owners.delete(token)) return;
     if (this.#owners.size > 0) return;
     await this.#awaitDrain(this.#beginDrain(false));
@@ -239,8 +193,6 @@ class Slot {
   }
 }
 
-// ---- registry: one slot per storePath, plus the token → paths reverse index ----
-
 let hooks: StoreLifecycleHooks | null = null;
 let slots = new Map<string, Slot>();
 let byToken = new Map<string, Set<string>>();
@@ -291,7 +243,6 @@ export async function detachAgent(agentToken: string): Promise<void> {
   try {
     await Promise.all(pending);
   } finally {
-    // A rejecting drain must not strand the slots this detach left idle.
     for (const storePath of known) prune(storePath);
   }
 }
@@ -341,7 +292,6 @@ export async function releaseStore(
     const outcomes = await Promise.all(pending);
     return outcomes.every((released) => released);
   } finally {
-    // A rejecting release must not strand the paths this release left idle.
     for (const path of known) prune(path);
   }
 }
@@ -352,8 +302,6 @@ export async function awaitDrainingClose(storePath: string): Promise<void> {
   if (slot === undefined) return;
   await slot.awaitDrainingClose();
 }
-
-// ---- read-only probes: unknown paths read as idle ----
 
 export function ownerCount(storePath: string): number {
   return slots.get(storePath)?.ownerCount ?? 0;

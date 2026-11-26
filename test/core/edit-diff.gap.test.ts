@@ -1,7 +1,3 @@
-// Ported from pi-better-edit 31d67d8 (fix(edit-diff): render small middle gaps whole, keep anchors
-// aligned, #172; closes #166) — adapted to dsh-better-edit conventions (.js import specifiers,
-// lineHashesPure, the (oldContent, newContent, contextLines, newContentHashes, oldContentHashes)
-// genDiff signature). Cases and expected values are unchanged.
 import { beforeAll, describe, expect, it } from "vitest";
 import { genDiff } from "../../src/edit-diff.js";
 import { lineHashesPure, initHasher } from "../../src/hashline/index.js";
@@ -88,7 +84,6 @@ describe("genDiff gap trimming (#166)", () => {
     expect(rowFor(diff, "C")).toBe(`+${hashes[11]}│C`);
     expect(rowFor(diff, "d")).toBe(` ${hashes[12]}│d`);
 
-    // servedRows must mirror exactly the rendered rows: a, B, g1..g4, g6..g9, C, d (0-based new indices)
     const renderedPositions = [0, 1, 2, 3, 4, 5, 7, 8, 9, 10, 11, 12];
     expect(servedRows.map((r) => r.position)).toEqual(renderedPositions);
     expect(servedRows.every((r) => r.hash === hashes[r.position])).toBe(true);
@@ -116,7 +111,6 @@ describe("genDiff gap trimming (#166)", () => {
         `+${newHashes[7]}│C`,
       ].join("\n"),
     );
-    // No context row may leak into the collapsed gap, and the trailing edge stays silent.
     gap.forEach((line) => expect(rowFor(diff, line)).toBeUndefined());
     expect(rowFor(diff, "d")).toBeUndefined();
     expect(servedRows).toEqual([

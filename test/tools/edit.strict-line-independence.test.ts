@@ -1,10 +1,3 @@
-/**
- * #144 T4 — strict span mode must not force a re-read of untouched lines between served anchors.
- *
- * Invariant: strict refuses only an unserved INTERIOR of the replaced span. Two independent
- * one-line edits within one batch — and two chained edits with no intervening read — apply, as
- * long as every line each item replaces was served once in this session.
- */
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import { readFile } from "node:fs/promises";
 
@@ -66,8 +59,6 @@ describe("strict span mode — line independence (#144 T4)", () => {
         { offset: 3, limit: 1 },
       ]);
 
-      // Neither item's replaced interior is unserved (each span is one line), so line 2's hole
-      // between the two edits is never examined.
       await withSpanMode("strict", () =>
         harness.editTool.execute("edit", {
           path: "hole.txt",
@@ -95,8 +86,6 @@ describe("strict span mode — line independence (#144 T4)", () => {
           path: "fifty.txt",
           edits: [[anchors.get("line 2")!, anchors.get("line 2")!, "LINE 2"]],
         });
-        // Still inside the same strict window and with no re-read: the anchors for 20-25 were
-        // served by the single window above, and the earlier edit did not touch those lines.
         await harness.editTool.execute("edit", {
           path: "fifty.txt",
           edits: [

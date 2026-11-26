@@ -90,7 +90,6 @@ describe("diff card — buildBatchResult", () => {
     ]);
 
     expect(out.content[0]!.text).toContain("```diff");
-    // combined 600 changed lines → should hit 400-line cap
     expect(out.content[0]!.text).toContain("[Diff truncated:");
   });
 });

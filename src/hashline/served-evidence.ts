@@ -8,17 +8,6 @@
  * (`owesInteriorScan`, `acceptsInteriorHole`, `checksPosition`), the leased
  * route's boundary interception loses identity before any content question is
  * asked, and `throwUnknownOrForeign` refuses anchors the lease seam cannot place.
- *
- * `verifyRebasedSpan` is exported because two cells pin the leased route directly;
- * it is not a second entry point. `buildRangeEcho`/`fmtServedRows`/`moreRowsHint`
- * render the echo, and `ResolvedRange` is the shape both sides of the edit path
- * carry, so neither side has to import the other.
- *
- * WHY here: the verifier is read-side evidence, but the write path calls it. Kept
- * in anchor-pipeline it closed a cycle through the served mirror and the request
- * contract; as a leaf (domain registry, hash-assign, constants) it closes none.
- *
- * @module dsh-better-edit/hashline/served-evidence
  */
 
 import { DomainError } from "../domain-errors.js";
@@ -298,8 +287,6 @@ function interceptLeaseBoundaries(args: {
       const len = fileHashes.length;
       const startLine = Math.max(1, rawStart);
       const endLine = Math.min(len, rawEnd);
-      // Collapsed-window guard: fail closed to `E_TARGET_LOST` when the named window
-      // collapses (e.g. served startLine 10 against a 4-line file) or misses the file.
       if (len > 0 && startLine <= endLine && rawEnd >= 1 && rawStart <= len) {
         const servedRows = buildRangeEcho(startLine, endLine, fileHashes);
         const totalLen = endLine - startLine + 1;
@@ -333,15 +320,6 @@ function interceptLeaseBoundaries(args: {
  * the named line was deleted and a different line now holds the same bytes — rejects: the leased
  * `line_id` no longer lives at the rebased coordinate, or is gone from the buffer's identity map
  * entirely, so the anchor cannot be reconciled with the line it named.
- *
- * Fail-closed arms, all `E_STALE_RANGE` with the echo rows: a window length that changed because
- * an external insert/delete landed strictly inside the span, a truncated mirror slot (no served row
- * left to reconcile), a never-served boundary row (the named anchor itself, unverifiable without a
- * served row), an unleased served row (a serve predating lease granting), a retired lease, or a
- * coordinate no leased identity occupies. An interior mirror row the span never served (`null`) is
- * accepted (upstream ADR-0024 decision 1, adopted; supersedes ADR-0019's decline): it carries no
- * identity to verify and the two boundary leases plus the window-length check pin the span's extent.
- * Throwing happens before any write, so a rejection leaves the file byte-identical.
  */
 export function verifyRebasedSpan(args: {
   served: (string | null)[];
@@ -377,11 +355,6 @@ export function verifyRebasedSpan(args: {
   for (let k = 0; k < servedLen; k++) {
     const servedAnchor = served[args.servedStart - 1 + k];
     const currentLine = args.rebasedStart + k;
-    // WHY: the served window can come from the leases' own `servedLineNumber` because a truncated
-    // serve dropped the mirror rows it no longer covers: the lease outlives the mirror. An
-    // absent slot is that missing record, never "this line was never served", so the span
-    // fails closed on the truth (the served record cannot be reconciled) and the current
-    // range is served for a fresh read.
     if (servedAnchor === undefined) {
       throw new ServedRejectionError({
         code: "E_STALE_RANGE",
@@ -393,10 +366,6 @@ export function verifyRebasedSpan(args: {
       });
     }
     if (servedAnchor === null) {
-      // WHY: the interior-accept / boundary-reject split is the route's `acceptsInteriorHole`
-      // decision (upstream ADR-0024 decision 1, adopted; supersedes ADR-0019's decline) — see
-      // its doc for why an unread interior row passes and a `null` boundary keeps the
-      // fail-closed diagnosis.
       if (!acceptsInteriorHole(route, k, servedLen)) {
         throw new ServedRejectionError({
           code: "E_STALE_RANGE",
@@ -408,9 +377,6 @@ export function verifyRebasedSpan(args: {
         });
       }
       if (refusesInteriorHole(spanMode, route, k, servedLen)) {
-        // Collect while the loop keeps adjudicating the other slots: a concrete staleness
-        // elsewhere still wins (existing precedence); only a window with no other refusal
-        // throws the aggregated strict refusal, once, after the loop.
         unservedInterior.push(currentLine);
       }
       continue;
@@ -426,10 +392,6 @@ export function verifyRebasedSpan(args: {
         cause: "never-served",
       });
     }
-    // WHY: two distinct diagnoses, one per condition: a terminal lease is a `retirement` — the
-    // identity is gone and only a re-read revives it — while a live lease whose `lineId` no
-    // longer sits at its expected coordinate is drift between the served record and the
-    // rebased span.
     if (lease.retiredAt !== null) {
       throw new ServedRejectionError({
         code: "E_STALE_RANGE",
@@ -495,8 +457,6 @@ export function verifyServedRange(args: {
   spanMode?: SpanMode;
 }): void {
   const { served, startHash, endHash, startLine, endLine, fileHashes, fileLines, filePath } = args;
-  // The one route construction (obligation (c)): every leased/mirror decision below consults
-  // this value, so the conjunction cannot drift site by site.
   const route = servedEvidenceRoute(args.leaseSource);
   const where = filePath ? ` in ${filePath}` : "";
   const retiredSet = args.retired ?? new Set<string>();
@@ -509,10 +469,6 @@ export function verifyServedRange(args: {
       : "";
   const echo = fmtServedRows(echoRows, fileLines) + tail;
 
-  // Retired-anchor check for boundaries (whole-span S@3==S@3) — the freed-hash concept, named
-  // `retired` here since ADR-0013 (ADR-0028 records the vocabulary ruling).
-  // If hash was freed in this epoch, any reuse is stale even at same pos+same canon.
-  // Early reject checks canon change to avoid false positive on same line re-read.
   if (retiredSet.has(startHash) || retiredSet.has(endHash)) {
     const retiredHash = retiredSet.has(startHash) ? startHash : endHash;
     if (servedCanons) {
@@ -534,11 +490,6 @@ export function verifyServedRange(args: {
     }
   }
 
-  // The leased route resolves boundaries through the lease seam FIRST (upstream
-  // b92e0ec:src/hashline/lease-resolve.ts:120-200): a missing or stale boundary lease rejects
-  // before content placement can substitute a look-alike for the lost identity. The non-leased
-  // route keeps mirror placement alone (upstream's non-leased analogue,
-  // served-verification.ts:745, is the zero-position arm below).
   if (route.kind === "leased") {
     interceptLeaseBoundaries({
       startHash,
@@ -555,9 +506,6 @@ export function verifyServedRange(args: {
   const currentLen = endLine - startLine + 1;
   let from: number | undefined;
   let to: number | undefined;
-  // Exact-boundary rule (ADR-0018, superseding ADR-0004): each boundary anchor must have
-  // EXACTLY one served position. Anything else leaves `from`/`to` undefined and rejects
-  // below — there is no candidate-span search that could re-bind onto a look-alike line.
   if (startPositions.length === 1 && endPositions.length === 1) {
     from = Math.min(startPositions[0]!, endPositions[0]!);
     to = Math.max(startPositions[0]!, endPositions[0]!);
@@ -570,10 +518,6 @@ export function verifyServedRange(args: {
       ]),
     ];
     if (missing.length > 0) {
-      // A boundary anchor the mirror never placed was never served for this file: the
-      // rejection carries no rows — with nothing served there is nothing trustworthy to
-      // retry with, only a read restores grounding (port of upstream
-      // b92e0ec:src/hashline/served-verification.ts:729-749).
       throw new DomainError("E_UNKNOWN_ANCHOR", {
         path: filePath ?? "this file",
         anchors: missing,
@@ -599,9 +543,6 @@ export function verifyServedRange(args: {
     });
   }
 
-  // The never-served interior scan is the mirror route's evidence rule (upstream ADR-0024
-  // decision 2); the leased route skips it because the identity gate owns interior holes
-  // there (decision 1) — the full rationale lives on `owesInteriorScan`.
   if (owesInteriorScan(route)) {
     for (let i = from; i <= to; i++) {
       if (served[i] === null) {
@@ -626,17 +567,8 @@ export function verifyServedRange(args: {
       servedRows: echoRows,
     });
   }
-  // Position check or identity gate — the seam is opt-in (obligation (c)).
   //
-  // With a lease source, identity decides: `verifyRebasedSpan` checks the whole served window by
-  // the leases its anchors were served with, so a benign shift (same bytes, moved position —
-  // exterior drift above the span) applies at its rebased coordinate with no re-read, while a
-  // look-alike rebind (the named line was deleted and another line now holds its bytes) rejects.
   //
-  // Without a lease source the unconditional position check below stands: identity only, never a
-  // weaker position check. The pos-free route is REACHABLE on a normal session route (a windowed
-  // read never pinned the epoch; a preview/no-store edit carries no leases), which is why this
-  // fallback cannot be dropped.
   if (route.kind === "leased") {
     verifyRebasedSpan({
       served,
@@ -660,7 +592,6 @@ export function verifyServedRange(args: {
       servedRows: echoRows,
     });
   }
-  // Canon check for same-pos different content (collision)
   if (servedCanons) {
     for (let k = 0; k < servedLen; k++) {
       const expected = servedCanons[from + k];
@@ -678,7 +609,6 @@ export function verifyServedRange(args: {
       }
     }
   }
-  // Retired-anchor interior check (whole-span) — gated on canon inequality (fail-closed only for different canon)
   for (let k = 0; k < servedLen; k++) {
     const h = fileHashes[startLine - 1 + k];
     if (h && retiredSet.has(h)) {
@@ -696,15 +626,7 @@ export function verifyServedRange(args: {
     }
   }
   for (let k = 0; k < servedLen; k++) {
-    // The leased route's `null` skip is `checksPosition`'s decision (the identity gate already
-    // adjudicated the hole); the mirror route's holes rejected in the scan above.
     if (!checksPosition(route, served[from + k])) continue;
-    // The served anchor must still name this line. #138 split identity from alignment: anchors key on
-    // the RAW line, so an external formatter's edge-whitespace rewrite rotates the anchor at an
-    // unchanged served position while the CANON still names the same line — the tolerance this
-    // equality used to carry implicitly (anchors were canon-derived, so equal anchor ⇔ equal canon).
-    // Compare the canon directly: a canon change still rejects here, and a missing canon record
-    // (`servedCanons` absent, a pre-canon serve) keeps the strict anchor equality — fail closed.
     const sameAnchor = served[from + k] === fileHashes[startLine - 1 + k];
     const servedCanonAt = servedCanons?.[from + k];
     const currentCanon = canon(fileLines[startLine - 1 + k] ?? "");

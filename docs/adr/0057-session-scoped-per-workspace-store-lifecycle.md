@@ -1,4 +1,4 @@
-# ADR-0056 — Session-scoped, per-workspace store lifecycle
+# ADR-0057 — Session-scoped, per-workspace store lifecycle
 
 Date: 2026-11-26
 

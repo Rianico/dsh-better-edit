@@ -51,7 +51,7 @@ function ensureWsPathSidecar(dir: string, canonicalWs: string): void {
     mkdirSync(dir, { recursive: true });
     writeFileSync(wsPathFile, `${canonicalWs}\n`, "utf-8");
   } catch {
-    // best-effort, never throw at path resolution
+    // HACK: best-effort, never throw at path resolution
   }
 }
 
@@ -95,7 +95,6 @@ export function tenancyFor(cwd?: string): Tenancy {
   return { dir, mode: "custom", runtimeDir: sd, canonical };
 }
 
-// Compat shims — paths.ts delegates here
 export function configDir(cwd?: string): string {
   return tenancyFor(cwd).dir;
 }

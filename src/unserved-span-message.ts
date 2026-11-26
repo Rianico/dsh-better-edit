@@ -9,10 +9,6 @@
  * The run cap is declared here rather than in `constants.ts` because `constants.ts` imports
  * `formatError` from `domain-errors.ts`, so a formatter → constants edge would cycle
  * `domain-errors → unserved-span-message → constants → domain-errors`.
- *
- * PRECONDITION: `unservedLines` is non-empty — an empty set has no sentence to render, so the
- * formatter throws a `TypeError` rather than a fail-open label. Both call sites already guard
- * (strict on a first offending line, hint on a removed unserved line), so it never fires.
  */
 
 /** Max runs the unserved list renders before the hidden line count is appended. */

@@ -8,13 +8,6 @@
  * counts describe bytes observed before any write.
  *
  * The two claims this spec measures together:
- *  - the warning is CHROME: it rides `text` after the rows (and after the UTF-8 / serve notes),
- *    it is never a served row, and it never touches `view.text` or the pagination hint;
- *  - the warning AGREES with the next write: the target it names is the terminator that edit
- *    actually lands on, and the applied `[W_EOL_REWRITTEN]` names the same `(source)`.
- *
- * Counts are whole-file by construction (`normFromText` counts the raw pre-image once), so
- * pagination and windows change which rows render, never which counts are reported.
  */
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -118,7 +111,6 @@ describe("read warning: a mixed pre-image says so on the read", () => {
         text.endsWith(`\n\n${MARK} Mixed EOL: 2 CRLF, 1 LF. All edits normalize to CRLF (file).`),
       ).toBe(true);
       expect(countOf(text, MARK)).toBe(1);
-      // A read tier header carries no audience: it reports state, it addresses nobody.
       expect(text).not.toContain(`[MODEL] ${MARK}`);
       expect(text).not.toContain(`[USER] ${MARK}`);
       expect(text).not.toMatch(/\[(?:MODEL|USER)\] \[W_MIXED_EOL\]/);
@@ -185,18 +177,13 @@ describe("read warning: chrome, not content", () => {
     await withTempFile("t.txt", sixMixed, async ({ cwd }) => {
       const { text, served } = await read(cwd, "t.txt", { offset: 1, limit: 2 });
 
-      // The page is still the page: the hint is untouched and names the whole file.
       expect(text).toContain("[Showing lines 1-2 of 6. Use offset=3 to continue.]");
       expect(countOf(text, "Use offset=3")).toBe(1);
-      // Counts are whole-file (4 CRLF + 2 LF), not the page's slice of them.
       expect(
         text.endsWith(`\n\n${MARK} Mixed EOL: 4 CRLF, 2 LF. All edits normalize to CRLF (file).`),
       ).toBe(true);
       expect(countOf(text, MARK)).toBe(1);
 
-      // Chrome, not a row: the notice line the model sees carries no anchor, and the serve is
-      // exactly the page. (Assert over the rendered line, never over a literal the test wrote —
-      // a regex that can never match its own input proves nothing about the page.)
       const noticeLine = text.split("\n").find((line) => line.includes(MARK));
       expect(noticeLine).toBeDefined();
       expect(ANCHOR_ROW.test(noticeLine!)).toBe(false);
@@ -204,7 +191,6 @@ describe("read warning: chrome, not content", () => {
       const rows = rowLines(text);
       expect(rows).toHaveLength(2);
       expect(served).toBe(2);
-      // Order: every row, the hint, then the warning last.
       expect(text.indexOf(rows[1]!)).toBeLessThan(text.indexOf(MARK));
       expect(text.lastIndexOf("Use offset=3")).toBeLessThan(text.indexOf(MARK));
     });
@@ -285,7 +271,6 @@ describe("read warning: the next edit agrees with it", () => {
         }),
       );
 
-      // The forced rung wins the ladder on BOTH sides: the read predicts it, the write lands it.
       expect(editText).toContain("[MODEL] [W_EOL_REWRITTEN] EOL normalized to LF (config)");
       expect(countOf(editText, "[W_EOL_REWRITTEN]")).toBe(1);
     });

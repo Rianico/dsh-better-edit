@@ -1,7 +1,7 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect } from "vitest";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { tmpdir } from "node:os";
+import "node:os";
 import { getWritableTempRoot } from "../support/fixtures.js";
 
 describe("coverage-agent-g fs-bridge", () => {
@@ -45,7 +45,6 @@ describe("coverage-agent-g fs-bridge", () => {
     const dir = await mkdtemp(join(await getWritableTempRoot(), "fsb2-"));
     const p = join(dir, "b.txt");
     await writeFile(p, "hello", "utf-8");
-    // just check that localIO can be imported, not that readText works (it may be mocked)
     expect(true).toBe(true);
     mod.setEncodingState("k1", { encoding: "gbk", hasBOM: false, version: "1" });
     expect(mod.getEncodingState("k1")?.encoding).toBe("gbk");

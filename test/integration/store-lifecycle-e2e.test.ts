@@ -1,19 +1,12 @@
 /**
  * Store lifecycle end-to-end: the undo history survives the handle that wrote it.
  *
- * The interesting claim is not that sqlite persists (it does), but that it persists across the ONE
- * thing the lifecycle wiring can destroy: the 1 → 0 detach closes the connection and drops the
- * cached entry, so the next session's `read` re-opens the file on a cold handle. If the undo row
- * lived in memory anywhere between the edit and the revert, this case would come back empty.
+ * The 1 → 0 detach closes the connection and drops the cached entry, so the next session's read
+ * re-opens the file on a cold handle, and anything the revert needs must already be on disk. Real
+ * tool definitions over a real temp workspace. Token and session key are built independently, so a
+ * resume-shaped continuation is the same session under a new agent id.
  *
- * Production bindings only: `src/hash-store.ts` binds the lifecycle hooks once at module load, so
- * this file never calls `configureStoreLifecycle` or `_resetForTests` — doing so would unbind the
- * behaviour under test. The tools are the REAL definitions the install wraps, driven over a real
- * temp workspace and a real sqlite file; nothing here stubs the store.
- *
- * The ATTACH TOKEN and the SESSION KEY are built independently here (`makeExec` sets both to the
- * same string): a resume-shaped continuation is the same session under a new agent id, and only
- * that shape separates "the token's teardown closed the store" from "the session's data is gone".
+ * Ref: docs/adr/0057-session-scoped-per-workspace-store-lifecycle.md
  */
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
@@ -96,7 +89,6 @@ describe("store lifecycle — reopen-undo across a closed handle", () => {
   });
 
   afterEach(async () => {
-    // Owners first: a detach is what drives the close, so it must run before the close-all.
     await detachAgent("agent-1");
     await detachAgent("agent-2");
     shutdownHashStore();
@@ -112,7 +104,6 @@ describe("store lifecycle — reopen-undo across a closed handle", () => {
     const undo = wrapToolWithAgentStore(buildUndoTool(io, sandbox));
     const storePath = hashStorePath(workspace);
 
-    // ---- first agent: read, then edit one line -------------------------------
     const firstRead = await read.execute(
       { path: "resume.txt" },
       execFor("agent-1", "session-1", workspace, { path: "resume.txt" }) as ToolRunContext,
@@ -130,22 +121,17 @@ describe("store lifecycle — reopen-undo across a closed handle", () => {
     expect(await readFile(filePath, "utf-8")).toBe(AFTER);
     expect(ownerCount(storePath)).toBe(1);
 
-    // ---- the teardown: the handle the edit used goes away ---------------------
     const store = await loadHashStore(workspace);
     expect(handleIsOpen(store)).toBe(true);
     const detached = detachAgent("agent-1");
-    // 1 → 0 closes synchronously inside the detach, so the writer's handle is dead before the
-    // second agent ever reads. Anything the revert needs must therefore be on disk.
     expect(handleIsOpen(store)).toBe(false);
     await detached;
     expect(ownerCount(storePath)).toBe(0);
 
-    // ---- second agent, same session key: resume ------------------------------
     const secondRead = await read.execute(
       { path: "resume.txt" },
       execFor("agent-2", "session-1", workspace, { path: "resume.txt" }) as ToolRunContext,
     );
-    // The read re-opened the store: a dead cached entry would have served nothing here.
     expect(ownerCount(storePath)).toBe(1);
     const resumed = await loadHashStore(workspace);
     expect(resumed).not.toBe(store);
@@ -157,8 +143,6 @@ describe("store lifecycle — reopen-undo across a closed handle", () => {
       execFor("agent-2", "session-1", workspace, { path: "resume.txt" }) as ToolRunContext,
     )) as string;
     expect(undone).not.toContain("No undo history");
-    // Byte-identical, not line-equal: an undo that re-spelled the terminator would pass a
-    // line-array comparison and still corrupt a CRLF file.
     expect(await readFile(filePath, "utf-8")).toBe(BEFORE);
   });
 });

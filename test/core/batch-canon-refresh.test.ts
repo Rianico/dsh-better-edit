@@ -40,7 +40,6 @@ describe("batch edit serves stay fresh for immediate retry (#53)", () => {
       expect(out1).toContain("Successfully");
       expect(await readFile(path, "utf-8")).toBe("1\nb\nC\n");
 
-      // Fresh anchors straight from the diff — no re-read.
       const served2 = servedByContent(out1);
       const retry = await harness.editTool.execute("edit", {
         path: "g.txt",

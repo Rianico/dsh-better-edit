@@ -171,9 +171,6 @@ describe("recorder seam", () => {
           .map((line) => line.split("│")[0]!);
         expect(anchors).toHaveLength(6);
 
-        // One external write changes an interior line of each span. Both items then reject in the
-        // pre-pass with a row-carrying `E_STALE_RANGE` evaluated against the committed snapshot, so
-        // no buffer shift applies and each echoes its own current region (positions 0-2 and 3-5).
         const disk = "alpha\nBETA\ngamma\ndelta\nEPSILON\nzeta\n";
         await writeFile(path, disk, "utf-8");
 
@@ -195,7 +192,6 @@ describe("recorder seam", () => {
         expect(message).toContain("- edits[0] (seam-ledger.txt) [E_STALE_RANGE]:");
         expect(message).toContain("- edits[1] (seam-ledger.txt) [E_STALE_RANGE]:");
 
-        // The recorder ran once per failure: both windows are now the current file's rows.
         const current = lineHashesPure(disk.trimEnd());
         const mirror = await withWorkspace(cwd, () => loadServed(fullKey, path));
         expect(mirror.slice(0, 3)).toEqual(current.slice(0, 3));

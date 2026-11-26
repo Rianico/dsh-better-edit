@@ -18,7 +18,6 @@ describe("file-view — stat consolidation", () => {
     await withTempFile("snap.txt", "alpha\nbeta\n", async ({ path }) => {
       const preloaded: FileStats = { ino: 4242, mtimeMs: 1, ctimeMs: 2, size: 999 };
       const snap = await fileSnap(path, preloaded);
-      // A real `stat` would report this file's own inode and size; these are the caller's numbers.
       expect(snap.ino).toBe(4242);
       expect(snap.size).toBe(999);
       expect(snap.mtimeMs).toBe(1);
@@ -30,7 +29,6 @@ describe("file-view — stat consolidation", () => {
     await withTempFile("snap-real.txt", "alpha\n", async ({ path }) => {
       const actual = await stat(path);
       const snap = await fileSnap(path, actual);
-      // The loader hands its own `fs.Stats` over, so the domain type must accept it structurally.
       expect(snap.ino).toBe(actual.ino);
       expect(snap.size).toBe(actual.size);
     });

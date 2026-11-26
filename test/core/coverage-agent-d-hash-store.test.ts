@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll } from "vitest";
-import { mkdtemp, rm, writeFile, mkdir, readdir } from "node:fs/promises";
+import { mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
-import { existsSync } from "node:fs";
+import "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import {
   isValidServedList,
@@ -42,7 +42,7 @@ describe("coverage-agent-d hash-store validators", () => {
     expect(isValidHashList("not array" as any)).toBe(false);
     expect(isValidHashList([42 as any])).toBe(false);
     expect(isValidHashList(["ZZ"] as any)).toBe(false);
-    expect(isValidHashList(["abc", "abc"])).toBe(true); // duplicates allowed in validator? check logic allows
+    expect(isValidHashList(["abc", "abc"])).toBe(true);
   });
   it("isValidServedList", () => {
     expect(isValidServedList([])).toBe(true);
@@ -76,7 +76,6 @@ describe("coverage-agent-d hash-store operations", () => {
         resultContent: "r",
       });
       expect(store.getUndo("/u.ts")).toBeDefined();
-      // corrupt via db
       const home = process.env.HOME!;
       const sqlitePath = join(home, ".dsh", "plugins", "dsh-better-edit", "hash-store.sqlite");
       const db = new DatabaseSync(sqlitePath) as any;
@@ -92,9 +91,8 @@ describe("coverage-agent-d hash-store operations", () => {
   it("served get and wipe", async () => {
     await withTempHome(async () => {
       const store = await loadHashStore();
-      const served = await import("../../src/hash-store.js");
+      const _served = await import("../../src/hash-store.js");
       const sp = store as any;
-      // use served persistence via store directly
       sp.upsertServed("sess1", "/p.ts", JSON.stringify(["aaa", null]));
       expect(sp.getServed("sess1", "/p.ts")).toEqual(["aaa", null]);
       sp.upsertServedReported("sess1", "/p.ts", JSON.stringify(["aaa"]));
@@ -129,7 +127,6 @@ describe("coverage-agent-d hash-store operations", () => {
       const store = (await loadHashStore()) as any;
       store.upsertSnapshot("/missing-file-xyz.ts", contentChecksum("x\n"), 1, ["abc"], "x\n");
       await store.pruneMissing();
-      // file doesn't exist, should be pruned
       expect(store.getSnapshot("/missing-file-xyz.ts", "x\n")).toBeUndefined();
       await saveUndo("/u2.ts", {
         content: "c",

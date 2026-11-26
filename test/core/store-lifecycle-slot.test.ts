@@ -85,7 +85,6 @@ describe("store-lifecycle-slot", () => {
     expect(isDraining(A)).toBe(true);
     expect(ownerCount(A)).toBe(0);
 
-    // No reverse-index entry, so the registry returns early: nothing starts and nothing finishes.
     await detachAgent("ghost");
 
     expect(isDraining(A)).toBe(true);
@@ -105,7 +104,6 @@ describe("store-lifecycle-slot", () => {
 
     const done = detachAgent("agent-1");
 
-    // No await on `done` yet: the close already happened, inside the call.
     expect(closes).toEqual([A]);
     await done;
     expect(closes).toEqual([A]);
@@ -136,7 +134,6 @@ describe("store-lifecycle-slot", () => {
     expect(isDraining(A)).toBe(true);
     expect(closes).toEqual([]);
 
-    // The re-attach cancels the pending drain, so the scope's end closes nothing.
     attachStore(A, "agent-2");
     await drained;
 
@@ -154,7 +151,6 @@ describe("store-lifecycle-slot", () => {
       await gate.promise;
     });
 
-    // The release is awaited from outside the scope, as the calling rule requires.
     attachStore(A, "agent-1");
     const released = releaseStore(A, { force: true });
     expect(ownerCount(A)).toBe(0);
@@ -246,7 +242,6 @@ describe("store-lifecycle-slot", () => {
     const gate = deferred();
     const inScope = withStoreScope(A, async () => {
       await gate.promise;
-      // A silent no-op: it must neither wait on the drain nor close anything.
       await awaitDrainingClose(A);
       expect(closes).toEqual([]);
     });
@@ -311,11 +306,9 @@ describe("store-lifecycle-slot", () => {
     expect(ownerCount(B)).toBe(1);
     expect(inFlightCount(B)).toBe(0);
 
-    // A close on A never touches B's owner.
     await detachAgent("a1");
     expect(closes).toEqual([A]);
 
-    // A fresh handle for A, then one token owning both paths.
     open.add(A);
     attachStore(A, "shared");
     attachStore(B, "shared");
@@ -344,17 +337,14 @@ describe("store-lifecycle-slot", () => {
   it("a drain over a closed handle reports closed = false and never double-closes", async () => {
     open.delete(A);
 
-    // Unowned and already closed: the drain runs, closes nothing, reports false.
     expect(await releaseStore(A)).toBe(false);
     expect(closes).toEqual([]);
 
-    // An owner refuses the non-forced release before any drain starts.
     attachStore(A, "agent-1");
     expect(await releaseStore(A)).toBe(false);
     await detachAgent("agent-1");
     expect(closes).toEqual([]);
 
-    // Forced reports true although no close could run.
     expect(await releaseStore(A, { force: true })).toBe(true);
     expect(closes).toEqual([]);
   });
@@ -422,14 +412,12 @@ describe("store-lifecycle-slot", () => {
         (error: unknown) => error,
       );
 
-      // The drain is already started and waits for this scope, so it cannot settle here.
       expect(isDraining(A)).toBe(true);
       expect(closes).toEqual([]);
     });
 
     expect(failure).toBeInstanceOf(Error);
     expect((failure as Error).message).toMatch(/own scope/);
-    // The started drain still closed, exactly once, when the scope ended.
     expect(closes).toEqual([A]);
   });
 
@@ -444,7 +432,6 @@ describe("store-lifecycle-slot", () => {
         (error: unknown) => error,
       );
 
-      // B holds no scope of its own: it closed synchronously, inside the call, before the wait.
       expect(closes).toEqual([B]);
       expect(isDraining(A)).toBe(true);
     });
@@ -454,7 +441,6 @@ describe("store-lifecycle-slot", () => {
     expect(closes.slice().sort()).toEqual([A, B].sort());
     expect(ownerCount(A)).toBe(0);
     expect(isDraining(A)).toBe(false);
-    // The rejecting detach must not leave B's empty idle slot behind.
     expect(_slotCountForTests()).toBe(0);
   });
 
@@ -486,7 +472,6 @@ describe("store-lifecycle-slot", () => {
         (error: unknown) => error,
       );
 
-      // Forced semantics already ran: owners dropped, drain started, no close yet.
       expect(ownerCount(A)).toBe(0);
       expect(isDraining(A)).toBe(true);
       expect(closes).toEqual([]);
@@ -508,7 +493,6 @@ describe("store-lifecycle-slot", () => {
     expect(isDraining(A)).toBe(true);
 
     const released = releaseStore(A, { force: true });
-    // This attach must NOT cancel the drain the forced release just upgraded.
     attachStore(A, "agent-2");
 
     expect(isDraining(A)).toBe(true);
@@ -538,7 +522,6 @@ describe("store-lifecycle-slot", () => {
     first.resolve();
     await firstScope;
 
-    // The scope that ended must not have pruned the slot the other one still holds.
     expect(inFlightCount(A)).toBe(1);
 
     attachStore(A, "agent-1");
@@ -602,7 +585,6 @@ describe("store-lifecycle-slot", () => {
   it("an idle releaseStore closes synchronously inside the call", async () => {
     const released = releaseStore(A);
 
-    // No await yet: nothing gates this release, so the close already ran.
     expect(closes).toEqual([A]);
     expect(await released).toBe(true);
   });
@@ -649,7 +631,6 @@ describe("store-lifecycle-slot", () => {
 
     await expect(detachAgent("agent-1")).rejects.toThrow("close exploded");
 
-    // The close failed, but the drain retired and the now-idle slot must not be stranded.
     expect(ownerCount(A)).toBe(0);
     expect(isDraining(A)).toBe(false);
     expect(_slotCountForTests()).toBe(0);
@@ -680,15 +661,12 @@ describe("store-lifecycle-slot", () => {
     expect(closes).toEqual([]);
 
     gate.resolve();
-    // The close error supersedes the scope's body result...
     await expect(scoped).rejects.toThrow("close exploded");
-    // ...while the drain waiter resolved: the drain record retired either way.
     await drained;
 
     expect(isDraining(A)).toBe(false);
     expect(closes).toEqual([]);
 
-    // The throwing close left the handle open, so the retry closes it for real.
     expect(await releaseStore(A)).toBe(true);
     expect(closes).toEqual([A]);
     expect(_slotCountForTests()).toBe(0);

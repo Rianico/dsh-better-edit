@@ -15,10 +15,6 @@ import { getText, setupIntegrationTest, withTempFile } from "../support/fixtures
  * NO rows, records none, and names the current-file lines an anchored read would serve.
  *
  * Shape: a 4-line file; ONE batch = [ grow line 1, the same noop on line 3 three times ].
- * The grow changes the buffer, then each identical noop ticks the counter — an applied item
- * clears the file's counters (`clearNoopLoop`), so the threshold is reachable inside one call
- * only. The third noop trips the guard with the grow already in the buffer; nothing is written.
- * The batch is resubmitted `NOOP_LOOP_THRESHOLD` times to prove the story does not decay.
  */
 
 type Harness = ReturnType<typeof setupIntegrationTest>;
@@ -59,33 +55,27 @@ describe("issue #150 — noop-loop rejection is rowless in a changed buffer", ()
       const batch = {
         path: "i150-noop.txt",
         edits: [
-          [first, first, "AAA\nBBB"], // grows the buffer: every line below shifts
-          [noopAnchor, noopAnchor, "ccc"], // noop: the range already holds this text
-          [noopAnchor, noopAnchor, "ccc"], // noop again
-          [noopAnchor, noopAnchor, "ccc"], // NOOP_LOOP_THRESHOLD: the guard rejects
+          [first, first, "AAA\nBBB"],
+          [noopAnchor, noopAnchor, "ccc"],
+          [noopAnchor, noopAnchor, "ccc"],
+          [noopAnchor, noopAnchor, "ccc"],
         ],
       };
 
-      // The rowless arm records nothing: the ledger before the first submission and after the
-      // final round is byte-identical.
       const servedBefore = await withWorkspace(cwd, () => loadServed(fullKey, path));
       let last = { applied: true, message: "" };
       for (let round = 1; round <= NOOP_LOOP_THRESHOLD; round += 1) {
         last = await attemptEdit(harness, batch);
-        // Every round aborts and writes nothing.
         expect(last.applied).toBe(false);
         expect(await readFile(path, "utf-8")).toBe(source);
       }
 
-      // Round `NOOP_LOOP_THRESHOLD` trips the loop guard, and that round's grow had already
-      // changed the buffer: the refusal is served-or-absent.
       expect(last.message).toMatch(
         /^\[TO MODEL\] \[E_BATCH_ABORT\] Batch rejected: 1 of 4 edits failed; nothing was written\.$/m,
       );
       expect(last.message.match(/- edits\[3\] \(i150-noop\.txt\) \[E_NOOP_LOOP\]:/g)).toHaveLength(
         1,
       );
-      // The body must not repeat the item prefix the bullet already names.
       expect(last.message).not.toContain("edits[3] (i150-noop.txt):");
       expect(last.message).toContain("[E_NOOP_LOOP]");
       expect(last.message).not.toContain("│");
@@ -96,8 +86,6 @@ describe("issue #150 — noop-loop rejection is rowless in a changed buffer", ()
       );
       expect(await withWorkspace(cwd, () => loadServed(fullKey, path))).toEqual(servedBefore);
 
-      // The withheld rows were not recorded as served: the original serve still applies a
-      // standalone edit of the same span, which proves the real served record was not displaced.
       const fix = await attemptEdit(harness, {
         path: "i150-noop.txt",
         edits: [[first, noopAnchor, "REPLACED"]],

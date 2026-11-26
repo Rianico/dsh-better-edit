@@ -12,21 +12,6 @@ import { getText, setupIntegrationTest, withTempFile } from "../support/fixtures
  *              snapshot but no longer fits once edits[0] shifted every coordinate below it.
  * edits[0] applies to the in-memory buffer, edits[1] rejects with `E_STALE_RANGE`, the
  * batch aborts, and the file stays byte-identical. That part is correct.
- *
- * The defect was the refusal's `Current on-disk range for edits[1] (unchanged — nothing was
- * written)` block: it rendered the rejection's own `servedRows`, echoed from the STAGED
- * buffer, against the PRE-BATCH lines, pairing anchors that exist only in the uncommitted
- * buffer with text that exists only on disk.
- *
- * The contract pinned here is the `served-or-absent` rule (upstream `pi-better-edit@5412d3f`):
- * a rejection raised after an earlier item of the call already changed the working buffer
- * shows NO rows, names only current-file line numbers, and states which current-file lines an
- * anchored read would serve. No `anchor│text` pair may appear at all — every pair a rejection
- * showed used to come from the staged buffer.
- *
- * Deliberately not covered: single-item and first-item rejections — their golden payloads
- * are unchanged (the pre-pass resolves against the untouched on-disk snapshot, so its rows
- * stay truthful and are still shown).
  */
 
 type Harness = ReturnType<typeof setupIntegrationTest>;
@@ -66,8 +51,6 @@ describe("issue #150 — batch-abort echo is never a mixed snapshot", () => {
       const grown = served[1]![0];
       const end = served[2]![0];
 
-      // ONE batch: item 0 grows the buffer (2-line replacement for a 1-line span),
-      // item 1 is the span `one..three`, which only fits the pre-batch snapshot.
       const attempt = await attemptEdit(harness, {
         path: "i150-sample.txt",
         edits: [
@@ -76,7 +59,6 @@ describe("issue #150 — batch-abort echo is never a mixed snapshot", () => {
         ],
       });
 
-      // The batch aborts on the later item, at the span-length arm.
       expect(attempt.applied).toBe(false);
       expect(attempt.message).toContain("[E_BATCH_ABORT]");
       expect(attempt.message).toContain("[E_STALE_RANGE]");
@@ -85,11 +67,8 @@ describe("issue #150 — batch-abort echo is never a mixed snapshot", () => {
         /served span \(3 lines\) no longer matches (?:the rebased range|current range) \(4 lines\)/,
       );
 
-      // All-or-nothing: item 0 was applied only to the buffer.
       expect(await readFile(path, "utf-8")).toBe(source);
 
-      // Served-or-absent: no rows at all, no on-disk block, and the message names the
-      // current-file lines an anchored read would serve instead.
       expect(attempt.message).not.toContain("│");
       expect(attempt.message).not.toContain("Current on-disk range for edits[1]");
       expect(attempt.message).toContain("none grant leases and none were recorded as served");
@@ -117,8 +96,6 @@ describe("issue #150 — batch-abort echo is never a mixed snapshot", () => {
         ],
       };
 
-      // First submission aborts; the identical resubmission must tell the same story —
-      // same code, still no rows (honesty does not decay with repetition).
       await attemptEdit(harness, batch);
       const repeat = await attemptEdit(harness, batch);
       expect(repeat.applied).toBe(false);
@@ -130,7 +107,6 @@ describe("issue #150 — batch-abort echo is never a mixed snapshot", () => {
       );
       expect(await readFile(path, "utf-8")).toBe(source);
 
-      // The named read is sufficient: the lines 1-3 page supplies anchors that apply.
       const paged = rowPairs(
         getText(
           await harness.readTool.execute("read", {

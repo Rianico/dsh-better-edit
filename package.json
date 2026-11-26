@@ -1,6 +1,6 @@
 {
   "name": "dsh-better-edit",
-  "version": "1.3.0",
+  "version": "1.3.1",
   "description": "Hash-anchored read/edit/undo_last_edit tools for DeepSeek Harness (dsh). Every line gets a unique 3-char hash (A-Za-z0-9) that stays stable across edits; stale or ambiguous anchors are rejected, never fuzzy-matched. Undo persists across restarts.",
   "keywords": [
     "anchors",
@@ -75,6 +75,7 @@
     "zod": "^4.6.7"
   },
   "devDependencies": {
+    "@babel/parser": "^8.1.3",
     "@biomejs/biome": "^2.1.0",
     "@commitlint/cli": "^21.2.2",
     "@commitlint/config-conventional": "^21.2.2",

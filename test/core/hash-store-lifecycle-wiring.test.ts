@@ -78,10 +78,7 @@ describe("hash-store — lifecycle slot wiring", () => {
   });
 
   afterEach(async () => {
-    // A spy on `DatabaseSync.prototype.close` must never outlive its case: the detach/close cleanup
-    // below has to run real closes.
     vi.restoreAllMocks();
-    // Owners first: a detach is what drives the close, so it must run before the close-all.
     for (const token of attached.splice(0)) await detachAgent(token);
     shutdownHashStore();
     vi.unstubAllEnvs();
@@ -99,13 +96,11 @@ describe("hash-store — lifecycle slot wiring", () => {
     attach(storePath, "agent-1");
 
     const detached = detachAgent("agent-1");
-    // The close already ran inside the detach call: no await has happened yet.
     expect(handleIsOpen(store)).toBe(false);
 
     await detached;
 
     const reopened = await loadHashStore(workspace);
-    // The map entry was removed after the close, so this is a fresh open, not the stale cache.
     expect(reopened).not.toBe(store);
     expect(handleIsOpen(reopened)).toBe(true);
   });
@@ -123,7 +118,6 @@ describe("hash-store — lifecycle slot wiring", () => {
     expect(handleIsOpen(store)).toBe(true);
 
     const detached = detachAgent("agent-2");
-    // Before its promise settles: the last owner's drain closed the handle synchronously.
     expect(handleIsOpen(store)).toBe(false);
 
     await detached;
@@ -144,7 +138,6 @@ describe("hash-store — lifecycle slot wiring", () => {
     attach(storePath, "agent-1");
     const detached = detachAgent("agent-1");
 
-    // The drain is pending, so the handle must still be live.
     expect(isDraining(storePath)).toBe(true);
     expect(handleIsOpen(store)).toBe(true);
 
@@ -160,7 +153,6 @@ describe("hash-store — lifecycle slot wiring", () => {
     const store = await loadHashStore(workspace);
     const storePath = hashStorePath(workspace);
 
-    // The cache the probe below reads is the one every later load reads.
     expect(await loadHashStore(workspace)).toBe(store);
 
     await detachAgent("ghost");
@@ -189,27 +181,19 @@ describe("hash-store — lifecycle slot wiring", () => {
 
   it("a failed open leaves the slot consistent", async () => {
     const storePath = hashStorePath(workspace);
-    // Path resolution only needs the store DIRECTORY plus its `.wsPath` sidecar, so let it succeed
-    // and block the database file itself: `DatabaseSync` cannot open a directory. That keeps the
-    // failure inside `openStore` — inside the open's scope — which is what this case must observe.
     await mkdir(storePath, { recursive: true });
     expect(() => hashStorePath(workspace)).not.toThrow();
 
-    // The rejection must be the db open's own: `node:sqlite` reports a directory hold as SQLITE_CANTOPEN
-    // ("unable to open database file"), which `isCorruptionError` does not match, so it rethrows instead
-    // of quarantining. A path-resolution failure would surface as EEXIST instead.
     await expect(loadHashStore(workspace)).rejects.toThrow(
       /unable to open|not a database|SQLITE|database/i,
     );
 
-    // The failed open's own scope pruned its slot: nothing owned, nothing draining, nothing left.
     expect(_slotCountForTests()).toBe(0);
     expect(ownerCount(storePath)).toBe(0);
     expect(isDraining(storePath)).toBe(false);
 
     await rm(storePath, { recursive: true, force: true });
 
-    // With the blocker gone the same path opens again; the failure left no poisoned state behind.
     const store = await loadHashStore(workspace);
     expect(handleIsOpen(store)).toBe(true);
   });
@@ -217,12 +201,9 @@ describe("hash-store — lifecycle slot wiring", () => {
   it("reopens after a drain that closes the handle the open just published", async () => {
     const storePath = hashStorePath(workspace);
     const pending = loadHashStore(workspace);
-    // The open's scope is held across real fs I/O, which is what lets the drain below land first.
     await waitForOpenScope(storePath);
 
     attach(storePath, "agent-1");
-    // The drain waits for that scope, then closes the handle as the scope ends. `reopenIfDrained`
-    // must notice and open again, or this promise would resolve onto a finalized handle.
     const detached = detachAgent("agent-1");
     const store = await pending;
     await detached;
@@ -236,14 +217,11 @@ describe("hash-store — lifecycle slot wiring", () => {
     const storePath = hashStorePath(workspace);
 
     const prune = store.pruneMissing();
-    // `withStoreScope` increments before its first await, so this read is synchronous and exact:
-    // without the prune's own scope the body's fs I/O would leave the counter at zero here.
     expect(inFlightCount(storePath)).toBe(1);
 
     attach(storePath, "agent-1");
     const detached = detachAgent("agent-1");
 
-    // The drain is pending on the prune's scope, so the handle must still be live.
     expect(isDraining(storePath)).toBe(true);
     expect(handleIsOpen(store)).toBe(true);
 
@@ -263,7 +241,6 @@ describe("hash-store — lifecycle slot wiring", () => {
 
     await expect(detachAgent("agent-1")).rejects.toThrow("close exploded");
 
-    // The entry survived the failed close, so the handle is still live and still closeable.
     expect(handleIsOpen(store)).toBe(true);
     closeSpy.mockRestore();
 
@@ -277,15 +254,14 @@ describe("hash-store — lifecycle slot wiring", () => {
     attach(storePath, "agent-1");
     const realClose = DatabaseSync.prototype.close;
     vi.spyOn(DatabaseSync.prototype, "close").mockImplementationOnce(function (this: DatabaseSync) {
-      realClose.call(this); // really close...
-      throw new Error("close exploded after closing"); // ...then throw
+      realClose.call(this);
+      throw new Error("close exploded after closing");
     });
 
     await expect(detachAgent("agent-1")).rejects.toThrow("close exploded after closing");
     expect(handleIsOpen(store)).toBe(false);
     vi.restoreAllMocks();
 
-    // The dead entry is gone: a release cannot re-close it and a later shutdown is silent.
     expect(await releaseStore(storePath)).toBe(false);
     expect(() => shutdownHashStore()).not.toThrow();
   });
@@ -299,7 +275,7 @@ describe("hash-store — lifecycle slot wiring", () => {
     const storeB = await loadHashStore(workspaceB);
     const pathC = hashStorePath(workspaceC);
     const pendingC = loadHashStore(workspaceC);
-    await waitForOpenScope(pathC); // openings now holds C
+    await waitForOpenScope(pathC);
     expect(__openingsCountForTests()).toBe(1);
 
     vi.spyOn(DatabaseSync.prototype, "close").mockImplementationOnce(() => {
@@ -308,14 +284,13 @@ describe("hash-store — lifecycle slot wiring", () => {
 
     expect(() => shutdownHashStore()).toThrow("close exploded");
 
-    // The loop kept going, the coalescing map was cleared, and the failed path stayed retryable.
     expect(handleIsOpen(storeB)).toBe(false);
     expect(__openingsCountForTests()).toBe(0);
     expect(handleIsOpen(storeA)).toBe(true);
 
     vi.restoreAllMocks();
-    const storeC = await pendingC; // the in-flight open still publishes its handle
-    shutdownHashStore(); // retry closes A, and C is visited too
+    const storeC = await pendingC;
+    shutdownHashStore();
     expect(handleIsOpen(storeA)).toBe(false);
     expect(handleIsOpen(storeC)).toBe(false);
     expect(__openingsCountForTests()).toBe(0);

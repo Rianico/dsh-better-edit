@@ -8,8 +8,6 @@
  *  1. the schema after a v9 open is the v6 column list, column for column;
  *  2. a full v7 cycle (serve, materialize, undo, wipe, TTL prune, pruneMissing) leaves all three
  *     shells at zero rows while the v7 tables carry the state;
- *  3. a v6 client's own read/write/delete statement set still succeeds against the v9 store, and
- *     the v7 readers ignore every row it writes.
  */
 import { describe, expect, it, vi, beforeAll } from "vitest";
 import { mkdtemp, rm } from "fs/promises";
@@ -69,17 +67,21 @@ const V6_COLUMNS = {
 
 const SHELL_TABLES = ["snapshots", "undo", "served"] as const;
 
+const SHELL_COUNT_SQL = {
+  snapshots: "SELECT COUNT(*) AS n FROM snapshots",
+  undo: "SELECT COUNT(*) AS n FROM undo",
+  served: "SELECT COUNT(*) AS n FROM served",
+} as const;
+
 function shellCounts(db: DatabaseSync): Record<(typeof SHELL_TABLES)[number], number> {
   const counts = {} as Record<(typeof SHELL_TABLES)[number], number>;
   for (const table of SHELL_TABLES) {
-    // Table names are SQL identifiers and come from the literal allowlist above, never a caller.
-    counts[table] = (db.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get() as { n: number }).n;
+    counts[table] = (db.prepare(SHELL_COUNT_SQL[table]).get() as { n: number }).n;
   }
   return counts;
 }
 
 function tableColumns(db: DatabaseSync, table: string): string[] {
-  // Parameterized: `pragma_table_info` is a table-valued function, so the table is a VALUE.
   return (db.prepare("SELECT name FROM pragma_table_info(?)").all(table) as { name: string }[]).map(
     (column) => column.name,
   );
@@ -129,7 +131,6 @@ describe("v6 shells — a full v7 cycle never writes them", () => {
       before.close();
       expect(shellsBefore).toEqual({ snapshots: 0, undo: 0, served: 0 });
 
-      // Serve (served_session_meta), materialize (file_snapshots + line_lineage), undo (file_undo).
       await recordServed("cycle-session", "/cycle.ts", [{ position: 0, hash: "C01" }], 1, {
         hashes: ["C01"],
         content: "cycle\n",
@@ -166,7 +167,6 @@ describe("v6 shells — a full v7 cycle never writes them", () => {
         populated.close();
       }
 
-      // Session wipe and the whole-row TTL prune both target the meta table only.
       await recordServed("cycle-session", "/cycle.ts", [{ position: 0, hash: "C01" }], 1, {
         hashes: ["C01"],
         content: "cycle\n",
@@ -183,7 +183,6 @@ describe("v6 shells — a full v7 cycle never writes them", () => {
       served.pruneServedOlderThan(Date.now() + 60_000);
       expect(served.getServed("cycle-session", "/cycle.ts")).toEqual([]);
 
-      // pruneMissing owns whole-path deletion for the v7 families; the shells are not consulted.
       await recordServed("cycle-session", "/gone.ts", [{ position: 0, hash: "G01" }], 1);
       await store.pruneMissing();
       expect(served.getServed("cycle-session", "/gone.ts")).toEqual([]);
@@ -207,7 +206,6 @@ describe("v6 shells — a v6 client still owns its statement set", () => {
 
       const db = new DatabaseSync(sqlitePath(home), { defensive: false } as never);
       try {
-        // ---- v6 write shapes: every released statement still prepares and runs.
         db.prepare(
           "INSERT INTO snapshots (path, checksum, line_count, hashes, updated_at) VALUES (?, ?, ?, ?, ?) " +
             "ON CONFLICT(path) DO UPDATE SET checksum = excluded.checksum, line_count = excluded.line_count, " +
@@ -226,7 +224,6 @@ describe("v6 shells — a v6 client still owns its statement set", () => {
             "updated_at = excluded.updated_at",
         ).run("v6-session", "/v6.ts", JSON.stringify(["CCC"]), null, now);
 
-        // ---- v6 read shapes: the rows come back from the shells, untouched.
         const snapshot = db
           .prepare(
             "SELECT hashes FROM snapshots WHERE path = ? AND checksum = ? AND line_count = ?",
@@ -242,7 +239,6 @@ describe("v6 shells — a v6 client still owns its statement set", () => {
           .get("v6-session", "/v6.ts") as { hashes: string };
         expect(JSON.parse(servedRow.hashes)).toEqual(["CCC"]);
 
-        // ---- v7 readers are blind to all three rows: the shells are not v7 evidence.
         expect(store.getSnapshot("/v6.ts", "v6 content\n")).toBeUndefined();
         expect(store.getUndo("/v6u.ts")).toBeUndefined();
         expect(store.getFileUndo("/v6u.ts")).toBeUndefined();
@@ -251,7 +247,6 @@ describe("v6 shells — a v6 client still owns its statement set", () => {
           (db.prepare("SELECT COUNT(*) AS n FROM served_session_meta").get() as { n: number }).n,
         ).toBe(0);
 
-        // ---- v6 delete shapes: still the shell owner's calls.
         db.prepare("DELETE FROM snapshots WHERE path = ?").run("/v6.ts");
         db.prepare("DELETE FROM undo WHERE path = ?").run("/v6u.ts");
         db.prepare("DELETE FROM served WHERE session_id = ?").run("v6-session");

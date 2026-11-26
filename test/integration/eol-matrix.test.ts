@@ -6,23 +6,6 @@
  * together if the bytes and the two disclosures agree in the same run, so this spec drives
  * `read`, `edit` and `undo_last_edit` through their tool seams — never the engine — and pins all
  * five observable columns per fixture:
- *
- *  1. the read warning (exact suffix, or its absence),
- *  2. the post-edit bytes on disk,
- *  3. the edit warning (exact substring, or its absence),
- *  4. the post-undo bytes,
- *  5. the undo's mixture clause (or its absence).
- *
- * The fixture set is the smallest one that separates every rung that can decide a terminator:
- * each mixed majority (CRLF / LF / CR), each uniform ending, and a file with no terminator at
- * all (which is the only way the `system` rung is reached). The config ladder below separates
- * `env` > `config` > `file` on a single mixed fixture, and its last case is the one asymmetry
- * worth naming: a uniform file has nothing to disclose on the read, yet a forced `LF` still
- * re-spells its terminators on the write, so the edit names the rung the read stayed silent
- * about.
- *
- * Nothing here imports a module the pre-fix base lacks, so the same file runs on both trees —
- * that is what makes the red-first capture in the ticket's step 2 possible.
  */
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -48,7 +31,6 @@ beforeAll(async () => {
 });
 
 afterEach(() => {
-  // The effective ending is a config rung; a forgotten override must not leak across fixtures.
   _resetConfigCache();
   delete process.env.DSH_BETTER_EDIT_EOL;
 });
@@ -117,8 +99,6 @@ const CASES: readonly MatrixCase[] = [
     undoClause: "Restored at CRLF; the pre-edit mixture is not restored.",
   },
   {
-    // The same majority with the OTHER mixed ordering: `detectEnding`'s first separator is now LF,
-    // so a first-separator rule would land LF here — the point is that the dominant kind decides.
     name: "mixed-CRLF-majority-lf-first",
     original: "alpha\nbeta\r\ngamma\r\n",
     from: "alpha",
@@ -158,7 +138,6 @@ const CASES: readonly MatrixCase[] = [
     undoClause: "Restored at CR; the pre-edit mixture is not restored.",
   },
   {
-    // One terminator of each kind: the tie-break (LF, then CRLF, then CR) is the only rule left.
     name: "mixed-tie-prefers-lf",
     original: "alpha\r\nbeta\rgamma\n",
     from: "alpha",
@@ -210,8 +189,6 @@ const CASES: readonly MatrixCase[] = [
     from: "alpha",
     to: "ALPHA\nBETA",
     readWarning: undefined,
-    // No terminator decided anything, so the `system` rung is named — and the separator the
-    // replacement itself introduces is re-spelled at it, without a trailing one.
     postEdit: `ALPHA${SYSTEM_ENDING}BETA`,
     editWarning: undefined,
     postUndo: "alpha",
@@ -229,9 +206,6 @@ describe("EOL matrix — read, edit and undo agree on one effective terminator",
         const anchor = anchorsByContent(readText).get(matrixCase.from);
         expect(anchor, `read served no row for ${JSON.stringify(matrixCase.from)}`).toBeDefined();
 
-        // Column 1: the read warning is the LAST thing the read says, exactly once.
-        // Soft: the five columns are independent claims, so one fixture reports every column
-        // that disagrees instead of stopping at the read.
         if (matrixCase.readWarning === undefined) {
           expect.soft(countOf(readText, MIXED_MARK), "a uniform file discloses nothing").toBe(0);
         } else {
@@ -253,10 +227,8 @@ describe("EOL matrix — read, edit and undo agree on one effective terminator",
           }),
         );
 
-        // Column 2: the bytes on disk.
         expect.soft(await readFile(path, "utf-8"), "post-edit bytes").toBe(matrixCase.postEdit);
 
-        // Column 3: the applied warning names the rung the write used, exactly once.
         if (matrixCase.editWarning === undefined) {
           expect
             .soft(countOf(editText, REWRITTEN_MARK), "nothing changed, so nothing is claimed")
@@ -268,10 +240,8 @@ describe("EOL matrix — read, edit and undo agree on one effective terminator",
 
         const undoText = textOf(await harness.undoTool.execute("u1", { path: "t.txt" }));
 
-        // Column 4: the revert is re-spelled at the ending the EDIT wrote, not the pre-image's.
         expect.soft(await readFile(path, "utf-8"), "post-undo bytes").toBe(matrixCase.postUndo);
 
-        // Column 5: a mixture that cannot come back is disclosed; a uniform file says nothing.
         if (matrixCase.undoClause === undefined) {
           expect
             .soft(undoText, "a uniform revert must not claim a mixture")
@@ -321,8 +291,6 @@ const LADDER: readonly LadderCase[] = [
     postEdit: "ALPHA\nbeta\ngamma\n",
   },
   {
-    // A valid `env` spelling stops the ladder whichever way it points: `env: AUTO` means "take the
-    // file's rung", so the config file's forced LF must not decide the write.
     name: "env AUTO stops the ladder: config LF is ignored",
     original: MIXED_LADDER_FILE,
     env: "AUTO",
@@ -372,7 +340,6 @@ describe("EOL config ladder — one mixed file, every rung that can decide it", 
         const anchor = anchorsByContent(readText).get("alpha");
         expect(anchor).toBeDefined();
 
-        // The read and the edit name the SAME rung: one resolver feeds both disclosures.
         expect
           .soft(readText, "read rung")
           .toContain(`All edits normalize to ${ladderCase.warningEnding} (${ladderCase.source}).`);
@@ -406,7 +373,6 @@ describe("EOL config ladder — one mixed file, every rung that can decide it", 
       const anchor = anchorsByContent(readText).get("alpha");
       expect(anchor).toBeDefined();
 
-      // Nothing is mixed, so the read has nothing to disclose — the counts are uniform.
       expect
         .soft(countOf(readText, MIXED_MARK), "a uniform CRLF file discloses no mixture")
         .toBe(0);
@@ -420,7 +386,6 @@ describe("EOL config ladder — one mixed file, every rung that can decide it", 
         }),
       );
 
-      // The write still re-spells at the forced rung, and the edit names it.
       expect.soft(await readFile(path, "utf-8"), "post-edit bytes").toBe("ALPHA\nbeta\n");
       expect
         .soft(editText, "applied rung")

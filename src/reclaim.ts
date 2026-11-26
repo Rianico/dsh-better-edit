@@ -54,7 +54,7 @@ export function registerWithReclaim(options: {
   const { toolsSvc, agent, agentCtx, name, def, logger } = options;
   const layer = getAgentScopedToolLayer(toolsSvc, agent);
   const current = layer?.get?.(name) ?? layer?.data?.get?.(name);
-  if (current === def) return () => {}; // Already registered with same ref; return no-op disposer
+  if (current === def) return () => {};
 
   try {
     return agentCtx.tools.register(def);

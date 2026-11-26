@@ -51,9 +51,6 @@ const SERVE_NOT_RECORDED_NOTE =
  * render. The target is the ending the NEXT write will use, resolved by the same ladder that
  * decides the write itself (`env` > `config` > the file's dominant terminator > the OS) — so the
  * notice and the applied `[W_EOL_REWRITTEN]` can never name different rungs.
- *
- * CHROME, not content: this string is appended to `text` only. It is never a served row and never
- * enters `view.text`, so it cannot be mistaken for file content or for an anchor.
  */
 function mixedEolWarning(counts: LineEndingCounts): string | undefined {
   if (terminatorKindsUsed(counts) < 2) return undefined;
@@ -113,15 +110,6 @@ export async function readAndServe(
   let retiredHashes = await loadRetiredAnchors(sessionKey, absolutePath);
   const servedForNorm = await loadServed(sessionKey, absolutePath);
   const servedCanons = await loadServedCanons(sessionKey, absolutePath);
-  // Build previous for stable reuse (S): served filtered + canons reconstruction.
-  // #62 alignment gate: the reconstructed arrays carry the SERVED index as the line
-  // position, which equals the real line number only when the mirror is dense — the
-  // `row.position === index` density half of the serve verdict, which session-view keeps as an
-  // ASSERTION about FileView rather than a decision (ADR-0035).
-  // With holes (a partial mirror), `mapStableHashes` would match compressed indices
-  // against whole-file positions and reshuffle anchors of an UNCHANGED file; pass
-  // `previous = undefined` instead and take the content-addressed snapshot path
-  // (hash.ts cache), which is deterministic for unchanged content.
   let previous: { content: string; hashes: string[]; removedHashes?: Set<string> } | undefined;
   if (servedForNorm.every((h) => h !== null)) {
     const filteredHashes: string[] = [];
@@ -134,7 +122,6 @@ export async function readAndServe(
       }
     }
     if (filteredHashes.length > 0) {
-      // Reconstruct previous content from canons — canon is idempotent and whitespace-insensitive (ADR-0002: canon strips ASCII whitespace, so "a b" and "a  b" share canon and hash). Joining filteredCanons preserves reuse correctness for mapStableHashes nearest-canon matching; byte-fidelity of whitespace is not required for anchor stability, only canon equality.
       const prevContent = filteredCanons.join("\n");
       previous = {
         content: prevContent,
@@ -162,31 +149,22 @@ export async function readAndServe(
       previous,
     });
   } catch (e: unknown) {
-    // INVARIANT (promotion is a retired-anchor GC, not a line-count escape hatch): a read that
-    // cannot be hashed at all must leave hazard state untouched — so the uncurable refusals
-    // (the line cap, and any other non-promotable error) rethrow HERE, before the store is
-    // reached. Clearing this (session,path)'s retired anchors for a failure the retry cannot
-    // cure would degrade stale-anchor checks while the same error still reaches the model.
     if (!isPromotableAnchorSpaceExhaustion(e)) throw e;
     const retiredCount = retiredHashes.size;
     const servedCount = servedForNorm.filter((h): h is string => h !== null).length;
     const reservedCount = retiredCount + servedCount;
-    // Major GC promotion: clear retired for this (session,path), keep served/canons
     try {
       const store = await loadServedStore();
       store.clearRetiredAnchors(sessionKey, absolutePath);
       try {
         store.clearCards(sessionKey, absolutePath);
       } catch {
-        // Best-effort: card state is a cache; the promotion retry below proceeds without it.
+        // HACK: card state is a cache; the promotion retry proceeds without it
       }
     } catch {
-      // Best-effort: a store fault here must not fail the read — the retry proceeds on the
-      // in-memory reservation state (ADR-0020 R2, promotion/wipe arm).
+      // HACK: a store fault must not fail the read — the in-memory reservation state carries on (ADR-0020 R2)
     }
-    // Soft promotion notice: plain non-header text (no [E_] code, no audience).
     promotionWarning = `Anchor space exhausted (retired ${retiredCount} + served ${servedCount} = ${reservedCount} of ${HASH_SPACE}); promotion cleared retired — re-read recommended, stale-anchor checks degraded until next full read.`;
-    // Retry ignoring retired (served only) — also drop removedHashes from previous
     retiredHashes = new Set<string>();
     reservedHashes = new Set<string>([...servedForNorm.filter((h): h is string => h !== null)]);
     reservations = { reservedHashes, retiredHashes };
@@ -205,7 +183,6 @@ export async function readAndServe(
   let servedLanded = true;
   if (view.served.length > 0) {
     const canons = splitLines(view.normalized).map((l) => canon(l));
-    // Pad or trim canons to served length? For now use canons for full file
     const fullCanons: (string | null)[] = [];
     for (let i = 0; i < view.hashes.length; i++) {
       fullCanons.push(canons[i] ?? null);
@@ -219,18 +196,11 @@ export async function readAndServe(
         hashes: view.hashes,
         canons: fullCanons,
         content: view.normalized,
-        // The verdict travels with the serve: FileView computed it from the request shape, this
-        // seam only carries it (ADR-0035).
         fullRead: view.fullRead,
         ...(view.retiredHashes === undefined ? {} : { retiredHashes: view.retiredHashes }),
       },
     );
   }
-  // #69: epoch lifecycle belongs to full reads — a partial (paged or truncated) read merges window
-  // rows only and must not clear the drift-reported marks; only a full read resets them. The
-  // verdict is `view.fullRead` (ADR-0035): FileView owns the request-shape rule — including
-  // `undefined`/`[]` → no windows via `hasRequestedWindows` — so no second predicate exists here
-  // to disagree with it.
   if (view.fullRead) await clearDriftReported(sessionKey, view.absolutePath);
   const autoFooter = getAutoGuessFooter(view.absolutePath) ?? "";
   const autoWarning = autoFooter || undefined;
@@ -240,12 +210,7 @@ export async function readAndServe(
       : promotionWarning
     : autoWarning;
   const baseText = view.hadUtf8DecodeErrors ? `${view.text}\n\n${UTF8_REWRITE_NOTE}` : view.text;
-  // The serve write is a second unit: a fault there must not fail the read, but it does decide
-  // whether the anchors above are usable — so the claim is downgraded in the one channel both
-  // consumers render.
   const withServeNote = servedLanded ? baseText : `${baseText}\n\n${SERVE_NOT_RECORDED_NOTE}`;
-  // LAST: the mixed-EOL notice closes the read. It is chrome (never a served row, never part of
-  // `view.text`), and one call appends it once whatever the page or window shape was.
   const readWarning = mixedEolWarning(view.endingCounts);
   const text = readWarning === undefined ? withServeNote : `${withServeNote}\n\n${readWarning}`;
   return {

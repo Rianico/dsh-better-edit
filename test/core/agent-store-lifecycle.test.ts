@@ -1,15 +1,12 @@
 /**
  * Agent-store wiring: per-call attach + scope, and the agent's teardown-time detach.
  *
- * These cases exercise PRODUCTION bindings: `src/hash-store.ts` binds the lifecycle hooks once at
- * module load, so this file never calls `configureStoreLifecycle` or `_resetForTests` — doing so
- * would unbind the behaviour under test. Every case drives a REAL tool definition over a real
- * temp workspace and a real sqlite handle; nothing here asserts on the wrapper in isolation.
+ * Production bindings only: `src/hash-store.ts` binds the lifecycle hooks at module load, so this
+ * file never reconfigures them. Every case drives a real tool definition over a real temp
+ * workspace and a real sqlite handle, and each synchronous 1 → 0 close is asserted before the
+ * first `await`.
  *
- * Timing is explicit, never incidental: the claim under test is that a 1 → 0 close runs
- * SYNCHRONOUSLY inside the detach call (no timer, no microtask), so each such step is asserted
- * before the first `await`. The one exception is the slot-count probe, which the registry prunes
- * in the detach's own `finally` — one microtask out — and is asserted there.
+ * Ref: docs/adr/0057-session-scoped-per-workspace-store-lifecycle.md
  */
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
@@ -206,10 +203,7 @@ describe("agent-store — attach, scope and teardown wiring", () => {
   });
 
   afterEach(async () => {
-    // A spy on `DatabaseSync.prototype.close` must never outlive its case: the cleanup below has
-    // to run real closes.
     vi.restoreAllMocks();
-    // Owners first: a detach is what drives the close, so it must run before the close-all.
     for (const token of usedTokens.splice(0)) await detachAgent(token);
     shutdownHashStore();
     vi.unstubAllEnvs();
@@ -217,7 +211,6 @@ describe("agent-store — attach, scope and teardown wiring", () => {
     await rm(home, { recursive: true, force: true, maxRetries: 5 });
   });
 
-  /** Record a token the case attached, so the teardown releases whatever the case left. */
   function useToken(token: string): string {
     usedTokens.push(token);
     return token;
@@ -229,7 +222,6 @@ describe("agent-store — attach, scope and teardown wiring", () => {
     const readTool = wrapToolWithAgentStore(buildReadTool(localIO()));
     const exec = makeExec(workspace, token);
 
-    // Two real calls through the decorated definition: the wrapper is what claims the store.
     await callTool(readTool, { path: "a.txt" }, exec);
     await callTool(readTool, { path: "a.txt" }, exec);
 
@@ -237,7 +229,6 @@ describe("agent-store — attach, scope and teardown wiring", () => {
     expect(ownerCount(storePath)).toBe(1);
     expect(agentPathCount(token)).toBe(1);
 
-    // The store those calls used is live: the claim is what kept it open, so nothing closed it.
     const store = await loadHashStore(workspace);
     expect(handleIsOpen(store)).toBe(true);
   });
@@ -263,7 +254,6 @@ describe("agent-store — attach, scope and teardown wiring", () => {
     const storeB = await loadHashStore(workspaceB);
 
     const detached = detachAgent(token);
-    // Every path is detached before the detach's first await, so both closes already ran.
     expect(handleIsOpen(storeA)).toBe(false);
     expect(handleIsOpen(storeB)).toBe(false);
     await detached;
@@ -288,7 +278,6 @@ describe("agent-store — attach, scope and teardown wiring", () => {
     expect(handleIsOpen(store)).toBe(true);
 
     const detached = detachAgent(second);
-    // The last owner's drain closed the handle synchronously, inside this call.
     expect(handleIsOpen(store)).toBe(false);
     await detached;
   });
@@ -308,14 +297,11 @@ describe("agent-store — attach, scope and teardown wiring", () => {
     });
     let probed: string[] | undefined;
 
-    // A fake body is enough for the scope claim: the wrapper's jail is around `execute`, and the
-    // store read after the gate is the honest victim a premature close would break.
     const fake = wrapToolWithAgentStore({
       async execute(_args: never, exec: ToolRunContext) {
         const scoped = await loadHashStore(execCwd(exec));
         markStarted();
         await gate;
-        // Runs AFTER the detach was issued, still inside this call's scope.
         probed = scoped.getSnapshot("/__in-flight-probe__.ts", "probe\n");
         return "ok";
       },
@@ -323,7 +309,6 @@ describe("agent-store — attach, scope and teardown wiring", () => {
 
     const running = fake.execute({} as never, makeExec(workspace, token)({}) as never);
     await started;
-    // The attach happened synchronously; the body now holds the path's in-flight scope.
     expect(ownerCount(storePath)).toBe(1);
 
     const detached = detachAgent(token);
@@ -332,7 +317,6 @@ describe("agent-store — attach, scope and teardown wiring", () => {
 
     releaseGate();
     await expect(running).resolves.toBe("ok");
-    // The body's read landed on a live handle: a wrapper without the scope fails here instead.
     expect(probed).toBeUndefined();
     await detached;
 
@@ -345,9 +329,6 @@ describe("agent-store — attach, scope and teardown wiring", () => {
     const token = useToken(host.agent.id);
     mount(host);
 
-    // The registered `read` is the definition `src/index.ts` decorates, not a look-alike: running
-    // it is what proves the install wraps the def it registered and the teardown detaches the
-    // SAME token the wrapper attached.
     const registered = host.layer.get("read") as {
       execute: (args: unknown, exec: ToolRunContext) => Promise<unknown>;
     };
@@ -355,27 +336,20 @@ describe("agent-store — attach, scope and teardown wiring", () => {
     const store = await loadHashStore(workspace);
     const storePath = hashStorePath(workspace);
 
-    // The body fails (the stub fs serves nothing); the attach and its scope still ran, which is
-    // exactly what this case pins.
     await registered
       .execute({ path: "missing.txt" }, makeExec(workspace, host.agent.id)({}) as never)
       .catch(() => undefined);
     expect(ownerCount(storePath)).toBe(1);
     expect(agentPathCount(token)).toBe(1);
 
-    // Delta, not an absolute: the slot the read left is pruned in its scope's `finally`, and the
-    // attach above puts one slot back.
     const slotsBeforeDispose = _slotCountForTests();
     host.disposeAgent();
 
-    // No await, no timer: the 1 → 0 close already ran inside detachAgent.
     expect(handleIsOpen(store)).toBe(false);
     expect(ownerCount(storePath)).toBe(0);
-    // The registry prunes the idle slot in the detach's own `finally`, one microtask out.
     expect(_slotCountForTests()).toBe(slotsBeforeDispose);
     await flushMicrotasks();
     expect(_slotCountForTests()).toBe(slotsBeforeDispose - 1);
-    // A close that throws must not escape the teardown, and it is reported, not swallowed.
     const reopened = await loadHashStore(workspace);
     attachStore(storePath, token);
     const closeSpy = vi.spyOn(DatabaseSync.prototype, "close").mockImplementationOnce(() => {
@@ -387,7 +361,6 @@ describe("agent-store — attach, scope and teardown wiring", () => {
     await flushMicrotasks();
 
     expect(host.warnings.some((m) => m.includes("store detach failed"))).toBe(true);
-    // The failed close left the handle retryable, so the next close owns it (see the wiring test).
     expect(handleIsOpen(reopened)).toBe(true);
   });
 
@@ -409,18 +382,12 @@ describe("agent-store — attach, scope and teardown wiring", () => {
     expect(handleIsOpen(store)).toBe(true);
 
     const detached = detachAgent(token);
-    // The dead handle is the assertion; the removal below only proves nothing re-opens it.
     expect(handleIsOpen(store)).toBe(false);
     await detached;
     await expect(rm(cwd, { recursive: true })).resolves.toBeUndefined();
   });
 
   it("K. central mode: the last detach leaves a closable cache dir, no open fd", async () => {
-    // T3's case F pins the workspace store; the central store lives under `$DSH_HOME/.../runtime/`
-    // and is the path a bare `rm` of the cache would hit. The claim is the same in one respect —
-    // the handle is dead when the last detach returns, so nothing holds the file — and different
-    // in another: the directory is not the workspace, so its removal proves the cached entry (not
-    // the cwd) was what kept it open.
     await writeFile(join(workspace, "k.txt"), "kappa\n", "utf-8");
     const token = useToken("last-agent");
     const readTool = wrapToolWithAgentStore(buildReadTool(localIO()));
@@ -430,11 +397,9 @@ describe("agent-store — attach, scope and teardown wiring", () => {
     expect(handleIsOpen(store)).toBe(true);
 
     const detached = detachAgent(token);
-    // 1 -> 0 runs the close synchronously inside the detach: no handle outlives this line.
     expect(handleIsOpen(store)).toBe(false);
     await detached;
 
-    // The close dropped the cache entry too, so a later load is a fresh handle, not the dead one.
     const reopened = await loadHashStore(workspace);
     expect(reopened).not.toBe(store);
     expect(handleIsOpen(reopened)).toBe(true);
@@ -445,16 +410,12 @@ describe("agent-store — attach, scope and teardown wiring", () => {
     );
     expect(existsSync(cacheDir)).toBe(true);
 
-    // Close the fresh handle first: the removal claim is about the store's own fd, not about a
-    // caller that chose to keep a handle open across the delete.
     shutdownHashStore();
     await expect(rm(cacheDir, { recursive: true, force: true })).resolves.toBeUndefined();
     expect(existsSync(cacheDir)).toBe(false);
   });
 
   it("G. a path-resolution fault is reported, never raised: the body still runs", async () => {
-    // The install passes its own channel: an attach failure reaches the plugin's logger, not
-    // the console, so the callback IS the assertion seam.
     const reported: string[] = [];
     const calls: string[] = [];
     const tool = wrapToolWithAgentStore(
@@ -466,8 +427,6 @@ describe("agent-store — attach, scope and teardown wiring", () => {
       },
       (message) => reported.push(message),
     );
-    // `execCwd` reads the live `workingDirectory` service; make that read throw, which is the
-    // only way the attach seam can fail before it claims anything.
     const exec = {
       signal: new AbortController().signal,
       agent: {
@@ -489,17 +448,11 @@ describe("agent-store — attach, scope and teardown wiring", () => {
     expect(reported).toHaveLength(1);
     expect(reported[0]).toContain("store attach failed");
     expect(reported[0]).toContain("cwd lookup exploded");
-    // Nothing was claimed, so the unmade claim cannot strand a path for that token.
     expect(agentPathCount("faulty")).toBe(0);
   });
   it("H. a decorated mutating tool applies the edit and owns the store", async () => {
     await writeFile(join(workspace, "h.txt"), "alpha\nbeta\n", "utf-8");
     const integration = setupIntegrationTest(workspace);
-    // One string is both the attach token and the session key: the fixture's `read` serves the
-    // anchors for `sessionKey`, and the edit must cite a lease that same session owns. The
-    // fixture's own `editTool` is the pi-shaped five-argument adapter, whose (callId, params)
-    // signature the (args, exec) wrapper would misread — so the decorated def is the fixture's
-    // io + sandbox through the builder the adapter wraps.
     const token = useToken(integration.sessionKey);
     const readText = getText(await integration.readTool.execute("read", { path: "h.txt" }));
     const betaRow = readText.split("\n").find((line) => line.includes("│beta"));
@@ -543,8 +496,6 @@ describe("agent-store — attach, scope and teardown wiring", () => {
     await started;
     expect(ownerCount(storePath)).toBe(1);
 
-    // The drain's close is the one that fails — and it runs from the scope's `finally`, so the
-    // error supersedes this call's own result.
     const closeSpy = vi.spyOn(DatabaseSync.prototype, "close").mockImplementationOnce(() => {
       throw new Error("close exploded");
     });
@@ -553,12 +504,7 @@ describe("agent-store — attach, scope and teardown wiring", () => {
 
     releaseGate();
     await expect(call).rejects.toThrow("close exploded");
-    // The failed close kept the entry, so the handle is still live and still closeable.
     expect(handleIsOpen(store)).toBe(true);
-    // The registry's documented split: a close run from a scope's end supersedes THAT scope's
-    // result, while the drain's waiters already resolved because the drain finished either way.
-    // A caller-driven close (no in-flight scope) is the arm that makes the detach itself reject;
-    // the wiring suite pins that one.
     await expect(detached).resolves.toBeUndefined();
     closeSpy.mockRestore();
   });
@@ -569,8 +515,6 @@ describe("agent-store — attach, scope and teardown wiring", () => {
     const store = await loadHashStore(workspace);
     const storePath = hashStorePath(workspace);
 
-    // The hook speaks to the agent's scope through `on`; nothing else of Cordis is needed to
-    // register the two listeners this case drives by hand.
     const listeners = new Map<string, (...args: unknown[]) => Promise<unknown>>();
     const agentCtx = {
       on(event: string, handler: (...args: unknown[]) => Promise<unknown>) {
@@ -600,8 +544,6 @@ describe("agent-store — attach, scope and teardown wiring", () => {
     );
     expect(decision).toMatchObject({ kind: "accept" });
 
-    // No decorated tool body ran here: the hook's own attach is the ONLY owner, so a hook that
-    // skipped the wrapper shows 0 and leaves the handle open after the detach.
     expect(ownerCount(storePath)).toBe(1);
     const detached = detachAgent(token);
     expect(handleIsOpen(store)).toBe(false);

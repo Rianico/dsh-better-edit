@@ -72,8 +72,6 @@ function createHost(options: {
   const toolsSvc = {
     get(name: string, scope?: unknown) {
       if (options.toolsGetThrows) throw new Error("registry exploded");
-      // Only the preset's own key resolves the preset layer; any other scope
-      // keys (a Promise, an unknown object) see the agent layer alone.
       if (scope === presetKey) return presetTools.get(name);
       return agentLayer.get(name);
     },
@@ -94,8 +92,6 @@ function createHost(options: {
       ? undefined
       : {
           composedPreset: () => (options.mode === "preset-free" ? undefined : options.preset!.id),
-          // Production shape (0.2.1-rc.2 / 0.2.2-rc.1): `acquireScope` returns a
-          // PROMISE of the lease; a sync stub must not be the only coverage.
           ...(options.mode === "preset" ||
           options.mode === "no-scope-api" ||
           options.mode === "keyless-lease" ||
@@ -110,8 +106,6 @@ function createHost(options: {
                 },
               }
             : {}),
-          // Older roster shape (0.1.5-rc.3): `standingKeyFor` also returns a
-          // promise; `sync` keeps the synchronous-stub form acceptable.
           ...(options.mode === "legacy"
             ? {
                 async standingKeyFor(id?: string) {
@@ -198,16 +192,10 @@ function createHost(options: {
     warnCalls,
     async settled() {
       await Promise.all(effects);
-      // `read` registers synchronously inside the effect; the preset-gated
-      // tools and the guidance sections land from a detached async install IIFE
-      // (Rianico/dsh-better-edit#123), which the effect promise no longer covers.
-      // The guidance sections are the install's last step, so their arrival
-      // marks install completion.
       const deadline = Date.now() + 2000;
       while (sections.length === 0 && Date.now() < deadline) {
         await new Promise((resolve) => setTimeout(resolve, 1));
       }
-      // Drain a final microtask/macrotask turn for trailing handlers.
       await new Promise((resolve) => setTimeout(resolve, 0));
     },
   };
@@ -366,8 +354,6 @@ describe("preset toolset policy (install gate)", () => {
     cleanup = home.cleanup;
   });
   afterAll(async () => {
-    // The boot-time guidance materializer runs in the background; retry the
-    // recursive remove if it is still writing into the temp home.
     for (let attempt = 0; attempt < 5; attempt += 1) {
       try {
         await cleanup?.();
@@ -382,7 +368,6 @@ describe("preset toolset policy (install gate)", () => {
     const host = await mount({ mode: "preset", preset: { id: "readonly", tools: ["read"] } });
     expect(registeredNames(host)).toEqual(["read"]);
     expect(host.sections.map((section) => section.name)).toEqual(["tool:read"]);
-    // The write hook follows the preset's `write`: no `write`, no listeners.
     expect(host.agentListeners.has("tools/pre-execute")).toBe(false);
     expect(host.agentListeners.has("tools/post-execute")).toBe(false);
   });

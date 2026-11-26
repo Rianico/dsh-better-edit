@@ -1,28 +1,3 @@
-/**
- * Scaled recursive patience pairing (spec §5.2): aligns a previous snapshot's lines to the
- * current snapshot's lines so `line_id`s survive reorders, inserts, and deletes.
- *
- * The engine has four phases, all fail-closed: an ambiguous interval pairs nothing rather
- * than guessing coordinates.
- *
- *   1. Locally unique canon anchors become candidate pins (`findUniquePins`).
- *   2. The candidate pins' minimal-displacement LIS backbone is their unconditional
- *      intersection across every maximum-length, minimum-Δ subsequence
- *      (`findStablePinBackbone`, two-pass DP over patience-sorted ranks).
- *   3. Pinless rigid runs with identical canon sequences zip pairwise (Probe N).
- *   4. Bounded leaf intervals align on a unique LCS embedding only: a pairing is emitted when
- *      it lies on every maximal traceback path, so an interval with several optimal pairings
- *      stays UNPAIRED / RETIRED.
- *
- * When the backbone is empty the interval falls straight through to leaf handling: the
- * engine never recurses on identical bounds, so alignment cannot starve the scan budget.
- *
- * Invariant: `prevLines` and `currLines` are contiguous ascending 1-based line numbers
- * (spec §5.2 descriptor shape), so a descriptor's index + 1 is its line number.
- *
- * @module dsh-better-edit/snapshot-store/pairing
- */
-
 export interface LineDescriptor {
   lineNumber: number;
   canonHash: string;
@@ -43,11 +18,6 @@ export interface AnchorPin {
 }
 
 export interface PairingOptions {
-  /**
-   * WHY: production callers omit this so the dynamic `MAX(100000, 4*(prev+curr))` guard
-   * WHY: applies; tests inject a tiny budget to prove the guard halts alignment instead of
-   * WHY: silently recursing past it.
-   */
   scanBudget?: number;
 }
 
@@ -86,12 +56,6 @@ interface WeightedPin {
   displacement: number;
 }
 
-/**
- * WHY: per-rank prefix-min indexes keep the minimal-displacement LIS at O(m log m): a
- * WHY: Fenwick over each rank's compressed `currLine` coordinates answers "min displacement of a
- * WHY: length-(k-1) subsequence ending before this coordinate" in O(log m) without an O(m²)
- * WHY: scan over predecessors.
- */
 class RankDisplacementIndex {
   private readonly sorted: number[];
   private readonly tree: Float64Array;
@@ -156,8 +120,6 @@ function computeLengthAndMinDisplacement(pins: WeightedPin[]): {
     const rank = lengths[i]!;
     let shortest = pin.displacement;
     if (rank > 1) {
-      // WHY: the predecessor with rank-1 is guaranteed to have been processed already
-      // WHY: (pins arrive in ascending prevLine), so a finite minimum always exists when rank > 1.
       const predecessor = indexes[rank - 2]!.queryBelow(pin.currLine);
       if (predecessor !== Infinity) shortest += predecessor;
     }
@@ -288,17 +250,6 @@ export function findStablePinBackbone(pins: AnchorPin[]): AnchorPin[] {
  * distinct canon strings nor DP orderings:
  * - A repeated canon that can be matched in two places counts twice, although the LCS string is
  *   the same: `[A, A, A]` vs `[A, A]` counts 3, not 1.
- * - Two orderings of down/right skips around the same matched lines count once, because they are
- *   the same embedding: `[A, X, B]` vs `[A, Y, B]` counts 1, not 2.
- *
- * The recurrence is a first-pair decomposition. For the region starting at `(i, j)` with optimal
- * length `target`, every maximum pairing either matches `i` with `j` (only possible when the
- * canons agree, and then it extends a maximum pairing of `(i + 1, j + 1)`), or leaves at least
- * one of the two lines unmatched, which is a maximum pairing of `(i + 1, j)` and/or `(i, j + 1)`
- * at the same length. The overlap of those two jump regions is subtracted, so each pairing is
- * counted exactly once. The cap is applied after the inclusion-exclusion subtraction, and because
- * `|A ∪ B| == 1` forces `A` and `B` to be the same singleton, the `=== 1` test that drives
- * `isUnique` stays exact under the cap.
  */
 export function computeLCSPaths(
   prevLines: LineDescriptor[],
@@ -364,11 +315,6 @@ export function computeLCSPaths(
       const diagonal = suffix[(i + 1) * stride + (j + 1)]!;
       const pKey = prevLines[pStart - 1 + i]!.canonHash;
       const cKey = currLines[cStart - 1 + j]!.canonHash;
-      // WHY: with `pairingCount[i][j] === 1` each step has exactly one pairing-optimal
-      // WHY: continuation, so this preference order reproduces *the* unique embedding. A canon
-      // WHY: match that preserves the optimum must be in it (a maximum path through that pair
-      // WHY: would otherwise be a second embedding), and when skipping both lines is optimal
-      // WHY: the unique embedding can only continue inside `(i + 1, j + 1)`.
       if (pKey === cKey && diagonal + 1 === target) {
         pairs.push([pStart + i, cStart + j]);
         i++;
@@ -442,9 +388,6 @@ export function pairSnapshots(
         alignRecursive(pCursor, pEnd, cCursor, cEnd);
         return;
       }
-      // WHY: contested candidate pins leave the backbone empty. Recursing on identical
-      // WHY: bounds here would never shrink the interval; fall through to leaf handling
-      // WHY: instead so progress and the scan budget are both guaranteed.
     }
 
     const pCount = pEnd - pStart + 1;
@@ -459,8 +402,6 @@ export function pairSnapshots(
         }
       }
       if (identical) {
-        // WHY: equal counts with an identical canon sequence is a pure shift of a rigid
-        // WHY: run: the only sound pairing is the positional zip (spec §3.5.1, Probe N).
         for (let i = 0; i < pCount; i++) pairing.set(pStart + i, cStart + i);
         return;
       }

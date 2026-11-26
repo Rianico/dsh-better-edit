@@ -20,14 +20,6 @@ import {
  * discarded, so a failed serve still emits a success message whose diff hands the model
  * `+HASH│` rows that are not in the served set: the next edit built on them is rejected
  * (`E_UNSERVED_RANGE`) and only a re-read recovers.
- *
- * The contract this cell pins (downgraded, post-fix): the edit still reports success — it *did*
- * apply — but it must say the rows were NOT recorded as served and name the recovery, and it
- * must not present the diff anchors as usable. The undo path already obeys this
- * (`src/tool-undo.ts`); this is the same class of defect on the edit path.
- *
- * Faults are deterministic (`vi.spyOn` on the cached store object): no timing race, no sleep,
- * no production fault-injection flag.
  */
 
 type Harness = ReturnType<typeof setupIntegrationTest>;
@@ -97,8 +89,6 @@ describe("edit serve claim — the anchors the result advertises", () => {
       const abs = await harness.io.resolve("t.txt", cwd, new AbortController().signal);
       const store = (await loadHashStore(cwd)) as InternalHashStore;
 
-      // ONLY the post-commit serve write faults: the file write and the undo pair already
-      // committed, so the edit stands and only the advertised anchors are missing.
       const upsert = vi.spyOn(store, "upsertServed").mockImplementation(() => {
         throw new Error("injected: post-commit serve fault");
       });
@@ -116,23 +106,18 @@ describe("edit serve claim — the anchors the result advertises", () => {
       const text = returned ?? "";
       const advertised = addedAnchorsFromToolOutput(text);
       const servedAnchors = store.getAnchorReservations(harness.sessionKey, abs).reservedHashes;
-      // Measured BEFORE the follow-up attempts: the recovery edit legitimately re-serves.
       const fileAfter = await readFile(path, "utf-8");
 
       const endState = {
         threw: fault !== undefined,
         toolClaimedSuccess: text.includes("Successfully edited"),
         toolWarnsNotRecorded: namesPartialFailure(text),
-        // The invariant's "rather than implying success" half: the notice must also set the anchor
-        // claim straight, not merely flag the bookkeeping failure.
         noticeNamesNotUsable: /NOT usable anchors/.test(text),
         toolPromisesFreshAnchors: promisesFreshAnchors(text, advertised),
         advertisedAnchorsServed:
           advertised.length === 0 ? "n/a" : advertised.every((anchor) => servedAnchors.has(anchor)),
         fileAfter,
-        // The follow-up the claim would have authorised, using an anchor it advertised.
         followUpEdit: "not-attempted" as string,
-        // The recovery the result must name: a re-read re-serves the edited file.
         recovery: "not-attempted" as string,
       };
 
@@ -142,17 +127,12 @@ describe("edit serve claim — the anchors the result advertises", () => {
       endState.recovery = await editOutcome(harness, await primeAnchor(harness, "│B"));
 
       expect(endState).toEqual({
-        // The edit DID apply; the claim that is downgraded is the anchor claim, not the edit.
         threw: false,
         toolClaimedSuccess: true,
-        // Post-fix contract: the result says so and names the recovery...
         toolWarnsNotRecorded: true,
         noticeNamesNotUsable: true,
-        // ...instead of presenting the unserved diff anchors as usable.
         toolPromisesFreshAnchors: false,
-        // The serve really did fail — pinned so the cell cannot pass by accident.
         advertisedAnchorsServed: false,
-        // The edit is not rolled back.
         fileAfter: "a\nB\nc\n",
         followUpEdit: "rejected",
         recovery: "applied",
@@ -167,8 +147,6 @@ describe("edit serve claim — the anchors the result advertises", () => {
       const abs = await harness.io.resolve("t.txt", cwd, new AbortController().signal);
       const store = (await loadHashStore(cwd)) as InternalHashStore;
 
-      // No fault arm: the serve write is the only store mutation here, and it lands. The happy
-      // path must stay concrete — same success claim, usable anchors, no warning.
       const text = getText(
         await harness.editTool.execute("edit", { path: "t.txt", edits: [[hash, hash, "B"]] }),
       );
@@ -216,8 +194,6 @@ function shownAnchorsFromReadText(text: string): string[] {
 
 describe("guidance — the anchor claim is conditional on the serve", () => {
   it("makes the edit guidance and description conditional", () => {
-    // Asserted on the guidance string itself: the result cell's fields are derived from the
-    // notice, so they cannot prove the guidance stopped promising unconditionally.
     const line = guidanceLine(EDIT_GUIDANCE, "fresh anchors");
     expect({
       namesNotRecorded: /NOT recorded as served/.test(line),
@@ -255,7 +231,6 @@ describe("read serve claim — the anchors the result shows", () => {
       const abs = await harness.io.resolve("t.txt", cwd, new AbortController().signal);
       const store = (await loadHashStore(cwd)) as InternalHashStore;
 
-      // The fault is installed BEFORE the first read: this is the read's only serve write.
       const upsert = vi.spyOn(store, "upsertServed").mockImplementation(() => {
         throw new Error("injected: read serve fault");
       });
@@ -281,11 +256,9 @@ describe("read serve claim — the anchors the result shows", () => {
 
       expect(endState).toEqual({
         shownRows: 3,
-        // The serve really did fail — the shown anchors are not in the served set.
         shownAnchorsServed: false,
         warnsNotRecorded: true,
         noticeNamesNotUsable: true,
-        // A read never fails on a bookkeeping fault: the rows are still shown.
         fileAfter: "a\nb\nc\n",
         followUpEdit: "rejected",
       });
@@ -311,8 +284,6 @@ describe("read serve claim — the anchors the result shows", () => {
 });
 
 describe("readAndServe boundary — the notice must reach the text channel", () => {
-  // `tool-read` renders `warning` and `text`; `src/write-hook.ts` renders `text` only and is
-  // frozen. So the tool-level cells above cannot see a notice parked in `warning` — these do.
   it("puts the notice in the returned text when the serve write fails", async () => {
     await withTempFile("t.txt", "a\nb\nc\n", async ({ cwd }) => {
       const harness = setupIntegrationTest(cwd);
@@ -322,9 +293,6 @@ describe("readAndServe boundary — the notice must reach the text channel", () 
       });
       let result: Awaited<ReturnType<typeof readAndServe>>;
       try {
-        // `withWorkspace` mirrors what the tool wrapper does around `execute`: `recordServed`
-        // resolves its store from the active workspace, so a bare call would hit another store
-        // and the fault would never reach it.
         result = await withWorkspace(cwd, () =>
           readAndServe(harness.io, "t.txt", cwd, { sessionKey: harness.sessionKey }),
         );

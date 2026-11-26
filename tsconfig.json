@@ -22,6 +22,7 @@
     "esModuleInterop": true,
     "forceConsistentCasingInFileNames": true,
     "isolatedModules": true,
+    "allowJs": true,
     "verbatimModuleSyntax": true
   },
   "include": ["src/**/*.ts"],

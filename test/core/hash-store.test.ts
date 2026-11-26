@@ -345,7 +345,6 @@ describe("hash-store — schema versioning", () => {
       const db = new DatabaseSync(sqlitePath(home), {
         defensive: false,
       } as any);
-      // Parameterized: `pragma_table_info` is a table-valued function, so the table is a VALUE.
       const columns = (table: string): string[] =>
         (db.prepare("SELECT name FROM pragma_table_info(?)").all(table) as { name: string }[]).map(
           (column) => column.name,
@@ -357,9 +356,6 @@ describe("hash-store — schema versioning", () => {
         "hashes",
         "updated_at",
       ]);
-      // #171: `undo` gained the effective-ending pair; the shell is still complete (every column
-      // the released v6 build prepares against is here, plus the additive pair).
-      // #191: `undo` gained the verdict pair beside it; same completeness contract.
       expect(columns("undo")).toEqual([
         "path",
         "content",
@@ -387,7 +383,6 @@ describe("hash-store — schema versioning", () => {
     });
   });
 
-  /** Frozen v6 undo INSERT (legacy-only row, no v7 mirror) for migration tests. */
   function insertV6Undo(
     home: string,
     path: string,
@@ -424,7 +419,6 @@ describe("hash-store — schema versioning", () => {
         defensive: false,
       } as any);
       const now = Date.now();
-      // v6 write shapes — all three shells still prepare and run on a v9 store.
       db.prepare(
         "INSERT INTO snapshots (path, checksum, line_count, hashes, updated_at) VALUES (?, ?, ?, ?, ?) " +
           "ON CONFLICT(path) DO UPDATE SET checksum = excluded.checksum, line_count = excluded.line_count, " +
@@ -440,7 +434,6 @@ describe("hash-store — schema versioning", () => {
           "ON CONFLICT(session_id, path) DO UPDATE SET hashes = excluded.hashes, updated_at = excluded.updated_at",
       ).run("sessionB", "/v.ts", JSON.stringify(["CCC"]), now);
 
-      // v6 read shapes.
       const vSnap = db
         .prepare("SELECT hashes FROM snapshots WHERE path = ? AND checksum = ? AND line_count = ?")
         .get("/v.ts", "ck", 2) as { hashes: string };
@@ -468,7 +461,6 @@ describe("hash-store — schema versioning", () => {
         cards: null,
       });
 
-      // v6 delete shapes.
       db.prepare("DELETE FROM snapshots WHERE path = ?").run("/v.ts");
       db.prepare("DELETE FROM undo WHERE path = ?").run("/v2.ts");
       db.prepare("DELETE FROM served WHERE session_id = ?").run("sessionB");
@@ -478,7 +470,6 @@ describe("hash-store — schema versioning", () => {
       expect((db.prepare("SELECT COUNT(*) AS n FROM served").get() as { n: number }).n).toBe(0);
       db.close();
 
-      // The replay wrote only shells: v7 readers stay on their own families.
       const reopened = await loadHashStore();
       expect(reopened.getSnapshot("/p.ts", "x\n")).toEqual(["XYZ"]);
       expect(reopened.getUndo("/v2.ts")).toBeUndefined();
@@ -578,9 +569,6 @@ describe("hash-store — schema versioning", () => {
       await loadHashStore();
       shutdownHashStore();
 
-      // ADR-0016's shell-retention contract: the open-time sweep reclaims only v7-owned state, so
-      // the v6 shells come through a v9 migration byte-identical. That is what makes a version flap
-      // survivable for an un-restarted v6 session.
       expect(before.snapshots.length).toBeGreaterThan(0);
       expect(readAll()).toEqual(before);
 
@@ -609,8 +597,6 @@ describe("hash-store — schema versioning", () => {
       db.prepare("DELETE FROM served WHERE path = ?").run("/v.ts");
       db.close();
 
-      // ...and after a full v6 write/read/delete cycle the shells are back to the same baseline:
-      // the v6 writer's own key shapes still round-trip through their own statements.
       const after = readAll();
       expect(after).toEqual(before);
     });
@@ -618,7 +604,6 @@ describe("hash-store — schema versioning", () => {
 
   it("migrates a real v6 store forward with every row and shell column intact", async () => {
     await withTempHome(async (home) => {
-      // v6 release schema, ce657e4: shells verbatim, meta stamped 6.
       await mkdir(configHome(home), { recursive: true });
       const now = Date.now();
       const fixture = new DatabaseSync(sqlitePath(home), {
@@ -700,8 +685,6 @@ describe("hash-store — schema versioning", () => {
       const check = new DatabaseSync(sqlitePath(home), {
         defensive: false,
       } as any);
-      // ADR-0016: the upgrade preserves the v6 shells byte-identically (the sweep reclaims only
-      // v7-owned state). This test guards the SHELL (the columns and the v7 tables below).
       expect(before.snapshots.length).toBeGreaterThan(0);
       expect(check.prepare("SELECT * FROM snapshots ORDER BY path").all()).toEqual(
         before.snapshots,
@@ -710,8 +693,6 @@ describe("hash-store — schema versioning", () => {
       expect(check.prepare("SELECT * FROM served ORDER BY session_id, path").all()).toEqual(
         before.served,
       );
-      // No anchor stamp was ever written, so the open-time sweep reclaims the copied served family
-      // too: every v7 table starts empty on this store.
       for (const table of [
         "file_snapshots",
         "line_id_counters",
@@ -800,8 +781,6 @@ describe("hash-store — schema versioning", () => {
         | { value?: string }
         | undefined;
       expect(version?.value).toBe(String(CURRENT + 1));
-      // The refusal wrote nothing: each family still holds exactly the state the test seeded
-      // (a lineage snapshot, a legacy-only shell undo row the v6 client wrote, and a live meta row).
       expect(countRows(check, "file_snapshots")).toBe(1);
       expect(countRows(check, "undo")).toBe(1);
       expect(countRows(check, "served_session_meta")).toBe(1);
@@ -830,16 +809,19 @@ describe("hash-store — schema versioning", () => {
 
       const rawConn = (): DatabaseSync =>
         new DatabaseSync(sqlitePath(home), { defensive: false } as any);
-      const rowsOf = (table: "snapshots" | "undo" | "served"): unknown[] => {
+      const TABLE_SQL = {
+        snapshots: "SELECT * FROM snapshots",
+        undo: "SELECT * FROM undo",
+        served: "SELECT * FROM served",
+      } as const;
+      const rowsOf = (table: keyof typeof TABLE_SQL): unknown[] => {
         const db = rawConn();
-        // Literal allowlist above: no caller data reaches this SQL.
-        const rows = db.prepare(`SELECT * FROM ${table}`).all();
+        const rows = db.prepare(TABLE_SQL[table]).all();
         db.close();
         return rows;
       };
 
       const stampDb = rawConn();
-      // A v6 process re-stamps the store and writes its own shell rows (it never names v7 tables).
       stampDb.prepare("UPDATE meta SET value = '6' WHERE key = 'version'").run();
       stampDb
         .prepare("INSERT INTO served (session_id, path, hashes, updated_at) VALUES (?, ?, ?, ?)")
@@ -854,13 +836,11 @@ describe("hash-store — schema versioning", () => {
       shutdownHashStore();
 
       const check = rawConn();
-      // The v6 shells are untouched — the v6 client's own rows come through byte-identical.
       expect(check.prepare("SELECT * FROM snapshots ORDER BY path").all()).toEqual(beforeSnapshots);
       expect(check.prepare("SELECT * FROM undo ORDER BY path").all()).toEqual(beforeUndo);
       expect(check.prepare("SELECT * FROM served ORDER BY session_id, path").all()).toEqual(
         beforeServed,
       );
-      // Live v7 rows survive the downgrade bump; the re-migration copies the shell's new key.
       expect(countRows(check, "file_snapshots")).toBe(1);
       expect(countRows(check, "served_session_meta")).toBe(2);
       expect(countRows(check, "file_undo")).toBe(0);
@@ -924,8 +904,6 @@ describe("hash-store — schema versioning", () => {
         | { value?: string }
         | undefined;
       expect(version?.value).toBe("999");
-      // Every seeded row is still where its OWNER put it: lineage for the snapshot, the legacy
-      // shell undo row from the v6 client, and the live served mirror on the meta table.
       expect(countRows(check, "file_snapshots")).toBe(1);
       expect(countRows(check, "undo")).toBe(1);
       expect(countRows(check, "served_session_meta")).toBe(1);
@@ -1036,13 +1014,9 @@ describe("hash-store — schema versioning", () => {
       stampDb.prepare("UPDATE meta SET value = '5' WHERE key = 'version'").run();
       stampDb.close();
 
-      // Positive control + ROLLBACK-arm coverage: the migration's stamp write
-      // is blocked, the open fails, and the store is left untouched.
       armTrigger();
       await expect(loadHashStore()).rejects.toThrow(/blocked/);
       expect(stamp()).toBe("5");
-      // The blocked migration wrote nothing: the lineage/meta rows are where the v7 writer left
-      // them, and the legacy shells are untouched (they never held this store's live state).
       expect(count("file_snapshots")).toBe(1);
       expect(count("file_undo")).toBe(1);
       expect(count("snapshots")).toBe(0);
@@ -1056,16 +1030,12 @@ describe("hash-store — schema versioning", () => {
       const blockedEntries = await readdir(configHome(home));
       expect(blockedEntries.some((name) => name.includes(".corrupt-"))).toBe(false);
 
-      // The failed migration left the store re-runnable: drop the trigger and
-      // the same open migrates forward with every row family intact.
       dropTrigger();
       await loadHashStore();
       expect(await readAll()).toEqual({ snapshots: 1, undo: true, served: ["XYZ"] });
       shutdownHashStore();
       expect(stamp()).toBe(String(HASH_STORE_VERSION));
 
-      // Refutable half: a write detector armed on a current store. Any version
-      // write on a current store now throws instead of passing silently.
       armTrigger();
       const current = await loadHashStore();
       expect(current.getSnapshot("/p.ts", "x\n")).toEqual(["XYZ"]);
@@ -1163,7 +1133,6 @@ describe("hash-store — pre-retired upgrade preserves rows", () => {
           "updated_at INTEGER NOT NULL" +
           ")",
       );
-      // served predates the retired column: every shell except retired.
       fixture.exec(
         "CREATE TABLE served (" +
           "session_id TEXT NOT NULL, " +
@@ -1203,8 +1172,6 @@ describe("hash-store — pre-retired upgrade preserves rows", () => {
       const served = await loadServedStore();
       served.upsertServed("sessionB", "/q.ts", JSON.stringify(["AAA"]));
       expect(served.getServed("sessionB", "/q.ts")).toEqual(["AAA"]);
-      // #138: the pre-generation `served` row is reclaimed by the open — it carries anchors and
-      // canons but no key, so the stamp decides for the whole family.
       expect(served.getServed("sessionA", "/p.ts")).toEqual([]);
       shutdownHashStore();
 
@@ -1215,8 +1182,6 @@ describe("hash-store — pre-retired upgrade preserves rows", () => {
         (column) => column.name,
       );
       expect(cols).toContain("retired");
-      // ADR-0016: the column backfill is non-destructive AND the shells are untouched — the v6
-      // rows come through the upgrade byte-identically.
       expect(beforeSnapshots.length).toBeGreaterThan(0);
       expect(beforeUndo.length).toBeGreaterThan(0);
       expect(check.prepare("SELECT * FROM snapshots ORDER BY path").all()).toEqual(beforeSnapshots);
@@ -1271,7 +1236,6 @@ describe("hash-store — v7 snapshot materialization", () => {
       await recordServed("cp3-sess2", "/d2.ts", [{ position: 0, hash: "XYZ" }], 1, {
         hashes: ["XYZ"],
         content: "x\n",
-        // One row for a one-line file: the whole file served.
         fullRead: true,
       });
       expect(internal.getSnapshot("/d2.ts", "x\n")).toEqual(["XYZ"]);
@@ -1298,11 +1262,9 @@ describe("hash-store — v7 snapshot materialization", () => {
         }
       ).v;
       expect(snapHash).toBe(snapshotHashFor("x\n"));
-      // The v6 shell is not a mirror: v7 never writes it, so there is no fallback to disagree with.
       expect(countRows(keyed, "snapshots")).toBe(0);
       keyed.close();
       shutdownHashStore();
-      // Remove the whole v7 family out of band: the read is a miss. No legacy row resurrects it.
       const raw = new DatabaseSync(sqlitePath(home), {
         defensive: false,
       } as any);
@@ -1325,10 +1287,7 @@ describe("hash-store — v7 snapshot materialization", () => {
       const content = "alpha\nbeta\n";
       const h1 = ["AAa", "AAb"];
       const h2 = ["BBa", "BBb"];
-      // Dual-write H1 through the full upsert (legacy row + lineage insert).
       internal.upsertSnapshot("/f.ts", contentChecksum(content), 2, h1, content);
-      // Same content, new assignment: adopt refreshes the lineage to H2 while the
-      // legacy row still carries H1 — the order under test decides here.
       internal.commitSnapshot({ path: "/f.ts", content, hashes: h2 });
       expect(internal.getSnapshot("/f.ts", content)).toEqual(h2);
     });
@@ -1352,8 +1311,6 @@ describe("hash-store — v7 snapshot materialization", () => {
       const warned = warn.mock.calls.map((call) => String(call[0])).join(" ");
       warn.mockRestore();
 
-      // Read half: the partial family is replaced, never served as a truncated mix — the
-      // snapshot now resolves to exactly one row per line, with the anchors just adopted.
       expect({
         snapshot: reopened.getSnapshot("/c.ts", content),
         warned: /stored lineage has 1 rows for 2 lines/.test(warned),
@@ -1377,8 +1334,6 @@ describe("hash-store — v7 snapshot materialization", () => {
       expect(() =>
         store.upsertSnapshot("/g.ts", contentChecksum(content), 2, hashes, content),
       ).toThrow("injected");
-      // Pair contract: the whole v7 family is one unit — neither row may survive the fault, and
-      // the v6 shell was never a side of it.
       const pairCheck = new DatabaseSync(sqlitePath(home), { defensive: false } as any);
       const v7Rows = (
         pairCheck
@@ -1398,8 +1353,6 @@ describe("hash-store — v7 snapshot materialization", () => {
       pairCheck.close();
       expect(v7Rows).toBe(0);
       expect(lineageRows).toBe(0);
-      // Same-connection proof: drop the trigger, then the same live handle must
-      // succeed (a wedged transaction would fail locked).
       const drop = new DatabaseSync(sqlitePath(home), {
         defensive: false,
       } as any);
@@ -1408,8 +1361,6 @@ describe("hash-store — v7 snapshot materialization", () => {
         store.upsertSnapshot("/g.ts", contentChecksum(content), 2, hashes, content),
       ).not.toThrow();
       expect(store.getSnapshot("/g.ts", content)).toEqual(hashes);
-      // Per-path counts: exactly one snapshot with its full lineage — no orphan,
-      // no partial row set (global 0/0 would break as soon as any other row exists).
       const snapCount = (
         drop.prepare("SELECT COUNT(*) AS n FROM file_snapshots WHERE path = ?").get("/g.ts") as {
           n: number;
@@ -1435,7 +1386,6 @@ it("#6 served ↔ served_leases: a lease fault leaves the served row at its pre-
     const store = await loadServedStore();
     const sessionKey = "t3a-p6";
     const filePath = "/p6.ts";
-    // Pre-write row contract: the served array as it stands before the failed pair.
     await recordServed(sessionKey, filePath, [{ position: 0, hash: "ZzZ" }], 1);
     expect(store.getServed(sessionKey, filePath)).toEqual(["ZzZ"]);
 
@@ -1448,7 +1398,6 @@ it("#6 served ↔ served_leases: a lease fault leaves the served row at its pre-
     );
     setup.close();
 
-    // Full read: the served upsert and the lease grant it derives from are ONE unit.
     await recordServed(
       sessionKey,
       filePath,
@@ -1460,7 +1409,6 @@ it("#6 served ↔ served_leases: a lease fault leaves the served row at its pre-
       { hashes, content, fullRead: true },
     );
 
-    // Row contract, never a COUNT: the stored JSON is byte-identical to the pre-write value.
     expect(store.getServed(sessionKey, filePath)).toEqual(["ZzZ"]);
     const check = new DatabaseSync(sqlitePath(home), { defensive: false } as any);
     const leases = (
@@ -1478,7 +1426,6 @@ it("#6 truncated served ↔ served_leases: a lease fault leaves the served row a
     const store = await loadServedStore();
     const sessionKey = "t3a-p6t";
     const filePath = "/p6t.ts";
-    // Pre-write row contract: the served array as it stands before the failed pair.
     await recordServed(sessionKey, filePath, [{ position: 0, hash: "ZzZ" }], 1);
     expect(store.getServed(sessionKey, filePath)).toEqual(["ZzZ"]);
 
@@ -1491,9 +1438,6 @@ it("#6 truncated served ↔ served_leases: a lease fault leaves the served row a
     );
     setup.close();
 
-    // Truncated path, same pair contract — and the direct re-entrancy proof: the
-    // nested `commitSnapshot` must JOIN the outer `withStore` unit, or this would
-    // raise `cannot start a transaction within a transaction` before any assertion.
     await recordServedTruncated(
       sessionKey,
       filePath,
@@ -1507,7 +1451,6 @@ it("#6 truncated served ↔ served_leases: a lease fault leaves the served row a
       { hashes, content },
     );
 
-    // Row contract, never a COUNT: the stored JSON is byte-identical to the pre-write value.
     expect(store.getServed(sessionKey, filePath)).toEqual(["ZzZ"]);
     const check = new DatabaseSync(sqlitePath(home), { defensive: false } as any);
     const leases = (
@@ -1527,7 +1470,6 @@ it("adopt on an orphan snapshot row repairs it; the serve path grants leases aga
     const hashes = ["AAa", "AAb"];
     internal.commitSnapshot({ path: "/o.ts", content, hashes });
     shutdownHashStore();
-    // Corrupt out-of-band: keep the snapshot row, empty the lineage.
     const cut = new DatabaseSync(sqlitePath(home), {
       defensive: false,
     } as any);
@@ -1535,8 +1477,6 @@ it("adopt on an orphan snapshot row repairs it; the serve path grants leases aga
     cut.close();
 
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
-    // Serve path: the repair is what stops the read → edit → reject loop — the read
-    // persists its leases instead of rolling the served row back forever.
     await recordServed(
       "cp3-orphan",
       "/o.ts",
@@ -1552,8 +1492,6 @@ it("adopt on an orphan snapshot row repairs it; the serve path grants leases aga
 
     const reopened = (await loadHashStore()) as unknown as InternalHashStore;
     expect({
-      // Pair #6 still holds: the lease grant and the `served` row it derives from commit
-      // together. The repair removes the failure that used to roll both back.
       served: reopened.getServed("cp3-orphan", "/o.ts"),
       lease: reopened.leaseFor("cp3-orphan", "/o.ts", "AAa") !== undefined,
       lineage: reopened.lineageFor("/o.ts", snapshotHashFor(content)).length,
@@ -1569,14 +1507,12 @@ it("lineage with a corrupt anchor falls back instead of serving it", async () =>
     const hashes = ["AAa", "AAb"];
     internal.commitSnapshot({ path: "/k.ts", content, hashes });
     shutdownHashStore();
-    // Corrupt out-of-band: intact numbering, invalid anchor shape.
     const cut = new DatabaseSync(sqlitePath(home), {
       defensive: false,
     } as any);
     cut.prepare("UPDATE line_lineage SET anchor = ? WHERE line_number = ?").run("!!!", 1);
     cut.close();
     const reopened = await loadHashStore();
-    // No legacy row was ever written: the hit is rejected, fallback misses.
     expect(reopened.getSnapshot("/k.ts", content)).toBeUndefined();
   });
 });
@@ -1620,16 +1556,11 @@ it("getFileUndo maps updatedAt from the stored file_undo.updated_at", async () =
     const internal = (await loadHashStore()) as unknown as InternalHashStore;
     const row = internal.getFileUndo("/w.ts");
     expect(row).toBeDefined();
-    // Pin the MAPPER, not the type. `typeof updatedAt === "number"` would pass for any
-    // numeric column; read the stored column directly and require the record to carry
-    // exactly that value. No clock dependency, no flake.
     const check = new DatabaseSync(sqlitePath(home));
     const storedRow = check
       .prepare("SELECT updated_at AS v FROM file_undo WHERE path = ?")
       .get("/w.ts");
     check.close();
-    // Runtime narrow, not a cast: a cast here would silence the compiler without
-    // proving the column is numeric at all.
     const stored = storedRow?.["v"];
     if (typeof stored !== "number") throw new Error("expected numeric file_undo.updated_at");
     expect(Number.isInteger(stored)).toBe(true);
@@ -1649,25 +1580,14 @@ it("getFileUndo heals a shape-corrupt row and deletes the pair", async () => {
       resultContent: "b\n",
     });
     const internal = (await loadHashStore()) as unknown as InternalHashStore;
-    // Happy path first, so the heal assertion below cannot be satisfied by the row never
-    // having existed.
     expect(internal.getFileUndo("/shape-corrupt.ts")).toBeDefined();
 
-    // TEXT survives INTEGER affinity, so an UPDATE to a non-numeric string really does
-    // leave a non-number in the column and `mapFileUndoRow` really does reject it.
     const corrupt = new DatabaseSync(sqlitePath(home));
     corrupt
       .prepare("UPDATE file_undo SET updated_at = 'nope' WHERE path = ?")
       .run("/shape-corrupt.ts");
     corrupt.close();
 
-    // A shape-corrupt row must take the SAME healing path as a JSON parse failure: the
-    // pair is deleted and the caller sees `undefined`. The face doc at the `getFileUndo`
-    // declaration promises "same healing contract as the legacy row". If the validating
-    // SELECT sits outside the try, this throws instead: the throw escapes `getFileUndo`
-    // -> `undo-edit.ts` `readFileUndo` -> `saveUndo`'s catch -> `persisted: false` ->
-    // `mutation.ts` aborts the edit, and because the pair is never deleted every future
-    // edit to this path aborts too. Fail-loud must not become fail-permanently.
     expect(internal.getFileUndo("/shape-corrupt.ts")).toBeUndefined();
 
     const check = new DatabaseSync(sqlitePath(home));
@@ -1691,10 +1611,7 @@ it("edits to a shape-corrupt path keep succeeding after the row heals", async ()
     corrupt.prepare("UPDATE file_undo SET updated_at = 'nope' WHERE path = ?").run(path);
     corrupt.close();
 
-    // The read inside the first edit heals the pair, so the write still persists.
     expect((await edit("b\n", "c\n", ["H02"])).persisted).toBe(true);
-    // The second edit is what pins "permanent denial" closed: before the fix BOTH of
-    // these returned `persisted: false` and no write ever cleared the corrupt row.
     expect((await edit("c\n", "d\n", ["H03"])).persisted).toBe(true);
 
     const internal = (await loadHashStore()) as unknown as InternalHashStore;
@@ -1709,17 +1626,7 @@ it("getFileUndo propagates infrastructure failures instead of healing the pair a
     const { saveUndo } = await import("../../src/undo-edit.js");
     const path = "/busy-undone.ts";
 
-    // Fault injection with no production seam: wrap `prepare` and give ONLY the
-    // `file_undo` SELECT a throwing `get`. A blanket `StatementSync.prototype.get` spy
-    // would not discriminate — `saveUndo` reads the legacy pair first (`readUndo` before
-    // `readFileUndo`), so it would fail before ever reaching `getFileUndo`.
     const realPrepare = DatabaseSync.prototype.prepare;
-    // Anchored to the exact `fileUndoGetStmt` SELECT (`src/hash-store.ts:577`), not the
-    // `FROM file_undo WHERE path = ?` substring — that also matches the DELETE at `:579` and the
-    // test-local COUNT/updated_at queries, so a future `.run` fault-injection would silently
-    // break the delete. A column-list change stops this matching and fails the test on `threw`:
-    // loud, not silently inert. (#171 added the effective-ending pair to the list and #191 the
-    // verdict pair; the canary did its job twice and is re-anchored here.)
     const fileUndoGetSql =
       /^SELECT content, bom, ending, hashes, result_content, snapshot_hash, updated_at, effective_ending, pre_image_mixed, migrated_from, migrated_from_bom FROM file_undo WHERE path = \?$/;
     let failFileUndoGet = false;
@@ -1754,8 +1661,6 @@ it("getFileUndo propagates infrastructure failures instead of healing the pair a
       const internal = (await loadHashStore()) as unknown as InternalHashStore;
       expect(internal.getFileUndo(path)).toBeDefined();
 
-      // Collect all three consequences into ONE assertion so a regression reports every
-      // symptom at once instead of aborting on the first.
       failFileUndoGet = true;
       let threw = false;
       let value: unknown;
@@ -1765,15 +1670,11 @@ it("getFileUndo propagates infrastructure failures instead of healing the pair a
         threw = true;
       }
 
-      // The heal must NOT have run — a live row is still on disk. A blanket catch would
-      // have deleted it here.
       failFileUndoGet = false;
       const check = new DatabaseSync(sqlitePath(home));
       const pair = { fileUndo: countRowsByPath(check, "file_undo", path) };
       check.close();
 
-      // Through the real route the edit aborts rather than reporting a write whose prior
-      // state it could not durably determine.
       failFileUndoGet = true;
       const after = (
         await saveUndo(path, {
@@ -1820,8 +1721,6 @@ it("restore puts the prior v7 row back content-identical with a fresh pair stamp
     });
     expect(second.persisted).toBe(true);
     await second.restore();
-    // One-stamp rule: restore rewrites the row now — content byte-identical,
-    // stamp refreshed once (the store owns the clock).
     const after = internal.getFileUndo("/r.ts");
     expect({ ...after, updatedAt: 0 }).toEqual({ ...before, updatedAt: 0 });
     expect(after?.updatedAt ?? 0).toBeGreaterThanOrEqual(before?.updatedAt ?? 0);
@@ -1867,7 +1766,6 @@ it("v7 write fault leaves the previous undo readable and reports failure", async
       resultContent: "three\n",
     });
     expect(failed.persisted).toBe(false);
-    // One row, atomic: the previous undo reads back byte-identical.
     expect((await loadHashStore()).getUndo("/f.ts")).toBeDefined();
     expect(internal.getFileUndo("/f.ts")).toEqual(before);
     const check = new DatabaseSync(sqlitePath(home), {
@@ -2066,7 +1964,6 @@ it("store getFileUndo heals both rows on non-hashlist", async () => {
 
 it("prune keeps the undo row when its stamp is newer than the cutoff", async () => {
   await withTempHome(async (home) => {
-    // Load first: the open-time TTL janitor must never see the forced stamp below.
     const store = await loadHashStore();
     const { saveUndo } = await import("../../src/undo-edit.js");
     await saveUndo("/split.ts", {
@@ -2077,7 +1974,6 @@ it("prune keeps the undo row when its stamp is newer than the cutoff", async () 
       resultContent: "b\n",
     });
     const raw = new DatabaseSync(sqlitePath(home));
-    // Forced stamp, no wall clock: newer than the cutoff.
     raw.prepare("UPDATE file_undo SET updated_at = ? WHERE path = ?").run(200, "/split.ts");
     raw.close();
     store.pruneUndoOlderThan(150);
@@ -2146,14 +2042,12 @@ it("pruneMissing deletes the whole v7 lineage family for missing paths", async (
       ],
       2,
     );
-    // v7-only path: lineage family and nothing else — the discovery union must find it.
     (store as unknown as InternalHashStore).commitSnapshot({
       path: "/gone-pure.ts",
       content: "p\n",
       hashes: ["P01"],
       leases: { sessionKey: "s1", rows: [{ position: 0, hash: "P01" }] },
     });
-    // Existing path keeps every row (no over-delete).
     const keep = join(home, "keep-fam.ts");
     await writeFile(keep, "x\ny\n", "utf-8");
     (store as unknown as InternalHashStore).commitSnapshot({
@@ -2189,7 +2083,6 @@ it("pruneMissing deletes the whole v7 lineage family for missing paths", async (
     expect(count("SELECT COUNT(*) AS n FROM line_id_counters WHERE path = ?", keep)).toBe(1);
     expect(count("SELECT COUNT(*) AS n FROM served_leases WHERE file_path = ?", keep)).toBe(1);
     expect(store.getUndo(keep)).toBeDefined();
-    // A wipe-all-file_undo regression would still pass the line above — pin the v7 side too.
     expect((store as unknown as InternalHashStore).getFileUndo(keep)).toBeDefined();
     check.close();
   });
@@ -2199,8 +2092,6 @@ it("pruneMissing rolls back every table when a later delete faults", async () =>
   await withTempHome(async (home) => {
     const store = await loadHashStore();
     const { saveUndo } = await import("../../src/undo-edit.js");
-    // Missing path with a full family; `file_undo` and the served meta row follow lineage in the
-    // prune order, so a fault on the LAST delete must roll back every earlier one.
     store.upsertSnapshot("/gone-rb.ts", contentChecksum("a\n"), 1, ["H01"], "a\n");
     (store as unknown as InternalHashStore).commitSnapshot({
       path: "/gone-rb.ts",
@@ -2216,7 +2107,6 @@ it("pruneMissing rolls back every table when a later delete faults", async () =>
       resultContent: "b\n",
     });
     await recordServed("s1", "/gone-rb.ts", [{ position: 0, hash: "H01" }], 1);
-    // Fault the LAST delete: the abort must roll back every earlier delete in the unit.
     const setup = new DatabaseSync(sqlitePath(home), {
       defensive: false,
     } as any);
@@ -2257,7 +2147,6 @@ it("reopen janitor prunes the undo row when the TTL elapsed", async () => {
       "storeDir: central\nundo_ttl_s: 3600\n",
       "utf-8",
     );
-    // Real file: the reopen also runs pruneMissing — a missing path would vanish regardless of TTL.
     const oldPath = join(home, "j-old.ts");
     await writeFile(oldPath, "a\n", "utf-8");
     const { saveUndo } = await import("../../src/undo-edit.js");
@@ -2272,7 +2161,6 @@ it("reopen janitor prunes the undo row when the TTL elapsed", async () => {
     raw.prepare("UPDATE file_undo SET updated_at = ? WHERE path = ?").run(1000, oldPath);
     raw.close();
     shutdownHashStore();
-    // cutoff = now - 3600s: stamp 1000 is older by an hour margin, no wall-clock dependence.
     const store = await loadHashStore();
     expect(store.getUndo(oldPath)).toBeUndefined();
     const check = new DatabaseSync(sqlitePath(home));
@@ -2303,18 +2191,12 @@ it("reopen janitor keeps the undo row when its stamp is newer than the TTL", asy
       resultContent: "b\n",
     });
     const raw = new DatabaseSync(sqlitePath(home));
-    // Young stamp named explicitly: newer than the cutoff by an hour margin, and the
-    // exact value the row contract below is asserted against.
     const youngStamp = Date.now();
     raw.prepare("UPDATE file_undo SET updated_at = ? WHERE path = ?").run(youngStamp, splitPath);
     raw.close();
-    // Force the reopen: the janitor (and its newest-side TTL rule) runs on open.
     shutdownHashStore();
     const store = await loadHashStore();
     expect(store.getUndo(splitPath)).toBeDefined();
-    // Row contract, field by field, with concrete expected values — no COUNT and no regex
-    // on a hash prefix. `getFileUndo` is on the public HashStore face, so proving the
-    // mapper needs no cast: every declared field is compared to its column's value.
     const { snapshotHashFor } = await import("../../src/snapshot-store/lineage-store.js");
     expect(store.getFileUndo(splitPath)).toEqual({
       content: "a\n",
@@ -2358,17 +2240,12 @@ it("deleteByPath removes only the lineage family and leaves the other families i
     expect(beforeUndo).toBeDefined();
     expect(beforeV7).toBeDefined();
 
-    // The face member is the LineageStore seam, LINEAGE FAMILY ONLY — it is not
-    // "delete everything for this path"; pruneMissing owns whole-path deletion.
     internal.deleteByPath(path);
 
-    // Lineage family: gone.
     expect(internal.lineageFor(path, snapshotHashFor(content))).toEqual([]);
-    // Every other family: byte-identical records.
     expect(internal.getUndo(path)).toEqual(beforeUndo);
     expect(internal.getFileUndo(path)).toEqual(beforeV7);
     expect(await loadServed("narrow-session", path)).toEqual(["AAA"]);
-    // The lineage family was the ONLY snapshot source, so the read is a miss now.
     expect(internal.getSnapshot(path, content)).toBeUndefined();
   });
 });
@@ -2381,7 +2258,6 @@ it("getSnapshot is a miss when the lineage family is corrupt (no legacy fallback
     const hashes = ["AAA", "AAB"];
     internal.upsertSnapshot(path, contentChecksum(content), 2, hashes, content);
 
-    // Corrupt the lineage family: right row count, non-sequential line_number.
     const db = new DatabaseSync(sqlitePath(home));
     db.prepare(
       "UPDATE line_lineage SET line_number = 99 WHERE line_number = 1 AND snapshot_id IN " +
@@ -2391,7 +2267,6 @@ it("getSnapshot is a miss when the lineage family is corrupt (no legacy fallback
     shutdownHashStore();
 
     const reopened = await loadHashStore();
-    // The shape guard rejects the corrupt lineage, and there is no other source: a miss.
     expect(reopened.getSnapshot(path, content)).toBeUndefined();
   });
 });
