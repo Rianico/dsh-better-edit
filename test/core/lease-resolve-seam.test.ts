@@ -657,8 +657,8 @@ describe("resolution is read-only (runtime)", () => {
     "SELECT session_id, file_path, anchor, line_id, canon_hash, served_snapshot_hash, " +
     "served_line_number, updated_at, retired_at FROM served_leases ORDER BY anchor";
   const MIRROR_COLUMNS =
-    "SELECT session_id, path, hashes, reported, retired, canons, cards FROM served " +
-    "ORDER BY session_id, path";
+    "SELECT session_id, file_path, hashes, reported, retired, canons, cards FROM served_session_meta " +
+    "ORDER BY session_id, file_path";
 
   /** Raw rows, read through this test's own handle — concrete columns, no row-shape cast. */
   function storeRows(): string {

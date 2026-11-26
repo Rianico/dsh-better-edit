@@ -25,8 +25,10 @@ function sqlitePath(): string {
 }
 
 describe("line_lineage.raw_hash — schema column", () => {
-  it("is the current schema version's addition", () => {
-    expect(HASH_STORE_VERSION).toBe(8);
+  it("is part of the current schema (added after the shared-store era)", () => {
+    // The stamp itself moved on with later additive work (#222 = 9); the column is still present
+    // and backfilled in place, which the next cell proves against the live schema.
+    expect(HASH_STORE_VERSION).toBeGreaterThanOrEqual(8);
   });
 
   it("persists the raw-line digest beside the canon digest", async () => {

@@ -10,16 +10,12 @@ describe("coverage-agent-g hash-store", () => {
 
   it("validators", async () => {
     const { isValidServedList } = await import("../../src/hash-store.js");
-    const { isValidSnapshot } = await import("../../src/snapshot-store/migrate.js");
     const { isValidHashList } = await import("../../src/snapshot-store/index.js");
     expect(isValidHashList(["abc"])).toBe(true);
     expect(isValidHashList("not-array")).toBe(false);
     expect(isValidHashList([123 as any])).toBe(false);
     expect(isValidHashList(["ab"])).toBe(false);
     expect(isValidHashList(["abc", "def"])).toBe(true);
-    expect(isValidSnapshot({ content: "hi", hashes: ["abc"] })).toBe(true);
-    expect(isValidSnapshot({ content: 123, hashes: ["abc"] })).toBe(false);
-    expect(isValidSnapshot(null)).toBe(false);
     expect(isValidServedList(["abc", null])).toBe(true);
     expect(isValidServedList(["ab"])).toBe(false);
     expect(isValidServedList("not-array")).toBe(false);
@@ -36,7 +32,7 @@ describe("coverage-agent-g hash-store", () => {
     expect(isCorruptionError(null)).toBe(false);
   });
 
-  it("getSnapshot and findSnapshotPaths", async () => {
+  it("getSnapshot serves a materialized snapshot and misses unknown content", async () => {
     const dir = await mkdtemp(join(await getWritableTempRoot(), "hs-g-"));
     const prevHome = process.env.HOME;
     const prevDsh = process.env.DSH_HOME;
@@ -46,11 +42,9 @@ describe("coverage-agent-g hash-store", () => {
       const { loadHashStore, shutdownHashStore } = await import("../../src/hash-store.js");
       const store: any = await loadHashStore();
       const p = join(dir, "file.txt");
-      await store.upsertSnapshot(p, "c", 1, ["abc"]);
-      const got = store.getSnapshot(p, "c", true);
-      expect(got === undefined || Array.isArray(got)).toBe(true);
-      const matches = store.findSnapshotPaths(["abc"]);
-      expect(Array.isArray(matches)).toBe(true);
+      await store.upsertSnapshot(p, "c", 1, ["abc"], "c");
+      expect(store.getSnapshot(p, "c", true)).toEqual(["abc"]);
+      expect(store.getSnapshot(p, "other", true)).toBeUndefined();
       shutdownHashStore();
     } finally {
       if (prevHome === undefined) delete process.env.HOME;
@@ -90,7 +84,6 @@ describe("coverage-agent-g hash-store", () => {
       store.wipeServed("sess");
       store.pruneServedOlderThan(Date.now() + 10000);
       store.pruneUndoOlderThan(Date.now() + 10000);
-      store.deleteSnapshot(p);
       expect(store.allKnownPaths()).toBeDefined();
       shutdownHashStore();
     } finally {
@@ -116,8 +109,8 @@ describe("coverage-agent-g hash-store", () => {
       const existing = join(dir, "exists.txt");
       await writeFile(existing, "hi", "utf-8");
       const missing = join(dir, "missing.txt");
-      store.upsertSnapshot(existing, "c1", 1, ["abc"]);
-      store.upsertSnapshot(missing, "c2", 1, ["def"]);
+      store.upsertSnapshot(existing, "c1", 1, ["abc"], "hi");
+      store.upsertSnapshot(missing, "c2", 1, ["def"], "x");
       await store.pruneMissing();
       expect(store.getSnapshot(missing, "x", false)).toBeUndefined();
       shutdownHashStore();

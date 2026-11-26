@@ -16,8 +16,7 @@ import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { resolveDshHome } from "@deepseek-ai/dsh-home-paths";
 import { loadConfig } from "./store-config.js";
-import { workspaceCwd } from "./workspace-context.js";
-import { errCode, splitLines } from "./utils.js";
+import { errCode } from "./utils.js";
 import { HASH_STORE_BUSY_TIMEOUT, SERVED_TTL_MS } from "./constants.js";
 import { reportVacuum } from "./snapshot-store/index.js";
 import type { VacuumResult } from "./snapshot-store/index.js";
@@ -165,7 +164,9 @@ export async function runCentralJanitorIfDue(): Promise<void> {
       ] as const) {
         try {
           totalBytes += (await stat(join(dir, file))).size;
-        } catch {}
+        } catch {
+          // A missing WAL/SHM sibling is normal: the file contributes no bytes.
+        }
       }
       infos.push({ name, dir, mtimeMs: st.mtimeMs, totalBytes });
     } catch (error) {
@@ -226,14 +227,14 @@ export async function runCentralJanitorIfDue(): Promise<void> {
 // Called from hash-store openStore after db is ready
 export async function onStoreOpen(
   storePath: string,
-  stmts: { servedPruneOlderThan: (ts: number) => void },
+  stmts: { servedMetaPruneOlderThan: (ts: number) => void },
   store: OpenStoreFace,
 ): Promise<void> {
   handleGitPollution(storePath);
 
   // Row TTL — always (not throttled) but cheap
   try {
-    stmts.servedPruneOlderThan(Date.now() - SERVED_TTL_MS);
+    stmts.servedMetaPruneOlderThan(Date.now() - SERVED_TTL_MS);
   } catch (error) {
     console.warn(
       `dsh-better-edit: served prune failed for ${storePath}: ${error instanceof Error ? error.message : String(error)}`,
@@ -242,8 +243,8 @@ export async function onStoreOpen(
   try {
     const cfg = loadConfig();
     if (cfg.undo_ttl_s !== -1) {
-      // Pair-atomic: route through the store face (both tables, one txn) — the
-      // half-pair statement must not stay reachable from the janitor (P1).
+      // One undo row now, routed through the store face so the janitor keeps its single
+      // age-prune owner (P1).
       store.pruneUndoOlderThan(Date.now() - cfg.undo_ttl_s * 1000);
     }
   } catch (error) {

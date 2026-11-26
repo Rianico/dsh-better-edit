@@ -87,3 +87,9 @@ Shell-retention contract: the v6 shells (`snapshots`, `undo`, `served`) keep the
 ## Legacy import and compat shells
 
 The legacy JSON _file_ import lives in `src/snapshot-store/migrate.ts` (the module owns the `snapshots` table). The legacy `snapshots` **blob rows** stay in the shell untouched: they are old-canon and carry no line text, so stable `line_id`/`canon_hash` identity cannot be derived from them — fabricating it would poison the identity space. They are rebuilt from content on the next read. The v6 shells are covered by a statement-replay compat test (the v6 read/write/delete shapes against v7-created and migrated stores).
+
+## Amendment (2026-11-25, #222)
+
+`served_session_meta` is now **LIVE** (store version 9): it owns the served mirror — the hashes, reported dedup set, `retired` set, canons and hazard cards — and the v6 shells are v6-owned with no v7 readers or writers. The Version boundary above moves with it: stamp 9 opens (migrating forward when older); stamp 10 is refused with `E_STORE_NEWER_VERSION`. The forward step is ONE copy inside the existing `BEGIN IMMEDIATE` — `served` → `served_session_meta` with `ON CONFLICT DO NOTHING`, ordered after the shell column backfills and before the anchor-stamp sweep — so a downgrade-then-upgrade cannot clobber the live v7 row. Legacy `snapshots` blob rows and legacy-only `undo` pin rows are NOT copied: the blobs carry no line text (unchanged rationale), and v8 wrote the `file_undo` half of every live pair, which is now the sole undo row. See [ADR-0055](0055-served-session-meta-owns-live-state.md).
+
+The `src/snapshot-store/migrate.ts` importer named in §Legacy import and compat shells is deleted; the `snapshots` blob rows still stay in the shell untouched for the reason recorded above, and v7 no longer writes the shells at all — neither the sweep, `allKnownPaths` nor `pruneMissing` names them. The statement-replay compat test now lives in `test/core/v6-shell-compat-222.test.ts`.

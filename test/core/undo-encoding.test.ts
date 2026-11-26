@@ -18,7 +18,7 @@ import { beforeAll, beforeEach, afterEach, describe, expect, it } from "vitest";
 import iconv from "iconv-lite";
 
 import { initHasher } from "../../src/hashline/hash-assign.js";
-import { loadHashStore, shutdownHashStore, type UndoRecord } from "../../src/hash-store.js";
+import { loadHashStore, shutdownHashStore } from "../../src/hash-store.js";
 import { getUndo } from "../../src/undo-edit.js";
 import { withWorkspace } from "../../src/workspace-context.js";
 import { _resetConfigCache } from "../../src/store-config.js";
@@ -232,28 +232,18 @@ describe("old rows — both new columns NULL mean 'no migration recorded'", () =
         const { harness } = await readAndEdit(cwd, "u16-old.txt", "вторая", "другая");
         const abs = await resolveTarget(path);
 
-        // Model the pre-change row: the pair exists but carries no verdict. Strip the verdict
-        // through the store's own pair writer, so the shape is exactly what an old store holds.
+        // Model the pre-change row: the row exists but carries no verdict. Strip the verdict
+        // through the store's own writer, so the shape is exactly what an old store holds.
         await withWorkspace(cwd, async () => {
           const store = await loadHashStore();
-          const legacy = store.getUndo(abs);
           const v7 = store.getFileUndo(abs);
-          expect(legacy).toBeDefined();
           expect(v7).toBeDefined();
-          const {
-            migratedFrom: _l,
-            migratedFromBOM: _lb,
-            ...legacyBase
-          } = legacy as UndoRecord & {
-            migratedFrom?: unknown;
-            migratedFromBOM?: unknown;
-          };
           const {
             migratedFrom: _v,
             migratedFromBOM: _vb,
             ...v7Base
           } = v7 as typeof v7 & { migratedFrom?: unknown; migratedFromBOM?: unknown };
-          store.writeUndoPair(abs, legacyBase, v7Base);
+          store.writeUndo(abs, v7Base);
 
           const entry = await getUndo(abs);
           expect(entry?.migration).toBeUndefined();
@@ -404,15 +394,11 @@ describe("half-record — one new column NULL claims nothing", () => {
           expect(store.getUndo(abs)?.migratedFrom).toBe("utf16le");
         });
 
-        // Strip the BOM flag on both halves so the stored pair keeps one shape on each half.
-        // `getUndo` rebuilds the verdict from the `undo` half only, so the `file_undo` half is
-        // pinned observably below through `getFileUndo` instead of riding along silently.
+        // Strip the BOM flag so the stored row is a half-record. `getUndo` rebuilds the verdict
+        // from the one row, so both readers are pinned observably below.
         shutdownHashStore();
         const raw = new DatabaseSync(hashStorePath(cwd));
-        raw.exec(
-          "UPDATE undo SET migrated_from = 'utf16le', migrated_from_bom = NULL; " +
-            "UPDATE file_undo SET migrated_from = 'utf16le', migrated_from_bom = NULL;",
-        );
+        raw.exec("UPDATE file_undo SET migrated_from = 'utf16le', migrated_from_bom = NULL;");
         raw.close();
 
         await withWorkspace(cwd, async () => {
@@ -432,7 +418,6 @@ describe("half-record — one new column NULL claims nothing", () => {
   it("BOM flag without its codec on the legacy half: no verdict, no clause, undo still restores", async () => {
     // Mutant caught: `typeof migratedFromBOM === "number" ? { ... } : undefined`
     // (codec unchecked) rebuilds a verdict from this reverse half-record — same gate, other side.
-    // As above, the `file_undo` half is pinned observably through `getFileUndo`.
     await withTempBytes(
       "u16-half-rev.txt",
       utf16leBytes("первая\r\nвторая\r\n"),
@@ -443,10 +428,7 @@ describe("half-record — one new column NULL claims nothing", () => {
 
         shutdownHashStore();
         const raw = new DatabaseSync(hashStorePath(cwd));
-        raw.exec(
-          "UPDATE undo SET migrated_from = NULL, migrated_from_bom = 0; " +
-            "UPDATE file_undo SET migrated_from = NULL, migrated_from_bom = 0;",
-        );
+        raw.exec("UPDATE file_undo SET migrated_from = NULL, migrated_from_bom = 0;");
         raw.close();
 
         await withWorkspace(cwd, async () => {

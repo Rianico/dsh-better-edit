@@ -347,7 +347,9 @@ describe("served state — retired-anchor writer contract", () => {
   ): { retired: string | null; updated_at: number } {
     const db = new DatabaseSync(sqlitePath(home), { defensive: false } as any);
     const row = db
-      .prepare("SELECT retired, updated_at FROM served WHERE session_id = ? AND path = ?")
+      .prepare(
+        "SELECT retired, updated_at FROM served_session_meta WHERE session_id = ? AND file_path = ?",
+      )
       .get(sessionKey, path) as { retired: string | null; updated_at: number } | undefined;
     db.close();
     if (!row) throw new Error(`no served row for ${sessionKey}:${path}`);
@@ -605,7 +607,7 @@ describe("served state — session wipe keeps snapshots and undo", () => {
       const store = await loadHashStore();
       await recordServed("sessionA", "/a.ts", [{ position: 0, hash: "abc" }]);
       await recordServed("sessionA", "/b.ts", [{ position: 1, hash: "def" }]);
-      store.upsertSnapshot("/a.ts", contentChecksum("a\n"), 1, ["abc"]);
+      store.upsertSnapshot("/a.ts", contentChecksum("a\n"), 1, ["abc"], "a\n");
       await saveUndo("/u.ts", {
         content: "old",
         bom: "",
@@ -632,11 +634,9 @@ describe("served state — corrupt row handling", () => {
     value: string,
   ): Promise<void> {
     const db = new DatabaseSync(sqlitePath(home), { defensive: false } as any);
-    db.prepare("UPDATE served SET hashes = ? WHERE session_id = ? AND path = ?").run(
-      value,
-      sessionKey,
-      path,
-    );
+    db.prepare(
+      "UPDATE served_session_meta SET hashes = ? WHERE session_id = ? AND file_path = ?",
+    ).run(value, sessionKey, path);
     db.close();
   }
 
@@ -650,7 +650,9 @@ describe("served state — corrupt row handling", () => {
         defensive: false,
       } as any);
       const remaining = check
-        .prepare("SELECT COUNT(*) AS n FROM served WHERE session_id = ? AND path = ?")
+        .prepare(
+          "SELECT COUNT(*) AS n FROM served_session_meta WHERE session_id = ? AND file_path = ?",
+        )
         .get("sessionA", "/p.ts") as { n: number };
       check.close();
       expect(remaining.n).toBe(0);
@@ -667,7 +669,9 @@ describe("served state — corrupt row handling", () => {
         defensive: false,
       } as any);
       const remaining = check
-        .prepare("SELECT COUNT(*) AS n FROM served WHERE session_id = ? AND path = ?")
+        .prepare(
+          "SELECT COUNT(*) AS n FROM served_session_meta WHERE session_id = ? AND file_path = ?",
+        )
         .get("sessionA", "/p.ts") as { n: number };
       check.close();
       expect(remaining.n).toBe(0);
@@ -684,7 +688,9 @@ describe("served state — corrupt row handling", () => {
         defensive: false,
       } as any);
       const remaining = check
-        .prepare("SELECT COUNT(*) AS n FROM served WHERE session_id = ? AND path = ?")
+        .prepare(
+          "SELECT COUNT(*) AS n FROM served_session_meta WHERE session_id = ? AND file_path = ?",
+        )
         .get("sessionA", "/p.ts") as { n: number };
       check.close();
       expect(remaining.n).toBe(0);
@@ -697,7 +703,7 @@ describe("served state — schema versioning", () => {
     await withTempHome(async (home) => {
       const store = await loadHashStore();
       await recordServed("sessionA", "/p.ts", [{ position: 0, hash: "XYZ" }]);
-      store.upsertSnapshot("/p.ts", contentChecksum("x\n"), 1, ["XYZ"]);
+      store.upsertSnapshot("/p.ts", contentChecksum("x\n"), 1, ["XYZ"], "x\n");
       await saveUndo("/u.ts", {
         content: "old",
         bom: "",
@@ -728,15 +734,21 @@ describe("served state — schema versioning", () => {
         | undefined;
       expect(version?.value).toBe("999");
       const servedRow = check
-        .prepare("SELECT hashes FROM served WHERE session_id = ? AND path = ?")
+        .prepare("SELECT hashes FROM served_session_meta WHERE session_id = ? AND file_path = ?")
         .get("sessionA", "/p.ts") as { hashes: string };
       expect(JSON.parse(servedRow.hashes)).toEqual(["XYZ"]);
-      const snapshots = check.prepare("SELECT COUNT(*) AS n FROM snapshots").get() as {
-        n: number;
-      };
-      expect(snapshots.n).toBe(1);
-      const undos = check.prepare("SELECT COUNT(*) AS n FROM undo").get() as { n: number };
-      expect(undos.n).toBe(1);
+      // Each seeded row still lives where its owner wrote it: lineage for the snapshot, the v7
+      // undo row, and the served mirror on the meta table. The legacy shells stay empty.
+      expect(
+        (check.prepare("SELECT COUNT(*) AS n FROM file_snapshots").get() as { n: number }).n,
+      ).toBe(1);
+      expect((check.prepare("SELECT COUNT(*) AS n FROM file_undo").get() as { n: number }).n).toBe(
+        1,
+      );
+      expect((check.prepare("SELECT COUNT(*) AS n FROM snapshots").get() as { n: number }).n).toBe(
+        0,
+      );
+      expect((check.prepare("SELECT COUNT(*) AS n FROM undo").get() as { n: number }).n).toBe(0);
       check.close();
 
       const entries = await readdir(configHome(home));
@@ -768,7 +780,7 @@ describe("served state — schema versioning", () => {
       await writeFile(path, content, "utf-8");
       const initialStore = await loadHashStore();
       await recordServed("sessionA", path, [{ position: 0, hash: "AAA" }]);
-      initialStore.upsertSnapshot(path, contentChecksum(content), 2, ["BBB", "AAA"]);
+      initialStore.upsertSnapshot(path, contentChecksum(content), 2, ["BBB", "AAA"], content);
       await saveUndo(path, {
         content: "old\nnew\n",
         bom: "",
@@ -848,8 +860,8 @@ describe("served state — pruneMissing", () => {
       const store = await loadHashStore();
       await recordServed("sessionA", existing, [{ position: 0, hash: "KEP" }]);
       await recordServed("sessionA", "/gone.ts", [{ position: 0, hash: "GON" }]);
-      store.upsertSnapshot(existing, contentChecksum("keep\n"), 1, ["KEP"]);
-      store.upsertSnapshot("/gone.ts", contentChecksum("gone\n"), 1, ["GON"]);
+      store.upsertSnapshot(existing, contentChecksum("keep\n"), 1, ["KEP"], "keep\n");
+      store.upsertSnapshot("/gone.ts", contentChecksum("gone\n"), 1, ["GON"], "gone\n");
       await saveUndo(existing, {
         content: "old",
         bom: "",
@@ -897,10 +909,9 @@ describe("served state — reported drift set", () => {
       const db = new DatabaseSync(sqlitePath(home), {
         defensive: false,
       } as any);
-      db.prepare("UPDATE served SET reported = 'not json' WHERE session_id = ? AND path = ?").run(
-        "sessionA",
-        "/p.ts",
-      );
+      db.prepare(
+        "UPDATE served_session_meta SET reported = 'not json' WHERE session_id = ? AND file_path = ?",
+      ).run("sessionA", "/p.ts");
       db.close();
       expect(await driftReported("sessionA", "/p.ts")).toEqual(new Set());
     });
@@ -950,11 +961,9 @@ describe("served state — TTL sweep", () => {
     updatedAt: number,
   ): Promise<void> {
     const db = new DatabaseSync(sqlitePath(home), { defensive: false } as any);
-    db.prepare("UPDATE served SET updated_at = ? WHERE session_id = ? AND path = ?").run(
-      updatedAt,
-      sessionKey,
-      path,
-    );
+    db.prepare(
+      "UPDATE served_session_meta SET updated_at = ? WHERE session_id = ? AND file_path = ?",
+    ).run(updatedAt, sessionKey, path);
     db.close();
   }
 
@@ -971,7 +980,9 @@ describe("served state — TTL sweep", () => {
         defensive: false,
       } as any);
       const remaining = check
-        .prepare("SELECT COUNT(*) AS n FROM served WHERE session_id = ? AND path = ?")
+        .prepare(
+          "SELECT COUNT(*) AS n FROM served_session_meta WHERE session_id = ? AND file_path = ?",
+        )
         .get("sessionA", "/p.ts") as { n: number };
       check.close();
       expect(remaining.n).toBe(0);

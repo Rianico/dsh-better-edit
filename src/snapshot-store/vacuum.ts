@@ -16,8 +16,8 @@
  *
  * Never touched by the pass, each for a stated reason: `line_id_counters` (the ID-reuse invariant
  * — a surviving lease must never have its `line_id` re-issued), `served_leases` (the pin set is
- * *computed from* this table; the TTL and grace are pin predicates, not pruners), and the legacy
- * `snapshots` row (one row per path, overwritten, and the documented upgrade fallback).
+ * *computed from* this table; the TTL and grace are pin predicates, not pruners), and the v6
+ * `snapshots`/`undo`/`served` shells (v6-owned; v7 never reads them, so they need no protection).
  * @module dsh-better-edit/snapshot-store/vacuum
  */
 import type { DatabaseSync } from "node:sqlite";

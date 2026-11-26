@@ -11,11 +11,9 @@ import {
   withStore,
 } from "../../src/hash-store.js";
 import { saveUndo } from "../../src/undo-edit.js";
-import { isValidSnapshot } from "../../src/snapshot-store/migrate.js";
 import { isValidHashList } from "../../src/snapshot-store/index.js";
 import { getWritableTempRoot } from "../support/fixtures.js";
 import { contentChecksum } from "../../src/hashline/hash-assign.js";
-import { splitLines } from "../../src/utils.js";
 import { vi } from "vitest";
 import { initHasher } from "../../src/hashline/hash-assign.js";
 
@@ -46,13 +44,6 @@ describe("coverage-agent-d hash-store validators", () => {
     expect(isValidHashList(["ZZ"] as any)).toBe(false);
     expect(isValidHashList(["abc", "abc"])).toBe(true); // duplicates allowed in validator? check logic allows
   });
-  it("isValidSnapshot", () => {
-    expect(isValidSnapshot({ content: "x", hashes: ["abc"] })).toBe(true);
-    expect(isValidSnapshot(null)).toBe(false);
-    expect(isValidSnapshot({ hashes: ["abc"] })).toBe(false);
-    expect(isValidSnapshot({ content: "x", hashes: "nope" })).toBe(false);
-    expect(isValidSnapshot({ content: 123, hashes: ["abc"] })).toBe(false);
-  });
   it("isValidServedList", () => {
     expect(isValidServedList([])).toBe(true);
     expect(isValidServedList([null, "abc"])).toBe(true);
@@ -74,47 +65,6 @@ describe("coverage-agent-d hash-store validators", () => {
 });
 
 describe("coverage-agent-d hash-store operations", () => {
-  it("getSnapshot deleteCorrupt false keeps row", async () => {
-    await withTempHome(async () => {
-      const store = await loadHashStore();
-      // insert corrupt via direct db
-      const home = process.env.HOME!;
-      const sqlitePath = join(home, ".dsh", "plugins", "dsh-better-edit", "hash-store.sqlite");
-      const db = new DatabaseSync(sqlitePath) as any;
-      db.exec(
-        "INSERT OR REPLACE INTO snapshots (path, checksum, line_count, hashes, updated_at) VALUES ('/corrupt.ts','canon:abc',1,'not-json',123)",
-      );
-      db.close();
-      shutdownHashStore();
-      const store2 = await loadHashStore();
-      const res = store2.getSnapshot("/corrupt.ts", "content", false);
-      expect(res).toBeUndefined();
-      // with deleteCorrupt true it deletes
-      const res2 = store2.getSnapshot("/corrupt.ts", "content", true);
-      expect(res2).toBeUndefined();
-    });
-  });
-  it("findSnapshotPaths and allSnapshotHashes", async () => {
-    await withTempHome(async () => {
-      const store = await loadHashStore();
-      store.upsertSnapshot("/a.ts", contentChecksum("a\n"), splitLines("a\n").length, ["aaa"]);
-      store.upsertSnapshot("/b.ts", contentChecksum("b\n"), splitLines("b\n").length, ["bbb"]);
-      expect(store.allSnapshotHashes().length).toBeGreaterThanOrEqual(2);
-      expect(store.findSnapshotPaths(["aaa"])).toContain("/a.ts");
-      expect(store.findSnapshotPaths(["zzz"])).toEqual([]);
-      // corrupt row ignored
-      const home = process.env.HOME!;
-      const sqlitePath = join(home, ".dsh", "plugins", "dsh-better-edit", "hash-store.sqlite");
-      const db = new DatabaseSync(sqlitePath) as any;
-      db.exec(
-        "INSERT OR REPLACE INTO snapshots (path, checksum, line_count, hashes, updated_at) VALUES ('/bad.ts','canon:bad',1,'not-json',123)",
-      );
-      db.close();
-      shutdownHashStore();
-      const store2 = await loadHashStore();
-      expect(store2.findSnapshotPaths(["aaa"])).toContain("/a.ts");
-    });
-  });
   it("getUndo corrupt handling", async () => {
     await withTempHome(async () => {
       const store = await loadHashStore();
@@ -131,7 +81,7 @@ describe("coverage-agent-d hash-store operations", () => {
       const sqlitePath = join(home, ".dsh", "plugins", "dsh-better-edit", "hash-store.sqlite");
       const db = new DatabaseSync(sqlitePath) as any;
       db.exec(
-        "INSERT OR REPLACE INTO undo (path, content, bom, ending, hashes, result_content, updated_at) VALUES ('/badundo','c','',\'\\n\',\'not-json\',\'r\',123)",
+        "INSERT OR REPLACE INTO file_undo (path, content, bom, ending, hashes, result_content, snapshot_hash, updated_at) VALUES ('/badundo','c','','\\n','not-json','r',NULL,123)",
       );
       db.close();
       shutdownHashStore();
@@ -169,7 +119,7 @@ describe("coverage-agent-d hash-store operations", () => {
     await withTempHome(async () => {
       const store = await loadHashStore();
       withStore(() => {
-        store.upsertSnapshot("/t.ts", contentChecksum("t\n"), 1, ["ttt"]);
+        store.upsertSnapshot("/t.ts", contentChecksum("t\n"), 1, ["ttt"], "t\n");
       });
       expect(store.getSnapshot("/t.ts", "t\n")).toEqual(["ttt"]);
     });
@@ -177,7 +127,7 @@ describe("coverage-agent-d hash-store operations", () => {
   it("pruneMissing and pruneUndoOlderThan", async () => {
     await withTempHome(async () => {
       const store = (await loadHashStore()) as any;
-      store.upsertSnapshot("/missing-file-xyz.ts", contentChecksum("x\n"), 1, ["abc"]);
+      store.upsertSnapshot("/missing-file-xyz.ts", contentChecksum("x\n"), 1, ["abc"], "x\n");
       await store.pruneMissing();
       // file doesn't exist, should be pruned
       expect(store.getSnapshot("/missing-file-xyz.ts", "x\n")).toBeUndefined();
@@ -195,7 +145,7 @@ describe("coverage-agent-d hash-store operations", () => {
   it("allKnownPaths includes all families", async () => {
     await withTempHome(async () => {
       const store = await loadHashStore();
-      store.upsertSnapshot("/k1.ts", contentChecksum("k\n"), 1, ["aaa"]);
+      store.upsertSnapshot("/k1.ts", contentChecksum("k\n"), 1, ["aaa"], "k\n");
       (store as any).upsertServed("s", "/k2.ts", JSON.stringify(["bbb"]));
       const paths = store.allKnownPaths().map((r) => r.path);
       expect(paths).toEqual(expect.arrayContaining(["/k1.ts", "/k2.ts"]));

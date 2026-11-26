@@ -49,3 +49,7 @@ Upstream `pi-better-edit@7e9c982` (`fix(canon): fence stored canon evidence by s
 - [ADR-0013](0013-anchor-identity-derives-from-raw-bytes.md) — upstream's referent for the same split.
 - upstream `pi-better-edit@7e9c982` (`fix(canon): fence stored canon evidence by snapshot epoch`, PR #340) — the implementing source.
 - `test/core/snapshot-epoch-isolation-221.test.ts`, `test/integration/undo-canon-epoch.test.ts`, `test/core/undo-generation-gate.test.ts` — the fence, the restore and the retention-versus-validity arms.
+
+## Amendment (2026-11-25, #222)
+
+The sweep now clears only the v7 family: `served_session_meta` is the served-state table it wipes wholesale, while the v6 shells (`served`, `snapshots`, `undo`) are v6-owned and are no longer deleted by a v7 sweep — strengthening ADR-0016's data-destruction rule, since a sweep that wiped them would destroy a live v6 session's data on a version flap. The retention-is-not-validity rule is unchanged: the stamp still keeps the full-epoch prefix for keyed rows and decides the whole unkeyed `served_session_meta` family, and a row that outlives the sweep is still refused at every reuse seam. See [ADR-0055](0055-served-session-meta-owns-live-state.md).

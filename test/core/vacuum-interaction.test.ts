@@ -335,7 +335,7 @@ describe("vacuum — interaction with lineage, leases and the tools", () => {
     });
   });
 
-  it("cell 14 cross-table: a pruned v7 family re-materializes and the legacy row is not the source", async () => {
+  it("cell 14 cross-table: a pruned v7 family re-materializes from disk and the shells stay untouched", async () => {
     await withTempFile("cell14.txt", DISK_CONTENT, async ({ cwd, path }) => {
       const it = setupIntegrationTest(cwd);
       await it.readTool.execute("c", { path });
@@ -344,8 +344,8 @@ describe("vacuum — interaction with lineage, leases and the tools", () => {
         expect(count(db, "SELECT COUNT(*) AS count FROM file_snapshots WHERE path = ?", path)).toBe(
           1,
         );
-        expect(count(db, "SELECT COUNT(*) AS count FROM snapshots WHERE path = ?", path)).toBe(1);
-
+        // The v6 shell was never written by v7: it has no row to reclaim or to serve.
+        expect(count(db, "SELECT COUNT(*) AS count FROM snapshots WHERE path = ?", path)).toBe(0);
         // Evict the v7 family entirely: the served row is oldest and the bulk row breaks the budget.
         ageLeases(db, path);
         db.prepare(
@@ -356,16 +356,9 @@ describe("vacuum — interaction with lineage, leases and the tools", () => {
         expect(count(db, "SELECT COUNT(*) AS count FROM file_snapshots WHERE path = ?", path)).toBe(
           0,
         );
-        // D2: the legacy `snapshots` row is a declared non-reclaim — one per path, upgrade fallback.
-        expect(count(db, "SELECT COUNT(*) AS count FROM snapshots WHERE path = ?", path)).toBe(1);
-        // A6 — negative pin: make the legacy row WRONG, so a silent legacy serve cannot pass. A
-        // correct re-materialization still serves anchors for the on-disk bytes; a legacy serve
-        // returns the diverged anchors below. (The D2 hazard is also pinned in another lane's unit
-        // cells — `test/core/hash-store.test.ts` fails 3 tests without the lineage-first branch.)
-        db.prepare("UPDATE snapshots SET hashes = ? WHERE path = ?").run(
-          JSON.stringify(["zzz", "zzz", "zzz"]),
-          path,
-        );
+        // ADR-0016: the legacy `snapshots` shell is untouched by the vacuum AND by the read path —
+        // it stays at zero rows, so no silent legacy serve can exist at all.
+        expect(count(db, "SELECT COUNT(*) AS count FROM snapshots WHERE path = ?", path)).toBe(0);
 
         const after = await it.readTool.execute("c", { path });
         expect(count(db, "SELECT COUNT(*) AS count FROM file_snapshots WHERE path = ?", path)).toBe(
@@ -466,7 +459,7 @@ describe("vacuum — interaction with lineage, leases and the tools", () => {
         warn.mockClear();
         await onStoreOpen(
           hashStorePath(cwd),
-          { servedPruneOlderThan: () => {} },
+          { servedMetaPruneOlderThan: () => {} },
           await storeFace(cwd),
         );
         expect(warn).toHaveBeenCalledWith(expect.stringContaining("soft overflow"));
@@ -521,7 +514,11 @@ describe("vacuum — interaction with lineage, leases and the tools", () => {
         warn.mockClear();
 
         await expect(
-          onStoreOpen(hashStorePath(cwd), { servedPruneOlderThan: () => {} }, await storeFace(cwd)),
+          onStoreOpen(
+            hashStorePath(cwd),
+            { servedMetaPruneOlderThan: () => {} },
+            await storeFace(cwd),
+          ),
         ).resolves.toBeUndefined();
 
         // (i) loud: the warning names the failing store. (ii) non-fatal: open still resolved.
@@ -536,7 +533,7 @@ describe("vacuum — interaction with lineage, leases and the tools", () => {
     });
   });
 
-  it("cell 28 legacy-only upsert: no v7 materialization means no sweep and no failure", async () => {
+  it("cell 28 contentless upsert: refused loudly, no sweep and no store failure", async () => {
     await withTempFile("cell28.txt", DISK_CONTENT, async ({ cwd, path }) => {
       const it = setupIntegrationTest(cwd);
       await it.readTool.execute("c", { path });
@@ -545,13 +542,12 @@ describe("vacuum — interaction with lineage, leases and the tools", () => {
       try {
         await pinnedBulk(db, cwd, "c28", 3);
         warn.mockClear();
-        // A legacy-only write (no content) is not a v7 materialization: no fresh row to protect, so
-        // the trigger must not sweep (and must not trip over the absent content either).
-        (await storeFace(cwd)).upsertSnapshot(path, "legacy-only-checksum", 3, [
-          "aaa",
-          "bbb",
-          "ccc",
-        ]);
+        // A contentless write has nothing to materialize (the legacy `snapshots` shell is a v6
+        // shell). It is refused loudly and the refusal never reaches the vacuum trigger.
+        const face = await storeFace(cwd);
+        expect(() =>
+          face.upsertSnapshot(path, "legacy-only-checksum", 3, ["aaa", "bbb", "ccc"]),
+        ).toThrow(/upsertSnapshot requires content/);
         expect(warn).not.toHaveBeenCalledWith(expect.stringContaining("vacuum failed"));
         expect(warn).not.toHaveBeenCalledWith(expect.stringContaining("soft overflow"));
       } finally {
