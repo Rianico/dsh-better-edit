@@ -349,4 +349,57 @@ describe("releaseHashStore — host release + root dispose", () => {
     const reopened = await loadHashStore(workspace);
     expect(handleIsOpen(reopened)).toBe(true);
   });
+
+  it("J. a refused graceful release does not poison an overlapping load", async () => {
+    const storePath = hashStorePath(workspace);
+    const pending = loadHashStore(workspace);
+    await waitForOpenScope(storePath);
+    attach(storePath, "keeper");
+    // Refused: no close, no epoch bump.
+    await expect(releaseHashStore(workspace)).resolves.toBe(false);
+
+    const detached = detachAgent("keeper"); // this drain closes the handle at the open scope's end
+    const store = await pending; // the loader must REOPEN, not throw
+    expect(handleIsOpen(store)).toBe(true);
+    await detached;
+  });
+
+  it("K. detach never bumps the release epoch", async () => {
+    const storePath = hashStorePath(workspace);
+    const pending = loadHashStore(workspace);
+    await waitForOpenScope(storePath);
+    attach(storePath, "only");
+
+    const detached = detachAgent("only");
+    const store = await pending;
+    expect(handleIsOpen(store)).toBe(true);
+    await detached;
+  });
+
+  it("L. a throw on the dispose chain is caught and warned", async () => {
+    const host = createStubHost();
+    let throwOnce = true;
+    const originalWarn = host.rootCtx.logger.warn;
+    host.rootCtx.logger.warn = (message: string) => {
+      if (throwOnce && message.includes("plugin dispose left a store path unreleased")) {
+        throwOnce = false;
+        throw new Error("warn exploded");
+      }
+      originalWarn(message);
+    };
+    mountRoot(host);
+    await loadHashStore(workspace);
+
+    const closeSpy = vi.spyOn(DatabaseSync.prototype, "close").mockImplementationOnce(() => {
+      throw new Error("close exploded"); // forces released === false → the .then warning throws
+    });
+    host.disposeRoot();
+    closeSpy.mockRestore();
+
+    await until(
+      () => host.warnings.some((message) => message.includes("plugin dispose failed")),
+      "the plugin dispose failure warning",
+    );
+    await flushMicrotasks();
+  });
 });

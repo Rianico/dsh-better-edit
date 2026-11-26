@@ -420,11 +420,20 @@ export function apply(rootCtx: Context): void {
   // constructor (`new apply(...)`) and DISCARDS its return value, so a returned disposer never
   // runs. Hosts that expose no `effect` (test stubs, minimal harnesses) skip the hook.
   rootCtx.effect?.(() => () => {
-    void releaseHashStore(undefined, { force: true }).then((released) => {
-      if (!released) {
-        rootCtx.logger.warn("dsh-better-edit: plugin dispose left a store path unreleased");
-      }
-    });
+    // Close failures already settle to `false` inside `releaseHashStore`; this rejection arm covers
+    // a throw from the dispose chain itself (including the warning path), so an unload never
+    // surfaces an unhandled rejection.
+    void releaseHashStore(undefined, { force: true })
+      .then((released) => {
+        if (!released) {
+          rootCtx.logger.warn("dsh-better-edit: plugin dispose left a store path unreleased");
+        }
+      })
+      .catch((error) => {
+        rootCtx.logger.warn(
+          `dsh-better-edit: plugin dispose failed: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      });
   });
 }
 

@@ -22,6 +22,7 @@ import { onStoreOpen, setStoresGetter } from "./store-lifecycle.js";
 import {
   awaitDrainingClose,
   configureStoreLifecycle,
+  ownerCount,
   releaseStore,
   withStoreScope,
 } from "./store-lifecycle-slot.js";
@@ -404,8 +405,16 @@ const stores = new Map<
   { path: string; db: DatabaseSync; stmts: Prepared; store: InternalHashStore }
 >();
 const openings = new Map<string, Promise<HashStore>>();
-/** Bumped by every release: a load that overlaps a release must not resurrect a released handle. */
-let releaseEpoch = 0;
+/** Per-path release epochs: a load that began before a bump must not reopen the closed handle. */
+const releaseEpochs = new Map<string, number>();
+
+function releaseEpochFor(storePath: string): number {
+  return releaseEpochs.get(storePath) ?? 0;
+}
+
+function bumpReleaseEpoch(storePath: string): void {
+  releaseEpochs.set(storePath, releaseEpochFor(storePath) + 1);
+}
 setStoresGetter(
   () => stores as Map<string, { path: string }>,
   () => openings as Map<string, Promise<any>>,
@@ -1468,9 +1477,9 @@ export function loadHashStore(cwd?: string): Promise<HashStore> {
 }
 
 async function loadHashStoreAtPath(storePath: string): Promise<HashStore> {
-  // Capture the release epoch before yielding: a release that lands while this load is in flight
-  // must be visible to `reopenIfDrained` (see `releaseEpoch`).
-  const epoch = releaseEpoch;
+  // Capture this path's release epoch before yielding: a release that lands while this load is in
+  // flight must be visible to `reopenIfDrained` (see `releaseEpochFor`).
+  const epoch = releaseEpochFor(storePath);
   // Outside any scope: a pending drain must finish before a bare open can publish onto it.
   await awaitDrainingClose(storePath);
   const cached = stores.get(storePath);
@@ -1503,7 +1512,8 @@ async function reopenIfDrained(
   await awaitDrainingClose(storePath);
   // A release that overlapped this load fails it loudly rather than reopening a handle the host
   // asked to close. The drain above still settled, so the failure names the release, not the drain.
-  if (epoch !== releaseEpoch) throw new Error("hash store: released while the store was opening");
+  if (epoch !== releaseEpochFor(storePath))
+    throw new Error("hash store: released while the store was opening");
   return loadHashStoreAtPath(storePath);
 }
 
@@ -1559,22 +1569,33 @@ export function shutdownHashStore(): void {
  * its drain and closed. A close failure is contained per path and reported as `false` for that
  * path, so one bad handle cannot strand the rest.
  *
- * Every call also bumps the release epoch: a load that overlapped it fails loudly instead of
- * reopening the handle this call closed.
+ * Per-PATH release epochs: only a path this call can actually close is bumped, so a load on that
+ * path fails loudly instead of reopening the handle the call closed. A refused path is untouched —
+ * `releaseStore` closes nothing there — so it keeps its epoch and no overlapping load is poisoned.
+ * `detachAgent` never bumps: a close from an explicit detach is not a host release.
  */
 export async function releaseHashStore(
   cwd?: string,
   options?: { force?: boolean },
 ): Promise<boolean> {
-  // Invalidate every load that started before this release: its `reopenIfDrained` must fail rather
-  // than reopen the handle this call closes (see `releaseEpoch`).
-  releaseEpoch += 1;
+  const force = options?.force === true;
   const settle = (pending: Promise<boolean>): Promise<boolean> => pending.catch(() => false);
-  if (cwd !== undefined) return settle(releaseStore(storePathFor(cwd), options));
+  if (cwd !== undefined) {
+    const storePath = storePathFor(cwd);
+    // Bump only when this release can close: a refusal closes nothing and must not poison a load
+    // on the untouched path. (A concurrent attach in this window is the caller's teardown race.)
+    if (force || ownerCount(storePath) === 0) bumpReleaseEpoch(storePath);
+    return settle(releaseStore(storePath, options));
+  }
   // Open entries first: their slots may already be pruned. The registry pass then covers claims
   // that never opened a handle (attach before a failed body) and is vacuous when none remain.
+  // A refused path stays open and keeps its epoch, so its overlapping load is not poisoned.
   const openPaths = [...stores.keys()];
+  for (const storePath of openPaths) {
+    if (force || ownerCount(storePath) === 0) bumpReleaseEpoch(storePath);
+  }
   const outcomes = await Promise.all(openPaths.map((path) => settle(releaseStore(path, options))));
+  // Registry-only claims hold no handle, so they cannot reopen: no epoch bump for that pass.
   const registryReleased = await settle(releaseStore(undefined, options));
   return registryReleased && outcomes.every((released) => released);
 }
