@@ -8,9 +8,15 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { mkdtemp, mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 
 import { contentChecksum, initHasher } from "../../src/hashline/hash-assign.js";
-import { loadHashStore, shutdownHashStore, type HashStore } from "../../src/hash-store.js";
+import {
+  __openingsCountForTests,
+  loadHashStore,
+  shutdownHashStore,
+  type HashStore,
+} from "../../src/hash-store.js";
 import {
   _slotCountForTests,
   attachStore,
@@ -18,6 +24,7 @@ import {
   inFlightCount,
   isDraining,
   ownerCount,
+  releaseStore,
   withStoreScope,
 } from "../../src/store-lifecycle-slot.js";
 import { hashStorePath } from "../../src/store-tenancy.js";
@@ -71,6 +78,9 @@ describe("hash-store — lifecycle slot wiring", () => {
   });
 
   afterEach(async () => {
+    // A spy on `DatabaseSync.prototype.close` must never outlive its case: the detach/close cleanup
+    // below has to run real closes.
+    vi.restoreAllMocks();
     // Owners first: a detach is what drives the close, so it must run before the close-all.
     for (const token of attached.splice(0)) await detachAgent(token);
     shutdownHashStore();
@@ -241,5 +251,54 @@ describe("hash-store — lifecycle slot wiring", () => {
     await detached;
 
     expect(handleIsOpen(store)).toBe(false);
+  });
+
+  it("a throwing close keeps the entry, and a later release retries", async () => {
+    const store = await loadHashStore(workspace);
+    const storePath = hashStorePath(workspace);
+    attach(storePath, "agent-1");
+    const closeSpy = vi.spyOn(DatabaseSync.prototype, "close").mockImplementationOnce(() => {
+      throw new Error("close exploded");
+    });
+
+    await expect(detachAgent("agent-1")).rejects.toThrow("close exploded");
+
+    // The entry survived the failed close, so the handle is still live and still closeable.
+    expect(handleIsOpen(store)).toBe(true);
+    closeSpy.mockRestore();
+
+    expect(await releaseStore(storePath)).toBe(true);
+    expect(handleIsOpen(store)).toBe(false);
+  });
+
+  it("shutdownHashStore visits every path and clears openings despite a throw", async () => {
+    const workspaceB = join(home, "workspace-b");
+    const workspaceC = join(home, "workspace-c");
+    await mkdir(workspaceB, { recursive: true });
+    await mkdir(workspaceC, { recursive: true });
+    const storeA = await loadHashStore(workspace);
+    const storeB = await loadHashStore(workspaceB);
+    const pathC = hashStorePath(workspaceC);
+    const pendingC = loadHashStore(workspaceC);
+    await waitForOpenScope(pathC); // openings now holds C
+    expect(__openingsCountForTests()).toBe(1);
+
+    vi.spyOn(DatabaseSync.prototype, "close").mockImplementationOnce(() => {
+      throw new Error("close exploded");
+    });
+
+    expect(() => shutdownHashStore()).toThrow("close exploded");
+
+    // The loop kept going, the coalescing map was cleared, and the failed path stayed retryable.
+    expect(handleIsOpen(storeB)).toBe(false);
+    expect(__openingsCountForTests()).toBe(0);
+    expect(handleIsOpen(storeA)).toBe(true);
+
+    vi.restoreAllMocks();
+    const storeC = await pendingC; // the in-flight open still publishes its handle
+    shutdownHashStore(); // retry closes A, and C is visited too
+    expect(handleIsOpen(storeA)).toBe(false);
+    expect(handleIsOpen(storeC)).toBe(false);
+    expect(__openingsCountForTests()).toBe(0);
   });
 });

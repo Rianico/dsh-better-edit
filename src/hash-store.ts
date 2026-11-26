@@ -1357,20 +1357,28 @@ function shutdownDb(db: DatabaseSync): void {
  * in `stores` until db.close() returns, so the central janitor keeps excluding a draining
  * directory; only a closed idle cache becomes eviction-eligible. `openings` is untouched: an
  * open is always inside a scope, so a drain cannot land mid-open.
+ *
+ * Delete only after a successful close. A throwing `db.close()` leaves the entry (and `isOpen`)
+ * in place, so the next release retries the close instead of stranding a live handle outside
+ * `stores` — and outside the janitor's live set. No extra flag is needed: the slot prunes its
+ * idle slot after the throwing call, and `releaseStore(path)` recreates a slot and sees
+ * `isOpen === true` for the retained entry.
  */
 function closeStoreAtPath(storePath: string): void {
   const entry = stores.get(storePath);
   if (entry === undefined) return;
-  try {
-    shutdownDb(entry.db);
-  } finally {
-    stores.delete(storePath);
-  }
+  shutdownDb(entry.db);
+  stores.delete(storePath);
 }
 
 function isStoreOpenAtPath(storePath: string): boolean {
   const entry = stores.get(storePath);
   return entry !== undefined && entry.db.isOpen;
+}
+
+/** Test-only: how many in-flight opens the coalescing map still holds. */
+export function __openingsCountForTests(): number {
+  return openings.size;
 }
 
 const STAT_BATCH = 64;
@@ -1478,13 +1486,33 @@ function currentStore():
   return entry?.db.isOpen ? entry : undefined;
 }
 
-/** Close every open store (process exit, HMR, tests). */
+/**
+ * Close every open store (process exit, HMR, tests). Still synchronous, but it now visits EVERY
+ * snapshot key and clears the coalescing map even when one close throws, then rethrows the first
+ * error — the entry a failed close retained stays retryable (see `closeStoreAtPath`).
+ *
+ * ISOLATION: the slot registry's `_resetForTests()` drops hooks and slots while `stores` and
+ * `openings` may still hold live handles, so it must be paired with `shutdownHashStore()` in
+ * HMR/test-reload teardown. The registry reset alone strands a live handle with no close owner.
+ */
 export function shutdownHashStore(): void {
   // Snapshot the keys: closeStoreAtPath deletes its own entry, so the close-all walks a list that
   // stays whole while it runs.
   const openPaths = [...stores.keys()];
-  for (const storePath of openPaths) closeStoreAtPath(storePath);
+  let failed = false;
+  let firstError: unknown;
+  for (const storePath of openPaths) {
+    try {
+      closeStoreAtPath(storePath);
+    } catch (error) {
+      if (!failed) {
+        failed = true;
+        firstError = error;
+      }
+    }
+  }
   openings.clear();
+  if (failed) throw firstError;
 }
 
 /**
