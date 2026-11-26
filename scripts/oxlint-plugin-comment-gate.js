@@ -7,7 +7,8 @@
  * Allowed: SAFETY:, TODO(#<issue>):, HACK:, `Ref: docs/<repo-path>` or `Ref: <link>`, strict Gherkin,
  * and `/** *\/` documentation at module scope within 12 lines. `Ref:` is the only citation tag and it
  * takes a target; a block carrying a retired token is prose, as are an in-body block, an over-cap
- * block, and a `SAFETY:` run that guards nothing. Provenance: docs/adr/0056-comment-gate-ratchet.md.
+ * block, and a `SAFETY:` run that guards nothing.
+ * Provenance: docs/agents/comment-grammar.md; decision: docs/adr/0056-comment-gate-ratchet.md.
  */
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, join, relative, sep } from "node:path";
@@ -91,8 +92,8 @@ const rule = {
   meta: {
     type: "problem",
     docs: {
-      description: "enforce the settled comment grammar (docs/adr/0056-comment-gate-ratchet.md)",
-      url: "https://github.com/Rianico/dsh-better-edit/blob/main/scripts/oxlint-plugin-comment-gate.js",
+      description: "enforce the settled comment grammar (docs/agents/comment-grammar.md)",
+      url: "https://github.com/Rianico/dsh-better-edit/blob/main/docs/agents/comment-grammar.md",
     },
     schema: [],
     messages: MESSAGES,

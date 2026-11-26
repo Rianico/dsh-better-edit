@@ -11,6 +11,10 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Features
+
+* **comment-gate:** hold every comment in the repo to the settled grammar with one shared predicate and two parsers. `harness/no-comments` is armed as `"error"` over root configs, `src/`, `test/` and `scripts/`, the `@babel/parser` generator owns the suppression file, and the arch suite pins the rule to Babel with a literal ceiling. `src/` and `test/` drain to zero legacy violations, so the baseline is empty and the ceiling is `0`; `benchmark/**` is out of scope and `pi-lens-ignore` is not accepted (ADR-0056, closes #232, #233, #234, #235). (#232)
+
 ### Bug Fixes
 
 * **read:** keep the intrinsic 200 KiB line cap apart from the multi-window response budget. A later window whose first row fits a lone read but misses what is left of the budget is omitted with a `[Section does not fit in the remaining … read budget; not shown. Re-read it on its own.]` notice and honest byte truncation, spending only the notice so smaller windows still render; an intrinsically oversized row cites `200.0KB` instead of the shrunken budget, and the warning names only rows the shown prefix reached (closes #229). (#231)

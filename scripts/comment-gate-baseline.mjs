@@ -1,5 +1,5 @@
 /**
- * Baseline generator for the comment gate (docs/adr/0056-comment-gate-ratchet.md).
+ * Baseline generator for the comment gate (docs/agents/comment-grammar.md; decision: docs/adr/0056).
  *
  * `--check` recomputes every violation and reports the delta against
  * `test/arch/comment-gate-baseline.json`; `--update` rewrites that file from source. Growth is

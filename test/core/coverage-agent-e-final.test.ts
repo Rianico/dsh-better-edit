@@ -3,6 +3,10 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
+/**
+ * Coverage sweep: encoding branches the main suite reaches only through option paths.
+ * The module is loaded dynamically so the sweep can exercise its exports directly.
+ */
 describe("coverage-agent-e final", () => {
   it("encoding remaining branches", async () => {
     const m: any = await import("../../src/encoding.js");

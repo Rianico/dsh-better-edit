@@ -3,7 +3,8 @@
  * each adapt their own parser into the same `AstFacts`, and the classification below is shared, so
  * the suppression file and the rule that reads it cannot drift.
  *
- * Provenance: docs/adr/0056-comment-gate-ratchet.md. Baseline key (`baselineKey`):
+ * Provenance: docs/agents/comment-grammar.md; decision: docs/adr/0056-comment-gate-ratchet.md.
+ * Baseline key (`baselineKey`):
  * `(path, text, occurrence)` — repo-relative path, the comment's raw `value`, and the 0-based
  * index of that exact text among the file's VIOLATIONS, so a key stays stable when an allowed
  * duplicate with the same text sits beside a rejected one.

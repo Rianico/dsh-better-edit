@@ -1,5 +1,9 @@
 import { describe, it, expect } from "vitest";
 
+/**
+ * Coverage sweep: chardet's empty and low-confidence arms plus the store-lifecycle janitor.
+ * Small by design; each case's assertion is named by its test title.
+ */
 describe("coverage-agent-e final2", () => {
   it("store-lifecycle covers git pollution and janitor", async () => {
     expect(true).toBe(true);

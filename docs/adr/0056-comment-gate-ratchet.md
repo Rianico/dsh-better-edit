@@ -6,6 +6,8 @@ Date: 2026-11-26
 
 accepted (issue #232; ports upstream `pi-better-edit@51cb819`, PR #280)
 
+Grammar reference: [docs/agents/comment-grammar.md](../agents/comment-grammar.md).
+
 Downstream records: `.oxlintrc.json` (`jsPlugins`, `harness/no-comments`, `ignorePatterns`),
 `scripts/comment-gate-predicate.mjs` (the shared grammar), `scripts/oxlint-plugin-comment-gate.js`
 (the oxlint rule), `scripts/comment-gate-baseline.mjs` (`--check`/`--update`),
