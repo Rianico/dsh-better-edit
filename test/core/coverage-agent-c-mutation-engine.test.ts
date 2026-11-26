@@ -174,21 +174,22 @@ describe("coverage: mutation engine applyOne", () => {
 });
 
 describe("coverage: mutation engine enforceNoopLoop", () => {
-  it("batch: throws at threshold and notice at 2", async () => {
+  it("batch: rejects at threshold and notice at 2", async () => {
     const { NOOP_LOOP_THRESHOLD } = await import("../../src/constants.js");
-    await expect(
-      enforceNoopLoop({
-        anchorFrom: "aaa",
-        anchorTo: "aaa",
-        displayPath: "a.txt",
-        index: 0,
-        count: NOOP_LOOP_THRESHOLD,
-        originalNormalized: "a\nb\nc",
-        echoRows: [{ position: 0, hash: "h1" }],
-      }),
-    ).rejects.toThrow(/E_NOOP_LOOP/);
+    const rejected = await enforceNoopLoop({
+      anchorFrom: "aaa",
+      anchorTo: "aaa",
+      displayPath: "a.txt",
+      index: 0,
+      count: NOOP_LOOP_THRESHOLD,
+      originalNormalized: "a\nb\nc",
+      echoRows: [{ position: 0, hash: "h1" }],
+    });
+    expect(rejected).toMatchObject({ action: "reject" });
+    if (rejected?.action !== "reject") throw new Error("expected a reject decision");
+    expect(rejected.error.message).toContain("[TO MODEL] [E_NOOP_LOOP]");
 
-    const notice = await enforceNoopLoop({
+    const decision = await enforceNoopLoop({
       anchorFrom: "aaa",
       anchorTo: "aaa",
       displayPath: "a.txt",
@@ -196,8 +197,10 @@ describe("coverage: mutation engine enforceNoopLoop", () => {
       count: 2,
       originalNormalized: "a\nb\nc",
     });
-    expect(notice).toMatch(/^\[MODEL\] \[W_NOOP\] Notice:/);
-    expect(notice).toMatch(/Resend will reject the batch\./);
+    expect(decision?.action).toBe("warn");
+    if (decision?.action !== "warn") throw new Error("expected a warn decision");
+    expect(decision.notice).toMatch(/^\[MODEL\] \[W_NOOP\] Notice:/);
+    expect(decision.notice).toMatch(/Resend will reject the batch\./);
 
     const none = await enforceNoopLoop({
       anchorFrom: "aaa",
@@ -214,40 +217,36 @@ describe("coverage: mutation engine enforceNoopLoop", () => {
   // the engine passes raw rows, so the heading renders exactly once.
   it("batch reject renders the on-disk heading exactly once", async () => {
     const { NOOP_LOOP_THRESHOLD } = await import("../../src/constants.js");
-    let caught: Error | undefined;
-    try {
-      await enforceNoopLoop({
-        anchorFrom: "aaa",
-        anchorTo: "aaa",
-        displayPath: "a.txt",
-        index: 0,
-        count: NOOP_LOOP_THRESHOLD,
-        originalNormalized: "a\nb\nc",
-        echoRows: [{ position: 0, hash: "h1" }],
-      });
-    } catch (error) {
-      caught = error as Error;
-    }
-    expect(caught).toBeDefined();
-    expect(caught!.message).toBe(
-      "[TO MODEL] [E_NOOP_LOOP] edits[0] (a.txt): identical edit (aaa → aaa) submitted 3×, no changes each time. " +
+    const decision = await enforceNoopLoop({
+      anchorFrom: "aaa",
+      anchorTo: "aaa",
+      displayPath: "a.txt",
+      index: 0,
+      count: NOOP_LOOP_THRESHOLD,
+      originalNormalized: "a\nb\nc",
+      echoRows: [{ position: 0, hash: "h1" }],
+    });
+    if (decision?.action !== "reject") throw new Error("expected a reject decision");
+    expect(decision.error.message).toBe(
+      "[TO MODEL] [E_NOOP_LOOP] identical edit (aaa → aaa) submitted 3×, no changes each time. " +
         "Range already contains this text; resend will reject the batch.\nCurrent on-disk range:\nh1│a",
     );
-    expect(caught!.message.match(/Current on-disk range:/g)).toHaveLength(1);
+    expect(decision.error.message.match(/Current on-disk range:/g)).toHaveLength(1);
   });
 
-  it("batch without echoRows still throws", async () => {
+  it("batch without echoRows still refuses", async () => {
     const { NOOP_LOOP_THRESHOLD } = await import("../../src/constants.js");
-    await expect(
-      enforceNoopLoop({
-        anchorFrom: "aaa",
-        anchorTo: "aaa",
-        displayPath: "a.txt",
-        index: 1,
-        count: NOOP_LOOP_THRESHOLD,
-        originalNormalized: "a\nb\nc",
-      }),
-    ).rejects.toThrow(/E_NOOP_LOOP/);
+    const decision = await enforceNoopLoop({
+      anchorFrom: "aaa",
+      anchorTo: "aaa",
+      displayPath: "a.txt",
+      index: 1,
+      count: NOOP_LOOP_THRESHOLD,
+      originalNormalized: "a\nb\nc",
+    });
+    if (decision?.action !== "reject") throw new Error("expected a reject decision");
+    expect(decision.error.servedRows).toEqual([]);
+    expect(decision.error.servedBlock).toBe("");
   });
 });
 

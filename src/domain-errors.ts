@@ -249,6 +249,11 @@ export interface ErrorPayloadMap {
     anchorTo: string;
     count: number;
     batch: boolean;
+    /**
+     * Reject-and-serve rows behind `servedBlock`, so the assembler records (and therefore leases)
+     * exactly the rows the body renders (ADR-0043).
+     */
+    servedRows: ServedRow[];
     servedBlock: string;
     /**
      * Rowless changed-buffer variant: names the withheld rows and the current-file lines a read would
@@ -576,14 +581,15 @@ function batchAbortFormat(payload: ErrorPayloadMap["E_BATCH_ABORT"]): string {
 }
 
 function noopLoopFormat(payload: ErrorPayloadMap["E_NOOP_LOOP"]): string {
-  // WHY batch first: the batch ref already names the item (edits[i] (path)),
-  // so the batch arm renders from ref and appends the on-disk range when the
-  // engine supplies one. `enforceNoopLoop` is the only producer and always
-  // passes `batch: true`; the generic arm below keeps the message defined for
-  // a non-batch payload the type still admits.
+  // WHY batch first: the batch arm renders the diagnosis only — the assembler's bullet names the
+  // item (`edits[i] (path)`) — and appends the on-disk range when the engine supplies one.
+  // `enforceNoopLoop` is the only producer and always passes `batch: true`; the generic arm below
+  // keeps the message defined for a non-batch payload the type still admits.
   if (payload.batch) {
+    // WHY no `ref` here: the batch assembler's bullet already names `edits[i] (path)`, so the
+    // body must not repeat the item prefix it renders.
     const base =
-      `${payload.ref}: identical edit (${payload.anchorFrom} → ${payload.anchorTo}) submitted ${payload.count}×, no changes each time. ` +
+      `identical edit (${payload.anchorFrom} → ${payload.anchorTo}) submitted ${payload.count}×, no changes each time. ` +
       `Range already contains this text; resend will reject the batch.`;
     // WHY: a changed-buffer refusal is rowless — `note` replaces the range block and says so.
     if (payload.note !== undefined && payload.servedBlock === "") return `${base} ${payload.note}`;
@@ -641,7 +647,7 @@ export const ERROR_REGISTRY: { [K in DomainErrorCode]: CodeSpec<ErrorPayloadMap[
   },
   E_MALFORMED_ANCHOR: {
     audience: "MODEL",
-    format: ({ rawAnchor, reason }) => `Invalid anchor "${rawAnchor}": ${reason}`,
+    format: ({ rawAnchor, reason }) => `Invalid anchor "${rawAnchor}": ${reason}.`,
     // WHY remedy: the parse rejected the token before any resolution — rawAnchor and reason name the shape failure.
     remedy: "Pass the bare 3-char anchor and retry.",
   },
@@ -672,12 +678,14 @@ export const ERROR_REGISTRY: { [K in DomainErrorCode]: CodeSpec<ErrorPayloadMap[
   E_ENCODING_UNWRITABLE: {
     audience: "MODEL",
     format: ({ path, encoding }) =>
-      `Cannot write ${path}: it was read as ${encoding}, and this filesystem exposes only a text write that always encodes UTF-8. Writing now would transcode the file silently, and its anchors would no longer describe the bytes on disk. Nothing was written. To migrate this file explicitly, send allow_encoding_migration: "utf8" (no BOM) or "utf8bom" (one leading UTF-8 BOM, which BOM-aware readers decode as UTF-8) on the edit; for a standing choice, set the allowEncodingMigration config setting to "utf8" or "utf8bom". Otherwise re-encode the file outside the plugin. Then retry.`,
+      `Cannot write ${path}: it was read as ${encoding}, and this filesystem exposes only a text write that always encodes UTF-8. Writing now would transcode the file silently, and its anchors would no longer describe the bytes on disk. Nothing was written. To migrate this file explicitly, send allow_encoding_migration: "utf8" (no BOM) or "utf8bom" (one leading UTF-8 BOM, which BOM-aware readers decode as UTF-8) on the edit; for a standing choice, set allowEncodingMigration: "utf8" or "utf8bom" in $DSH_HOME/plugins/dsh-better-edit/config.yaml. Otherwise re-encode the file outside the plugin. Then retry.`,
     // WHY remedy: the recorded encoding proves the text seam cannot reproduce it; the
     // consent surface (per-call payload value or the standing config setting) is the
-    // plugin's own vocabulary, and re-encoding outside the plugin is the only other route.
+    // plugin's own vocabulary, its location is named so the caller does not guess
+    // $DSH_HOME/plugins/dsh-better-edit/config.yaml, and re-encoding outside the plugin
+    // is the only other route.
     remedy:
-      'Send allow_encoding_migration: "utf8" or "utf8bom" on the edit (or set the standing allowEncodingMigration setting to the same value), or re-encode the file outside the plugin, then retry.',
+      'Send allow_encoding_migration: "utf8" or "utf8bom" on the edit (or set the standing allowEncodingMigration setting to the same value in $DSH_HOME/plugins/dsh-better-edit/config.yaml), or re-encode the file outside the plugin, then retry.',
   },
   E_ACCESS: {
     audience: "MODEL",

@@ -194,7 +194,7 @@ describe("undo leases — read, edit, undo through the real tools", () => {
         staleMessage = error instanceof Error ? error.message : String(error);
       }
       expect(threw).toBe(true);
-      expect(staleCode).toBe("E_BATCH_ABORT");
+      expect(staleCode).toBe("E_STALE_ANCHOR");
       expect(staleMessage).toContain("[E_STALE_ANCHOR]");
       expect(await fileText()).toBe(beforeStale);
     });

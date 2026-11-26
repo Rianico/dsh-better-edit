@@ -50,13 +50,13 @@ function diagRef(ref: string): { rawAnchor: string; reason: string } {
   const trimmed = ref.trim();
 
   if (!trimmed.length) {
-    return { rawAnchor: trimmed, reason: 'Expected a 3-char alphanumeric anchor (e.g. "aB3").' };
+    return { rawAnchor: trimmed, reason: 'Expected a 3-char alphanumeric anchor (e.g. "aB3")' };
   }
 
   if (/^\d+/.test(trimmed)) {
     return {
       rawAnchor: trimmed,
-      reason: 'Use the hash alone (e.g. "aB3") — no line numbers or trailing content.',
+      reason: 'Use the hash alone (e.g. "aB3") — no line numbers or trailing content',
     };
   }
 
@@ -64,13 +64,13 @@ function diagRef(ref: string): { rawAnchor: string; reason: string } {
     return {
       rawAnchor: trimmed,
       reason:
-        'anchor_from and anchor_to must contain the 3-char hash only — remove everything from "│" onward.',
+        'anchor_from and anchor_to must contain the 3-char hash only — remove everything from "│" onward',
     };
   }
 
   return {
     rawAnchor: trimmed,
-    reason: 'Expected a 3-char alphanumeric anchor (e.g. "aB3").',
+    reason: 'Expected a 3-char alphanumeric anchor (e.g. "aB3")',
   };
 }
 
@@ -269,18 +269,18 @@ export function resEdit(edit: HTEdit, _warnings?: string[]): HEdit {
       throw new DomainError("E_MALFORMED_ANCHOR", {
         // Redacted, upstream shape: never echo the pasted block back into the transcript.
         rawAnchor: `${lines}-line block`,
-        reason: `anchor_from/anchor_to must be a single bare 3-char hash — the anchor read() served beside the one line you mean. You passed a ${lines}-line block; pass that bare hash, or re-read the file.`,
+        reason: `anchor_from/anchor_to must be a single bare 3-char hash — the anchor read() served beside the one line you mean. You passed a ${lines}-line block; pass that bare hash, or re-read the file`,
       });
     }
     const match = trimmed.match(ANCHOR_ROW_RE);
     if (match) {
       let reason: string;
       if (match[1] === "+") {
-        reason = `stripped diff-preview marker from anchor_from/anchor_to — pass the bare anchor.`;
+        reason = `stripped diff-preview marker from anchor_from/anchor_to — pass the bare anchor`;
       } else if (match[1] === "-") {
-        reason = `stripped leading "-" marker from anchor_from/anchor_to — pass the bare anchor.`;
+        reason = `stripped leading "-" marker from anchor_from/anchor_to — pass the bare anchor`;
       } else {
-        reason = `stripped "HASH│" prefix from anchor_from/anchor_to — pass the bare anchor.`;
+        reason = `stripped "HASH│" prefix from anchor_from/anchor_to — pass the bare anchor`;
       }
       // Channel rule: the model must retry with the bare anchor → MODEL audience via the registry.
       throw new DomainError("E_MALFORMED_ANCHOR", { rawAnchor: trimmed, reason });
@@ -322,11 +322,11 @@ function stripBarePrefixes(edit: HEdit, fileHashes: string[], _warnings: string[
   if (matchedCount === stripped.length) {
     throw new BadAnchorError(
       locations,
-      `stripped "HASH│" prefix from ${locations} (${evidence}) — use bare content without HASH│ next time.`,
+      `stripped "HASH│" prefix from ${locations} (${evidence}) — use bare content without HASH│ next time`,
       { ...edit, content_lines: contentLines },
     );
   }
-  throw new BadAnchorError(locations, `stripped "HASH│" prefix from ${locations} (${evidence}).`, {
+  throw new BadAnchorError(locations, `stripped "HASH│" prefix from ${locations} (${evidence})`, {
     ...edit,
     content_lines: contentLines,
   });
@@ -350,7 +350,7 @@ function stripDiffPrefixes(edit: HEdit, _warnings: string[]): HEdit {
   });
   if (stripped.length === 0) return edit;
   const locations = stripped.map((i) => `replace_with line ${i + 1}`).join(", ");
-  throw new BadAnchorError(locations, `stripped diff-preview marker from ${locations}.`, {
+  throw new BadAnchorError(locations, `stripped diff-preview marker from ${locations}`, {
     ...edit,
     content_lines: contentLines,
   });

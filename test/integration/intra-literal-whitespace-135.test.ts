@@ -15,9 +15,8 @@
  * them. Case (d) pins the deliberate narrowing on a parenthesis-spacing rewrite, which v2 also
  * folded away.
  *
- * The tool surfaces the rejection inside the batch envelope: the outer code is `E_BATCH_ABORT` and
- * the inner cause this repo emits for a canon mismatch is `[E_STALE_ANCHOR]` (the lease retired, so
- * the anchor no longer pairs) — both pinned below.
+ * The tool surfaces the rejection as the one-item call's bare diagnosis: the outer code is
+ * `E_STALE_ANCHOR` (the lease retired, so the anchor no longer pairs) — pinned below.
  */
 import { describe, expect, it } from "vitest";
 import { readFile, writeFile } from "node:fs/promises";
@@ -82,7 +81,7 @@ describe("issue #135 — intra-literal whitespace is significant (canon v4)", ()
       const onDisk = await readFile(path, "utf-8");
 
       expect(error, "the intra-literal rewrite must reject, not overwrite").toBeDefined();
-      expect(code).toBe("E_BATCH_ABORT");
+      expect(code).toBe("E_STALE_ANCHOR");
       expect(message).toContain("[E_STALE_ANCHOR]");
       expect(onDisk).toBe(external);
     });
@@ -130,7 +129,7 @@ describe("issue #135 — intra-literal whitespace is significant (canon v4)", ()
 
       const { error, code, message } = await editOne(harness, anchor, "foo(c, d);");
       expect(error, "the interior rewrite must reject").toBeDefined();
-      expect(code).toBe("E_BATCH_ABORT");
+      expect(code).toBe("E_STALE_ANCHOR");
       expect(message).toContain("[E_STALE_ANCHOR]");
       expect(await readFile(path, "utf-8")).toBe(external);
     });

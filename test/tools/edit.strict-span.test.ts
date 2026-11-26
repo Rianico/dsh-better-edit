@@ -151,7 +151,7 @@ describe("strict span mode — tool acceptance (#144 T4)", () => {
         ),
       );
 
-      expect(error.code).toBe("E_BATCH_ABORT");
+      expect(error.code).toBe("E_UNSERVED_RANGE");
       expect(error.message).toContain("[E_UNSERVED_RANGE]");
       expect(error.message).toContain("Strict span mode refused the edit to hole.txt:");
       expect(error.message).toContain("1 of the 3 file lines it replaces was never served.");

@@ -8,8 +8,9 @@ import { getText, setupIntegrationTest, withTempFile } from "../support/fixtures
  * Range-family retry truth (T4 CP1-r2, C1–C4).
  *
  * Each cell drives the REAL `read`/`edit` tools (setupIntegrationTest) over the CP0
- * geometry it names, and asserts on the `E_BATCH_ABORT` envelope — `batchAbortFormat`
- * embeds the inner message verbatim, so the envelope is the tool output the model sees.
+ * geometry it names, and asserts on the tool output the model sees: a one-item call renders the
+ * item's bare diagnosis, and a multi-item call renders the `E_BATCH_ABORT` envelope whose
+ * `batchAbortFormat` embeds each inner message verbatim.
  * The invariant under test: no message may promise a retry the served state cannot honour.
  *
  * - C1 = CP0 G3 (`evidence/CP1-sweep-G1-G10-HEAD.txt`): interior insert, span-length arm.
@@ -95,7 +96,9 @@ describe("range-family retry truth (T4)", () => {
       });
       expect({
         applied: first.applied,
-        envelope: first.message.startsWith("[TO MODEL] [E_BATCH_ABORT]"),
+        bareDiagnosis: first.message.startsWith("[TO MODEL] [E_STALE_RANGE] "),
+        noVerdict: !first.message.includes("Batch rejected:"),
+        noBullet: !first.message.includes("- edits["),
         code: first.message.includes("[E_STALE_RANGE]"),
         arm: first.message.includes(
           "served span (4 lines) no longer matches current range (5 lines)",
@@ -105,7 +108,9 @@ describe("range-family retry truth (T4)", () => {
         deadNoRead: first.message.includes("no read needed"),
       }).toEqual({
         applied: false,
-        envelope: true,
+        bareDiagnosis: true,
+        noVerdict: true,
+        noBullet: true,
         code: true,
         arm: true,
         instruction: true,
@@ -201,10 +206,11 @@ describe("range-family retry truth (T4)", () => {
       });
       expect({
         applied: first.applied,
-        envelope: first.message.startsWith("[TO MODEL] [E_BATCH_ABORT]"),
+        bareDiagnosis: first.message.startsWith("[TO MODEL] [E_STALE_ANCHOR]"),
+        noVerdict: !first.message.includes("Batch rejected:"),
+        noBullet: !first.message.includes("- edits["),
         code: first.message.includes("[E_STALE_ANCHOR]"),
         headlineInstruction: first.message.includes("Re-read for fresh anchors."),
-        envelopeBullet: first.message.includes("- edits[0] (t4-g7.txt) [E_STALE_ANCHOR]:"),
         noReadFallback: !first.message.includes("Call read() to get fresh anchors."),
         deadHint: first.message.includes("Retry with these anchors"),
         // The declaration the message never renders — asserted here because M4 flips it.
@@ -212,10 +218,11 @@ describe("range-family retry truth (T4)", () => {
         remedyPromisesNoRead: /no read is needed/i.test(ERROR_REGISTRY.E_STALE_ANCHOR.remedy ?? ""),
       }).toEqual({
         applied: false,
-        envelope: true,
+        bareDiagnosis: true,
+        noVerdict: true,
+        noBullet: true,
         code: true,
         headlineInstruction: true,
-        envelopeBullet: true,
         noReadFallback: true,
         deadHint: false,
         remedyIsReadRequired: true,
@@ -292,10 +299,10 @@ describe("range-family retry truth (T4)", () => {
     });
   });
 
-  // C11a/C11b (T4 CP1-r4 F12, reshaped by the structural envelope): the model-facing
-  // message is one verdict line plus one bullet per failure. Rows are echoed exactly once,
-  // inside the inner error, and the envelope renders no preview or fallback of its own.
-  it("the rendered envelope is one verdict line plus one bullet, rows echoed once (C11a)", async () => {
+  // C11a/C11b (T4 CP1-r4 F12, reshaped by the one-item bare-diagnosis grammar): the model-facing
+  // message is the item's own diagnosis, so a one-item call renders no verdict line and no bullet.
+  // Rows are echoed exactly once, inside the inner error, and no fallback is rendered.
+  it("a one-item call renders the bare diagnosis, rows echoed once (C11a)", async () => {
     await withTempFile("t4-c11a.txt", "alpha\nbeta\ngamma\n", async ({ cwd, path }) => {
       const harness = setupIntegrationTest(cwd);
       // FU-3 made the old H1 interior-hole geometry an ACCEPT, so this render contract is
@@ -311,11 +318,10 @@ describe("range-family retry truth (T4)", () => {
         edits: [[served[0], served[2], "R"]],
       });
       expect(attempt.applied).toBe(false);
-      expect(attempt.message).toMatch(
-        /^\[TO MODEL\] \[E_BATCH_ABORT\] Batch rejected: 1 of 1 edit failed; nothing was written\.$/m,
-      );
-      expect(attempt.message).toContain("- edits[0] (t4-c11a.txt) [E_STALE_RANGE]:");
-      // The envelope renders no second block; the inner rows are the only echo, indented.
+      expect(attempt.message).toMatch(/^\[TO MODEL\] \[E_STALE_RANGE\] /m);
+      expect(attempt.message).not.toContain("Batch rejected:");
+      expect(attempt.message).not.toContain("- edits[");
+      // No second block: the inner rows are the only echo.
       expect(attempt.message).not.toContain("Current on-disk range");
       expect(attempt.message.match(/^\s*Current range:$/gm)).toHaveLength(1);
       const rowLines = attempt.message
@@ -331,11 +337,11 @@ describe("range-family retry truth (T4)", () => {
     });
   });
 
-  it("a contextless refusal renders the bullet only, with no fallback line (C11b)", async () => {
+  it("a contextless refusal renders the bare diagnosis, with no fallback line (C11b)", async () => {
     await withTempFile("t4-c11b.txt", "alpha\nbeta\ngamma\ndelta\n", async ({ cwd, path }) => {
       const harness = setupIntegrationTest(cwd);
       // The G7 geometry: whole-file rewrite → contextless E_STALE_ANCHOR → a rowless
-      // inner message; the envelope adds no fallback.
+      // inner message; the bare diagnosis adds no fallback.
       const served = rowAnchors(
         getText(await harness.readTool.execute("read", { path: "t4-c11b.txt" })),
       );
@@ -346,7 +352,7 @@ describe("range-family retry truth (T4)", () => {
       });
       expect(attempt.applied).toBe(false);
       expect(attempt.message).toContain("[E_STALE_ANCHOR]");
-      expect(attempt.message).toContain("- edits[0] (t4-c11b.txt) [E_STALE_ANCHOR]:");
+      expect(attempt.message).not.toContain("- edits[");
       expect(attempt.message).not.toContain("Call read() to get fresh anchors.");
       expect(attempt.message).not.toContain("Current on-disk range");
       expect(attempt.message).not.toContain("│");

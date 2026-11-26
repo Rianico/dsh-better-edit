@@ -6,7 +6,7 @@ import { localIO, mapFsError } from "../../src/fs-bridge.js";
 import { initHasher } from "../../src/hashline/hash-assign.js";
 import { lineHashesPure } from "../../src/hashline/index.js";
 import { loadServed } from "../../src/session-view.js";
-import { withWorkspace } from "../../src/workspace-context.js";
+import { sessionKeyFor, withWorkspace } from "../../src/workspace-context.js";
 import { loadHashStore, type InternalHashStore } from "../../src/hash-store.js";
 import { buildReadTool } from "../../src/tool-read.js";
 import { rejectUnknownFields } from "../../src/utils.js";
@@ -713,6 +713,59 @@ describe("rejection payload region rule (ADR-0022)", () => {
       expect(pinAfter).toEqual(pinBefore);
       expect(store.lineageFor(path, pinAfter!.snapshotHash!).length).toBeGreaterThan(0);
       expect(await readFile(path, "utf-8")).toBe("alpha\nBETA\ngamma\n");
+    });
+  });
+
+  // #218: the no-op-loop arm of the (b) contract — a row-carrying noop refusal must echo the whole
+  // span it shows AND lease it, including the interior rows the bounds-only read never served.
+  it("the noop-loop refusal carries its whole span's rows and leases the interior it shows (#218)", async () => {
+    await withTempFile("noop.txt", "one\ntwo\nthree\nfour\n", async ({ cwd, path }) => {
+      const harness = setupIntegrationTest(cwd);
+      const fullKey = sessionKeyFor(harness.sessionKey);
+      // Bounds-only geometry: lines 1 and 4 are served; positions 1-2 (lines 2-3) are not.
+      const first = servedHashes(
+        getText(await harness.readTool.execute("read", { path: "noop.txt", offset: 1, limit: 1 })),
+      );
+      const last = servedHashes(
+        getText(await harness.readTool.execute("read", { path: "noop.txt", offset: 4, limit: 1 })),
+      );
+      expect(first).toHaveLength(1);
+      expect(last).toHaveLength(1);
+      const before = await withWorkspace(cwd, () => loadServed(fullKey, path));
+      expect([before[0], before[3]]).toEqual([first[0], last[0]]);
+      expect(before.slice(1, 3)).toEqual([null, null]);
+
+      const call = (): Promise<{ content: Array<{ text?: string }> }> =>
+        harness.editTool.execute("edit", {
+          file: "noop.txt",
+          edits: [
+            { anchor_from: first[0]!, anchor_to: last[0]!, replace_with: "one\ntwo\nthree\nfour" },
+          ],
+        });
+      // Two warn-tier submissions, then the third reaches NOOP_LOOP_THRESHOLD (3) and rejects.
+      await call();
+      await call();
+      let caught: unknown;
+      try {
+        await call();
+      } catch (error) {
+        caught = error;
+      }
+
+      const disk = await readFile(path, "utf-8");
+      assertRegionPayload({
+        error: caught,
+        fileHashes: lineHashesPure(disk.trimEnd()),
+        fileLines: disk.split("\n").slice(0, -1),
+        liveStart: 1,
+        liveEnd: 4,
+        expectedCode: "E_NOOP_LOOP",
+        heading: "Current on-disk range",
+      });
+      // The row-carrying noop refusal leases what it shows: the interior rows are served now.
+      const after = await withWorkspace(cwd, () => loadServed(fullKey, path));
+      expect(after.slice(1, 3).every((slot) => slot !== null)).toBe(true);
+      expect(after).toEqual(lineHashesPure(disk.trimEnd()));
     });
   });
 });

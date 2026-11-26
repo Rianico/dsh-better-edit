@@ -9,7 +9,6 @@ import {
   assertUndoRequest,
   isNormalizedEdit,
   normalizedEdit,
-  EDIT_PAYLOAD_HINT,
 } from "../../src/contract.js";
 
 describe("coverage: contract.ts", () => {
@@ -134,15 +133,29 @@ describe("coverage: contract.ts", () => {
     expect(isNormalizedEdit({ [normalizedEdit]: false } as any)).toBe(false);
   });
 
-  it("prepareEditArguments throws with hint on bad shape", () => {
+  it("prepareEditArguments refuses with the fault and one shape line", () => {
+    const SHAPE =
+      "Edit payload: { file, edits: [{ anchor_from, anchor_to, replace_with }], mode?, dry_run?, allow_encoding_migration? }";
     expect(() => prepareEditArguments({ path: "a", edits: [["a", "b", "c"]] })).not.toThrow();
-    expect(() => prepareEditArguments(null)).toThrow(/E_BAD_PAYLOAD/);
-    expect(() => prepareEditArguments({ path: "", edits: [] } as any)).toThrow(/E_BAD_PAYLOAD/);
-    expect(() => prepareEditArguments("bare string" as any)).toThrow(/Received a bare string/);
-    expect(() => prepareEditArguments(undefined as any)).toThrow(/Received no arguments/);
-    expect(() => prepareEditArguments(null as any)).toThrow(/Received null/);
-    const longInput = { path: "a", edits: "bad" as any, extra: "x".repeat(200) };
-    expect(() => prepareEditArguments(longInput)).toThrow(/E_BAD_PAYLOAD/);
+    for (const bad of [
+      null,
+      undefined,
+      "bare string",
+      { path: "a", edits: "bad", extra: "x".repeat(200) },
+    ]) {
+      let message = "";
+      try {
+        prepareEditArguments(bad);
+        expect.unreachable();
+      } catch (error) {
+        message = String((error as Error).message);
+      }
+      expect(message).toContain("[E_BAD_PAYLOAD]");
+      expect(message).toContain("Edit arguments are malformed.");
+      expect(message.split(SHAPE).length - 1, message).toBe(1);
+      expect(message).not.toContain("Received");
+      expect(message.length, message).toBeLessThanOrEqual(180);
+    }
   });
 
   it("assertEditRequest validates all fields", () => {

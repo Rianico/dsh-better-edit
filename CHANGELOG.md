@@ -13,12 +13,27 @@ All notable changes to this project will be documented in this file.
 
 ### Bug Fixes
 
-* **edit:** give both unserved-interior messages one structural shape. One formatter now names the replaced file-line count, the unserved count, and the exact absolute file lines as compressed runs; the hint `[W_UNSERVED_INTERIOR]` no longer prints a min..max envelope that could name served lines, and a single line prints `Unserved file line: 3`. Strict `[E_UNSERVED_RANGE]` keeps the same facts, and its capped remainder now agrees in number (ADR-0053, closes #223).
-* **canon:** fence the canon evidence a snapshot stores behind its full `CANON_VERSION:ANCHOR_GENERATION` epoch, so a prior-canon `line_lineage`/`served_leases` row no longer carries a `line_id`, resolves a lease, or pairs into the next snapshot — the four reuse seams (S_latest pairing, read-path alignment, the identity-position fallback, and the edit's lease source) plus the undo pin. One module (`src/snapshot-store/epoch.ts`) now owns the key shape and both predicates, replacing three literal copies; raw-byte anchors are untouched by a canon-only change, so `undo_last_edit` keeps a canon-only pin and its restore re-derives the snapshot key on the current epoch, serving the next edit without an intermediate read. The snapshot cache key and the open-time sweep keep their current miss semantics — retention is not validity — with no migration and no schema change (ADR-0054, closes #221).
+* **edit:** give both unserved-interior messages one structural shape. One zero-import formatter owns the summary, run compression, plural agreement and remedy for the strict refusal and the hint; the hint names the replaced file-line count and the exact unserved file lines instead of a `min..max` envelope that could name served lines. Strict facts are unchanged, and a single line prints `Unserved file line: N` (ADR-0053, closes #223).
+* **canon:** fence stored canon evidence by the full `CANON_VERSION:ANCHOR_GENERATION` snapshot epoch. The latest-snapshot lookup, the edit's lease source and the undo pin refuse a prior-epoch `line_lineage`/`served_leases` row; raw anchors stay generation-only. `src/snapshot-store/epoch.ts` owns the key shape and both predicates, and a canon-only undo pin is kept and re-derived on the current epoch. No migration or schema change (ADR-0054, closes #221).
+* **edit:** one batch-rejection assembler owns build → record → throw, so a refusal that shows rows always leases them; a multi-item call renders one `Batch rejected: K of N edits failed; nothing was written.` verdict and one `- edits[i] (path) [E_CODE]:` bullet per failure, and a one-item call throws that item's bare diagnosis instead (ADR-0046 amended). (#225)
+
+* **errors:** name where the standing encoding-migration consent lives — `$DSH_HOME/plugins/dsh-better-edit/config.yaml` — in the `[E_ENCODING_UNWRITABLE]` message and remedy, so the model is not left to guess the config location; the per-call `allow_encoding_migration` route is unchanged (#220)
+
+* **edit:** a no-op-loop refusal joins the batch grammar and records the rows it shows, so a retry with a shown anchor resolves without a re-read; the changed-buffer variant stays rowless and names the read (ADR-0046 amended). (#225)
+
+* **edit:** admission refusals state the fault plus one `Edit payload: { … }` shape line instead of a 972-character canonical-payload paragraph and a `Received:` echo of the model's own input — a malformed payload drops from 1201 to 171 characters, and anchor reasons lose their terminal period so the registry supplies exactly one. (#225)
+
+### Tests
+
+* **arch:** pin the rejection surface — ten full-message goldens through the real `edit` tool, the structural assembler/recorder ratchet, a producer ratchet for rejection and applied-tier warning headers, a region-oracle cell for the no-op-loop arm, and the admission budget at the tool boundary; each guard is demonstrated red by an injection that is then reverted. (#225)
+
+### Documentation
+
+* **docs:** record the batch-rejection grammar in `GLOSSARY.md`, amend ADR-0046 (arity-one rule, the assembler seam, the no-op-loop lease, the `edits[i]` deviation from upstream, the served-prompt clause), align the README error tables, and add the served-prompt clause the model reads (spec #214). (#225)
 
 ### Code Refactoring
 
-* **store:** consolidate the live v7 state onto `served_session_meta` and retire the v6 shells from every v7 read/write path — store version 9 adds one forward copy inside the existing `BEGIN IMMEDIATE` (`served` → `served_session_meta`, `ON CONFLICT DO NOTHING`, after the shell column backfills and before the anchor-stamp sweep), while `served`, `snapshots` and `undo` stay at their exact v6 shapes for a v6 process and are no longer read, written, swept or pruned by v7. The legacy `snapshots` adapter, the pre-SQLite `hash-store.json` importer and the dead path-by-hash API are removed, `getSnapshot` is lineage-only, `upsertSnapshot` requires `content`, and `file_undo` is the sole undo row (one upsert, one delete, one age prune) with the pin gate unchanged. The store layer drops 43 → 33 prepared statements (ADR-0055, closes #222).
+* **store:** consolidate live v7 state onto `served_session_meta` and retire the v6 shells from every v7 path. Store version 9 copies `served` -> `served_session_meta` once inside the existing transaction (`ON CONFLICT DO NOTHING`); `served`, `snapshots` and `undo` keep their exact v6 shapes and are no longer read, written, swept or pruned by v7. The legacy snapshot adapter and JSON importer are removed, `file_undo` is the sole undo row, and prepared statements drop 43 -> 33 (ADR-0055, closes #222).
 
 ## [1.3.0] - 2026-11-25
 
