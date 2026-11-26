@@ -18,6 +18,7 @@
 import type { Context } from "@deepseek-ai/cordis";
 import type { Agent } from "@deepseek-ai/dsh-agent";
 import type { FileSystem } from "@deepseek-ai/dsh-fs";
+import { wrapToolWithAgentStore } from "./agent-store.js";
 import { ctxFsIO } from "./fs-bridge.js";
 import { FsSandboxController } from "./sandbox.js";
 import { buildReadTool } from "./tool-read.js";
@@ -43,6 +44,7 @@ import {
 } from "./guidance.js";
 import { configDir } from "./store/index.js";
 import { ensureDefaultConfig } from "./store-config.js";
+import { detachAgent } from "./store-lifecycle-slot.js";
 import { onAppStart, onSessionStart } from "./store/index.js";
 
 /** Cordis plugin name used by loader diagnostics. */
@@ -165,7 +167,9 @@ function installAgentTools(rootCtx: Context, agent: Agent): void {
     // take the name. The owned definition stays in this closure: self-heal
     // verifies identity against it and must never read `layer.get("read")`,
     // which would ratify an intruder.
-    const hashReadDef = buildReadTool(io);
+    const hashReadDef = wrapToolWithAgentStore(buildReadTool(io), (message) =>
+      rootCtx.logger.warn(message),
+    );
     try {
       registerDisposer(
         registerWithReclaim({
@@ -205,7 +209,9 @@ function installAgentTools(rootCtx: Context, agent: Agent): void {
       let hashEditDef: unknown;
       if (toolset.edit) {
         try {
-          hashEditDef = buildEditTool(io, sandbox);
+          hashEditDef = wrapToolWithAgentStore(buildEditTool(io, sandbox), (message) =>
+            rootCtx.logger.warn(message),
+          );
           registerDisposer(
             registerWithReclaim({
               toolsSvc,
@@ -230,6 +236,9 @@ function installAgentTools(rootCtx: Context, agent: Agent): void {
       let hashStrReplaceDef: unknown;
       if (toolset.strReplaceEditor) {
         try {
+          // Undecorated: this body never resolves or opens the hash store (ADR-0015
+          // contract only), so a per-call store attach would buy it nothing and would
+          // mkdir + `.wsPath` on every governed mutation.
           hashStrReplaceDef = buildStrReplaceEditorTool(io, sandbox);
           registerDisposer(
             registerWithReclaim({
@@ -253,7 +262,9 @@ function installAgentTools(rootCtx: Context, agent: Agent): void {
       // through the same guarded reclaim (issue #123).
       if (toolset.undo) {
         try {
-          const hashUndoDef = buildUndoTool(io, sandbox);
+          const hashUndoDef = wrapToolWithAgentStore(buildUndoTool(io, sandbox), (message) =>
+            rootCtx.logger.warn(message),
+          );
           registerDisposer(
             registerWithReclaim({
               toolsSvc,
@@ -339,6 +350,15 @@ function installAgentTools(rootCtx: Context, agent: Agent): void {
         }
       }
       disposers.length = 0;
+
+      // Release this agent's store claims last: the idle 1 -> 0 close runs synchronously inside
+      // detachAgent before this disposer returns; an in-flight scope defers it to scope end. Tool
+      // bodies and the write hooks both attach under this same id, so one detach covers them.
+      detachAgent(agent.id).catch((error) =>
+        rootCtx.logger.warn(
+          `dsh-better-edit: store detach failed for agent ${agent.id}: ${error instanceof Error ? error.message : String(error)}`,
+        ),
+      );
     };
   });
 }

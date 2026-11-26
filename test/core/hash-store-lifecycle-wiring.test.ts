@@ -271,6 +271,25 @@ describe("hash-store — lifecycle slot wiring", () => {
     expect(handleIsOpen(store)).toBe(false);
   });
 
+  it("a close that throws after closing drops the dead entry", async () => {
+    const store = await loadHashStore(workspace);
+    const storePath = hashStorePath(workspace);
+    attach(storePath, "agent-1");
+    const realClose = DatabaseSync.prototype.close;
+    vi.spyOn(DatabaseSync.prototype, "close").mockImplementationOnce(function (this: DatabaseSync) {
+      realClose.call(this); // really close...
+      throw new Error("close exploded after closing"); // ...then throw
+    });
+
+    await expect(detachAgent("agent-1")).rejects.toThrow("close exploded after closing");
+    expect(handleIsOpen(store)).toBe(false);
+    vi.restoreAllMocks();
+
+    // The dead entry is gone: a release cannot re-close it and a later shutdown is silent.
+    expect(await releaseStore(storePath)).toBe(false);
+    expect(() => shutdownHashStore()).not.toThrow();
+  });
+
   it("shutdownHashStore visits every path and clears openings despite a throw", async () => {
     const workspaceB = join(home, "workspace-b");
     const workspaceC = join(home, "workspace-c");

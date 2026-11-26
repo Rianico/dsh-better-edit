@@ -1363,11 +1363,27 @@ function shutdownDb(db: DatabaseSync): void {
  * `stores` — and outside the janitor's live set. No extra flag is needed: the slot prunes its
  * idle slot after the throwing call, and `releaseStore(path)` recreates a slot and sees
  * `isOpen === true` for the retained entry.
+ *
+ * THE ONE EXCEPTION is a throw raised AFTER the handle actually closed: the entry then describes
+ * nothing, so it is dropped (instead of retained as a retry target) and the error still
+ * propagates. Without that split the dead entry would answer `isOpen === false`, no later close
+ * would ever run, and every `shutdownHashStore()` would keep throwing `database is not open`.
+ * That arm is DEFENSIVE HARDENING, not a reachable `node:sqlite` mode — a real `db.close()` does
+ * not throw after closing — so only a manufactured throw (`test/core/hash-store-lifecycle-wiring
+ * .test.ts` spies `DatabaseSync.prototype.close` to close and then throw) ever reaches it.
  */
 function closeStoreAtPath(storePath: string): void {
   const entry = stores.get(storePath);
   if (entry === undefined) return;
-  shutdownDb(entry.db);
+  // Delete only after a successful close. A throwing `db.close()` leaves the entry (and
+  // `isOpen`) in place so the next release retries; if the throw happened AFTER the handle
+  // actually closed, drop the dead entry so no future shutdown re-visits it.
+  try {
+    shutdownDb(entry.db);
+  } catch (error) {
+    if (!entry.db.isOpen) stores.delete(storePath);
+    throw error;
+  }
   stores.delete(storePath);
 }
 
