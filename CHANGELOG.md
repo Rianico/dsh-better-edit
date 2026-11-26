@@ -13,7 +13,7 @@ All notable changes to this project will be documented in this file.
 
 ### Bug Fixes
 
-* **read:** keep the intrinsic 200 KiB line cap apart from the multi-window response budget. A later window whose first row fits a lone read but misses what is left of the budget is omitted with a `[Section does not fit in the remaining … read budget; not shown. Re-read it on its own.]` notice and honest byte truncation, spending only the notice so smaller windows still render; an intrinsically oversized row cites `200.0KB` instead of the shrunken budget, and the warning names only rows the shown prefix reached (closes #229).
+* **read:** keep the intrinsic 200 KiB line cap apart from the multi-window response budget. A later window whose first row fits a lone read but misses what is left of the budget is omitted with a `[Section does not fit in the remaining … read budget; not shown. Re-read it on its own.]` notice and honest byte truncation, spending only the notice so smaller windows still render; an intrinsically oversized row cites `200.0KB` instead of the shrunken budget, and the warning names only rows the shown prefix reached (closes #229). (#231)
 
 * **edit:** give both unserved-interior messages one structural shape. One zero-import formatter owns the summary, run compression, plural agreement and remedy for the strict refusal and the hint; the hint names the replaced file-line count and the exact unserved file lines instead of a `min..max` envelope that could name served lines. Strict facts are unchanged, and a single line prints `Unserved file line: N` (ADR-0053, closes #223). (#227)
 
