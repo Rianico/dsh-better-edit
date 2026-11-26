@@ -44,7 +44,7 @@ drain `src/` and `test/` in one change without turning a gate into a rewrite.
   executable script's first line is not a violation.
 - **The gate is armed as a ratchet, not a drain.** `.oxlintrc.json` enables
   `harness/no-comments` as `"error"` over root configs, `src/`, `test/` and `scripts/`, ignoring
-  `.lane/`, `lib/`, `dist/`, `coverage/` and `benchmark/`. The 3,690 pre-existing `src/`+`test/`
+  `.lane/`, `lib/`, `dist/`, `coverage/` and `benchmark/`. The pre-existing `src/`+`test/`
   violations are recorded in `test/arch/comment-gate-baseline.json`; root configs and `scripts/`
   hold zero. A new violation at any scope fails `pnpm run lint`.
 - **The ceiling is a literal in the arch suite.** `EXPECTED_MAX_LEGACY_COMMENTS` in
@@ -73,8 +73,8 @@ drain `src/` and `test/` in one change without turning a gate into a rewrite.
 
 ## What this deliberately does not do
 
-- It does not drain the legacy `src/` and `test/` corpus. That is later work, and the ceiling
-  literal falls as it lands.
+- It does not drain the legacy `test/` corpus. `src/` is drained (#233) and the ceiling literal
+  already fell from 3,690 to 2,465; the remaining work falls as it lands.
 - It does not adopt upstream's `pi-lens-ignore` prefix or its `docs/agents/verification-standards.md`
   provenance page; this ADR is the downstream provenance.
 - It does not move the upstream sync cursor. `51cb819` is a targeted port outside `0b1934c`.

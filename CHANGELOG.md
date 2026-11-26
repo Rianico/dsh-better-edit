@@ -43,6 +43,8 @@ All notable changes to this project will be documented in this file.
 
 * **lint:** arm `harness/no-comments` as a shrink-only CI ratchet. One shared predicate owns the settled comment grammar (anchored `SAFETY:`/`TODO(#N):`/`HACK:`/`Ref:`, strict Gherkin, module-scope `/** */` blocks at most 12 lines, `SAFETY:` within two non-blank lines of a cast, `#!` treated as an interpreter directive) and retires `WHY:`, `Invariant:`, `See ADR-` and `via https://` even inside a docblock; only `eslint-disable*`/`oxlint-disable*` may state a free-form reason after `--`. Root configs and `scripts/` drain to zero, the 3,690 legacy `src/`+`test/` violations ride a committed baseline, and a literal ceiling in the arch suite makes growth a visible edit (ADR-0056, closes #232). (#232)
 
+* **lint:** drain every grandfathered comment-gate violation under `src/` to zero. Redundant prose is deleted, over-cap docblocks shrink to the 12-line module cap, non-cast `SAFETY:` notes become `HACK:` reasons, the one real cast guard moves onto its cast, and 18 explanation-only `catch` blocks regain a legal `HACK:` reason. The baseline falls 3,690 -> 2,465 and the arch ceiling follows; behaviour, wire contracts and public types are unchanged (ADR-0056, closes #233). (#233)
+
 ## [1.3.0] - 2026-11-25
 
 ### Bug Fixes
