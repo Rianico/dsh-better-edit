@@ -13,44 +13,37 @@ All notable changes to this project will be documented in this file.
 
 ### Features
 
-* **comment-gate:** hold every comment in the repo to the settled grammar with one shared predicate and two parsers. `harness/no-comments` is armed as `"error"` over root configs, `src/`, `test/` and `scripts/`, the `@babel/parser` generator owns the suppression file, and the arch suite pins the rule to Babel with a literal ceiling. `src/` and `test/` drain to zero legacy violations, so the baseline is empty and the ceiling is `0`; `benchmark/**` is out of scope and `pi-lens-ignore` is not accepted (ADR-0056, closes #232, #233, #234, #235). (#232)
+* **comment-gate:** hold every comment in the repo to the settled grammar with one shared predicate and two parsers. `harness/no-comments` is armed as `"error"` over root configs, `src/`, `test/` and `scripts/`, the `@babel/parser` generator owns the suppression file, and the arch suite pins the rule to Babel with a literal ceiling. `src/` and `test/` drain to zero legacy violations, so the baseline is empty and the ceiling is `0`; `benchmark/**` is out of scope and `pi-lens-ignore` is not accepted (ADR-0056, closes #232, #233, #234, #235).
+
+## [1.3.1] - 2026-11-26
 
 ### Bug Fixes
 
-* **read:** separate intrinsic line cap from remaining window budget (#231)
-* **edit:** unify unserved-span messages and fence canon evidence (#227)
-* **edit:** one grammar for batch rejections and admission refusals (#214) (#225)
-* **errors:** name the config file in the encoding refusal (#220)
 * **read:** keep the intrinsic 200 KiB line cap apart from the multi-window response budget. A later window whose first row fits a lone read but misses what is left of the budget is omitted with a `[Section does not fit in the remaining … read budget; not shown. Re-read it on its own.]` notice and honest byte truncation, spending only the notice so smaller windows still render; an intrinsically oversized row cites `200.0KB` instead of the shrunken budget, and the warning names only rows the shown prefix reached (closes #229). (#231)
+
 * **edit:** give both unserved-interior messages one structural shape. One zero-import formatter owns the summary, run compression, plural agreement and remedy for the strict refusal and the hint; the hint names the replaced file-line count and the exact unserved file lines instead of a `min..max` envelope that could name served lines. Strict facts are unchanged, and a single line prints `Unserved file line: N` (ADR-0053, closes #223). (#227)
+
 * **canon:** fence stored canon evidence by the full `CANON_VERSION:ANCHOR_GENERATION` snapshot epoch. The latest-snapshot lookup, the edit's lease source and the undo pin refuse a prior-epoch `line_lineage`/`served_leases` row; raw anchors stay generation-only. `src/snapshot-store/epoch.ts` owns the key shape and both predicates, and a canon-only undo pin is kept and re-derived on the current epoch. No migration or schema change (ADR-0054, closes #221). (#227)
+
 * **edit:** one batch-rejection assembler owns build → record → throw, so a refusal that shows rows always leases them; a multi-item call renders one `Batch rejected: K of N edits failed; nothing was written.` verdict and one `- edits[i] (path) [E_CODE]:` bullet per failure, and a one-item call throws that item's bare diagnosis instead (ADR-0046 amended). (#225)
+
 * **errors:** name where the standing encoding-migration consent lives — `$DSH_HOME/plugins/dsh-better-edit/config.yaml` — in the `[E_ENCODING_UNWRITABLE]` message and remedy, so the model is not left to guess the config location; the per-call `allow_encoding_migration` route is unchanged (#220)
+
 * **edit:** a no-op-loop refusal joins the batch grammar and records the rows it shows, so a retry with a shown anchor resolves without a re-read; the changed-buffer variant stays rowless and names the read (ADR-0046 amended). (#225)
+
 * **edit:** admission refusals state the fault plus one `Edit payload: { … }` shape line instead of a 972-character canonical-payload paragraph and a `Received:` echo of the model's own input — a malformed payload drops from 1201 to 171 characters, and anchor reasons lose their terminal period so the registry supplies exactly one. (#225)
-
-### Documentation
-
-* **lint:** publish the comment grammar and governance record
-* **lint:** record the test/ comment drain
-* **lint:** record the src/ comment drain
-* **lint:** record the comment-gate ratchet
-* **readme:** align the advertised Node requirement with engines.node (#224)
-* **docs:** record the batch-rejection grammar in `GLOSSARY.md`, amend ADR-0046 (arity-one rule, the assembler seam, the no-op-loop lease, the `edits[i]` deviation from upstream, the served-prompt clause), align the README error tables, and add the served-prompt clause the model reads (spec #214). (#225)
-
-### Code Refactoring
-
-* **store:** consolidate live v7 state onto `served_session_meta` and retire the v6 shells from every v7 path. Store version 9 copies `served` → `served_session_meta` once inside the existing transaction (`ON CONFLICT DO NOTHING`); `served`, `snapshots` and `undo` keep their exact v6 shapes and are no longer read, written, swept or pruned by v7. The legacy snapshot adapter and JSON importer are removed, `file_undo` is the sole undo row, and prepared statements drop 43 → 33 (ADR-0055, closes #222). (#228)
 
 ### Tests
 
 * **arch:** pin the rejection surface — ten full-message goldens through the real `edit` tool, the structural assembler/recorder ratchet, a producer ratchet for rejection and applied-tier warning headers, a region-oracle cell for the no-op-loop arm, and the admission budget at the tool boundary; each guard is demonstrated red by an injection that is then reverted. (#225)
 
-### Build System
+### Documentation
 
-* **lint:** arm `harness/no-comments` as a shrink-only CI ratchet. One shared predicate owns the settled comment grammar (anchored `SAFETY:`/`TODO(#N):`/`HACK:`/`Ref:`, strict Gherkin, module-scope `/** */` blocks at most 12 lines, `SAFETY:` within two non-blank lines of a cast, `#!` treated as an interpreter directive) and retires `WHY:`, `Invariant:`, `See ADR-` and `via https://` even inside a docblock; only `eslint-disable*`/`oxlint-disable*` may state a free-form reason after `--`. Root configs and `scripts/` drain to zero, the 3,690 legacy `src/`+`test/` violations ride a committed baseline, and a literal ceiling in the arch suite makes growth a visible edit (ADR-0056, closes #232). (#232)
-* **lint:** drain every grandfathered comment-gate violation under `src/` to zero. Redundant prose is deleted, over-cap docblocks shrink to the 12-line module cap, non-cast `SAFETY:` notes become `HACK:` reasons, the one real cast guard moves onto its cast, and 18 explanation-only `catch` blocks regain a legal `HACK:` reason. The baseline falls 3,690 -> 2,465 and the arch ceiling follows; behaviour, wire contracts and public types are unchanged (ADR-0056, closes #233). (#233)
-* **lint:** drain every grandfathered comment-gate violation under `test/` to zero. Redundant prose is deleted, over-cap docblocks shrink to the 12-line module cap, guard inventories move to `docs/agents/arch-guard-inventory.md`, unused imports and bindings are cleaned so the touched files pass the lens no-unused-vars gate, and the two test SQL fixtures stop interpolating table names. The baseline is empty and the arch ceiling is 0: the gate now refuses every new violation at every scope (ADR-0056, closes #234). (#234)
+* **docs:** record the batch-rejection grammar in `GLOSSARY.md`, amend ADR-0046 (arity-one rule, the assembler seam, the no-op-loop lease, the `edits[i]` deviation from upstream, the served-prompt clause), align the README error tables, and add the served-prompt clause the model reads (spec #214). (#225)
+
+### Code Refactoring
+
+* **store:** consolidate live v7 state onto `served_session_meta` and retire the v6 shells from every v7 path. Store version 9 copies `served` → `served_session_meta` once inside the existing transaction (`ON CONFLICT DO NOTHING`); `served`, `snapshots` and `undo` keep their exact v6 shapes and are no longer read, written, swept or pruned by v7. The legacy snapshot adapter and JSON importer are removed, `file_undo` is the sole undo row, and prepared statements drop 43 → 33 (ADR-0055, closes #222). (#228)
 
 ## [1.3.0] - 2026-11-25
 
