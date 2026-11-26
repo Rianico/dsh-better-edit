@@ -241,6 +241,20 @@ _Avoid_: cwd (ambiguous: header vs live), project root
 The directory the session was CREATED in, kept immutable in the session header (`exec.agent.session.header.cwd`). Not the operation target once a session has moved — read the working directory instead.
 _Avoid_: workspace (the workspace follows the live directory, not the header)
 
+### Store
+
+**store attachment**:
+The claim one agent id (the toolkit's `exec.agent.id`) places on one workspace's store path when a tool execution resolves that path. Lazy and idempotent — every call re-claims the same path without counting, and an attachment never opens the database. The agent that holds it decides when the handle may close.
+_Avoid_: store lock, store session
+
+**store detachment**:
+Releasing every attachment one agent id holds at its Cordis tear-down. The last release makes a close due: synchronous when no tool call is in flight, otherwise after the last in-flight scope drains. It breaks the claim only — no snapshot, served row, lease or undo record is deleted, so a resumed session still reverts.
+_Avoid_: store shutdown (the process close-all), store eviction
+
+**store release**:
+The host-level close over one store path or all of them (`releaseHashStore(cwd?, { force? })`), graceful or forced. It reports whether every targeted path settled its drain and closed — a refusal while an agent still holds the path reads `false`. See [ADR-0056](docs/adr/0056-session-scoped-per-workspace-store-lifecycle.md).
+_Avoid_: detach (that is the agent claim)
+
 ### Guidance
 
 **Prompt section**:
