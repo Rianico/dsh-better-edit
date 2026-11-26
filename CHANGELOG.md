@@ -11,33 +11,43 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Features
+
+* **lifecycle:** public releaseHashStore + root dispose (T4)
+* **lifecycle:** attach agents on tool calls, detach on dispose (T3)
+* **lifecycle:** wire per-store slots into the store map (T2)
+* **lifecycle:** per-storePath slot registry (T1)
+
 ### Bug Fixes
 
+* **lifecycle:** gate release epochs per path and contain dispose rejection (T4R)
+* **lifecycle:** keep close retryable and shut down every path (T2R)
+* **lifecycle:** prune-on-reject hardening (T1R)
+* **read:** separate intrinsic line cap from remaining window budget (#231)
+* **edit:** unify unserved-span messages and fence canon evidence (#227)
+* **edit:** one grammar for batch rejections and admission refusals (#214) (#225)
+* **errors:** name the config file in the encoding refusal (#220)
 * **read:** keep the intrinsic 200 KiB line cap apart from the multi-window response budget. A later window whose first row fits a lone read but misses what is left of the budget is omitted with a `[Section does not fit in the remaining … read budget; not shown. Re-read it on its own.]` notice and honest byte truncation, spending only the notice so smaller windows still render; an intrinsically oversized row cites `200.0KB` instead of the shrunken budget, and the warning names only rows the shown prefix reached (closes #229). (#231)
-
 * **edit:** give both unserved-interior messages one structural shape. One zero-import formatter owns the summary, run compression, plural agreement and remedy for the strict refusal and the hint; the hint names the replaced file-line count and the exact unserved file lines instead of a `min..max` envelope that could name served lines. Strict facts are unchanged, and a single line prints `Unserved file line: N` (ADR-0053, closes #223). (#227)
-
 * **canon:** fence stored canon evidence by the full `CANON_VERSION:ANCHOR_GENERATION` snapshot epoch. The latest-snapshot lookup, the edit's lease source and the undo pin refuse a prior-epoch `line_lineage`/`served_leases` row; raw anchors stay generation-only. `src/snapshot-store/epoch.ts` owns the key shape and both predicates, and a canon-only undo pin is kept and re-derived on the current epoch. No migration or schema change (ADR-0054, closes #221). (#227)
-
 * **edit:** one batch-rejection assembler owns build → record → throw, so a refusal that shows rows always leases them; a multi-item call renders one `Batch rejected: K of N edits failed; nothing was written.` verdict and one `- edits[i] (path) [E_CODE]:` bullet per failure, and a one-item call throws that item's bare diagnosis instead (ADR-0046 amended). (#225)
-
 * **errors:** name where the standing encoding-migration consent lives — `$DSH_HOME/plugins/dsh-better-edit/config.yaml` — in the `[E_ENCODING_UNWRITABLE]` message and remedy, so the model is not left to guess the config location; the per-call `allow_encoding_migration` route is unchanged (#220)
-
 * **edit:** a no-op-loop refusal joins the batch grammar and records the rows it shows, so a retry with a shown anchor resolves without a re-read; the changed-buffer variant stays rowless and names the read (ADR-0046 amended). (#225)
-
 * **edit:** admission refusals state the fault plus one `Edit payload: { … }` shape line instead of a 972-character canonical-payload paragraph and a `Received:` echo of the model's own input — a malformed payload drops from 1201 to 171 characters, and anchor reasons lose their terminal period so the registry supplies exactly one. (#225)
-
-### Tests
-
-* **arch:** pin the rejection surface — ten full-message goldens through the real `edit` tool, the structural assembler/recorder ratchet, a producer ratchet for rejection and applied-tier warning headers, a region-oracle cell for the no-op-loop arm, and the admission budget at the tool boundary; each guard is demonstrated red by an injection that is then reverted. (#225)
 
 ### Documentation
 
+* **lifecycle:** record the store lifecycle port (T5)
+* **readme:** align the advertised Node requirement with engines.node (#224)
 * **docs:** record the batch-rejection grammar in `GLOSSARY.md`, amend ADR-0046 (arity-one rule, the assembler seam, the no-op-loop lease, the `edits[i]` deviation from upstream, the served-prompt clause), align the README error tables, and add the served-prompt clause the model reads (spec #214). (#225)
 
 ### Code Refactoring
 
 * **store:** consolidate live v7 state onto `served_session_meta` and retire the v6 shells from every v7 path. Store version 9 copies `served` → `served_session_meta` once inside the existing transaction (`ON CONFLICT DO NOTHING`); `served`, `snapshots` and `undo` keep their exact v6 shapes and are no longer read, written, swept or pruned by v7. The legacy snapshot adapter and JSON importer are removed, `file_undo` is the sole undo row, and prepared statements drop 43 → 33 (ADR-0055, closes #222). (#228)
+
+### Tests
+
+* **arch:** pin the rejection surface — ten full-message goldens through the real `edit` tool, the structural assembler/recorder ratchet, a producer ratchet for rejection and applied-tier warning headers, a region-oracle cell for the no-op-loop arm, and the admission budget at the tool boundary; each guard is demonstrated red by an injection that is then reverted. (#225)
 
 ## [1.3.0] - 2026-11-25
 
