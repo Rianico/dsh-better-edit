@@ -1,12 +1,12 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
-import { mkdtemp, rm, writeFile, readFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { describe, it, expect, vi } from "vitest";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import "node:os";
 import { join } from "node:path";
 import { readAndServe } from "../../src/read-and-serve.js";
 import { withWorkspace } from "../../src/workspace-context.js";
 import { localIO } from "../../src/fs-bridge.js";
-import { HASH_SEP } from "../../src/hashline/hash-assign.js";
-import { splitLines } from "../../src/utils.js";
+import "../../src/hashline/hash-assign.js";
+import "../../src/utils.js";
 import {
   findServedHashEcho,
   servedHashEchoDenial,
@@ -85,7 +85,6 @@ describe("write-hook coverage agent-a", () => {
         await writeFile(file, "hello\nworld\n", "utf-8");
         const io = localIO();
         const sessionKey = "sess-d-" + Math.random();
-        // prime served state via readAndServe
         await withWorkspace(cwd, () => readAndServe(io, file, cwd, { sessionKey }));
         const denial = await withWorkspace(cwd, () =>
           servedHashEchoDenial(io, file, "clean content\n", cwd, sessionKey),
@@ -143,14 +142,9 @@ describe("write-hook coverage agent-a", () => {
     });
 
     it("aborts before served load if signal aborted after resolve", async () => {
-      // servedHashEchoDenial calls abortIf twice; first passes, second fails
-      const io = {
+      const _io = {
         resolve: async () => "/tmp/resolved",
       } as any;
-      // mock loadServed not needed because abort before second abortIf?
-      // Actually need to test abortIf after resolve: provide a signal that aborts between calls
-      // Simpler: abort signal already aborted should throw at first abortIf - already covered
-      // So we test that successful path doesn't throw when not aborted
       const dir = await mkdtemp(join(await getWritableTempRoot(), "wh-abort-"));
       const restoreHome = (() => {
         const prev = process.env.HOME;
@@ -226,7 +220,6 @@ describe("write-hook coverage agent-a", () => {
         expect(pre).toBeDefined();
         expect(post).toBeDefined();
 
-        // non-write passes through
         const nextPre = vi.fn(async () => ({ kind: "allow" }) as PreToolDecision);
         const dec1 = await pre(
           {
@@ -240,7 +233,6 @@ describe("write-hook coverage agent-a", () => {
         expect(dec1).toEqual({ kind: "allow" });
         expect(nextPre).toHaveBeenCalled();
 
-        // clean write allows
         const nextPre2 = vi.fn(async () => ({ kind: "allow" }) as PreToolDecision);
         const dec2 = await pre(
           {
@@ -253,7 +245,6 @@ describe("write-hook coverage agent-a", () => {
         );
         expect(dec2).toEqual({ kind: "allow" });
 
-        // echo write denied
         const nextPre3 = vi.fn(async () => ({ kind: "allow" }) as PreToolDecision);
         const dec3 = await pre(
           {
@@ -268,9 +259,8 @@ describe("write-hook coverage agent-a", () => {
         expect((dec3 as any).reason).toContain("E_SUSPICIOUS_TEXT");
         expect(nextPre3).not.toHaveBeenCalled();
 
-        // missing path/content -> next
         const nextPre4 = vi.fn(async () => ({ kind: "allow" }) as PreToolDecision);
-        const dec4 = await pre(
+        const _dec4 = await pre(
           {
             name: "write",
             arguments: { file_path: 123 } as any,
@@ -281,7 +271,6 @@ describe("write-hook coverage agent-a", () => {
         );
         expect(nextPre4).toHaveBeenCalled();
 
-        // guard fails open on thrown error (non-abort): mock io.resolve to throw
         const badIO = {
           resolve: async () => {
             throw new Error("boom");
@@ -309,7 +298,6 @@ describe("write-hook coverage agent-a", () => {
         expect(dec5).toEqual({ kind: "allow" });
         expect(rootCtx.logger.warn).toHaveBeenCalled();
 
-        // guard re-throws aborted signal
         const ctrl = new AbortController();
         ctrl.abort();
         const nextPre6 = vi.fn(async () => ({ kind: "allow" }) as PreToolDecision);
@@ -325,12 +313,11 @@ describe("write-hook coverage agent-a", () => {
           ),
         ).rejects.toThrow();
 
-        // post-execute: non-write, isError, decision not accept -> return decision
         const nextPost = vi.fn(
           async () =>
             ({ kind: "accept", content: [{ type: "text", text: "orig" }] }) as PostToolDecision,
         );
-        const res1 = await post(
+        const _res1 = await post(
           { name: "read", arguments: {} } as any,
           { isError: false } as any,
           nextPost,
@@ -353,7 +340,6 @@ describe("write-hook coverage agent-a", () => {
         );
         expect(res3.kind).toBe("deny");
 
-        // post success auto-read appends anchors
         await writeFile(file, "hello post\nworld\n", "utf-8");
         const nextPost4 = vi.fn(
           async () =>
@@ -373,7 +359,6 @@ describe("write-hook coverage agent-a", () => {
         expect((res4 as any).content.length).toBe(2);
         expect((res4 as any).content[1].text).toContain("Auto-read");
 
-        // post missing path -> return decision
         const nextPost5 = vi.fn(async () => ({ kind: "accept", content: [] }) as PostToolDecision);
         const res5 = await post(
           {
@@ -387,14 +372,11 @@ describe("write-hook coverage agent-a", () => {
         );
         expect(res5.kind).toBe("accept");
 
-        // post failure fails open (warn)
         const failIO = {
           resolve: async () => {
             throw new Error("fail-read");
           },
         } as any;
-        // Need a hook with failIO for post path: but post uses readAndServe which calls io.resolve
-        // We already have post for good io; now test error path via dispose+new hook with bad io
         const listeners3 = new Map<string, any>();
         const agentCtx3 = {
           on(e: string, l: any) {
@@ -423,8 +405,7 @@ describe("write-hook coverage agent-a", () => {
         expect(rootCtx3.logger.warn).toHaveBeenCalled();
 
         dispose();
-        expect(listeners.has("tools/pre-execute")).toBe(false); // disposed? our mock deletes on disposeGuard but we only deleted listeners map entry via dispose function: check dispose actually calls deletes
-        // Our dispose should have cleared
+        expect(listeners.has("tools/pre-execute")).toBe(false);
       } finally {
         shutdownHashStore();
         await rm(dir, { recursive: true, force: true });

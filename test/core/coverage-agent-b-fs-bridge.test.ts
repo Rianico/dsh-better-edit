@@ -17,7 +17,7 @@ import type { Context } from "@deepseek-ai/cordis";
 
 function makeFs(overrides: Record<string, any> = {}) {
   return {
-    resolve: vi.fn(async (p: string, opts?: any) => ({ targetKey: `tk:${p}`, displayPath: p })),
+    resolve: vi.fn(async (p: string, _opts?: any) => ({ targetKey: `tk:${p}`, displayPath: p })),
     processPath: vi.fn((t: any) => t.displayPath),
     readText: vi.fn(async () => "hello"),
     readBytes: vi.fn(async () => Buffer.from("hello")),
@@ -59,8 +59,6 @@ describe("mapFsError", () => {
     const err = Object.assign(new Error("x"), { code: "FS_DECODE_FAILED" });
     expect(() => mapFsError(err, "a.txt")).toThrow(/E_UNSUPPORTED_FILE.*cannot be decoded/);
   });
-  // F7 pin: row-less and read-required — headline alone, no `Current
-  // range:` section, no retry hint.
   it("maps FS_STALE_VERSION to a row-less E_STALE_RANGE", () => {
     const err = Object.assign(new Error("x"), { code: "FS_STALE_VERSION" });
     let caught: Error | undefined;
@@ -160,9 +158,6 @@ describe("ctxFsIO", () => {
     const text = await io.readText("/abs/file.txt", undefined, "utf8");
     expect(text).toBe("hello");
     expect(getEncodingState("/abs/file.txt")).toBeDefined();
-    // ADR-0038: ONE key construction site, the plain path. This fake backend resolves to
-    // `tk:/abs/file.txt`, so the removed dual write would land exactly there — the memo must stay
-    // empty under the backend's opaque key.
     expect(fs.resolve).toHaveBeenCalled();
     expect(getEncodingState("tk:/abs/file.txt")).toBeUndefined();
   });
@@ -332,7 +327,6 @@ describe("localIO", () => {
     await writeFile(p, Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), Buffer.from("hello")]));
     const io = localIO();
     const t = await io.readText(p);
-    // localIO detects BOM and returns decoded (may include BOM or not depending on path)
     expect(t).toContain("hello");
   });
 

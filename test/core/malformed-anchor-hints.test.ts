@@ -73,16 +73,13 @@ describe("#108 multi-line anchor paste — shape refusal, no minted coordinate",
       expect(message).toContain("[E_MALFORMED_ANCHOR]");
       expect(message).toMatch(/must be a single bare 3-char hash/);
       expect(message).toMatch(/4-line block/);
-      // T3: the paste is redacted at the echo site — no block byte reaches the transcript.
       expect(message).toContain('Invalid anchor "4-line block"');
       expect(message).not.toContain("settlementStatus");
       expect(message).not.toContain("remark");
-      // The deleted hint shipped a coordinate plus an instruction to reuse it.
       expect(message).not.toMatch(/extracted first hash/);
       expect(message).not.toMatch(/use bare "/);
       expect(unlistedQuotedAnchors(message)).toEqual([]);
       expect(message).not.toContain('"set"');
-      // No write happened: the refusal grants nothing.
       expect(await readFile(path, "utf-8")).toBe(INITIAL);
     });
   });
@@ -132,7 +129,6 @@ describe("#108 diagRef — no fabricated coordinate on a │ + newline paste", (
   });
 
   it("a pipe-free newline paste still reaches the generic shape tail", () => {
-    // The deleted branch's only replacement is the pre-existing tail — no new fallback.
     expect(() => parseHashRef("x\ny")).toThrow(/Expected a 3-char/);
   });
 
@@ -158,8 +154,6 @@ describe("#108 diagRef — no fabricated coordinate on a │ + newline paste", (
   });
 
   it("following the old hint shape is the model's own input, not a malformed anchor", async () => {
-    // `wUp`/`AU6` are ordinary 3-char anchors: the tool must reject them on
-    // resolution, never re-label them as a shape failure or suggest them.
     await withTempFile("app.ts", INITIAL, async ({ cwd, path }) => {
       const { editTool } = setupIntegrationTest(cwd);
       let message = "";
@@ -188,7 +182,6 @@ describe("#108 multi-line rawAnchor redaction", () => {
       message = String((error as Error).message);
     }
     expect(message).toContain('Invalid anchor "4-line block"');
-    // No byte of the pasted block survives into the transcript.
     expect(message).not.toContain("settlementStatus");
     expect(message).not.toContain("remark");
     expect(message).not.toContain("})");

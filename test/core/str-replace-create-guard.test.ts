@@ -9,7 +9,6 @@
  * target with `O_EXCL`. Every case here asserts the competitor wins, never
  * last-writer-wins; the last case is the control proving the guard did not
  * leak onto the `edit`-family commands.
- * @module dsh-better-edit/str-replace-create-guard.test
  */
 import { describe, it, expect, beforeEach } from "vitest";
 import { readFile, writeFile } from "node:fs/promises";
@@ -172,8 +171,6 @@ describe("str_replace_editor create is create-or-fail", () => {
       const path = join(dir, "raced.txt");
       const base = localIO();
       let interleaved = false;
-      // The competitor lands after the tool's own presence check saw it absent:
-      // exactly the window the pre-`stat` used to leave open.
       const raceIO: FileIO = {
         ...base,
         async statVersion(absolutePath, signal) {
@@ -213,7 +210,6 @@ describe("str_replace_editor create is create-or-fail", () => {
       expect(error.message).toMatch(/E_FILE_EXISTS/);
       expect(error).toMatchObject({ code: "E_FILE_EXISTS" });
       expect(provider.text(path)).toBe(COMPETITOR);
-      // The demand reaches the provider: never an unconditional (undefined) write.
       expect(provider.intents).toEqual([{ kind: "createIfAbsent" }]);
     });
   });
@@ -260,8 +256,6 @@ describe("str_replace_editor create is create-or-fail", () => {
       const path = join(dir, "dispatched.txt");
       const provider = makeRacingProvider({ interleave: false });
       const dispatched: string[] = [];
-      // Answers like a listener that leaves the decision to the bridge's own
-      // fallback, but records that the seam asked at all.
       const ctx = {
         waterfall: async (
           event: string,
@@ -283,9 +277,7 @@ describe("str_replace_editor create is create-or-fail", () => {
       )) as unknown as { text: string };
 
       expect(result.text).toMatch(/Created/);
-      // Half 1: the guarded path still dispatches, exactly once, under that name.
       expect(dispatched).toEqual(["fs/write-intent"]);
-      // Half 2: the delivered intent is still the create demand.
       expect(provider.intents).toEqual([{ kind: "createIfAbsent" }]);
       expect(provider.text(path)).toBe("mine\n");
     });

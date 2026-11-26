@@ -8,12 +8,6 @@
  * writes the Windows-readable target. Precedence is one ladder — payload > the
  * `allowEncodingMigration` setting (`DSH_BETTER_EDIT_ALLOW_ENCODING_MIGRATION`) > the legacy
  * `normalizeToUtf8` spelling > `"refuse"`.
- *
- * External behaviour first: every case below drives the public `read` / `edit` /
- * `undo_last_edit` tools and pins on-disk bytes, notice text and the presence of an undo row.
- * The resolver's unit block is the one place that names the ladder directly; the config-file
- * block writes the YAML a real install carries, so the persisted rungs (and the absence that
- * makes the legacy spelling reachable) are pinned against the file, not against a mock.
  */
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -64,7 +58,6 @@ async function writeConfigFile(cwd: string, yaml: string): Promise<string> {
   await mkdir(dir, { recursive: true });
   const configPath = join(dir, "config.yaml");
   await writeFile(configPath, yaml, "utf-8");
-  // The env/cache layer reads once; drop it so the file just written is what the next load sees.
   _resetConfigCache();
   return configPath;
 }
@@ -215,7 +208,6 @@ describe("payload consent converts one file without changing fleet policy", () =
 
       const edited = await readFile(path);
       expect([...edited.subarray(0, 3)]).toEqual([0xef, 0xbb, 0xbf]);
-      // Exactly one BOM: the seam prepares this write twice (transaction + IO bridge).
       expect(edited.subarray(3).toString("utf-8")).toBe(UTF16_EDITED);
 
       const reRead = getText(await harness.readTool.execute("r2", { path: "u16-bom.txt" }));
@@ -321,14 +313,11 @@ describe("config ladder — the persisted config-file rungs", () => {
     await withTempBytes("u16-cfg-legacy.txt", utf16leBytes(UTF16_TEXT), async ({ cwd, path }) => {
       const configPath = await writeConfigFile(cwd, "normalizeToUtf8: true\n");
 
-      // The absence is what makes the legacy spelling reachable (ADR-0052 §4): loading must
-      // neither default the key nor materialize it into the file via the complement pass.
       const cfg = loadConfig();
       expect(cfg.normalizeToUtf8).toBe(true);
       expect(cfg.allowEncodingMigration).toBeUndefined();
       expect(await readFile(configPath, "utf-8")).not.toMatch(/^allowEncodingMigration:/m);
 
-      // …and the resulting consent is the legacy `"utf8"` rung: no BOM.
       const { editText } = await readAndEdit(cwd, "u16-cfg-legacy.txt", "вторая", "другая");
       expect(countOf(editText, NOTICE_MARK)).toBe(1);
       const edited = await readFile(path);
@@ -341,7 +330,6 @@ describe("a wrong payload value is refused by name", () => {
   it("an out-of-enum value is answered before the contract runs, and nothing converts", async () => {
     await withTempBytes("cp-bad-wire.txt", cp1251Bytes("Привет\nМир\n"), async ({ cwd, path }) => {
       const before = await readFile(path);
-      // A fleet consent is set so a silently DROPPED bad value would migrate instead of refusing.
       setEnvSetting(ENCODING_MIGRATION_ENV_VAR, "utf8");
       const harness = setupIntegrationTest(cwd);
       const anchors = anchorsByContent(
@@ -355,16 +343,12 @@ describe("a wrong payload value is refused by name", () => {
       const anchor = anchors.get("Привет");
       expect(anchor).toBeDefined();
 
-      // `null` is an out-of-enum value here, not a spelling of absent: the wire enum is closed.
       for (const bad of [null, "utf8BOM", "migrate", true, 1]) {
         const attempt = harness.editTool.execute("e1", {
           file: "cp-bad-wire.txt",
           edits: [{ anchor_from: anchor!, anchor_to: anchor!, replace_with: "Пока" }],
           allow_encoding_migration: bad,
         });
-        // The declared wire schema is the first gate (dsh refuses a value outside the string enum
-        // exactly as it does for a non-boolean `dry_run`), so the value never reaches the contract.
-        // The enum-naming refusal is the contract's own boundary, pinned in the next case.
         await expect(attempt).rejects.toMatchObject({ code: "INVALID_ARGS" });
         expect((await readFile(path)).equals(before)).toBe(true);
       }
@@ -470,9 +454,6 @@ describe('undo after a "utf8bom" migration', () => {
   });
 
   it("a DSH backend that restores the UTF-8 BOM on read does not read as externally modified", async () => {
-    // The local backend strips a decoded BOM; `ctxFsIO` restores it (issue #23). Emulating that here
-    // is what exercises the migrated-arm staleness tolerance: the undo pair's `bom` column records
-    // the ABANDONED codec's BOM, so without the tolerance the tool's own target looks foreign.
     const base = localIO();
     const dshLike: FileIO = {
       ...base,

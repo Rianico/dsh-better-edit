@@ -45,8 +45,6 @@ export {
 } from "./anchor-pipeline.js";
 export type { ServedRow } from "./anchor-pipeline.js";
 
-// Read-side served evidence (ADR-0037) — re-exported here so the barrel stays the one
-// external surface; `ServedRow` keeps coming from anchor-pipeline's domain-errors re-export.
 export {
   ServedRejectionError,
   verifyServedRange,

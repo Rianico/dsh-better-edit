@@ -41,9 +41,6 @@ export function buildReadTool(io: FileIO) {
         type: "number",
         description: "Maximum number of lines to read",
       },
-      // Upstream enforces the 16-window cap twice (TypeBox schema + preview); the dsh
-      // value-schema DSL has no maxItems on array nodes, so the bound is enforced in
-      // file-view's normWindows and stated in the description to stay discoverable.
       windows: {
         type: "array",
         description: `Optional array of up to ${MAX_READ_WINDOWS} line windows to read in a single turn; every window's rows are served, so anchors from all of them are usable in one edit; overlapping windows merge into the union of their line ranges (one section per merged run), while disjoint windows keep a section each`,
@@ -105,9 +102,6 @@ export function buildReadTool(io: FileIO) {
           windows: canonical.windows,
           encoding: encoding as string | undefined,
         });
-        // Record the present observation with the fs policy gate so later
-        // built-in write/edit calls see this file as observed at the
-        // version the model just read (a no-op when no policy listens).
         await io.emitObserved(absolutePath, exec, signal);
 
         return warning ? { text, warning } : { text };

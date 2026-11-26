@@ -128,14 +128,8 @@ describe("edit payload fold (named-object + legacy)", () => {
     const tuple = { file: "f.ts", edits: [["a", "a", "b"]] };
     expect(validateJsonSchemaValue(params, named)).toEqual([]);
     expect(validateJsonSchemaValue(params, tuple)).toEqual([]);
-    // Structurally strict: the object branch forbids undeclared keys.
     expect(params.properties.edits.items.oneOf[0].additionalProperties).toBe(false);
-    // #117: the null file branch stays wire-admissible but undescribed, so the
-    // domain rejects it with E_BAD_PAYLOAD instead of dsh answering INVALID_ARGS.
-    // It is never inferred; re-adding a description here must turn this red.
     expect(params.properties.file.oneOf[1]).toEqual({ type: "null" });
-    // Mixed-key items die at admission (strict object branch forbids them)
-    // and in the fold with E_BAD_PAYLOAD for direct contract callers.
     expect(
       validateJsonSchemaValue(params, {
         file: "f.ts",

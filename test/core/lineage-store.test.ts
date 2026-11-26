@@ -56,9 +56,6 @@ describe("lineage-store — first snapshot and lineage shape", () => {
       splitLines(content).map((line) => canonDigest(line)),
     );
     expect(rows.map((row) => row.anchor)).toEqual(hashes);
-    // The key carries BOTH axes: canon (the alignment/verification digest) and the anchor
-    // generation (the raw-byte seeding). A canon-only change misses the cache; a generation change
-    // invalidates anchor-bearing state.
     expect(snapshotHashFor(content)).toBe(
       `${CANON_VERSION}:${ANCHOR_GENERATION}:${contentChecksum(content)}`,
     );
@@ -77,7 +74,6 @@ describe("lineage-store — patience pairing engine", () => {
     commit(lineage, "/a.ts", "alpha\nbeta\ngamma", "A");
     commit(lineage, "/a.ts", "alpha\nBETA\ngamma", "B");
     expect(idsOf(lineage, "/a.ts", "alpha\nBETA\ngamma")).toEqual([1, 4, 3]);
-    // Counter continued past the fresh block: next fresh id is 5.
     commit(lineage, "/a.ts", "alpha\nBETA\ngamma\ndelta", "C");
     expect(idsOf(lineage, "/a.ts", "alpha\nBETA\ngamma\ndelta")).toEqual([1, 4, 3, 5]);
   });
@@ -92,10 +88,6 @@ describe("lineage-store — patience pairing engine", () => {
   it("an unambiguous rotation keeps the moved lines' identity, retires the displaced one", () => {
     const { lineage } = open();
     commit(lineage, "/m.ts", "alpha\nbeta\ngamma", "A");
-    // gamma is displaced past the alpha/beta run: the only maximum-LCS embedding pairs
-    // alpha and beta, so they keep their ids at their shifted coordinates while gamma,
-    // which no embedding can place, takes a fresh id. A *bare* symmetric swap has no
-    // unique embedding and pairs nothing (next test).
     commit(lineage, "/m.ts", "gamma\nalpha\nbeta", "B");
     expect(idsOf(lineage, "/m.ts", "gamma\nalpha\nbeta")).toEqual([4, 1, 2]);
   });
@@ -117,11 +109,6 @@ describe("lineage-store — patience pairing engine", () => {
   it("duplicate canon pairs nothing — the current line takes a fresh id", () => {
     const { lineage } = open();
     commit(lineage, "/t.ts", "b\na\na", "A");
-    // `a` is not locally unique in prev, so it is not a candidate pin; the leaf interval
-    // [a] vs [a] has two optimal embeddings and the engine pairs nothing. The current line
-    // takes a FRESH id (4) instead of the lowest unclaimed previous one (2). Fail-closed on
-    // purpose: the deleted-twin fixture below has the same shape, and guessing here would
-    // rebind a lease onto a look-alike line.
     commit(lineage, "/t.ts", "a", "B");
     expect(idsOf(lineage, "/t.ts", "a")).toEqual([4]);
   });
@@ -130,8 +117,6 @@ describe("lineage-store — patience pairing engine", () => {
     const { lineage } = open();
     commit(lineage, "/s.ts", "alpha\nbeta", "A");
     commit(lineage, "/s.ts", "beta\nalpha", "B");
-    // {1->2, 2->1} and {1->1, 2->2} are equally optimal, so neither line can be proven to
-    // have moved; both take fresh ids.
     expect(idsOf(lineage, "/s.ts", "beta\nalpha")).toEqual([3, 4]);
   });
 
@@ -152,10 +137,6 @@ describe("lineage-store — patience pairing engine", () => {
     const survivingId = before[5]!.lineId;
     commit(lineage, "/twins.ts", contentB, "B");
     const after = lineage.lineageFor("/twins.ts", snapshotHashFor(contentB));
-    // The anchored line (A line 2) was deleted externally and a byte-identical twin
-    // survives at B line 5. The old FIFO rule handed the twin the DELETED line's id — a
-    // look-alike rebind. The engine leaves the deleted line unpaired, so its id is absent
-    // from B's lineage and the twin keeps its own identity.
     expect(after.map((row) => row.lineId)).not.toContain(deletedId);
     expect(after[4]!.lineId).toBe(survivingId);
     expect(after.map((row) => row.lineId)).toEqual([1, 3, 4, 5, 6, 7]);
@@ -183,10 +164,6 @@ describe("lineage-store — patience pairing engine", () => {
     commit(lineage, "/dup.ts", "alpha\nbeta\ngamma", "A");
     const duplicated = "alpha\nalpha\nbeta\ngamma";
     commit(lineage, "/dup.ts", duplicated, "B");
-    // WHY (T3): `pairLineIds` now runs `pairLineage` (engine + homogeneous-run carry), so the
-    // run's k-th copy keeps the k-th prior identity — the first `alpha` carries id 1 and only
-    // the current tail (`alpha`) mints fresh. The engine leaves the pair unpaired; the carry
-    // fills that gap on raw-uniform evidence, which is the same rule the read path serves by.
     expect(idsOf(lineage, "/dup.ts", duplicated)).toEqual([1, 4, 2, 3]);
   });
 });
@@ -204,10 +181,8 @@ describe("lineage-store — adopt on re-commit", () => {
       leases: { sessionKey: "s2", rows: [{ position: 1, hash: hashes[1]! }] },
     });
     expect(JSON.stringify(lineage.lineageFor("/a.ts", snapshotHashFor(content)))).toBe(before);
-    // The adopted re-commit consumed no ids: the next fresh id is still 4.
     commit(lineage, "/a.ts", "alpha\nBETA\ngamma", "B");
     expect(idsOf(lineage, "/a.ts", "alpha\nBETA\ngamma")).toEqual([1, 4, 3]);
-    // ...and the adopt path still granted the lease.
     const lease = lineage.leaseFor("s2", "/a.ts", hashes[1]!);
     expect(lease?.lineId).toBe(2);
     expect(lease?.lineNumber).toBe(2);
@@ -406,10 +381,7 @@ describe("lineage-store — adopt refreshes anchors, never identity", () => {
     expect({
       lines: repaired.map((row) => row.lineNumber),
       anchors: repaired.map((row) => row.anchor),
-      // The discarded identity is unrecoverable: every line takes a fresh id and none
-      // reuses a corrupt row's id — the fail-closed direction.
       idsAreFresh: repaired.every((row) => before.every((old) => old.lineId !== row.lineId)),
-      // Only THIS snapshot is discarded; no sibling row is deleted.
       snapshotRows: (
         db.prepare("SELECT COUNT(*) AS n FROM file_snapshots WHERE path = ?").get("/e.ts") as {
           n: number;
@@ -429,9 +401,6 @@ describe("lineage-store — adopt refreshes anchors, never identity", () => {
     const { lineage } = open();
     const content = "alpha\nbeta";
     lineage.commitSnapshot({ path: "/h.ts", content, hashes: ["A0", "A1"] });
-    // Two commits: H1, then H2 carrying the leases — refresh and grant couple in
-    // one transaction. The served position (0) deliberately disagrees with the
-    // anchor's line (2): a position-based grant would resolve line 1 instead.
     lineage.commitSnapshot({
       path: "/h.ts",
       content,
@@ -449,14 +418,12 @@ describe("lineage-store — adopt refreshes anchors, never identity", () => {
     expect(lease?.lineId).toBe(2);
     expect(lease?.canonHash).toBe(canonDigest("beta"));
     expect(lease?.lineNumber).toBe(1);
-    // The stale H1 row was attempted in this very batch and granted nothing.
     expect(lineage.leaseFor("s", "/h.ts", "A1")).toBeUndefined();
   });
   it("sparse stored lineage repairs it instead of silently no-oping", () => {
     const { db, lineage } = open();
     const content = "alpha\nbeta";
     lineage.commitSnapshot({ path: "/s.ts", content, hashes: ["A0", "A1"] });
-    // Corrupt out-of-band: keep the row count but shift numbering (1,2 -> 11,12).
     db.exec("UPDATE line_lineage SET line_number = line_number + 10");
 
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
@@ -491,8 +458,6 @@ describe("lineage-store — retirement on snapshot resolution", () => {
         ],
       },
     });
-    // Edit drops the beta line: pure snapshot commit, no new leases — the grant
-    // and the retirement couple in the one transaction either way.
     lineage.commitSnapshot({ path: "/p.ts", content: contentB, hashes: ["B0", "B2"] });
     const beta = lineage.leaseFor("s", "/p.ts", "A1");
     expect(beta).toBeDefined();
@@ -513,8 +478,6 @@ describe("lineage-store — retirement on snapshot resolution", () => {
       "CREATE TRIGGER t2b_retire BEFORE UPDATE OF retired_at ON served_leases " +
         "BEGIN SELECT RAISE(ABORT, 'injected'); END;",
     );
-    // Dropping beta must retire A1's lease: the trigger aborts the retire, so
-    // the B snapshot must be absent — atomicity, not best-effort.
     expect(() =>
       lineage.commitSnapshot({ path: "/q.ts", content: "alpha", hashes: ["B0"] }),
     ).toThrow("injected");

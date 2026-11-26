@@ -86,8 +86,6 @@ describe("FU-5 — never-served shape tier on the applied write-through", () => 
 });
 
 describe("FU-5 — served prefix mismatch tier (evidence-gated middle tier)", () => {
-  // `OLD` was served at position 2 but is no longer a file anchor (post-drift):
-  // the strip arm sees 0 matched and writes through; the mismatch tier owns the line.
   function staleServe(replacement: string, servedCanonAtOld: string) {
     return async () => {
       const hashes = await lineHashes(file, home.testPath);

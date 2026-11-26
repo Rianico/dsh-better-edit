@@ -20,15 +20,6 @@ import { codeOf, splitLines } from "../../src/utils.js";
  * empty. `LineageCorruptError` is not a `DomainError` and matches none of
  * `isCorruptionError`'s regexes, so nothing quarantines it — once such a row exists for
  * content the file still has, `commitSnapshot` throws for that content forever.
- *
- * `grantServeLeases` calls `commitSnapshot` INSIDE the `withStore` unit that wrote the
- * `served` row, so the throw rolls the whole served+lease unit back; `recordServed` catches
- * it with `console.error` and returns. The read therefore reports success while nothing was
- * persisted, no lease is granted, and the next edit rejects. A re-read repeats identically.
- *
- * Test files are not typechecked (measured R1); row shapes are proved at runtime, and the
- * store handle is narrowed to `InternalHashStore` at the seam (same narrowing as
- * test/core/serve-leases.test.ts) — no other casts.
  */
 
 type Harness = ReturnType<typeof setupIntegrationTest>;
@@ -124,17 +115,14 @@ describe("CP2 — corrupt lineage", () => {
       const store = (await loadHashStore(cwd)) as InternalHashStore;
       const content = "a\nb\nc\n";
 
-      // 1. A normal read: lineage committed, served rows and leases exist.
       getText(await harness.readTool.execute("read", { path: "t.txt" }));
       expect(lineageRows(store, abs, content)).toBe(3);
 
-      // 2. The `:338` arm: keep the snapshot row, drop its lineage family.
       expect(corruptLineage(cwd, abs)).toBe(3);
       expect(lineageRows(store, abs, content)).toBe(0);
 
       const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
 
-      // 3. Read #1 — what it reports vs what it persisted.
       const readOne = getText(await harness.readTool.execute("read", { path: "t.txt" }));
       const anchorOne = anchorFor(readOne, "b");
       const afterReadOne = {
@@ -144,10 +132,8 @@ describe("CP2 — corrupt lineage", () => {
         leaseForAnchor: store.leaseFor(harness.sessionKey, abs, anchorOne) !== undefined,
       };
 
-      // 4. Edit with the anchor the read just handed the model.
       const attemptOne = await attemptEdit(harness, anchorOne, "Z");
 
-      // 5. Read again, edit again: the same refusal, or an escape.
       const readTwo = getText(await harness.readTool.execute("read", { path: "t.txt" }));
       const attemptTwo = await attemptEdit(harness, anchorFor(readTwo, "Z", "b"), "Y");
 
@@ -181,7 +167,6 @@ describe("CP2 — corrupt lineage", () => {
       });
     });
   });
-  /** The four row families `deleteByPath` owns, counted for one path. */
   function familyCounts(
     db: DatabaseSync,
     lineage: LineageStore,
@@ -201,8 +186,6 @@ describe("CP2 — corrupt lineage", () => {
     const lineage: LineageStore = createLineageStore(db);
     const content = "a\nb\nc\n";
 
-    // Seed ALL FOUR families: the snapshot + its lineage, the per-path id counter, and two
-    // `served_leases` rows (two, so a partial delete of the lease family is observable).
     lineage.commitSnapshot({
       path: "t.txt",
       content,
@@ -216,11 +199,8 @@ describe("CP2 — corrupt lineage", () => {
       },
     });
 
-    // The seed is confirmed at runtime, never assumed.
     const seeded = familyCounts(db, lineage, "t.txt", content);
 
-    // Deterministic fault BETWEEN the four statements: the first (lineage delete) runs,
-    // the second (snapshot delete) aborts. `withBusyRetry` rethrows non-busy errors.
     db.exec(
       "CREATE TRIGGER block_snapshot_delete BEFORE DELETE ON file_snapshots " +
         "BEGIN SELECT RAISE(ABORT, 'injected: delete interrupted'); END",
@@ -235,13 +215,9 @@ describe("CP2 — corrupt lineage", () => {
 
     const interrupted = familyCounts(db, lineage, "t.txt", content);
 
-    // With the trigger gone the same delete runs to completion on the family the rollback
-    // restored. This is the only way to observe the counters and leases statements at all:
-    // the interrupted path rolls them back, so it cannot tell whether they ever ran.
     lineage.deleteByPath("t.txt");
     const successful = familyCounts(db, lineage, "t.txt", content);
 
-    // One object compare: any single family diverging fails loudly.
     expect({ seeded, interrupted: { faulted, ...interrupted }, successful }).toEqual({
       seeded: { snapshotRows: 1, lineageRows: 3, counterRows: 1, leaseRows: 2 },
       interrupted: {
@@ -261,17 +237,13 @@ describe("CP2 — corrupt lineage", () => {
     const hash = snapshotHashFor(content);
     const trueCanons = splitLines(content).map((line) => canonDigest(line));
 
-    // 1. Commit, so ids 1,2 exist and the stored canons are the true ones.
     lineage.commitSnapshot({ path: "/k.ts", content, hashes: ["A0", "A1"] });
     const before = lineage.lineageFor("/k.ts", hash);
     expect(before.map((row) => row.lineId)).toEqual([1, 2]);
     expect(before.map((row) => row.canonHash)).toEqual(trueCanons);
 
-    // 2. Corrupt the stored canon out of band: count and numbering stay intact, so only a
-    //    canon comparison can tell this family is unusable.
     db.exec("UPDATE line_lineage SET canon_hash = 'deadbeef'");
 
-    // 3. Re-adopt the same (path, content).
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     lineage.commitSnapshot({ path: "/k.ts", content, hashes: ["A0", "A1"] });
     const warnCalls = warn.mock.calls.length;
@@ -283,10 +255,8 @@ describe("CP2 — corrupt lineage", () => {
       warnCalls,
       warnFired: /repairing corrupt lineage/.test(warned),
       namesCanonArm: /canon mismatch at line 1/.test(warned),
-      // STILL_CORRUPT must be false: every stored canon is the true one again.
       canons: after.map((row) => row.canonHash),
       numbering: after.map((row) => row.lineNumber),
-      // IDS_AFTER must not be 1,2: the corrupt rows' ids are never inherited.
       ids: after.map((row) => row.lineId),
       idsAreFresh: after.every((row) => before.every((old) => old.lineId !== row.lineId)),
       snapshotRows: countRows(
@@ -312,14 +282,9 @@ describe("CP2 — corrupt lineage", () => {
     const hash = snapshotHashFor(content);
     const trueCanons = splitLines(content).map((line) => canonDigest(line));
 
-    // 1. Commit (ids 1,2), then corrupt the stored canon out of band — count and numbering
-    //    stay intact, so only the canon arm can tell this family is unusable.
     lineage.commitSnapshot({ path: "/i.ts", content, hashes: ["A0", "A1"] });
     db.exec("UPDATE line_lineage SET canon_hash = 'deadbeef'");
 
-    // 2. Adopt the same (path, content) three times in a row, counting the warnings per
-    //    adopt. A repair that wrote the DISCARDED canon instead of the fresh one would
-    //    diagnose and repair again on every adopt: a silent repair loop.
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     lineage.commitSnapshot({ path: "/i.ts", content, hashes: ["A0", "A1"] });
     const firstAdoptWarns = warn.mock.calls.length;
@@ -329,14 +294,12 @@ describe("CP2 — corrupt lineage", () => {
     const thirdAdoptWarns = warn.mock.calls.length - firstAdoptWarns - secondAdoptWarns;
     warn.mockRestore();
 
-    // State is read AFTER the spy is restored, as the neighbouring canon cell does.
     const after = lineage.lineageFor("/i.ts", hash);
     expect({
       firstAdoptWarns,
       secondAdoptWarns,
       thirdAdoptWarns,
       canonsOk: after.every((row, index) => row.canonHash === trueCanons[index]),
-      // Adopts 2 and 3 are no-ops: they must not re-materialize, so the ids do not move.
       ids: after.map((row) => row.lineId),
       numbering: after.map((row) => row.lineNumber),
       snapshotRows: countRows(

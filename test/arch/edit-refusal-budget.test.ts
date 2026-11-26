@@ -143,9 +143,6 @@ describe("edit refusal budget (#217, spec #214)", () => {
     for (const key of ["file", "edits", "mode", "dry_run", "allow_encoding_migration"]) {
       expect(rootKeys, `${key} must stay a root key`).toContain(key);
     }
-    // Declared exclusions: aliases the fold normalizes away, and dsh escalation passthroughs that
-    // are not payload fields. A NEW root key with no entry here fails the loop below until the
-    // shape line names it.
     const EXCLUDED: Record<string, string> = {
       file_path: "legacy alias for file; the shape names the canonical spelling",
       path: "legacy alias for file; the shape names the canonical spelling",
@@ -174,11 +171,6 @@ describe("edit refusal budget (#217, spec #214)", () => {
     for (const message of messages) expect(message, message).not.toContain("..");
   });
 
-  // #218: the same budget holds at the boundary the model actually meets — the edit tool, which
-  // runs the contract fold and wraps the refusal, not `assertEditRequest` directly. The input is
-  // the empty-batch arm, not a non-array `edits`: the host's wire schema (`edits: { type:
-  // "array" }`) answers `invalid arguments` (INVALID_ARGS) before the plugin's contract runs, so
-  // a non-array never reaches this budget.
   it("the tool boundary renders the same budgeted refusal", async () => {
     await withTempFile("budget.txt", "alpha\nbeta\n", async ({ cwd }) => {
       const harness = setupIntegrationTest(cwd);

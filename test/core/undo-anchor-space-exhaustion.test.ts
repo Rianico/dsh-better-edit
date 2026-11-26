@@ -71,8 +71,6 @@ describe("undo anchor-space exhaustion mapping (R1 finding 4)", () => {
       try {
         const undone = await harness.undoTool.execute("u1", { path: "undo_promote_current.txt" });
         expect(getText(undone)).toContain("File reverted to previous state");
-        // Exactly one promotion retry: the exhausted current-file rehash, its retry, then the
-        // restore rehash. Without the guard this would be 1 call and a thrown raw probe error.
         expect(control.calls).toBe(3);
       } finally {
         control.mode = "ok";
@@ -92,8 +90,6 @@ describe("undo anchor-space exhaustion mapping (R1 finding 4)", () => {
       try {
         const undone = await harness.undoTool.execute("u1", { path: "undo_promote_restore.txt" });
         expect(getText(undone)).toContain("File reverted to previous state");
-        // Exactly one promotion retry: the current-file rehash, the exhausted restore rehash, then
-        // its retry.
         expect(control.calls).toBe(3);
       } finally {
         control.mode = "ok";
@@ -113,12 +109,10 @@ describe("undo anchor-space exhaustion mapping (R1 finding 4)", () => {
         await expect(
           harness.undoTool.execute("u1", { path: "undo_exhaust_hard.txt" }),
         ).rejects.toThrow(/E_LARGE_FILE/);
-        // The first attempt and the post-promotion retry both exhausted, then the typed refusal.
         expect(control.calls).toBe(2);
       } finally {
         control.mode = "ok";
       }
-      // The revert never ran: the file still holds the edited content.
       expect(await readFile(path, "utf8")).toBe(EDITED);
     });
   });

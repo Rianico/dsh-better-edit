@@ -20,8 +20,6 @@ export function isValidHashList(value: unknown): value is string[] {
   return true;
 }
 
-// WHY: the vacuum budgets are the store's retention policy constants, so the module entry keeps
-// them on the public surface; consumers must never reach into the eviction module directly.
 export { reportVacuum, vacuumSnapshots } from "./vacuum.js";
 export type { VacuumOptions, VacuumResult } from "./vacuum.js";
 export {
@@ -34,6 +32,4 @@ export {
   VACUUM_RETIRED_PIN_MS,
   REPORT_CONTEXT_CAP,
 } from "./vacuum.js";
-// The checksum-miss alignment reads the prior lineage through the store surface; the module entry
-// re-exports its row shape so consumers never reach into the lineage module directly.
 export type { LineageRow } from "./lineage-store.js";

@@ -84,9 +84,6 @@ describe("structured error codes (#55 S1)", () => {
     }
   });
 
-  // FU-4 granularity: a boundary anchor with NO served position is a never-served anchor —
-  // refused `E_UNKNOWN_ANCHOR` with no rows (upstream b92e0ec:src/hashline/lease-resolve.ts:87-118
-  // and its non-leased analogue `served-verification.ts:729-749`), not a range-serve.
   it("boundary anchor with no served position carries E_UNKNOWN_ANCHOR (FU-4)", () => {
     const hashes = lineHashesPure("a\nb\nc");
     try {
@@ -146,12 +143,10 @@ describe("structured error codes (#55 S1)", () => {
       hash: "abc",
       servedLine: 2,
     });
-    // Structured code, message header and audience agree …
     expect(error).toBeInstanceOf(DomainError);
     expect(error.code).toBe("E_SUSPICIOUS_TEXT");
     expect(error.message.startsWith("[TO MODEL] [E_SUSPICIOUS_TEXT] ")).toBe(true);
     expect(error.audience).toBe("MODEL");
-    // … while the existing reject-and-serve branches still recognise it.
     expect(error).toBeInstanceOf(AnchorMismatchError);
     expect(isAnchorMismatch(error)).toBe(true);
     expect(error).not.toBeInstanceOf(ServedRejectionError);
@@ -187,8 +182,6 @@ describe("registry range-shape rules (F7)", () => {
       servedBlock: "abc│one",
     });
     expect(message).toContain("Current range:\nabc│one");
-    // T6 deleted the `Retry with these anchors (no read needed).` affordance: the payload's
-    // rows are the affordance, and the echoed rows are NOT serves (T3f/T4).
     expect(message).not.toContain("Retry with these anchors");
   });
   it("E_STALE_RANGE without rows renders the headline alone", () => {

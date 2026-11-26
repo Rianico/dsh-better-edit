@@ -25,15 +25,6 @@ beforeAll(async () => {
  * placement), so a window placed by such a lookup cannot satisfy the window check.
  * `fileHashes`/`fileLines` are the current on-disk snapshot; each row must reproduce them
  * exactly at its own position.
- *
- * Payload shape is disjoint by ROW COUNT (ADR-0022 §Decision 2, refined by FU-4's code
- * granularity): a row-less payload is the grounding-void shape — either a granular refusal
- * (`E_UNKNOWN_ANCHOR`, no read wording by upstream's text) asserted directly at its cell, or
- * the target-lost shape (read instruction in the headline); a row-carrying payload renders
- * `Current range:` (or `Current range (fresh read):` for `E_UNVERIFIED_RANGE`) and its rows.
- *
- * R15: the rule below is the guard, so it carries its own mutant (`T6M4` breaks the real
- * per-row identity check). The planted-violation cells exercise the broken guard.
  */
 const SERVED_LINE_RE = /^[A-Za-z0-9]{3}│/m;
 /** The deleted retry affordance. Its reappearance anywhere in a payload is a regression. */
@@ -62,16 +53,12 @@ function assertRegionPayload(args: {
   expect(err, "a rejection payload was thrown").toBeDefined();
   expect(err.message).toContain(`[${args.expectedCode}]`);
   if (err.code !== undefined && err.code !== "E_BATCH_ABORT") {
-    // The real-tool path aggregates a single failure into an E_BATCH_ABORT envelope whose
-    // message embeds the inner header verbatim, so the code lives in the text there.
     expect(err.code).toBe(args.expectedCode);
   }
   const rows = err.servedRows ?? [];
   expect(err.message).not.toContain(RETRY_AFFORDANCE);
 
-  // Either end null means the window is unidentifiable (call sites pair null with null).
   if (args.liveStart === null || args.liveEnd === null) {
-    // Target-lost shape: grounding void, only a read restores it.
     expect(rows).toEqual([]);
     expect(err.servedBlock).toBe("");
     expect(err.message).not.toContain("Current range:");
@@ -89,14 +76,12 @@ function assertRegionPayload(args: {
     expect(row.position).toBeLessThan(args.fileHashes.length);
     expect(seen.has(row.position), `position ${row.position} appears once`).toBe(false);
     seen.add(row.position);
-    // The identity half: the row's hash IS the current snapshot's hash at that position.
     expect(row.hash, `row ${row.position} reproduces fileHashes[${row.position}]`).toBe(
       args.fileHashes[row.position],
     );
     const line = row.position + 1;
     expect(line).toBeGreaterThanOrEqual(args.liveStart);
     expect(line).toBeLessThanOrEqual(args.liveEnd);
-    // The message half: the row is rendered with the same snapshot's content.
     expect(err.message).toContain(`${row.hash}│${args.fileLines[row.position]}`);
   }
 }
@@ -128,8 +113,6 @@ function servedHashes(rendered: string): string[] {
  */
 function allowedReadParams(): string[] {
   const tool = buildReadTool(localIO()) as unknown as {
-    // `defineTool` compiles the author-facing parameter map into a raw object-rooted schema; the
-    // allowed set lives under `.properties`, not on the root (`type`/`properties` are schema keys).
     parameters: { properties: Record<string, unknown> };
   };
   return Object.keys(tool.parameters.properties);
@@ -187,8 +170,6 @@ describe("rejection payload region rule (ADR-0022)", () => {
       } catch (error) {
         caught = error;
       }
-      // The named window is the range the submitted anchors identify (served lines 1–5 of
-      // the current 5-line file); hardcoded, never searched.
       assertRegionPayload({
         error: caught,
         fileHashes: lineHashesPure(disk),
@@ -201,16 +182,6 @@ describe("rejection payload region rule (ADR-0022)", () => {
     });
   });
 
-  // FU-3 (upstream ADR-0024 decision 1, adopted): the interior-hole arm no longer fires on the
-  // leased route — the tool path always carries a lease source, so the identity gate owns the
-  // span and accepts the hole. This cell keeps pinning the E_UNSERVED_RANGE payload shape on the
-  // boundary arm, which runs before the gate and rejects regardless of leases. The non-leased
-  // interior rejection is pinned in test/core/error-codes.test.ts ("interior hole carries
-  // E_UNSERVED_RANGE with kind").
-  // FU-4 granularity: a boundary anchor the mirror never placed was never served for this
-  // file — upstream refuses it with `E_UNKNOWN_ANCHOR` and NO rows (b92e0ec:src/hashline/
-  // served-verification.ts:729-749), so `assertRegionPayload`'s row-shape branches do not
-  // apply: the region is unidentifiable AND the message does not name a read. Asserted directly.
   it("never-served boundary arm rejects granular with no rows", async () => {
     await withTempFile("hole.txt", "alpha\nbeta\ngamma\n", async ({ cwd, path }) => {
       const harness = setupIntegrationTest(cwd);
@@ -222,7 +193,6 @@ describe("rejection payload region rule (ADR-0022)", () => {
         .find((l) => l.includes("│"))!
         .split("│")[0]!;
       const disk = await readFile(path, "utf-8");
-      // The `to` anchor exists on disk (line 3) but was never served, so it has no served position.
       const to = lineHashesPure(disk.trimEnd())[2]!;
       let caught: unknown;
       try {
@@ -239,10 +209,6 @@ describe("rejection payload region rule (ADR-0022)", () => {
       expect(err.message).toContain("[E_UNKNOWN_ANCHOR]");
       expect(err.message).toContain(`has not served the anchor "${to}"`);
       expect(err.message).toContain("nothing was written");
-      // The granular refusal itself renders no rows — checked on the message: the payload
-      // emits no `Current range:` heading (the envelope's separate `Current on-disk range`
-      // echo at engine.ts:509 is an F5 convenience derived from the submitted anchors'
-      // live window, not payload rows).
       expect(err.message).not.toContain("Current range");
       expect(err.message).not.toContain(RETRY_AFFORDANCE);
       expect(await readFile(path, "utf-8"), "the rejection wrote nothing").toBe(disk);
@@ -299,13 +265,11 @@ describe("rejection payload region rule (ADR-0022)", () => {
     });
   });
 
-  // ---- planted violations: the guard must be able to fail ----
   it("negative control: a misplaced row fails the live-mapping check", () => {
     const hashes = lineHashesPure(DISK.trimEnd());
     const misplaced: ServedRow = { position: 0, hash: hashes[2]! };
     const planted = plantedError({
       code: "E_STALE_RANGE",
-      // The planted payload wears the right heading, so the check fails on the row identity.
       message: `[TO MODEL] [E_STALE_RANGE] line 2 differs.\nCurrent range:\n${misplaced.hash}│alpha`,
       servedRows: [misplaced],
       servedBlock: `${misplaced.hash}│alpha`,
@@ -425,9 +389,6 @@ describe("rejection payload region rule (ADR-0022)", () => {
   it("windows is part of the read contract; unknown-field rejection stays leak-free (R12, FU-6 flipped)", async () => {
     await withTempFile("r12.txt", "one\ntwo\nthree\n", async ({ cwd }) => {
       const harness = setupIntegrationTest(cwd);
-      // FU-6 (port of pi-better-edit@2334352, superseding ADR-0023's decline): `windows` reads are
-      // served in one call — the R12 pin flipped from "windows is rejected" to "windows works",
-      // while the discoverability invariant keeps a NON-contract field.
       const readText = getText(
         await harness.readTool.execute("read", {
           path: "r12.txt",
@@ -450,17 +411,11 @@ describe("rejection payload region rule (ADR-0022)", () => {
       const allowed = allowedReadParams();
       expect(allowed.length, "the tool schema exposes the allowed set").toBeGreaterThan(0);
       expect(allowed, "the schema now advertises windows").toContain("windows");
-      // The failure is exactly the offending-field line: the `hint` suffix (src/utils.ts:26-40) is
-      // the only place an allowed-set list could be appended, and any hint changes this string.
       expect(message).toBe(
         "[TO MODEL] [E_BAD_PAYLOAD] Read request contains unknown or unsupported fields: ranges.",
       );
-      // The invariant, stated in terms of the DERIVED schema — no retyped list enters this file.
       assertNoAllowedSetLeak(message, allowed);
 
-      // Demonstration control (required): `rejectUnknownFields` builds this message and its `hint`
-      // argument is the only way the suffix is populated. Called WITH a hint, the ban must fail —
-      // otherwise the assertion above would be vacuous.
       let hinted: unknown;
       try {
         rejectUnknownFields(
@@ -481,16 +436,9 @@ describe("rejection payload region rule (ADR-0022)", () => {
     });
   });
 
-  // ---- multi-region interaction (ADR-0023): the two cells that retire ADR-0022's declared limit.
-  // Both express N served regions with N sequential `offset`/`limit` reads — since FU-6 a single
-  // `windows` call serves N regions too, but these cells pin the sequential path on purpose: the
-  // region oracle must scope a payload regardless of how the regions were served.
-  // Each cell fails if a rejection payload starts carrying rows outside the
-  // region the submitted anchors identify (e.g. the union of every served window).
   it("overlapping windowed reads: an anchor pair spanning the overlap scopes the payload to the resolved region (R13)", async () => {
     await withTempFile("overlap.txt", "one\ntwo\nthree\nfour\nfive\n", async ({ cwd, path }) => {
       const harness = setupIntegrationTest(cwd);
-      // Read A serves lines 1–3; read B serves lines 3–5. Line 3 is the overlap.
       const windowA = servedHashes(
         getText(
           await harness.readTool.execute("read", { path: "overlap.txt", offset: 1, limit: 3 }),
@@ -506,23 +454,18 @@ describe("rejection payload region rule (ADR-0022)", () => {
       const overlap = windowA[2]!;
       expect(windowB[0]!, "both reads served the overlap line under one anchor").toBe(overlap);
 
-      // The serve-union the port was declined against (ADR-0023): the merged mirror holds BOTH
-      // windows, and the overlap occupies exactly one position — the exact-write merge neither
-      // duplicates it nor drops read A's rows.
       const mirror = await withWorkspace(cwd, () => loadServed("test-session", path));
       expect(mirror).toEqual([...windowA, windowB[1]!, windowB[2]!]);
       expect(mirror.filter((hash) => hash === overlap)).toHaveLength(1);
 
-      // An interior insert, so the anchors' served span (3 lines) and their resolved span (4 lines)
-      // disagree: the span-length arm rejects with the resolved region's current rows.
       const disk = "one\ntwo\nINSERTED\nthree\nfour\nfive\n";
       await writeFile(path, disk, "utf-8");
       let caught: unknown;
       try {
         await harness.editTool.execute("edit", {
           path: "overlap.txt",
-          anchor_from: windowA[1]!, // "two" — served by read A only
-          anchor_to: windowB[1]!, // "four" — served by read B only
+          anchor_from: windowA[1]!,
+          anchor_to: windowB[1]!,
           replace_with: "R",
         });
       } catch (error) {
@@ -530,8 +473,6 @@ describe("rejection payload region rule (ADR-0022)", () => {
       }
       const fileLines = disk.split("\n").slice(0, -1);
       const fileHashes = lineHashesPure(disk.trimEnd());
-      // The region is the span the submitted anchors resolve in — lines 2–5 of the new snapshot —
-      // hardcoded from served-coordinate knowledge, never searched.
       assertRegionPayload({
         error: caught,
         fileHashes,
@@ -541,8 +482,6 @@ describe("rejection payload region rule (ADR-0022)", () => {
         expectedCode: "E_STALE_RANGE",
       });
 
-      // The scoping half, as an exclusion: neither read's exclusive edge row may ride along. A
-      // payload echoing the union of the two served windows (lines 1–6) reddens on these four.
       const payload = caught as Payloadish;
       expect(payload.servedRows.map((row) => row.position)).toEqual([1, 2, 3, 4]);
       expect(payload.message).not.toContain(`${fileHashes[0]}│${fileLines[0]}`);
@@ -557,7 +496,6 @@ describe("rejection payload region rule (ADR-0022)", () => {
       "alpha\nbeta\ngamma\ndelta\nepsilon\nzeta\n",
       async ({ cwd, path }) => {
         const harness = setupIntegrationTest(cwd);
-        // Read A serves lines 1–2; read B serves lines 5–6. Lines 3–4 are never served.
         const windowA = servedHashes(
           getText(
             await harness.readTool.execute("read", { path: "disjoint.txt", offset: 1, limit: 2 }),
@@ -570,7 +508,6 @@ describe("rejection payload region rule (ADR-0022)", () => {
         );
         expect(windowA).toHaveLength(2);
         expect(windowB).toHaveLength(2);
-        // The control's premise: two served regions that do not touch, with the gap left unserved.
         const mirror = await withWorkspace(cwd, () => loadServed("test-session", path));
         expect(mirror).toEqual([windowA[0]!, windowA[1]!, null, null, windowB[0]!, windowB[1]!]);
 
@@ -598,8 +535,6 @@ describe("rejection payload region rule (ADR-0022)", () => {
           expectedCode: "E_STALE_RANGE",
         });
 
-        // Window B's rows are served, leased and byte-unchanged, so nothing but the region rule
-        // keeps them out of this payload; the never-served gap rows are excluded with them.
         const payload = caught as Payloadish;
         expect(payload.servedRows.map((row) => row.position)).toEqual([0, 1, 2]);
         for (const outside of [3, 4, 5, 6]) {
@@ -616,7 +551,6 @@ describe("rejection payload region rule (ADR-0022)", () => {
       "alpha\nbeta\ngamma\ndelta\nepsilon\n",
       async ({ cwd, path }) => {
         const harness = setupIntegrationTest(cwd);
-        // A windowed read serves lines 1–2; positions 3–5 are never served.
         const servedRows = getText(
           await harness.readTool.execute("read", { path: "region.txt", offset: 1, limit: 2 }),
         )
@@ -628,10 +562,6 @@ describe("rejection payload region rule (ADR-0022)", () => {
         expect(before.slice(0, 2)).toEqual([servedRows[0]!, servedRows[1]!]);
         expect(before.slice(2).every((slot) => slot === null)).toBe(true);
 
-        // WHY (T3): a duplicate insert above the span no longer collides — the served anchor keeps
-        // its identity and that edit applies. The exterior change is therefore a TEAR: an insert
-        // inside the served span (alpha..beta gains a line), so the span verification refuses with
-        // a row-carrying range rejection and the region rule stays observable.
         const disk = "alpha\nINSERTED\nbeta\ngamma\ndelta\nepsilon\n";
         await writeFile(path, disk, "utf-8");
         let caught: unknown;
@@ -649,14 +579,9 @@ describe("rejection payload region rule (ADR-0022)", () => {
         expect(String((caught as Error).message)).toContain("[E_STALE_RANGE]");
         const payload = caught as Payloadish;
         const after = await withWorkspace(cwd, () => loadServed("test-session", path));
-        // ADR-0043: a row-carrying rejection records the window it echoed, so the mirror now
-        // holds the CURRENT file's rows at those positions instead of the pre-change ones. The
-        // echoed region is the torn span's current coordinates (lines 1-3, positions 0-2);
-        // measured from this run, not assumed.
         const currentHashes = lineHashesPure(disk.trimEnd());
         expect(payload.servedRows.map((row) => row.position)).toEqual([0, 1, 2]);
         expect(after.slice(0, 3)).toEqual(currentHashes.slice(0, 3));
-        // Rows outside the region stay unserved AND unrendered.
         expect(after.slice(3).every((slot) => slot === null)).toBe(true);
         const diskLines = disk.split("\n").slice(0, -1);
         for (const outside of [3, 4, 5]) {
@@ -680,7 +605,6 @@ describe("rejection payload region rule (ADR-0022)", () => {
         .map((line) => line.split("│")[0]!);
       expect(served).toHaveLength(4);
 
-      // Apply one edit so a v7 undo pin exists.
       await harness.editTool.execute("edit", {
         path: "pin.txt",
         anchor_from: served[3]!,
@@ -692,7 +616,6 @@ describe("rejection payload region rule (ADR-0022)", () => {
       expect(pinBefore!.snapshotHash, "the pin names a snapshot").not.toBeNull();
       expect(store.lineageFor(path, pinBefore!.snapshotHash!).length).toBeGreaterThan(0);
 
-      // A region rejection: the file changed out of band under the served anchors.
       await writeFile(path, "alpha\nBETA\ngamma\n", "utf-8");
       let caught: unknown;
       try {
@@ -707,8 +630,6 @@ describe("rejection payload region rule (ADR-0022)", () => {
       }
       expect(String((caught as Error).message)).toMatch(/E_STALE_RANGE|E_UNSERVED_RANGE/);
 
-      // The pin is untouched by the rejection, and its snapshot still resolves: a reject path
-      // that vacuums or rewrites `file_undo` reddens this cell.
       const pinAfter = store.getFileUndo(path);
       expect(pinAfter).toEqual(pinBefore);
       expect(store.lineageFor(path, pinAfter!.snapshotHash!).length).toBeGreaterThan(0);
@@ -716,13 +637,10 @@ describe("rejection payload region rule (ADR-0022)", () => {
     });
   });
 
-  // #218: the no-op-loop arm of the (b) contract — a row-carrying noop refusal must echo the whole
-  // span it shows AND lease it, including the interior rows the bounds-only read never served.
   it("the noop-loop refusal carries its whole span's rows and leases the interior it shows (#218)", async () => {
     await withTempFile("noop.txt", "one\ntwo\nthree\nfour\n", async ({ cwd, path }) => {
       const harness = setupIntegrationTest(cwd);
       const fullKey = sessionKeyFor(harness.sessionKey);
-      // Bounds-only geometry: lines 1 and 4 are served; positions 1-2 (lines 2-3) are not.
       const first = servedHashes(
         getText(await harness.readTool.execute("read", { path: "noop.txt", offset: 1, limit: 1 })),
       );
@@ -742,7 +660,6 @@ describe("rejection payload region rule (ADR-0022)", () => {
             { anchor_from: first[0]!, anchor_to: last[0]!, replace_with: "one\ntwo\nthree\nfour" },
           ],
         });
-      // Two warn-tier submissions, then the third reaches NOOP_LOOP_THRESHOLD (3) and rejects.
       await call();
       await call();
       let caught: unknown;
@@ -762,7 +679,6 @@ describe("rejection payload region rule (ADR-0022)", () => {
         expectedCode: "E_NOOP_LOOP",
         heading: "Current on-disk range",
       });
-      // The row-carrying noop refusal leases what it shows: the interior rows are served now.
       const after = await withWorkspace(cwd, () => loadServed(fullKey, path));
       expect(after.slice(1, 3).every((slot) => slot !== null)).toBe(true);
       expect(after).toEqual(lineHashesPure(disk.trimEnd()));

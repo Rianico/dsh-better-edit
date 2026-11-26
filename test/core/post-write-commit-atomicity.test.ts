@@ -64,8 +64,6 @@ describe("edit commit ordering (#98, upstream CAND-3)", () => {
       const afterFailure = await withWorkspace(cwd, () =>
         loadAnchorReservations("test-session", path),
       );
-      // The anchor the edit would have freed is still live: nothing was retired for a write
-      // that never landed.
       expect([...afterFailure.retiredHashes].sort()).toEqual([...before.retiredHashes].sort());
     });
   });
@@ -93,8 +91,6 @@ describe("edit commit ordering (#98, upstream CAND-3)", () => {
       const read = await harness.readTool.execute("r1", { path: "cand3_retire_fault.txt" });
       const bravo = extractHash(rowsOf(read)[1]!);
 
-      // A store fault in the post-write retire must not convert the applied edit into a thrown
-      // error. The patch also faults the serve sweep, so the edit stands with both notices.
       const store = await withWorkspace(cwd, () => loadServedStore());
       const originalUpsert = store.upsertRetiredAnchors.bind(store);
       store.upsertRetiredAnchors = (): void => {
@@ -115,7 +111,6 @@ describe("edit commit ordering (#98, upstream CAND-3)", () => {
         expect(text).toContain("could not be retired for this session");
         expect(text).toContain("induced retire fault");
         expect(warn).toHaveBeenCalled();
-        // Retirement did not land, so the freed anchor stays live and self-heals on next use.
         const after = await withWorkspace(cwd, () => loadAnchorReservations("test-session", path));
         expect(after.retiredHashes.has(bravo)).toBe(false);
       } finally {
@@ -138,7 +133,6 @@ describe("undo commit ordering and atomicity (#98, upstream CAND-3)", () => {
         anchor_to: bravo,
         replace_with: "bravo edited",
       });
-      // The diff row is `+HASH│…`; drop the marker before reading the anchor.
       const postEditAnchor = extractHash(
         rowsOf(editResult)
           .find((row) => row.endsWith("│bravo edited"))!
@@ -147,7 +141,6 @@ describe("undo commit ordering and atomicity (#98, upstream CAND-3)", () => {
       expect(await readFile(path, "utf8")).toBe(EDITED);
 
       const before = await withWorkspace(cwd, () => loadAnchorReservations("test-session", path));
-      // The pre-edit anchors are already retired by the edit; the post-edit hashes are live.
       const retiredBefore = new Set(before.retiredHashes);
 
       const failingHarness = setupIntegrationTest(cwd, ioWithFailingWrite());
@@ -155,23 +148,17 @@ describe("undo commit ordering and atomicity (#98, upstream CAND-3)", () => {
         failingHarness.undoTool.execute("u1", { path: "cand3_undo_order.txt" }),
       ).rejects.toThrow();
 
-      // The bytes never changed...
       expect(await readFile(path, "utf8")).toBe(EDITED);
 
       const afterFailure = await withWorkspace(cwd, () =>
         loadAnchorReservations("test-session", path),
       );
-      // ...and the store did not move either: no revert-freed anchor was retired, and the
-      // undo pair survives so a later undo still works.
       expect([...afterFailure.retiredHashes].sort()).toEqual([...retiredBefore].sort());
       expect(await withWorkspace(cwd, () => getUndo(path))).toBeDefined();
 
-      // A real undo then lands and reverts; the pair is consumed.
       await harness.undoTool.execute("u2", { path: "cand3_undo_order.txt" });
       expect(await readFile(path, "utf8")).toBe(ORIGINAL);
       expect(await withWorkspace(cwd, () => getUndo(path))).toBeUndefined();
-      // The revert retired the superseded post-edit anchor and revived the pre-edit one,
-      // both in the same unit (ADR-0017 reversal, #111).
       const afterUndo = await withWorkspace(cwd, () =>
         loadAnchorReservations("test-session", path),
       );
@@ -181,9 +168,6 @@ describe("undo commit ordering and atomicity (#98, upstream CAND-3)", () => {
   });
 
   it("a store fault inside the restore unit rolls the whole triple back", async () => {
-    // The failure is injected in the LAST statement of the unit (`deleteUndoPair`), so the
-    // snapshot adopt and the retirement have already executed when it throws: only one
-    // transaction can take all three back together.
     await withTempFile("cand3_undo_store_fault.txt", ORIGINAL, async ({ cwd, path }) => {
       const harness = setupIntegrationTest(cwd);
       const read = await harness.readTool.execute("r1", { path: "cand3_undo_store_fault.txt" });
@@ -214,11 +198,8 @@ describe("undo commit ordering and atomicity (#98, upstream CAND-3)", () => {
           harness.undoTool.execute("u1", { path: "cand3_undo_store_fault.txt" }),
         ).rejects.toThrow(/E_UNDO_NOT_RECORDED/);
 
-        // The revert's write landed first...
         expect(await readFile(path, "utf8")).toBe(ORIGINAL);
         const after = await withWorkspace(cwd, () => loadAnchorReservations("test-session", path));
-        // ...but the retirement that ran before the fault is rolled back with the adopt, and the
-        // undo pair is still there (all three or none).
         expect([...after.retiredHashes].sort()).toEqual([...retiredBefore].sort());
         expect(await withWorkspace(cwd, () => getUndo(path))).toBeDefined();
       } finally {

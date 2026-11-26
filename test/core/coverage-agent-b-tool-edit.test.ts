@@ -16,7 +16,6 @@ describe("tool-edit coverage", () => {
   it("edit single line via tool", async () => {
     await withTempFile("t.txt", "a\nb\nc\n", async ({ cwd, path }) => {
       const harness = setupIntegrationTest(cwd);
-      // need served hashes
       const res = await harness.readTool.execute("read", { path: "t.txt" });
       const text = getText(res);
       const line = text.split("\n").find((l) => l.includes("│b"))!;
@@ -43,7 +42,6 @@ describe("tool-edit coverage", () => {
   it("a null path is refused at admission even when one file matches its anchors", async () => {
     await withTempFile("only.txt", "line one\nline two\n", async ({ cwd, path }) => {
       const harness = setupIntegrationTest(cwd);
-      // serve to create snapshots — one file matches, the retired inference arm's best case
       const res = await harness.readTool.execute("read", { path: "only.txt" });
       const lines = getText(res)
         .split("\n")
@@ -56,7 +54,6 @@ describe("tool-edit coverage", () => {
       } as never);
       const tool = buildEditTool(io, sandbox);
       const exec = makeExec(cwd);
-      // #117: null file is an admission error — even a single hash match must not infer.
       await expect(
         tool.execute({ path: null, edits: [[h1, h1, "replaced"]] } as any, exec),
       ).rejects.toMatchObject({ code: "E_BAD_PAYLOAD" });
@@ -81,7 +78,6 @@ describe("tool-edit coverage", () => {
       }
       expect(error).toBeDefined();
       expect(error).toMatchObject({ code: "E_BAD_PAYLOAD" });
-      // #117 retired the inference seam: the rejection must not advertise a lookup.
       expect((error as Error).message).not.toMatch(/inferred|Autocorrected/);
       expect(await readFile(path, "utf-8")).toBe("a\nb\n");
     });

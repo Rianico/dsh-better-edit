@@ -300,8 +300,6 @@ describe("agent-layer tool install isolation (#123)", () => {
   });
 
   afterAll(async () => {
-    // The boot-time guidance materializer runs detached from `apply`; retry the
-    // recursive remove if it is still writing into the temp home.
     let lastError: unknown;
     for (let attempt = 0; attempt < 5; attempt += 1) {
       try {
@@ -331,13 +329,9 @@ describe("agent-layer tool install isolation (#123)", () => {
     expect(host.layer.get("undo_last_edit")).not.toBe(peerUndo);
     expect(host.layer.get("undo_last_edit")).toMatchObject({ name: "undo_last_edit" });
 
-    // Both contested names are reclaimed through the shared primitive, each
-    // with a warning that cites the issue.
     expect(hasWarn(host, 'reclaimed contested tool "edit"', "#123")).toBe(true);
     expect(hasWarn(host, 'reclaimed contested tool "undo_last_edit"', "#123")).toBe(true);
 
-    // The rest of the install completes: write hook listeners, self-heal
-    // watcher, and the guidance sections.
     expect(host.agentListeners.has("tools/pre-execute")).toBe(true);
     expect(host.agentListeners.has("tools/post-execute")).toBe(true);
     expect(host.agentListeners.has("tools/change")).toBe(true);
@@ -347,8 +341,6 @@ describe("agent-layer tool install isolation (#123)", () => {
       "tool:undo_last_edit",
     ]);
 
-    // The detached guidance materializer seeds the fresh home and reports
-    // nothing: every file it wrote is the current compiled default.
     await waitUntil(
       () =>
         access(join(pluginHome(), ".seeded.json")).then(
@@ -367,16 +359,12 @@ describe("agent-layer tool install isolation (#123)", () => {
     const host = createHost({ presetPending: true });
 
     mount(host);
-    // `read` is claimed synchronously, inside `agent/created`.
     expect(host.layer.get("read")).toBeDefined();
     const registrationsBeforeDispose = host.registerCalls.length;
 
     host.disposeAgent();
-    // The synchronous cleanup releases the read registration immediately.
     expect(host.layer.get("read")).toBeUndefined();
 
-    // The pending toolset resolves after the agent is gone: the `disposed` gate
-    // discards the rest of the install, so nothing leaks into the dead scope.
     host.releaseScope();
     await drain();
 
@@ -396,14 +384,11 @@ describe("agent-layer tool install isolation (#123)", () => {
     mount(host);
     await settle(host);
 
-    // No occupied entry and no collision signal: the guarded reclaim must not
-    // run, and the unrelated peer definition stays untouched.
     expect(host.deletedNames()).toEqual([]);
     expect(host.layer.get("unrelated_peer")).toBe(peer);
     expect(host.layer.get("edit")).toBeUndefined();
     expect(hasWarn(host, "non-collision error", "#123")).toBe(true);
 
-    // Fault isolation: the remaining tools and the guidance still install.
     expect(registeredNames(host)).toEqual([
       "read",
       "str_replace_editor",
@@ -418,7 +403,6 @@ describe("agent-layer tool install isolation (#123)", () => {
   });
 
   beforeEach(() => {
-    // The hoisted mock log is module-wide; each test owns exactly one install.
     watcherCalls.options.length = 0;
   });
   it("S4 isolates a factory fault: the remaining tools and guidance still install", async () => {
@@ -445,19 +429,13 @@ describe("agent-layer tool install isolation (#123)", () => {
   it("self-heal keeps the owned read definition, not whatever the layer holds", async () => {
     const host = createHost({ presetPending: true });
     const peerRead = { name: "peer-read" };
-    // Pre-claim `read` like S1 pre-claims `edit` and `undo_last_edit`.
     host.layerData.set("read", peerRead);
 
     mount(host);
-    // Step 1 reclaimed the peer entry and registered our own definition.
     const claimedRead = host.layer.get("read");
     expect(claimedRead).toBeDefined();
     expect(claimedRead).not.toBe(peerRead);
 
-    // A peer re-claims `read` while the install is still awaiting the preset
-    // lease. By Step 6 the layer no longer holds our definition, so an
-    // installer that snapshots `layer.get("read")` would hand self-heal the
-    // intruder instead of the definition it built.
     const intruder = { name: "intruder-read" };
     host.layerData.set("read", intruder);
     host.releaseScope();
@@ -469,8 +447,6 @@ describe("agent-layer tool install isolation (#123)", () => {
     expect(ownedRead).not.toBe(intruder);
     expect(host.layer.get("read")).toBe(intruder);
 
-    // The watcher heals from the owned reference: the intruder is replaced by
-    // the definition the install built, not by a re-read of the layer.
     host.agentListeners.get("tools/change")!();
     await flushMicrotasks();
 
@@ -496,7 +472,6 @@ describe("agent-layer tool install isolation (#123)", () => {
     expect(diverged()[0]).toContain(editFile);
     expect(await readFile(editFile, "utf-8")).toBe(custom);
 
-    // Restore the compiled default so later mounts and `afterAll` stay quiet.
     await writeFile(editFile, renderSectionDefault("tool:edit"), "utf-8");
   });
 });

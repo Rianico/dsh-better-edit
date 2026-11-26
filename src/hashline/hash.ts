@@ -97,9 +97,6 @@ export interface LineageAlignment {
  * the lineage stays blocked from fresh allocation even when its own line retired, so a fresh
  * duplicate can never reclaim a retired twin's spelling; a canon seen once stays free, so a pure
  * reorder never rotates unchanged bytes.
- *
- * `retired` is an OUT-set the caller persists as a retirement marker (the session layer's job —
- * this function only reports which anchors no current line carries).
  */
 export function alignToLatestLineage(
   content: string,
@@ -198,7 +195,6 @@ export async function lineHashes(
   await initHasher();
   if (!path) return lineHashesPure(content, reservedHashes);
 
-  // Back-compat: caller may pass HashStore as 4th arg; adapt to IO.
   const io: HashSnapshotIO | undefined =
     ioOrStore && "getSnapshot" in ioOrStore
       ? snapshotIOFor(ioOrStore as HashStore)

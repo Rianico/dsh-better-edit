@@ -1,24 +1,13 @@
 /**
- * Promote the curated `## [Unreleased]` ledger into the release.
+ * Promotes the curated `## [Unreleased]` ledger into the release.
  *
  * `@semantic-release/changelog` regenerated the notes from commit subjects, which discarded the
- * curated ledger at the moment it mattered and prepended the regenerated text *above*
- * `## [Unreleased]` — inverting Keep-a-Changelog order. This plugin makes the ledger the source
- * instead, so curation survives into the file and the GitHub release:
- *
- * - `generateNotes` returns the curated block, so the release notes are what a human wrote.
- * - `prepare` promotes it to `## [version] - date` and re-opens an empty `## [Unreleased]` above.
- *
- * `generateNotes` is called twice: once in the generateNotes phase (while the block is still
- * unreleased), and again by semantic-release v25's `prepare` pipeline, which regenerates notes
- * after any `prepare` plugin that changes `gitHead` — `@semantic-release/git` commits the
- * CHANGELOG back, so the regeneration fires after this plugin's own `prepare` has already
- * promoted the block to the dated heading. The first result is cached so the curated ledger
- * survives the second call instead of returning the now-empty `[Unreleased]` block.
- *
- * An empty block is not an error. A landing can carry no entry — a direct push to `main`, say — and
- * blocking a release on a bookkeeping gap is worse than releasing without user-facing text, so the
- * section is promoted empty and the note says so.
+ * curated ledger and prepended them *above* `## [Unreleased]`, inverting Keep-a-Changelog order.
+ * Here `generateNotes` returns the curated block and `prepare` promotes it to
+ * `## [version] - date` with a fresh empty `## [Unreleased]` above it. semantic-release v25 calls
+ * `generateNotes` twice — `@semantic-release/git` commits the CHANGELOG, which regenerates the
+ * notes — so the first result is cached and the ledger survives the second call. An empty block is
+ * not an error: a landing can carry no entry, so the section is promoted empty.
  */
 
 import { readFile, writeFile } from "node:fs/promises";

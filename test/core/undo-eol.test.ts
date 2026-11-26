@@ -6,14 +6,6 @@
  * replayed the pre-image at `detectEnding`'s answer, so restoring a mixed file re-spelled it at
  * the wrong ending. The pair now records the write's effective ending and whether the pre-image
  * spelled more than one terminator kind, so the revert:
- *
- *  - restores at the ending the edit actually used (byte-identical for a uniform file),
- *  - compares staleness against the same ending it will write,
- *  - and pushes one clause naming that ending when the pre-image was mixed — the mixture itself
- *    is not restorable, and saying nothing would claim it was.
- *
- * Old rows (the two columns NULL) fall back to `ending` and never claim a mixture, so an upgrade
- * needs no destructive migration and no version bump.
  */
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -45,7 +37,6 @@ beforeAll(async () => {
 });
 
 afterEach(() => {
-  // The effective ending is a config rung; a forgotten override must not leak across files.
   _resetConfigCache();
   delete process.env.DSH_BETTER_EDIT_EOL;
 });
@@ -125,10 +116,7 @@ function rawWriteIO(): FileIO {
 describe("mixed pre-image — the undo restores at the ending the edit used", () => {
   it("first separator differs from the majority: restores at CRLF and discloses the mixture", async () => {
     await withTempFile("t.txt", "a\nb\r\nc\r\nd\r\n", async ({ cwd, path }) => {
-      // The edit adds a line as well as changing one: the line-count summary then exists, which is
-      // what the ordering assertion below needs (the clause must follow it and precede the revert).
       const { harness, editText } = await readAndEdit(cwd, "t.txt", "a", "A\nEXTRA");
-      // The edit itself normalized the file; that is #169's contract, not this test's claim.
       expect(await readFile(path, "utf-8")).toBe("A\r\nEXTRA\r\nb\r\nc\r\nd\r\n");
       expect(editText).not.toContain("[E_");
 
@@ -138,8 +126,6 @@ describe("mixed pre-image — the undo restores at the ending the edit used", ()
       expect(text).toContain(`Restored at CRLF; ${MIXED_CLAUSE}`);
       expect(text).not.toContain("[E_");
 
-      // Response order is the contract: the line-count summary, then the mixture clause, then the
-      // revert summary. A clause pushed after the revert would read as a footnote about it.
       const summaryAt = text.indexOf("line(s) that were added");
       const clauseAt = text.indexOf("Restored at CRLF");
       const revertedAt = text.indexOf("File reverted to previous state.");
@@ -190,10 +176,6 @@ describe("old rows — the two columns carrying NULL mean 'no mixture'", () => {
       const { harness } = await readAndEdit(cwd, "t.txt", "a", "A");
       expect(await readFile(path, "utf-8")).toBe("A\r\nb\r\n");
 
-      // Simulate the pre-change row WITHOUT a migration: the columns exist (an additive
-      // backfill), so the upgrade state is exactly "present, unset". Blanking them is the
-      // whole fixture — an old store's row is indistinguishable from this one after
-      // `addColumnIfMissing` ran, which is why no destructive step is needed.
       shutdownHashStore();
       const raw = new DatabaseSync(hashStorePath(cwd));
       raw.exec("UPDATE file_undo SET effective_ending = NULL, pre_image_mixed = NULL;");
@@ -229,8 +211,6 @@ describe("storage — both rows round-trip the new columns", () => {
       expect(entry?.effectiveEnding).toBe("\r\n");
       expect(entry?.preImageMixed).toBe(true);
 
-      // A caller that names neither (every pre-#171 call site) records the original ending and
-      // never claims a mixture — the same shape an old row reads back as.
       await saveUndo(path, {
         content: "c\nd\n",
         bom: "",
@@ -277,8 +257,6 @@ describe("corruption — a bad new column heals the row", () => {
       };
       const store = await loadHashStore();
       store.writeUndo(path, { ...record, snapshotHash: snapshotHashFor(content) });
-      // The row is readable before the corruption, so the miss below is the healing, not a
-      // generation refusal or a missing row.
       expect(store.getFileUndo(path)?.snapshotHash).toBe(snapshotHashFor(content));
 
       shutdownHashStore();
@@ -289,7 +267,6 @@ describe("corruption — a bad new column heals the row", () => {
       expect(await getUndo(path)).toBeUndefined();
       const reloaded = await loadHashStore();
       expect(reloaded.getFileUndo(path)).toBeUndefined();
-      // The heal is row-wide: the corrupt row is deleted, so both readers miss.
       expect(reloaded.getUndo(path)).toBeUndefined();
     });
   });
@@ -299,7 +276,6 @@ describe("corruption — a bad new column heals the row", () => {
  * The column names `pragma_table_info` reports for one table — the schema fact the backfill owns.
  */
 function columnsOf(db: DatabaseSync, table: string): string[] {
-  // Parameterized: `pragma_table_info` is a table-valued function, so the table is a VALUE.
   return (db.prepare("SELECT name FROM pragma_table_info(?)").all(table) as { name: string }[]).map(
     (column) => column.name,
   );
@@ -321,9 +297,6 @@ describe("upgrade — an old store gains the pair on BOTH tables", () => {
       store.writeUndo(path, { ...record, snapshotHash: snapshotHashFor(content) });
       shutdownHashStore();
 
-      // Model the pre-#171 store: neither v7 row carries the pair. DROP COLUMN takes the values
-      // with it, so whatever the open path re-adds arrives NULL on the existing rows — exactly the
-      // upgrade state this ticket promises (no destructive migration here).
       const preChange = new DatabaseSync(hashStorePath());
       preChange.exec(
         "ALTER TABLE undo DROP COLUMN effective_ending; " +
@@ -333,14 +306,11 @@ describe("upgrade — an old store gains the pair on BOTH tables", () => {
       );
       preChange.close();
 
-      // The fixture really removed them, so the assertions below cannot pass vacuously.
       const dropped = new DatabaseSync(hashStorePath());
       expect(columnsOf(dropped, "undo")).not.toContain("effective_ending");
       expect(columnsOf(dropped, "file_undo")).not.toContain("pre_image_mixed");
       dropped.close();
 
-      // The open path backfills BOTH tables. Deleting either `addColumnIfMissing` call fails here,
-      // on the table it belongs to — that is the whole point of inspecting the live schema.
       const reopened = await loadHashStore();
       const inspected = new DatabaseSync(hashStorePath());
       expect(columnsOf(inspected, "undo")).toEqual(
@@ -351,7 +321,6 @@ describe("upgrade — an old store gains the pair on BOTH tables", () => {
       );
       inspected.close();
 
-      // The re-added columns are NULL on the surviving rows: "not recorded", never a claim.
       const legacyRow = reopened.getUndo(path);
       expect(legacyRow?.effectiveEnding).toBeNull();
       expect(legacyRow?.preImageMixed).toBeNull();
@@ -359,7 +328,6 @@ describe("upgrade — an old store gains the pair on BOTH tables", () => {
       expect(fileRow?.effectiveEnding).toBeNull();
       expect(fileRow?.preImageMixed).toBeNull();
 
-      // … so the reader falls back to the pre-image's ending and reports no mixture.
       const entry = await getUndo(path);
       expect(entry?.effectiveEnding).toBe("\r\n");
       expect(entry?.preImageMixed).toBe(false);
@@ -376,26 +344,19 @@ describe("seams — the effective ending is named at both write points", () => {
       const text = getText(await harness.undoTool.execute("u1", { path: "t.txt" }));
 
       expect(text).toContain(`Restored at CRLF; ${MIXED_CLAUSE}`);
-      // The LAST write is the revert; its 7th argument names the ending the restore used. Drop that
-      // argument and the IO seam re-prepares against a memo that still says `ending`.
       expect(calls.at(-1)?.[6]).toEqual({ lineEnding: "\r\n" });
     });
   });
 
   it("the restore names it in prepareForSave, not only in the IO option", async () => {
     await withTempFile("t.txt", "a\nb\r\nc\r\nd\r\n", async ({ cwd, path }) => {
-      // A literal-writing IO: no `prepareForSave` on the far side can rescue a wrong ending, so the
-      // bytes are decided by the save seam's own option alone.
       const { harness } = await readAndEdit(cwd, "t.txt", "a", "A", rawWriteIO());
       expect(await readFile(path, "utf-8")).toBe("A\r\nb\r\nc\r\nd\r\n");
 
-      // Drop the memo: the undo must take its ending from the pair, not from a leftover record.
       clearEncodingState(await resolveTarget(path));
 
       await harness.undoTool.execute("u1", { path: "t.txt" });
 
-      // `undo.content` is the NORMALIZED pre-image, so without `lineEnding` the literal write would
-      // land LF and this assertion fails.
       expect(await readFile(path, "utf-8")).toBe("a\r\nb\r\nc\r\nd\r\n");
     });
   });

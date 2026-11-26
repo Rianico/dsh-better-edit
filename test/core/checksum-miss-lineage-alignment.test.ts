@@ -15,8 +15,6 @@ import { normFromText } from "../../src/file-view.js";
 import type { LineageRow } from "../../src/snapshot-store/lineage-store.js";
 import { useTestHome } from "../support/fixtures.js";
 
-// #199: await the hashing seam before the first digest, so the spec never races the
-// async xxhash-wasm init on a cold runner.
 beforeAll(async () => {
   await initHasher();
 });
@@ -73,8 +71,6 @@ describe("alignToLatestLineage — pairing against prior rows", () => {
   });
 
   it("blocks a retired twin's canonical anchor from fresh allocation", () => {
-    // a a a b -> a a b: every `a` retired, and every `a` anchor is a twin canon, so no fresh line
-    // may reclaim one of them.
     const latest = lineageRows(["AAA", "BBB", "CCC", "DDD"], ["a", "a", "a", "b"]);
 
     const aligned = alignToLatestLineage("a\na\nb\n", latest);

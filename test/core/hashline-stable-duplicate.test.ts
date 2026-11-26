@@ -200,9 +200,6 @@ describe("stable hashing with duplicate content lines", () => {
         ctx,
       );
 
-      // The post-edit diff window covers only the changed region; anchors
-      // outside it are recovered with a read (hashline's on-demand recovery),
-      // which also re-serves the whole current file.
       const read1b = await readTool.execute(
         "r1b",
         { path: "sample.ts" },

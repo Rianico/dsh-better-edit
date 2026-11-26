@@ -20,8 +20,6 @@ import {
   parseEnvEncodingMigrationConsent,
 } from "./encoding-consent.js";
 
-// ---- eol vocabulary (single source of truth for the `eol` setting) ----
-
 /** Environment override for the `eol` setting; must match the resolver's rung. */
 export const EOL_ENV_VAR = "DSH_BETTER_EDIT_EOL";
 
@@ -42,8 +40,6 @@ export function parseEnvEolSetting(raw: string | undefined): EolSetting | undefi
   const candidate = raw.trim().toUpperCase();
   return isEolSetting(candidate) ? candidate : undefined;
 }
-
-// ---- helpers (pure, no IO) ----
 
 function homeBase(): string {
   const envHome = process.env.HOME;
@@ -116,24 +112,21 @@ function parseSupportedEncodingsRaw(v: string): string[] | undefined {
   return items;
 }
 
-// ---- Zod schema (single source of truth) ----
-
 const StoreConfigSchema = z.object({
   storeDir: z
     .string()
     .default("central")
-    .transform((v) => normalizeStoreDir(v) ?? "central"), // where the store lives: "central" (default, in $DSH_HOME/.../runtime/<name>-<hash8>/) | "workspace" (legacy <ws>/.dsh_better_edit/) | "/abs/path" (custom root)
-  autoGitignore: z.boolean().default(false), // workspace only: auto-append ".dsh_better_edit/" to .gitignore when .git exists but entry missing (false = warn once)
-  autoGuessEncoding: z.boolean().default(false), // VS Code files.autoGuessEncoding — deterministic BOM→UTF-8 first, model-assisted top-3 only when true
-  normalizeToUtf8: z.boolean().default(false), // when true, legacy files (GBK etc.) migrate to UTF-8 on first edit/write
-  // ABSENT by default on purpose: absence falls through to legacy `normalizeToUtf8` (see encoding-consent)
+    .transform((v) => normalizeStoreDir(v) ?? "central"),
+  autoGitignore: z.boolean().default(false),
+  autoGuessEncoding: z.boolean().default(false),
+  normalizeToUtf8: z.boolean().default(false),
   allowEncodingMigration: z.enum(ENCODING_MIGRATION_CONSENTS).optional(),
   supportedEncodings: z.array(z.string()).default([...SUPPORTED_ENCODINGS]),
-  spanMode: z.enum(["hint", "strict"]).default("hint"), // opt-in served-span policy for edit payloads: "hint" (default) | "strict"
-  undo_ttl_s: z.number().int().min(-1).default(604800), // undo history TTL in seconds; -1 = keep forever (default 604800 = 7 days)
-  storeMaxAgeS: z.number().int().min(1).default(2592000), // central janitor: max idle age in seconds before evicting runtime/<name>-<hash8>/ (default 2592000 = 30 days)
-  storeMaxTotalBytes: z.number().int().min(0).default(524288000), // central janitor: max total bytes under runtime/ before LRU eviction (default 524288000 = 500 MB)
-  eol: z.enum(EOL_SETTINGS).default(EOL_DEFAULT), // line ending a write uses: AUTO (keep the file's dominant terminator) | LF | CRLF | CR
+  spanMode: z.enum(["hint", "strict"]).default("hint"),
+  undo_ttl_s: z.number().int().min(-1).default(604800),
+  storeMaxAgeS: z.number().int().min(1).default(2592000),
+  storeMaxTotalBytes: z.number().int().min(0).default(524288000),
+  eol: z.enum(EOL_SETTINGS).default(EOL_DEFAULT),
 });
 
 export type StoreConfig = z.infer<typeof StoreConfigSchema>;
@@ -212,14 +205,11 @@ export async function ensureDefaultConfig(homeDir?: string): Promise<void> {
     await writeFile(yamlPath, DEFAULT_CONFIG_YAML, { encoding: "utf-8", flag: "wx" });
   } catch (error: unknown) {
     if (errCode(error) === "EEXIST") return;
-    // ENOENT for missing parent is handled by mkdir, other errors are best-effort
     console.warn(
       `dsh-better-edit: failed to materialize default config at ${yamlPath}: ${error instanceof Error ? error.message : String(error)}`,
     );
   }
 }
-
-// ---- adapters ----
 
 function fsAdapter(): Partial<StoreConfig> {
   const yamlPath = configYamlPath();
@@ -235,7 +225,6 @@ function fsAdapter(): Partial<StoreConfig> {
           `dsh-better-edit: storeDir "${parsed.storeDir}" illegal/malformed — not absolute after expand, fallback to central`,
         );
       } else {
-        // validate via Zod shape for enum/abs
         const res = z.string().safeParse(norm);
         if (res.success) out.storeDir = norm;
       }
@@ -265,7 +254,6 @@ function fsAdapter(): Partial<StoreConfig> {
       }
     }
 
-    // storeMaxAgeS — unified seconds (canonical); deprecated aliases: storeMaxAgeDays / store_max_age_days (days -> seconds), store_max_age_s (snake)
     {
       let rawMaxAge: string | undefined;
       let rawSource: string | undefined;
@@ -332,7 +320,6 @@ function fsAdapter(): Partial<StoreConfig> {
       else out.normalizeToUtf8 = b;
     }
     if (parsed.allowEncodingMigration !== undefined) {
-      // config values are verbatim/case-sensitive, consistent with `eol`
       if (isEncodingMigrationConsent(parsed.allowEncodingMigration)) {
         out.allowEncodingMigration = parsed.allowEncodingMigration;
       } else {
@@ -358,7 +345,6 @@ function fsAdapter(): Partial<StoreConfig> {
       else out.supportedEncodings = arr;
     }
     if (parsed.eol !== undefined) {
-      // file values are verbatim — a lowercase `lf` is outside the enum and is not accepted
       if (isEolSetting(parsed.eol)) {
         out.eol = parsed.eol;
       } else {
@@ -483,8 +469,6 @@ function envAdapter(base: StoreConfig): Partial<StoreConfig> {
 }
 
 function complementMissingFieldsSync(yamlPath: string, yamlPartial: Partial<StoreConfig>): void {
-  // Best-effort: append missing canonical keys with defaults, preserving existing content.
-  // Only runs when the file exists (mtime !== undefined) and some canonical key is absent.
   const missingLines: string[] = [];
   if (yamlPartial.storeDir === undefined) missingLines.push("storeDir: central");
   if (yamlPartial.autoGitignore === undefined) missingLines.push("autoGitignore: false");
@@ -498,15 +482,10 @@ function complementMissingFieldsSync(yamlPath: string, yamlPartial: Partial<Stor
   if (yamlPartial.storeMaxTotalBytes === undefined)
     missingLines.push("storeMaxTotalBytes: 524288000");
   if (yamlPartial.eol === undefined) missingLines.push("eol: AUTO");
-  // `allowEncodingMigration` is deliberately NOT complemented: materializing `refuse` into an
-  // existing config would silently disable a legacy `normalizeToUtf8: true` (absence is what makes
-  // the legacy spelling reachable — see `src/encoding-consent.ts`).
   if (missingLines.length === 0) return;
   try {
-    // Ensure we don't duplicate if file was concurrently complemented — re-read raw keys.
     const raw = readFileSync(yamlPath, "utf-8");
     const parsed = parseSimpleYaml(raw);
-    // Re-check against raw parsed (aliases for storeMaxAgeS already handled via yamlPartial, but double-check).
     const stillMissing = missingLines.filter((line) => {
       const key = line.split(":")[0]!.trim();
       return parsed[key] === undefined;
@@ -516,17 +495,16 @@ function complementMissingFieldsSync(yamlPath: string, yamlPartial: Partial<Stor
       (raw.endsWith("\n") || raw.length === 0 ? "" : "\n") + stillMissing.join("\n") + "\n";
     appendFileSync(yamlPath, suffix, "utf-8");
   } catch {
-    // best-effort: ENOENT (file deleted between stat and read) or permission — ignore
+    // HACK: ENOENT (file deleted between stat and read) or permission — ignore
   }
 }
-// ---- public load (merged, cached) ----
 export function loadConfig(): StoreConfig {
   const yamlPath = configYamlPath();
   let mtime: number | undefined;
   try {
     mtime = statSync(yamlPath).mtimeMs;
   } catch {
-    // no yaml file — fall through to defaults/cache miss
+    // HACK: no yaml file — fall through to defaults/cache miss
   }
   const envStoreDir = process.env.DSH_BETTER_EDIT_STORE_DIR;
   const envGuess = process.env.DSH_BETTER_EDIT_AUTO_GUESS_ENCODING;
@@ -558,12 +536,13 @@ export function loadConfig(): StoreConfig {
     complementMissingFieldsSync(yamlPath, yamlPartial);
     try {
       mtime = statSync(yamlPath).mtimeMs;
-    } catch {}
+    } catch {
+      // HACK: stat raced with a delete/rename; the cached mtime stands
+    }
   }
   const envPartial = envAdapter({ ...DEFAULT_CONFIG, ...yamlPartial });
   const merged = { ...DEFAULT_CONFIG, ...yamlPartial, ...envPartial };
 
-  // final Zod validation + normalization (expand abs, fallback)
   const parsed = StoreConfigSchema.safeParse(merged);
   const cfg = parsed.success ? parsed.data : { ...DEFAULT_CONFIG, ...yamlPartial, ...envPartial };
 
@@ -592,7 +571,6 @@ export function loadConfig(): StoreConfig {
   return cfg;
 }
 
-// For tests: reset cache
 export function _resetConfigCache(): void {
   cachedConfig = undefined;
   cachedMtimeMs = undefined;

@@ -17,30 +17,6 @@ import { firedWarnings, listSources, stripComments } from "../support/arch-scan.
  * oracle pins the tier for the paths that remain: no applied-notice expression
  * may carry an error composer, and every applied notice must come from
  * `formatWarning` with a registry `W_*` code.
- *
- * Method: the shared scanner (`test/support/arch-scan.ts`) reads text, so the
- * same guard runs over the live `src/` tree AND over planted fixture strings.
- * The planted cells are the refutability evidence: a guard whose pattern was
- * deleted would pass the live tree vacuously, but fails the plant.
- *
- * Two independent referents: the live tree (`listSources` + regex scan) versus
- * this test's expectations, and `WARNING_REGISTRY`'s declared keys versus the
- * `formatWarning("<CODE>"` call sites `firedWarnings` finds. Neither side reads
- * the other back.
- *
- * ── DECLARED LIMIT — variable indirection (a DIFFERENT class, not a widening gap) ──
- * A text scanner sees SHAPES, not VALUES (the ceiling stated in
- * `test/support/arch-scan.ts`). The original defect flowed through a variable —
- * `const fileWarning = formatError(…)` then `warnings.unshift(fileWarning)` —
- * and `warnings.push(...list)` (live today at `src/mutation/engine.ts:730,734`)
- * spreads a list whose elements are invisible here. No pattern below claims to
- * see either: they are MISSED by construction, and the probe cell pins that
- * miss instead of hiding it.
- *
- * Behavioural backstop for this class: `test/core/notice-tier-e2e.test.ts`
- * drives real applied paths (reversed-range heal, literal-mode bypass) and
- * asserts the RENDERED output lacks `[E_`. A variable-carried error header that
- * reaches an applied notice reddens there, whatever the source shape.
  */
 
 const SRC_ROOT = join(process.cwd(), "src");
@@ -62,9 +38,9 @@ const COMPOSER_FILE = join(SRC_ROOT, "domain-errors.ts");
  * positive control below names. Paths are relative to `SRC_ROOT`.
  */
 const REFERENT_FILES = [
-  "hashline/anchor-pipeline.ts", // W_REVERSED_ANCHORS, W_LITERAL_BYPASS, W_UNICODE_LITERAL
-  "hashline/served-guard.ts", // W_SERVED_PREFIX_MISMATCH, W_NEVER_SERVED_SHAPE
-  "mutation/engine.ts", // W_NOOP (batch) + the declared-limit spread
+  "hashline/anchor-pipeline.ts",
+  "hashline/served-guard.ts",
+  "mutation/engine.ts",
 ] as const;
 
 /**
@@ -133,7 +109,6 @@ describe("applied-notice tier: no [E_*] header on an applied notice (#115)", () 
   it("the live src/ tree never composes an error header into the applied-notice channel", () => {
     const sources = liveSources();
     const files = sources.map((source) => source.file);
-    // Non-vacuity: an emptied or misrooted walk would pass every scan below.
     expect(sources.length, "the src/ walk is not empty").toBeGreaterThan(0);
     expect(files, "the walk visits the composer").toContain(COMPOSER_FILE);
     for (const rel of REFERENT_FILES) {
@@ -153,8 +128,6 @@ describe("applied-notice tier: no [E_*] header on an applied notice (#115)", () 
     const fired = firedWarnings(sources.map((source) => source.file));
     const declared = Object.keys(WARNING_REGISTRY).sort();
 
-    // A guard that scanned nothing would report an empty set: pin the known
-    // producers by name first, then require the scan to be exactly the registry.
     for (const code of [
       "W_REVERSED_ANCHORS",
       "W_NOOP",
@@ -165,11 +138,8 @@ describe("applied-notice tier: no [E_*] header on an applied notice (#115)", () 
     ]) {
       expect(fired.has(code), `${code} is produced by a literal formatWarning call`).toBe(true);
     }
-    // Both directions: every declared warning fires, and no undeclared W_* exists.
     expect([...fired].sort()).toEqual(declared);
   });
-
-  // ---- planted violations: the guard must be able to fail ----
 
   it("negative control: a planted `warning: formatError(` fixture fails the scan", () => {
     const planted: ScanSource[] = [
@@ -182,7 +152,6 @@ describe("applied-notice tier: no [E_*] header on an applied notice (#115)", () 
     expect(offenders).toHaveLength(1);
     expect(offenders[0]).toContain("`warning:`/`notice:` property");
 
-    // Control on the control: the same shape through the warning composer is clean.
     expect(
       appliedNoticeViolations([
         {
@@ -211,7 +180,6 @@ describe("applied-notice tier: no [E_*] header on an applied notice (#115)", () 
   });
 
   it("negative control: a planted `warnings.unshift(formatError(` fixture fails the scan", () => {
-    // The historical carrier was `warnings.unshift(...)` — `push` alone was blind.
     for (const line of [
       'warnings.unshift(formatError("E_BAD_PAYLOAD", { message: "x" }));',
       'notices.unshift(formatError("E_BAD_PAYLOAD", { message: "x" }));',
@@ -223,15 +191,12 @@ describe("applied-notice tier: no [E_*] header on an applied notice (#115)", () 
   });
 
   it("negative control: a bare warning assignment fails the scan", () => {
-    // A bare assignment (no const/let/var) is the same defect with less syntax.
     const offenders = offendersOf('warnings = formatError("E_BAD_PAYLOAD", { message: "x" });');
     expect(offenders).toHaveLength(1);
     expect(offenders[0]).toContain("binding assigned from `formatError(`");
   });
 
   it("negative control: a type-annotated warning local fails the scan", () => {
-    // `const warning: string = formatError(…)` slips the property shape because
-    // the annotation sits between name and `=`; the binding shape owns it.
     const offenders = offendersOf(
       'const warning: string = formatError("E_BAD_PAYLOAD", { message: "x" });',
     );
@@ -245,12 +210,8 @@ describe("applied-notice tier: no [E_*] header on an applied notice (#115)", () 
     expect(offenders[0]).toContain("raw");
   });
 
-  // The reach table, one row per carrier class the review probed. CAUGHT rows are
-  // the guard; MISSED rows are the DECLARED LIMIT in the header, pinned so the
-  // miss is a recorded fact rather than an assumed closure.
   it("shape reach: the eight probed carriers, caught and declared-missed", () => {
     const probe: Array<{ carrier: string; text: string; caught: boolean }> = [
-      // Historical producer (the pre-#117 flow): a variable, invisible by construction.
       {
         carrier: "historical producer",
         text: "warnings.unshift(first.fileWarning);",
@@ -282,7 +243,6 @@ describe("applied-notice tier: no [E_*] header on an applied notice (#115)", () 
         text: 'warnings = formatError("E_BAD_PAYLOAD", { message: "x" });',
         caught: true,
       },
-      // Spread of a list whose elements are values, not shapes: invisible here.
       { carrier: "spread", text: "warnings.push(...list);", caught: false },
     ];
 

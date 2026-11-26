@@ -34,8 +34,6 @@ let reportRun = 0;
  * one in production).
  */
 function open(): { db: DatabaseSync; lineage: LineageStore } {
-  // The opener every production path uses: node:sqlite enables `enableForeignKeyConstraints` by
-  // default and `hash-store` also sets `PRAGMA foreign_keys = ON` (P1 matrix).
   const db = new DatabaseSync(":memory:");
   createFileUndoTable(db);
   return { db, lineage: createLineageStore(db) };
@@ -200,7 +198,6 @@ describe("vacuum — per-path and global budgets", () => {
     const removedBefore = snapshotHashes(db, path).length;
     const result = vacuumSnapshots(db);
 
-    // Retention is the spec formula, clamped to [2, 10]; with 3-line files the window is the max.
     const expectedRetention = Math.min(
       VACUUM_MAX_SNAPSHOTS_PER_PATH,
       Math.max(
@@ -222,7 +219,6 @@ describe("vacuum — per-path and global budgets", () => {
         expect(surviving).toContain(hash);
       }
     }
-    // No orphan lineage anywhere: every lineage row's snapshot row still exists.
     const orphans = db
       .prepare(
         "SELECT COUNT(*) AS count FROM line_lineage WHERE snapshot_id NOT IN " +
@@ -234,13 +230,12 @@ describe("vacuum — per-path and global budgets", () => {
 
   it("cell 02 global budget: oldest-created_at rows are evicted until the total holds", () => {
     const { db } = open();
-    const linesPerRow = 300_000; // 15.6 MB/row at 52 B/line: four rows overflow the 50 MB budget, three fit
+    const linesPerRow = 300_000;
     const perRow = VACUUM_LINEAGE_BYTES_PER_LINE * linesPerRow;
     const hashA = "2:bulk-a";
     const hashB = "2:bulk-b";
     const hashC = "2:bulk-c";
     const hashD = "2:bulk-d";
-    // Explicit distinct stamps: ordering is by created_at and must never depend on wall-clock ties.
     insertSnapshot(db, "/bulk-a.ts", hashA, linesPerRow, 1_000);
     insertSnapshot(db, "/bulk-a.ts", hashB, linesPerRow, 1_100);
     insertSnapshot(db, "/bulk-b.ts", hashC, linesPerRow, 1_200);
@@ -255,7 +250,6 @@ describe("vacuum — per-path and global budgets", () => {
     expect(result.totalBytes).toBeLessThanOrEqual(VACUUM_GLOBAL_BUDGET_BYTES);
     expect(result.deferredBytes).toBe(0);
     expect(result.overSoftOverflow).toBe(false);
-    // The oldest row goes first; the three newer rows survive.
     expect(snapshotHashes(db, "/bulk-a.ts")).toEqual([hashB]);
     expect(snapshotHashes(db, "/bulk-b.ts")).toEqual([hashC, hashD]);
   });
@@ -285,12 +279,10 @@ describe("vacuum — pins", () => {
     const lease = lineage.leaseFor("s", path, h1[1]!);
     expect(lease).toBeDefined();
     expect(lineage.positionsByIdentity(path, v1).get(lease!.lineId)).toBe(2);
-    // The unpinned siblings were the sweep's candidates: 12 rows, 1 pinned, window 10.
     expect(countSnapshots(db, path)).toBe(VACUUM_MAX_SNAPSHOTS_PER_PATH);
   });
 
   it("cell 04 pin recency: an aged lease stops pinning and a re-serve pins again", () => {
-    // Half A — aged lease: the target is evictable.
     const aged = open();
     const pathA = "/aged.ts";
     const v1 = "one\ntwo\nthree";
@@ -300,7 +292,6 @@ describe("vacuum — pins", () => {
         path,
         content: v1,
         hashes: h1,
-        // ONE lease row, so ageing it is enough to unpin the snapshot (the pin is per snapshot_hash).
         leases: { sessionKey: "s", rows: [{ position: 0, hash: h1[0]! }] },
       });
     };
@@ -312,7 +303,6 @@ describe("vacuum — pins", () => {
     vacuumSnapshots(aged.db);
     expect(snapshotHashes(aged.db, pathA)).not.toContain(snapshotHashFor(v1));
 
-    // Half B — the re-serve refreshes `served_leases.updated_at`, so the same target stays pinned.
     const refreshed = open();
     const pathB = "/refreshed.ts";
     grant(refreshed.lineage, pathB);
@@ -320,7 +310,7 @@ describe("vacuum — pins", () => {
       commit(refreshed.lineage, pathB, `one\ntwo\nthree\nversion ${index}`, `W${index}`);
     }
     ageLease(refreshed.db, pathB, h1[0]!, Date.now() - SERVED_TTL_MS - 60_000);
-    grant(refreshed.lineage, pathB); // re-serve: adopt + lease upsert with a fresh stamp
+    grant(refreshed.lineage, pathB);
     vacuumSnapshots(refreshed.db);
     expect(snapshotHashes(refreshed.db, pathB)).toContain(snapshotHashFor(v1));
     expect(refreshed.lineage.lineageFor(pathB, snapshotHashFor(v1))).toHaveLength(3);
@@ -337,7 +327,6 @@ describe("vacuum — pins", () => {
       hashes: h1,
       leases: { sessionKey: "s", rows: h1.map((hash, position) => ({ position, hash })) },
     });
-    // Retired now, updated outside the active TTL: the grace clause is the only pin left.
     db.prepare("UPDATE served_leases SET retired_at = ?, updated_at = ? WHERE file_path = ?").run(
       Date.now(),
       Date.now() - SERVED_TTL_MS - 60_000,
@@ -351,7 +340,6 @@ describe("vacuum — pins", () => {
     expect(inGrace.pinnedBytes).toBeGreaterThan(0);
     expect(snapshotHashes(db, path)).toContain(snapshotHashFor(v1));
 
-    // A retirement two hours old is outside the one-hour grace: the same row stops being pinned.
     db.prepare("UPDATE served_leases SET retired_at = ? WHERE file_path = ?").run(
       Date.now() - 2 * 60 * 60 * 1000,
       path,
@@ -368,7 +356,6 @@ describe("vacuum — pins", () => {
     for (let index = 2; index <= 12; index++) {
       commit(lineage, path, `one\ntwo\nthree\nversion ${index}`, `V${index}`);
     }
-    // Over the global budget too: 80 MB of synthetic lineage on a sibling path.
     insertSnapshot(db, "/bulk.ts", "6:bulk", 2_000_000, Date.now() + 60_000);
     db.prepare(
       "INSERT INTO file_undo (path, content, bom, ending, hashes, result_content, snapshot_hash, " +
@@ -389,7 +376,7 @@ describe("vacuum — pins", () => {
   it("cell 07 protectSnapshotIds: the in-flight id survives an over-budget sweep", () => {
     const { db } = open();
     const paths = ["/protect-0.ts", "/protect-1.ts", "/protect-2.ts", "/protect-3.ts"];
-    const linesPerRow = 300_000; // 15.6 MB/row at 52 B/line: four rows overflow the 50 MB budget, three fit
+    const linesPerRow = 300_000;
     const perRow = VACUUM_LINEAGE_BYTES_PER_LINE * linesPerRow;
     const oldestId = insertSnapshot(db, paths[0]!, "7:oldest", linesPerRow, 2_000);
     insertSnapshot(db, paths[1]!, "7:second", linesPerRow, 2_100);
@@ -400,7 +387,6 @@ describe("vacuum — pins", () => {
     expect(unprotected.evicted).toBe(1);
     expect(countSnapshots(db, paths[0]!)).toBe(0);
 
-    // Rebuild, and protect exactly the row the oldest-first sweep would take first.
     const second = open();
     const protectedId = insertSnapshot(second.db, paths[0]!, "7:oldest", linesPerRow, 2_000);
     insertSnapshot(second.db, paths[1]!, "7:second", linesPerRow, 2_100);
@@ -473,11 +459,9 @@ describe("vacuum — pins", () => {
       );
       expect(result.overSoftOverflow).toBe(true);
       expect(result.skippedInTransaction).toBe(false);
-      // The sweep itself is silent — every trigger reports through the single report owner.
       expect(warn).not.toHaveBeenCalled();
       reportVacuum(result, "cell 09");
       expect(warn).toHaveBeenCalledWith(expect.stringContaining("soft overflow"));
-      // The pinned snapshots are all still there.
       expect(countSnapshots(db, "/defer-0.ts")).toBe(1);
       expect(countSnapshots(db, "/defer-1.ts")).toBe(1);
       expect(countSnapshots(db, "/defer-2.ts")).toBe(1);
@@ -497,8 +481,6 @@ describe("vacuum — pins", () => {
     expect(before.orphanLineage).toBe(0);
     expect(before.lineageLessSnapshots).toBe(0);
 
-    // (a) inside a caller-owned unit the sweep defers, so the injection never fires and the
-    // caller's COMMIT cannot commit a partial sweep (probe M1: joined + ABORT -> pair broken).
     db.exec("BEGIN IMMEDIATE");
     const inside = vacuumSnapshots(db);
     expect(inside.skippedInTransaction).toBe(true);
@@ -507,7 +489,6 @@ describe("vacuum — pins", () => {
     db.exec("COMMIT");
     expect(storeCounts(db)).toEqual(before);
 
-    // (b) at the boundary the same injection propagates and the sweep rolls back whole.
     expect(() => vacuumSnapshots(db)).toThrow(/injected mid-loop failure/);
     expect(storeCounts(db)).toEqual(before);
   });
@@ -516,14 +497,11 @@ describe("vacuum — pins", () => {
     const { db } = open();
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     try {
-      // Two pinned 40 MB versions: over the hard budget, under the soft cap — so an
-      // `overSoftOverflow`-only reporter would have left this pass silent.
       insertPinnedBulk(db, "c17", 2);
       const first = vacuumSnapshots(db);
       reportVacuum(first, "cell 17");
       expect(first.deferredBytes).toBeGreaterThan(0);
       expect(first.overSoftOverflow).toBe(false);
-      // The observable is the payload, not the call: the warning carries the numbers.
       expect(warn).toHaveBeenCalledTimes(1);
       expect(warn).toHaveBeenCalledWith(
         expect.stringContaining(
@@ -531,7 +509,6 @@ describe("vacuum — pins", () => {
             `deferredBytes=${first.deferredBytes}`,
         ),
       );
-      // A second identical pass is throttled; the transition-in half.
       reportVacuum(vacuumSnapshots(db), "cell 17");
       expect(warn).toHaveBeenCalledTimes(1);
     } finally {
@@ -547,11 +524,9 @@ describe("vacuum — pins", () => {
       reportVacuum(vacuumSnapshots(db), "cell 18");
       expect(warn).toHaveBeenCalledTimes(1);
       expect(warn).toHaveBeenCalledWith(expect.stringContaining("deferredBytes="));
-      // Under the soft cap: the report is silent and the throttle re-arms.
       db.prepare("DELETE FROM file_snapshots WHERE path != '/defer-c18-0.ts'").run();
       reportVacuum(vacuumSnapshots(db), "cell 18");
       expect(warn).toHaveBeenCalledTimes(1);
-      // Over the cap again: the re-arm is proved by a second warning.
       insertPinnedBulk(db, "c18b", 3);
       reportVacuum(vacuumSnapshots(db), "cell 18");
       expect(warn).toHaveBeenCalledTimes(2);
@@ -593,7 +568,6 @@ describe("vacuum — pins", () => {
       });
     };
 
-    // (i) a normal sweep: every retained snapshot keeps its lineage, no orphans either way.
     const normal = open();
     seed(normal.db, normal.lineage, "/pair-normal.ts");
     vacuumSnapshots(normal.db);
@@ -603,7 +577,6 @@ describe("vacuum — pins", () => {
       lineageLessSnapshots: 0,
     });
 
-    // (ii) the mid-loop ABORT at the boundary: the whole sweep rolls back, pair intact.
     const aborted = open();
     seed(aborted.db, aborted.lineage, "/pair-aborted.ts");
     aborted.db.exec(ABORT_LATE_TRIGGER);
@@ -614,7 +587,6 @@ describe("vacuum — pins", () => {
       lineageLessSnapshots: 0,
     });
 
-    // (iii) inside a caller-owned unit: nothing runs, so the state is unchanged.
     const deferred = open();
     seed(deferred.db, deferred.lineage, "/pair-deferred.ts");
     const before = storeCounts(deferred.db);
@@ -636,10 +608,6 @@ describe("vacuum — pins", () => {
 
     const result = vacuumSnapshots(db);
 
-    // FK-mode-agnostic invariant: no lineage row survives its snapshot row, and no retained
-    // snapshot loses its lineage. The explicit child-first delete is what makes this true without
-    // leaning on the pragma; on this opener the cascade would mask it (P1 matrix), which is why the
-    // order/drop mutants are GREEN with meaning 4 rather than RED here.
     expect(result.evicted).toBe(2);
     expect(storeCounts(db).orphanLineage).toBe(0);
     expect(storeCounts(db).lineageLessSnapshots).toBe(0);
@@ -652,16 +620,6 @@ describe("vacuum — pins", () => {
       commit(lineage, path, `one\ntwo ${index}\nthree`, `V${index}`);
     }
     const before = storeCounts(db);
-    // The fault fires on the second `file_snapshots` delete, i.e. after one pair's lineage row was
-    // already deleted: only the transaction can restore it. (1) ATOMICITY at the boundary — the
-    // throw propagates and no pair state survives, neither an orphan lineage row nor a dangling
-    // snapshot row. (2) ORPHAN LINEAGE === 0 — the defect direction: an orphan lineage row has no
-    // owner to detect it, unlike a `file_snapshots` row with no lineage (the codebase's "orphan
-    // snapshot row"), which the adopt path already detects, warns about and repairs
-    // (`test/core/hash-store.test.ts:1665`) — this vacuum must not repair that shape eagerly, and
-    // (`test/core/hash-store.test.ts:1665`; the full ownership note lives at the pair delete in
-    // `src/snapshot-store/vacuum.ts`) — this vacuum must not repair that shape eagerly, and this
-    // cell asserts nothing about it.
     db.exec(ABORT_LATE_TRIGGER);
     expect(() => vacuumSnapshots(db)).toThrow(/injected mid-loop failure/);
     const after = storeCounts(db);
@@ -669,8 +627,6 @@ describe("vacuum — pins", () => {
       snapshots: before.snapshots,
       lineage: before.lineage,
     });
-    // Post-fault counts, asserted explicitly so the report can paste them: 12 snapshots / 36
-    // lineage rows, unchanged by the rollback (neither shape survives), orphanLineage 0.
     expect(before.snapshots).toBe(12);
     expect(before.lineage).toBe(36);
     expect(after).toEqual(before);
@@ -685,7 +641,6 @@ describe("vacuum — pins", () => {
     for (let index = 1; index <= 11; index++) {
       commit(lineage, path, `one\ntwo ${index}\nthree`, `V${index}`);
     }
-    // Same snapshot_hash, different path: the `fu.path = fs.path` clause must reject it.
     db.prepare(
       "INSERT INTO file_undo (path, content, bom, ending, hashes, result_content, " +
         "snapshot_hash, updated_at) VALUES ('/other.ts', 'x', '', '\\n', '[]', 'x', ?, ?)",
@@ -707,34 +662,24 @@ describe("vacuum — pins", () => {
       overSoftOverflow: true,
       skippedInTransaction: false,
     };
-    // The ledgers are process-global module state, so every context in this cell carries a per-run
-    // prefix: an earlier cell's entry with the same text would suppress a warn this cell asserts.
     reportRun += 1;
     const prefix = `cell 29 run ${reportRun}`;
-    // Match the parenthesised context exactly: prefix matching would confuse `b 1` with `b 10`.
     const warned = (context: string): number =>
       warn.mock.calls.filter((call) => String(call[0]).includes(`(${context})`)).length;
-    // A small K brackets the boundary: the cap is never asserted as a value (that would be a
-    // tautology — one referent that cannot fail). What is asserted is the OBSERVABLE consequence:
-    // of `cap + K` fresh contexts, the K oldest were evicted and the K newest were retained.
     const K = 3;
     try {
       const target = `${prefix} target`;
       reportVacuum(overBudget, target);
       expect(warned(target)).toBe(1);
       reportVacuum(overBudget, target);
-      expect(warned(target)).toBe(1); // throttled while the context is in the ledger
+      expect(warned(target)).toBe(1);
 
-      // Enough fresh contexts to trip the cap: each insert drops the oldest entry, the target.
       for (let index = 0; index < REPORT_CONTEXT_CAP; index++) {
         reportVacuum(overBudget, `${prefix} fill ${index}`);
       }
-      // Eviction re-armed the context: the same result reports again, 1 -> 2.
       reportVacuum(overBudget, target);
       expect(warned(target)).toBe(2);
 
-      // Bracket the boundary: `cap + K` inserts leave the retained set exactly the `cap` most
-      // recent (`b_0..b_{K-1}` evicted, `b_cap..b_{cap+K-1}` retained).
       const oldest = Array.from({ length: K }, (_, index) => `${prefix} b ${index}`);
       const newest = Array.from(
         { length: K },
@@ -744,17 +689,14 @@ describe("vacuum — pins", () => {
         reportVacuum(overBudget, `${prefix} b ${index}`);
       }
       for (const context of oldest) {
-        // Each fill insert warned once; an evicted context warns a second time on the re-report.
         expect(warned(context)).toBe(1);
         reportVacuum(overBudget, context);
         expect(warned(context)).toBe(2);
       }
-      // Re-reporting an evicted context re-inserts it and drops the oldest *retained* entry
-      // (`b_K..b_{K+2}`), which with `cap >> 2K` can never reach the newest K.
       for (const context of newest) {
         expect(warned(context)).toBe(1);
         reportVacuum(overBudget, context);
-        expect(warned(context)).toBe(1); // retained: still throttled
+        expect(warned(context)).toBe(1);
       }
     } finally {
       warn.mockRestore();

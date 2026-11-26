@@ -11,28 +11,7 @@ import { buildEditTool } from "../../src/tool-edit.js";
 import { localIO } from "../../src/fs-bridge.js";
 import { FsSandboxController } from "../../src/sandbox.js";
 
-/**
- * Port of pi-better-edit@5dacf56 (#100 downstream: issue #100): pin the `edit` payload's wire
- * shape against third-party shape adapters, so a renamed or newly added key cannot silently arm
- * a foreign consumer of our anchors.
- *
- * The declared shape is the named-object contract from ADR-0015: root `file` / `edits` / `mode` /
- * `dry_run`, item `anchor_from` / `anchor_to` / `replace_with` (the item object is closed to
- * additional properties). Legacy tuple items, the legacy `path` / `file_path` root keys, and the
- * `remove_from` / `remove_to` / `replacement_text` item keys survive ONLY as pre-validation fold
- * inputs — they are never declared wire keys, so no adapter can see a shape it recognizes.
- *
- * WHY: a third-party adapter that recognizes one of the alias key sets below (pi-lens's
- * `mutating-tool.js` accepts `set_line` / `replace_lines`, `operations` / `ops`, and
- * `remove_from` + `remove_to` + `replacement_lines`; its path resolver takes `path` / `filePath` /
- * `file_path`, never `file`) would begin judging line identity with a divergent scheme and report
- * false stale / out-of-range verdicts on edits our own verification accepts. Change this list
- * deliberately, never casually: the coupling is the consequence.
- */
-
 function paramsOf(confining: boolean): JsonSchemaNode {
-  // An unconfined backend advertises no escalation fields; a confining one adds
-  // sandbox_permissions + justification (the closed retry vocabulary).
   const sandbox = confining
     ? new FsSandboxController({
         fs: { sandboxMode: "workspace" },
@@ -41,8 +20,6 @@ function paramsOf(confining: boolean): JsonSchemaNode {
       } as never)
     : new FsSandboxController({ fs: {}, get: () => undefined } as never);
   // SAFETY: defineTool hands back the registration record, whose `parameters` is the
-  // value-schema spec the host compiles; the enforced JSON Schema subset is exactly
-  // JsonSchemaNode's shape, which TypeScript cannot see through the untyped registration.
   return buildEditTool(localIO(), sandbox).parameters as unknown as JsonSchemaNode;
 }
 
@@ -88,15 +65,11 @@ describe("edit payload wire shape", () => {
       "anchor_to",
       "replace_with",
     ]);
-    // The item object is closed; the root is not (dsh's value-schema root carries no
-    // additionalProperties), so root closure lives in the fold — pinned below.
     expect(named.additionalProperties).toBe(false);
-    // The legacy tuple branch stays an unconstrained string array: arity is the fold's gate.
     const tuple = tupleItemBranch(params);
     expect(tuple.items?.type).toBe("string");
     expect(tuple.additionalProperties).toBeUndefined();
 
-    // Escalation fields are the ONLY extra root keys a confining composition may add.
     expect(rootKeys(paramsOf(true))).toEqual([
       "allow_encoding_migration",
       "dry_run",
@@ -119,7 +92,6 @@ describe("edit payload wire shape", () => {
     expect(
       validateJsonSchemaValue(params, { file: "sample.ts", edits: [["aB3", "cD4", "new"]] }),
     ).toEqual([]);
-    // Schema admission is shape-only: tuple arity is the fold's gate, not the wire schema's.
     expect(validateJsonSchemaValue(params, { file: "sample.ts", edits: [["aB3", "cD4"]] })).toEqual(
       [],
     );
@@ -170,11 +142,8 @@ describe("edit payload wire shape", () => {
       mode: "general",
       dry_run: false,
     });
-    // Fold output IS the declared wire shape: adapters may hand us legacy input, but the
-    // canonical form always validates against the declared schema.
     expect(validateJsonSchemaValue(params, folded)).toEqual([]);
 
-    // Root closure lives in the fold: an adapter alias at the root is rejected, not ignored.
     expect(
       editRequestFrom({
         file: "sample.ts",
@@ -190,7 +159,6 @@ describe("edit payload wire shape", () => {
       }),
     ).toThrow(/E_BAD_PAYLOAD/);
 
-    // Mixed legacy/named item keys are rejected rather than half-folded.
     expect(
       editRequestFrom({
         file: "sample.ts",
@@ -266,8 +234,6 @@ describe("edit payload wire shape — dry_run root field", () => {
   });
 
   it("refuses a normalized record whose dry_run was forced non-boolean", () => {
-    // The pre-marker predicate in assertEditRequest is the one dry_run type gate:
-    // a non-boolean never normalizes, so it refuses the raw record by name.
     const forced: Record<string, unknown> = { ...payload, mode: "general", dry_run: "yes" };
     Object.defineProperty(forced, normalizedEdit, { value: true, enumerable: false });
     expect(() => assertEditRequest(forced)).toThrow(/"dry_run" must be a boolean/);
@@ -278,8 +244,6 @@ describe("edit payload wire shape — allow_encoding_migration root field", () =
   it("declares the consent as a plain string enum beside file and edits", () => {
     const params = paramsOf(false);
     const consent = params.properties?.allow_encoding_migration;
-    // No null branch: `null` is not a spelling of absent here, so the host refuses it as an
-    // out-of-enum value before the contract ever sees it (ADR-0052 §1).
     expect(consent?.type).toBe("string");
     expect(consent?.enum).toEqual(["refuse", "utf8", "utf8bom"]);
     expect(consent?.oneOf).toBeUndefined();
@@ -306,15 +270,11 @@ describe("edit payload wire shape — allow_encoding_migration root field", () =
       dry_run: false,
       allow_encoding_migration: "utf8",
     });
-    // Absent stays absent: the config ladder decides, so the fold materializes nothing (a folded
-    // "refuse" would outrank the config).
     expect(editRequestFrom(payload)).not.toHaveProperty("allow_encoding_migration");
     expect(prepareEditArguments({ ...payload, allow_encoding_migration: "refuse" })).toMatchObject({
       allow_encoding_migration: "refuse",
     });
 
-    // `null` is a present value outside the enum, never "absent": the fold refuses it and the
-    // admission gate names the three accepted values.
     expect(editRequestFrom({ ...payload, allow_encoding_migration: null })).toBeUndefined();
     expect(() =>
       assertEditRequest(normalizeRequest({ ...payload, allow_encoding_migration: null })),

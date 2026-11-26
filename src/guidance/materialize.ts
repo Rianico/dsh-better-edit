@@ -202,7 +202,6 @@ async function reconcileShippedFile(
   run: SeedRun,
 ): Promise<void> {
   const content = await readMaybe(path);
-  // Vanished between the listing and the read; the next boot seeds it.
   if (content === undefined) return;
   const body = seededContent(section);
   if (isBlankOverride(content)) {
@@ -221,8 +220,6 @@ async function reconcileShippedFile(
     return;
   }
   if (decision === "refresh") {
-    // TOCTOU: re-read before writing. A file that changed (or vanished) under
-    // us belongs to the user now — neither write it nor record it.
     const current = await readMaybe(path);
     if (current === undefined || seedHash(current) !== seedHash(content)) return;
     await writeAtomic(path, body);
@@ -255,7 +252,6 @@ async function inspectCustomFile(
     content,
     recorded: undefined,
     currentDefault: body,
-    // Custom presets have no ledger row; their historical seeds are unknown.
     historical: [],
   });
   if (decision === "refresh" || decision === "preserve" || decision === "malformed") {
@@ -282,11 +278,6 @@ function preservationWarning(paths: readonly string[]): string {
  * default, while a file the user edited is never overwritten. A blank override
  * file (whitespace-only body, no fence) is re-seeded with the current compiled
  * default; malformed, non-blank, and deliberate-blank (valid-fence) files are
- * never touched. Custom preset directories present on disk are scanned for
- * blank heals and for stale or customized files, but never fabricated or
- * refreshed. Missing directories are created on demand (shipped presets only),
- * and shipped files are written exclusively so two concurrent first runs race
- * safely. Preserved paths are reported through `warn` in a single call.
  */
 export async function ensurePresetGuidance(
   homeDir: string,
@@ -313,17 +304,12 @@ export async function ensurePresetGuidance(
             await writeFile(path, body, { encoding: "utf-8", flag: "wx" });
             run.manifest.files[key] = seedHash(body);
           } catch (error: unknown) {
-            // A concurrent writer landed first; leave it and do not record it.
             if (errCode(error) !== "EEXIST") throw error;
           }
         }),
       );
     }),
   );
-  // Ghost seam cleanup (ADR-0003): remove orphan batch_edit.md override files left
-  // from pre-0.3.0 homes. The payload contract merged batch_edit into edit's
-  // {path, edits:[[hash,hash,text]]} arity — the file is dead. Best-effort,
-  // idempotent, concurrent-safe (ignore ENOENT).
   for (const preset of DEFAULT_PRESETS) {
     const ghost = join(homeDir, preset, "batch_edit.md");
     await unlink(ghost).catch((error: unknown) => {
@@ -332,9 +318,6 @@ export async function ensurePresetGuidance(
     });
   }
 
-  // Custom presets present on disk: heal blank section files, report stale or
-  // customized ones. Absence is respected — a custom preset's files are never
-  // fabricated, and nothing here is ever refreshed.
   const entries = await readdir(homeDir, { withFileTypes: true });
   await Promise.all(
     entries
@@ -350,7 +333,6 @@ export async function ensurePresetGuidance(
         );
       }),
   );
-  // Ghost seam cleanup for custom presets (same ADR-0003 dead file).
   for (const entry of entries) {
     if (!entry.isDirectory() || DEFAULT_PRESETS.includes(entry.name)) continue;
     const ghost = join(homeDir, entry.name, "batch_edit.md");
@@ -384,7 +366,7 @@ export async function ensurePresetGuidance(
     try {
       warn(preservationWarning([...run.preserved].sort()));
     } catch {
-      // A logger callback must never break boot.
+      // HACK: a logger callback must never break boot
     }
   }
 }

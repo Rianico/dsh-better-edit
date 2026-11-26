@@ -1,11 +1,11 @@
-import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
+import { describe, expect, it, vi, afterEach } from "vitest";
 import {
   isValidHashList,
   lineHashes,
   snapshotIOFor,
   setDefaultHashSnapshotIO,
 } from "../../src/hashline/hash.js";
-import { initHasher, HASH_RE } from "../../src/hashline/hash-assign.js";
+import { initHasher } from "../../src/hashline/hash-assign.js";
 import { lineHashesPure } from "../../src/hashline/hash-assign.js";
 import { useTestHome } from "../support/fixtures.js";
 
@@ -19,10 +19,9 @@ describe("coverage: hash.ts snapshotIOFor / isValidHashList", () => {
     expect(isValidHashList("string")).toBe(false);
     expect(isValidHashList([])).toBe(true);
     expect(isValidHashList(["abc"])).toBe(true);
-    expect(isValidHashList(["ab"])).toBe(false); // not 3 chars
+    expect(isValidHashList(["ab"])).toBe(false);
     expect(isValidHashList(["abc", 123 as any])).toBe(false);
     expect(isValidHashList(["abc", ""])).toBe(false);
-    // test HASH_RE boundary
     const good = lineHashesPure("a\nb\nc")[0]!;
     expect(isValidHashList([good])).toBe(true);
   });
@@ -53,7 +52,6 @@ describe("coverage: hash.ts snapshotIOFor / isValidHashList", () => {
 
   it("snapshotIOFor falls through to loadHashStore when no store and no default", async () => {
     setDefaultHashSnapshotIO(undefined);
-    // just ensure it returns an IO object with get/upsert (we don't call loadHashStore here)
     const io = snapshotIOFor(undefined);
     expect(io).toBeDefined();
     expect(typeof io!.get).toBe("function");
@@ -158,9 +156,8 @@ describe("coverage: hash.ts snapshotIOFor / isValidHashList", () => {
       get: vi.fn(async () => ["should-not-return"] as any),
       upsert: vi.fn(async () => {}),
     };
-    // previous path with persist false
     const prevHashes = lineHashesPure("a\nb");
-    const res1 = await lineHashes(
+    const _res1 = await lineHashes(
       "a\nb\nc",
       home.testPath,
       { content: "a\nb", hashes: prevHashes },
@@ -168,10 +165,8 @@ describe("coverage: hash.ts snapshotIOFor / isValidHashList", () => {
       false,
     );
     expect(io.upsert).not.toHaveBeenCalled();
-    // no previous, persist false should still not call get with deleteCorrupt true? check
     const io2 = { get: vi.fn(async () => ["cached"]), upsert: vi.fn(async () => {}) };
-    const res2 = await lineHashes("a\nb\nc", home.testPath, undefined, io2 as any, false);
-    // persist false passes deleteCorrupt false
+    const _res2 = await lineHashes("a\nb\nc", home.testPath, undefined, io2 as any, false);
     expect(io2.get).toHaveBeenCalledWith(home.testPath, "a\nb\nc", false);
     expect(io2.upsert).not.toHaveBeenCalled();
   });

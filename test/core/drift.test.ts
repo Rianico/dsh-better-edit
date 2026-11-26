@@ -354,7 +354,6 @@ describe("computeDrift rotated survivors (#68 canon deficit)", () => {
       reported: new Set(),
     });
     expect(result).toBeDefined();
-    // h00 is inside the edited range (skipped); only h01 counts.
     expect(result!.total).toBe(1);
   });
 
@@ -405,20 +404,12 @@ describe("computeDrift rotated survivors (#68 canon deficit)", () => {
       reported: new Set(),
     });
     expect(result).toBeDefined();
-    // h00 is inside the edited range (skipped); h01+h02 truly lost.
     expect(result!.total).toBe(2);
   });
 });
 
 describe("drift-notice episode identity (#98, upstream CAND-9)", () => {
-  // The reported set must key on the drifted line's rebased position, not its anchor STRING:
-  // an anchor is a spelling, not an identity. A reported entry for one line may not silence
-  // a distinct line that happens to share the anchor.
   it("does not collapse distinct duplicate-hash drifted lines into one reported episode", () => {
-    // Two distinct served positions share the anchor "dup" (ambiguous hash). Both lines
-    // drifted to different content. `reported` holds one entry for the shared anchor: under
-    // the string key BOTH lines are "already reported" and their current content is never
-    // shown. Under the position key a raw anchor string reports nothing.
     const result = computeDrift({
       served: ["h00", "dup", "dup", "h03"],
       resultHashes: ["h00", "P01", "P02", "h03"],
@@ -435,8 +426,6 @@ describe("drift-notice episode identity (#98, upstream CAND-9)", () => {
     expect(result).toBeDefined();
     expect(result!.total).toBe(2);
     expect(result!.allAlreadyReported).toBe(false);
-    // Two duplicate lines share one position key: a single marker reports the shared episode,
-    // and the fixed behavior is that the episode is NOT collapsed to a bare pointer.
     expect(result!.rows.filter((r) => r.drifted).map((r) => r.hash)).toEqual(["P01"]);
     expect(result!.rows.map((r) => r.hash)).toContain("P02");
   });
@@ -458,12 +447,7 @@ describe("drift-notice episode identity (#98, upstream CAND-9)", () => {
     expect(first).toBeDefined();
     const drifted = first!.rows.filter((r) => r.drifted);
     expect(drifted).toHaveLength(1);
-    // The episode advances exactly as scanDrift does: mark what the notice showed.
     const reported = new Set(drifted.map((r) => driftEpisodeKey(r.position)));
-    // Lease rotation renames the re-served mirror anchor "n01" -> "r01" without a fresh read,
-    // and the line's content changes again. Under the string key the marked "n01" no longer
-    // matches the mirror's rotated "r01" and the line spuriously re-notices; the position key
-    // is rotation-stable.
     const second = computeDrift({
       served: ["h00", "r01", "h02", "h03"],
       resultHashes: ["h00", "x02", "h02", "h03"],
@@ -493,14 +477,9 @@ describe("drift-notice episode identity (#98, upstream CAND-9)", () => {
     try {
       const sessionKey = "sessionA";
       const path = "/drift.ts";
-      // A stale pre-upgrade reported entry is a bare anchor string. "AAA" is exactly what the
-      // pre-namespace position key for position 0 encoded to, so under the old key it silenced the
-      // episode below. Seed it raw so the reader — not the writer — owns the round-trip.
       const store = await loadServedStore();
       withStore(() => store.upsertServedReported(sessionKey, path, JSON.stringify(["AAA"])));
 
-      // The legacy entry survives verbatim: the reader neither drops it nor rewrites it into the
-      // namespaced "#AAA", which would leak through as a false report for position 0.
       const reported = await driftReported(sessionKey, path);
       expect(reported).toEqual(new Set(["AAA"]));
 
@@ -522,8 +501,6 @@ describe("drift-notice episode identity (#98, upstream CAND-9)", () => {
       expect(result!.allAlreadyReported).toBe(false);
       expect(result!.text).toContain("drift:");
 
-      // Marking the episode writes a namespaced key; a fresh read must now suppress it. Before the
-      // reader accepted namespaced keys this round-trip lost "#AAA" and re-noticed forever.
       await markDriftReported(
         sessionKey,
         path,

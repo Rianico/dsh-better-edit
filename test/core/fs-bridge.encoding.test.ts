@@ -1,11 +1,11 @@
 import { describe, expect, it, beforeEach, afterEach } from "vitest";
-import { writeFile, mkdir, rm } from "fs/promises";
+import { writeFile, rm } from "fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { mkdtemp } from "fs/promises";
 import iconv from "iconv-lite";
 import { localIO, clearEncodingState } from "../../src/fs-bridge.js";
-import { loadConfig, _resetConfigCache } from "../../src/store-config.js";
+import { _resetConfigCache } from "../../src/store-config.js";
 import { assertReadRequest } from "../../src/contract.js";
 import { normalizeEncoding } from "../../src/encoding.js";
 
@@ -33,7 +33,7 @@ describe("localIO encoding — BOM and autoGuess", () => {
     );
     const io = localIO();
     const text = await io.readText(path);
-    expect(text).toBe("hello"); // localIO strips BOM and decodes
+    expect(text).toBe("hello");
   });
 
   it("autoGuessEncoding:false falls back to raw utf8 (no candidate)", async () => {
@@ -43,10 +43,7 @@ describe("localIO encoding — BOM and autoGuess", () => {
     process.env.DSH_BETTER_EDIT_AUTO_GUESS_ENCODING = "false";
     _resetConfigCache();
     const io = localIO();
-    // with autoGuess false, localIO will try BOM→UTF-8→autoGuess false → raw readFile utf-8 (with �)
-    // For GBK bytes, readFile utf-8 will produce replacement chars, but localIO's try block will not autoGuess, so it falls to readFile("utf-8") which contains �
     const text = await io.readText(path);
-    // Should not be the correct GBK decode when autoGuess off
     expect(text).not.toBe("你好世界");
   });
 

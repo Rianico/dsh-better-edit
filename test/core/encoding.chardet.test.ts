@@ -18,7 +18,7 @@ describe("detectWithChardet", () => {
   it("filters by allowlist — returns undefined when not allowed", async () => {
     const text = "こんにちは世界";
     const bytes = iconv.encode(text, "shift_jis");
-    const enc = await detectWithChardet(bytes, ["gbk"]); // shift_jis not allowed
+    const enc = await detectWithChardet(bytes, ["gbk"]);
     expect(enc).toBeUndefined();
   });
 
@@ -37,10 +37,6 @@ describe("detectWithChardet", () => {
     const text = "Привет мир — CP1251 legacy";
     const bytes = iconv.encode(text, "windows-1251");
     const cands = await chardetTop3Candidates(bytes, ["gbk", "shift_jis", "windows-1251"]);
-    // chardet may return low confidence, but if it returns, it should be filtered
-    // For this sample, chardet correctly returns windows-1251 with confidence 28 (<45) so our helper filters and returns []
-    // So we expect either empty or windows-1251 if threshold lowered; currently threshold 45, so empty is expected
-    // This test checks that the function does not throw and respects allowlist
     expect(Array.isArray(cands)).toBe(true);
   });
 
@@ -49,7 +45,6 @@ describe("detectWithChardet", () => {
     const bytes = iconv.encode(text, "gbk");
     const cands = await getTop3Candidates(bytes, ["gbk", "shift_jis", "windows-1251"]);
     expect(cands.length).toBeGreaterThan(0);
-    // heuristic should give gbk as top for this sample
     expect(cands[0]!.encoding).toBe("gbk");
   });
 });
@@ -94,12 +89,9 @@ describe("autoGuess with chardet + heuristic integration", () => {
 
 describe("footer for autoGuess mid-confidence", () => {
   it("footer is added when autoGuess confidence mid or top2 close — check via encoding helper", async () => {
-    // This is a placeholder for the footer logic which is in fs-bridge, not encoding.ts
-    // We test that the helper exists and does not throw
     const text = "こんにちは世界 — Shift_JIS legacy 二行目";
     const bytes = iconv.encode(text, "shift_jis");
-    const cands = await chardetTop3Candidates(bytes, ["gbk", "shift_jis", "windows-1251"]);
-    // cands may be empty due to low confidence, but getTop3Candidates should fallback
+    const _cands = await chardetTop3Candidates(bytes, ["gbk", "shift_jis", "windows-1251"]);
     const top3 = await getTop3Candidates(bytes, ["gbk", "shift_jis", "windows-1251"]);
     expect(top3.length).toBeGreaterThan(0);
   });

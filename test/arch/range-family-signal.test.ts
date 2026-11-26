@@ -8,21 +8,7 @@ import { describe, expect, it } from "vitest";
  * Method: read `src/**` with node:fs and match with precise regexes (no imports of the
  * scanned modules, so the oracle cannot be fooled by runtime shape). The `ErrorPayloadMap`
  * shape check reads `src/domain-errors.ts` as text for the same reason.
- *
- * Invariant (T6): the range family's retry affordance is its ROWS, not a flag. Every
- * `ServedRejectionError` arm whose code is `E_STALE_RANGE` or `E_UNSERVED_RANGE` must NOT
- * carry the deleted `reread` field, and neither payload-map entry may redeclare it. The
- * field was a constant `true` on all 14 producers (T6 closure measurement), so it carried
- * no information; `servedRows.length` carries the distinction (empty ⇒ grounding void,
- * only a read restores it; non-empty ⇒ the named region's current anchors). The row
- * derivability rule itself lives in `test/arch/rejection-payload-region.test.ts`.
- *
- * NEGATIVE CONTROL (named): re-adding `reread: true` to one arm, or re-declaring the
- * payload-map field, must turn this file RED. That is `T6M2`'s second assertion — run it:
- *   node test/tools/mutate-ledger.mjs T6M2
- *
- * If an arm is ever made retryable with its echoed rows, this guard is where the evidence
- * must land. */
+ */
 
 const SRC_ROOT = join(process.cwd(), "src");
 const REGISTRY_FILE = join(SRC_ROOT, "domain-errors.ts");
@@ -183,7 +169,6 @@ function sitesFromText(text: string, file: string): Site[] {
   const out: Site[] = [];
   for (const m of masked.matchAll(SITE_RE)) {
     const openBrace = m.index! + m[0].length - 1;
-    // Locate with the mask (strings are spaces); read the arm from `bare` (strings intact).
     const regionLength = bracedRegion(masked, openBrace).length;
     const region = bare.slice(openBrace, openBrace + regionLength);
     const code = CODE_RE.exec(region)?.[1];
@@ -238,8 +223,6 @@ describe("arch: range-family re-read signal (T4)", () => {
     }
   });
 
-  // Planted evidence: proves the oracle can fail (a scanner that always found `true`
-  // would pass the cells above while proving nothing).
   it("scanner stays sighted on the flag in both directions", () => {
     const without = sitesFromText(
       "function f() {\n" +
@@ -260,7 +243,6 @@ describe("arch: range-family re-read signal (T4)", () => {
       "planted.ts",
     );
     expect(withFlag.map((s) => s.reread)).toEqual([true]);
-    // A commented-out construction is not evidence — comments are stripped.
     const commented =
       '// throw new ServedRejectionError({ code: "E_STALE_RANGE", reread: true });\n' +
       'const s = "throw new ServedRejectionError({";\n';

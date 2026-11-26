@@ -45,7 +45,6 @@ describe("applyEdit — recovery scenarios", () => {
       caught = error as Error;
     }
     expect(caught).toBeDefined();
-    // F6 pin: headline + context block, no `Current range:` heading, no retry hint.
     expect(caught!.message).toBe(
       `[TO MODEL] [E_STALE_ANCHOR] 1 stale anchor: "ZZZ". Re-read for fresh anchors.\n\n` +
         `  Current context around resolved anchor "${hashes[2]}" (line 3):\n` +

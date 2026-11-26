@@ -9,7 +9,6 @@
  * The model-facing contract lives here: every batch rejection — the noop-loop guard's included —
  * routes through the one assembler in `./batch-rejection.ts`, which records the rows it shows
  * (ADR-0043) before it throws. E_UNDO_UNAVAILABLE is owned elsewhere.
- * @module dsh-better-edit/mutation/engine
  */
 
 import type { FileIO } from "../fs-bridge.js";
@@ -35,8 +34,6 @@ import type { SpanMode } from "../span-mode.js";
 import { throwBatchRejection, type BatchFailure } from "./batch-rejection.js";
 
 function promotionWarning(retiredSize: number, servedLen: number): string {
-  // Soft promotion notice: plain non-header text (no [E_] code, no audience).
-  // The hard capacity refusal routes through E_LARGE_FILE (hash-space).
   return `Anchor space exhausted (retired ${retiredSize} + served ${servedLen} of ${HASH_SPACE}); promotion cleared retired — re-read recommended, stale-anchor checks degraded until next full read.`;
 }
 
@@ -76,8 +73,6 @@ async function retryLineHashesWithPromotion(
   warnings: string[],
   fn: (reserved: Set<string>, retired: Set<string>) => Promise<string[]>,
 ): Promise<string[]> {
-  // WHY (#145): exhaustion is the one dry-run path that clears retired anchors — the clear is what
-  // lets the allocation succeed at all (parity over purity), unreachable below 62^ANCHOR_LEN lines.
   const clearWarning = await clearRetiredForPromotion(sessionKey, absolutePath);
   if (clearWarning !== undefined) warnings.push(clearWarning);
   const servedLen = served?.filter((h): h is string => h !== null).length ?? 0;
@@ -109,9 +104,6 @@ import type { ServedPersistence } from "../hash-store.js";
 import { clearNoopLoop, noopPayloadKey, trackNoopPayload } from "../noop-guard.js";
 import { NOOP_LOOP_THRESHOLD } from "../constants.js";
 import { abortIf, splitLines } from "../utils.js";
-
-// ---------------------------------------------------------------------------
-// shared types
 
 export interface PreparedItem {
   index: number;
@@ -162,9 +154,6 @@ export interface FileEditResult {
   range: ResolvedRange;
 }
 
-// ---------------------------------------------------------------------------
-// pre-batch coordinate map (rowless changed-buffer rejections)
-
 /**
  * Maps a line of the live batch buffer to the line it occupied before the batch's first item. `undefined`
  * means the line has no baseline — the batch created it.
@@ -178,9 +167,6 @@ type BufferFrames = {
   /** False when the store gave no identity map at all: no line can be mapped, so none may be named. */
   complete: boolean;
 };
-
-// ---------------------------------------------------------------------------
-// request / counting helpers shared by both tool paths
 
 /** The hashes a range edit removes, for stable re-hash bookkeeping. */
 export function collectRemovedHashes(edit: HEdit, originalHashes: string[]): Set<string> {
@@ -218,9 +204,6 @@ export function countLineChanges(
     totalRemovedLines,
   };
 }
-
-// ---------------------------------------------------------------------------
-// apply-one
 
 export interface ApplyOneInput {
   content: string;
@@ -404,9 +387,6 @@ export async function applyOne(
   };
 }
 
-// ---------------------------------------------------------------------------
-// noop-loop guard
-
 export interface NoopLoopOptions {
   anchorFrom: string;
   anchorTo: string;
@@ -452,10 +432,6 @@ export async function enforceNoopLoop(
     const ref = `edits[${index}] (${displayPath})`;
     const frames = opts.frames;
     if (frames !== undefined) {
-      // Served-or-absent (upstream `pi-better-edit@5412d3f` noop arm): rows from a buffer this call has
-      // not committed are not guaranteed current-file rows — show none, record none, grant none.
-      // Without an identity map (`complete === false`) no buffer line can be mapped to a current-file
-      // line, so the note names no line instead of claiming the rows do not exist.
       const range = opts.range;
       const currentLines =
         !frames.complete || range === undefined
@@ -490,9 +466,7 @@ export async function enforceNoopLoop(
         anchorTo,
         count,
         batch: true,
-        // The assembler records these same rows (ADR-0043), so the anchors under the bullet resolve.
         servedRows: echoRows ?? [],
-        // F5: pass raw rows — the registry owns the `Current on-disk range:` heading.
         servedBlock: echoRows ? fmtServedRows(echoRows, originalLines) : "",
       }),
     };
@@ -511,9 +485,6 @@ export async function enforceNoopLoop(
   }
   return undefined;
 }
-
-// ---------------------------------------------------------------------------
-// per-file sequencer (batch)
 
 function echoRowsForItem(edit: HEdit, originalHashes: string[]): ServedRow[] | undefined {
   const startHash = edit.hash_bounds[0].hash;
@@ -562,8 +533,6 @@ function shiftedBufferProjection(
   error: DomainError,
   frames: BufferFrames,
 ): { error: DomainError; inner: string } | undefined {
-  // E_UNVERIFIED_RANGE rows name served coordinates (already current-file lines); every other
-  // producer names working-buffer coordinates.
   const rowsAreBufferCoordinates = error.code !== "E_UNVERIFIED_RANGE";
   const toCurrentLine = (line: number): number | undefined =>
     rowsAreBufferCoordinates ? frames.lineOf(line) : line;
@@ -575,15 +544,12 @@ function shiftedBufferProjection(
     frames.complete
       ? text.replace(HEADLINE_LINE_RE, (whole: string, start: string, end?: string) => {
           const s = toCurrentLine(Number(start));
-          // A buffer-created line keeps its producer text: upstream leaves the number untouched when
-          // there is no baseline, and a fabricated number would name a line that never existed.
           if (s === undefined) return whole;
           if (end === undefined) return `line ${s}`;
           const e = toCurrentLine(Number(end));
           return e === undefined ? `line ${s}` : `line ${s}-${e}`;
         })
-      : // No identity map: no number here can be trusted, so none is printed.
-        text.replace(HEADLINE_LINE_RE, () => "a line");
+      : text.replace(HEADLINE_LINE_RE, () => "a line");
   const firstCurrent =
     error.firstOffendingLine === undefined ? undefined : toCurrentLine(error.firstOffendingLine);
   const note =
@@ -635,23 +601,12 @@ function shiftedBufferProjection(
         servedBlock: "",
         ...(firstCurrent !== undefined ? { firstOffendingLine: firstCurrent } : {}),
       });
-      // Its formatter always appends the fresh-read heading; a rowless arm must not dangle it.
-      // Reachability: NOT reachable from the in-loop resolver today — `applyOne` forwards only
-      // `ServedRejectionError`/`AnchorMismatchError` to `onReject` (engine.ts:294-297 in this file) and
-      // `ServedCode` excludes this code (src/hashline/served-evidence.ts:29). The arm stays because
-      // this is the only place the served-coordinate frame is written down: its rows come from
-      // `lease.servedLineNumber` (src/hashline/served-evidence.ts:277-292), i.e. served coordinates.
-      // A future widening of that catch must keep this frame rule.
       return {
         error: rowless,
         inner: `${rowless.message.replace(FRESH_READ_HEADING_SUFFIX_RE, "")}${note}`,
       };
     }
     default:
-      // No other row-carrying code reaches the loop resolver today. One that did would escape this
-      // rewrite and be thrown from `applyOne` unwrapped — no batch envelope, and, for a
-      // buffer-derived arm, rows under a fresh-read heading. Widening that catch is a follow-up
-      // decision, not part of the #150 rule.
       return undefined;
   }
 }
@@ -674,21 +629,9 @@ function collectFailure(index: number, error: DomainError, frames?: BufferFrames
 /** The `makeDomainStore` object behind the narrowed `HashStore` view. */
 function internalStore(store: HashStore): InternalHashStore {
   // SAFETY: `loadHashStore` and `options.store` return the `makeDomainStore` object, which
-  // implements `InternalHashStore`; `HashStore` is its narrowed public view (the same cast
-  // session-view.ts documents for its served view).
   return store as unknown as InternalHashStore;
 }
 
-// WHY — KEEL K-1: every sibling degrade path signals at warn tier through a module-owned ledger
-// (`reportVacuum`'s overflow/skip sets); a throwing `positionsByIdentity` was the one silent
-// fail-open — it silently downgraded the leased-identity guard to the unconditional position
-// check. One warn per file path: the identity of the degrade is the path, stable across retries,
-// so a persistently broken lineage read warns once instead of on every edit. Observability only:
-// never throws, never changes the outcome.
-// BOUND (mirror of vacuum.ts's `REPORT_CONTEXT_CAP`): the ledger holds at most
-// IDENTITY_DEGRADE_REPORT_CAP paths and evicts the oldest inserted first, so the state is capped
-// rather than unbounded across distinct file paths. A process touching more distinct paths than
-// the cap can re-report an evicted one — strictly cheaper than an unbounded Set.
 const IDENTITY_DEGRADE_REPORT_CAP = 256;
 const identityDegradeReported = new Map<string, true>();
 
@@ -706,7 +649,7 @@ function reportIdentityDegrade(absolutePath: string, cause: unknown): void {
         `edit proceeds under the unconditional position check.`,
     );
   } catch {
-    // SAFETY: observability only — a broken diagnostic sink must never fail the caller.
+    // HACK: observability only — a broken diagnostic sink must never fail the caller.
   }
 }
 
@@ -741,9 +684,6 @@ function leaseSourceFrom(
     leaseFor: (anchor) => {
       const lease = internal.leaseFor(sessionKey, absolutePath, anchor);
       if (lease === undefined) return undefined;
-      // A lease served under a prior snapshot epoch is never honoured (ADR-0054): its `canon_hash`
-      // and paired `line_id` were written under a canon this build no longer uses, and the open-time
-      // sweep cannot cover rows written after it. Fail closed — the edit needs a fresh read.
       if (!isCurrentSnapshotEpoch(lease.snapshotHash)) return undefined;
       return {
         lineId: lease.lineId,
@@ -753,8 +693,6 @@ function leaseSourceFrom(
       };
     },
     rebasedLineOf: (lineId) => positions.get(lineId),
-    // Failure-path only (upstream b92e0ec:src/hashline/resolve.ts:41-49): the lease-miss
-    // rejection asks which OTHER files this session served the anchor for.
     anchorHomes: (anchor) => internal.leaseHomes(sessionKey, absolutePath, anchor),
   };
 }
@@ -768,10 +706,6 @@ function leaseSourceFrom(
  *
  * For a buffer that is not a committed snapshot — batch item k > 0 — the caller passes the map it
  * already advanced (`leaseSourceFrom` + `spliceWorkingBufferIds`) rather than re-deriving it here.
- *
- * UPGRADE CONSEQUENCE: a session whose `served` rows predate lease granting (a pre-T2b store) holds
- * no lease for those anchors, so its first edit rejects and needs one re-read. Fail-closed and
- * one-time; it goes in the CP3 ADR and the T7 CHANGELOG note.
  */
 export function makeLeaseSource(
   store: HashStore,
@@ -810,14 +744,6 @@ function positionsFromIds(ids: readonly (number | null)[]): Map<number, number> 
  * Lines outside the item's resolved range keep their id — they only shifted, so the same identity
  * lives at a new coordinate. The range's replacement lines become `null`: the batch created them, so
  * they carry no identity to resolve against until a read leases them.
- *
- * WHY this map exists, and why dsh does NOT port upstream's commit-from-map half: resolution needs
- * the working buffer's identities *during* the batch, and re-pairing `S_latest` against the
- * intermediate buffer is ambiguous exactly when the batch introduced a duplicate canon — the map is
- * the deterministic answer there. The COMMIT path is a different question and keeps re-pairing the
- * final content against the latest snapshot, which is *more* identity-preserving than the map for a
- * line inside a replaced range that survived byte-identical: re-pairing inherits it, while the map
- * would assign `null` and force a re-read on the next edit. So the map is resolution-only by design.
  */
 function spliceWorkingBufferIds(
   ids: readonly (number | null)[],
@@ -854,15 +780,9 @@ export async function runFileEdits(
   const first = items[0]!;
   abortIf(opts.signal);
   const absolutePath = first.absolutePath;
-  // Served-span policy: one read per file edit; every item in this file shares it, so a
-  // config edit mid-batch cannot split the batch's policy.
   const spanMode = loadConfig().spanMode;
   const perSessionRetired = await loadRetiredAnchors(opts.sessionKey, absolutePath);
   const reservedHashes = new Set(perSessionRetired);
-  // Issue #112: the mutating re-read consumes the encoding recorded by `read`,
-  // so a file admitted by `read({ encoding })` decodes to the same text (and the
-  // same anchors). The version guard drops a drifted memo first — re-detect, never
-  // launder the old encoding onto changed bytes.
   const currentVersion = await io.statVersion(absolutePath, opts.signal);
   const encodingHint = encodingHintAtVersion(absolutePath, currentVersion);
   const rawText = await io.readText(absolutePath, opts.signal, encodingHint);
@@ -881,26 +801,15 @@ export async function runFileEdits(
     signal: opts.signal,
     maxLines: MAX_HASH_LINES,
     reservedHashes,
-    // WHY (#145): a dry run is read-only, so the pre-image snapshot, lineage and lease upserts below
-    // `lineHashes` are skipped. Only persistence is withheld — every hash value is the live one.
     noPersist: opts.dryRun === true,
     retiredHashes: perSessionRetired,
-    // T3: the edit load pairs this buffer against the latest committed lineage (the same owner the
-    // read path uses), so an exterior change no longer forces a re-read to keep a held anchor alive.
     alignOnMiss: true,
   });
 
-  // T3: this load aligned the buffer against the latest lineage and retired the deletions it found.
-  // Block them for the batch (no fresh allocation may re-issue one) and queue them for the
-  // post-write retirement, so the session cannot hand one out after this edit either.
   for (const hash of loadRetiredHashes ?? []) {
     perSessionRetired.add(hash);
     reservedHashes.add(hash);
   }
-  // #169: ONE decode decides the whole write. The counts are the raw pre-image's terminators, so
-  // the effective ending (env > config > file's dominant > OS) and the number of terminators this
-  // write re-spells come from the same scan and cannot disagree. A file with no terminator gets
-  // the platform one, and the terminators the write INTRODUCES are not counted as changed.
   const effectiveEol = resolveEffectiveEolFromCounts(endingCounts);
   const effectiveEnding = effectiveEol.value;
   const preImageMixed = terminatorKindsUsed(endingCounts) >= 2;
@@ -917,10 +826,6 @@ export async function runFileEdits(
   const served = await loadServed(opts.sessionKey, absolutePath);
   const servedCanons = await loadServedCanons(opts.sessionKey, absolutePath);
   const warnings: string[] = [];
-  // FU-R (upstream pipeline.ts:811-822): the never-served soft hint is once per call. Per-item
-  // counts travel as structured data (`neverServedCount`), aggregate here, and one counted hint
-  // renders after the loop. No other warning tier is capped; a noop writes nothing, so its count
-  // is never aggregated.
   let neverServedTotal = 0;
   const pushAppliedWarnings = (list: string[] | undefined, hintCount: number): void => {
     if (list) warnings.push(...list);
@@ -930,9 +835,6 @@ export async function runFileEdits(
     if (list) warnings.push(...list);
   };
 
-  // The lease store is resolved once per file edit; the source itself is rebuilt per buffer (the
-  // pre-pass resolves against `originalNormalized`, each loop item against `currentContent` plus the
-  // working-buffer identity map below).
   const leaseStore = await loadLeaseStore();
   const originalPositions =
     leaseStore === undefined
@@ -942,17 +844,10 @@ export async function runFileEdits(
     leaseStore === undefined || originalPositions === undefined
       ? undefined
       : leaseSourceFrom(leaseStore, opts.sessionKey, absolutePath, originalPositions);
-  // The working-buffer identity map: index -> `line_id | null`, seeded from the same seam the
-  // resolution uses so resolution and any future commit cannot disagree. Advanced after each
-  // applied item; a length that disagrees with the buffer's line count falls back to
-  // `positionsByIdentity` — never to a guess.
   let currentIds =
     originalPositions === undefined
       ? undefined
       : idsFromPositions(originalPositions, splitLines(originalNormalized).length);
-  // Pre-batch line of each identity, so a rejection inside a buffer that earlier items already changed
-  // can name the current-file lines an anchored read would serve (see `shiftedBufferProjection`). The map is
-  // frozen before the batch; `currentIds` is not — it advances past every applied item.
   const baselineLineById = new Map<number, number>();
   if (currentIds !== undefined) {
     currentIds.forEach((id, i) => {
@@ -963,8 +858,6 @@ export async function runFileEdits(
     const id = currentIds?.[bufferLine - 1];
     return id === null || id === undefined ? undefined : baselineLineById.get(id);
   };
-  // Snapshot the pre-loop coverage: `currentIds` advances past every applied item but never goes
-  // undefined → defined, so a const taken here states whether any buffer line can be mapped at all.
   const frames: BufferFrames = { lineOf: baselineLineOf, complete: currentIds !== undefined };
   let currentContent = originalNormalized;
   let currentHashes = originalHashes;
@@ -977,17 +870,7 @@ export async function runFileEdits(
   let unionStartHash = "";
   let unionEndHash = "";
   let lastApplied: { content: string; hashes: string[]; removedHashes: Set<string> } | undefined;
-  // WHY seeded with the load's deletions: they are retired with this edit's own overflow
-  // (upstream's `accumulatedRemoved`), so one post-write retirement covers both.
   const newlyRetired = new Set<string>(loadRetiredHashes ?? []);
-  // C: pure pre-pass over all items on the pre-batch snapshot — parse each
-  // item (resEdit) and resolve its span (applyEdit) with no mutation
-  // (warnings go to a throwaway array; noop tracking untouched). Anchor and
-  // served failures collect for one aggregated rejection; a non-domain
-  // throw is unexpected and aborts immediately. The loop below still owns
-  // state-dependent (mid-loop) failures via onReject.
-  // One recorder context for every rejection of this call (ADR-0043): the committed pre-batch
-  // snapshot the echoed rows were derived from, never a buffer echo.
   const rejectionRecord = {
     sessionKey: opts.sessionKey,
     absolutePath,
@@ -1061,14 +944,12 @@ export async function runFileEdits(
         spanMode,
       },
       async (error) => {
-        // In-loop (state-dependent) failures keep single-failure envelopes.
         if (error instanceof AnchorMismatchError || error instanceof ServedRejectionError) {
           return throwBatchRejection({
             failures: [
               collectFailure(
                 item.index,
                 error,
-                // Served-or-absent once an earlier item changed the buffer (see `shiftedBufferProjection`).
                 currentContent !== originalNormalized ? frames : undefined,
               ),
             ],
@@ -1077,8 +958,6 @@ export async function runFileEdits(
             record: rejectionRecord,
           });
         }
-        // Any other failure joins the same grammar. At arity one the raw error surfaces as
-        // `E_UNKNOWN` at the edit tool boundary (`wrapUnexpected`).
         return throwBatchRejection({
           failures: [
             {
@@ -1105,8 +984,6 @@ export async function runFileEdits(
 
     if (applied.noop) {
       noopCount += 1;
-      // WHY (#145): a dry run previews the very payload a live call would send, so it must neither
-      // advance the counter nor arm the loop guard — the next LIVE attempt keeps the tally it earned.
       if (opts.dryRun !== true) {
         const payload = noopPayloadKey(
           absolutePath,
@@ -1123,14 +1000,10 @@ export async function runFileEdits(
           count,
           originalNormalized,
           echoRows: echoRowsForItem(applied.edit, originalHashes),
-          // Same served-or-absent rule as the shifted-buffer rejections: the noop's rows come from a
-          // buffer earlier items changed, so they name current-file lines only and record nothing.
           ...(currentContent !== originalNormalized ? { frames } : {}),
           range: { startLine: applied.range.startLine, endLine: applied.range.endLine },
         });
         if (decision?.action === "reject") {
-          // The noop-loop refusal joins the one grammar: the assembler records the rows it shows
-          // (ADR-0043) and, in a multi-item call, wraps it in the verdict + bullet envelope.
           return throwBatchRejection({
             failures: [{ index: item.index, error: decision.error }],
             total: items.length,
@@ -1170,7 +1043,6 @@ export async function runFileEdits(
       );
     }
     currentHashes = applied.hashes;
-    // A dry run changed nothing, so it must not clear the live payload's tally either.
     if (opts.dryRun !== true) clearNoopLoop(opts.sessionKey, absolutePath);
     pushAppliedWarnings(applied.anchorWarnings, applied.neverServedCount);
   }
@@ -1192,8 +1064,6 @@ export async function runFileEdits(
           removedHashes: lastApplied.removedHashes,
         },
         undefined,
-        // WHY (#145): the result exists only in memory on a dry run, so its anchor snapshot must not
-        // be persisted. Persistence is the only thing withheld: the anchors themselves are identical.
         opts.dryRun !== true,
         reservedHashes,
         perSessionRetired,
@@ -1216,16 +1086,12 @@ export async function runFileEdits(
               removedHashes: lastApplied.removedHashes,
             },
             undefined,
-            // Same rule as the first allocation: a dry run's retry persists no snapshot either.
             opts.dryRun !== true,
             recomputed,
             emptyRetired,
           ),
       );
     }
-    // WHY (#98, port of upstream CAND-3): retirement is returned to the caller and committed
-    // AFTER the write. Doing it here — inside the read-only apply phase — let a failed write
-    // leave anchors retired for a file that still holds them.
   }
 
   if (hadUtf8DecodeErrors) {
@@ -1233,9 +1099,6 @@ export async function runFileEdits(
   }
 
   let driftNotice: string | undefined;
-  // WHY (#145): a preview writes nothing, so its post-edit coordinates are hypothetical — recording
-  // them would insert a served row at a position the file does not hold and retire the hashes they
-  // displace. The notice would describe a write that never landed, so the scan does not run at all.
   if (opts.dryRun !== true && appliedCount > 0 && unionStartLine !== Infinity) {
     const resultLines = splitLines(result);
     const originalLines = splitLines(originalNormalized);
@@ -1289,6 +1152,3 @@ export async function runFileEdits(
     },
   };
 }
-
-// ---------------------------------------------------------------------------
-// the write transaction

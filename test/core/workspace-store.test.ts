@@ -30,7 +30,6 @@ describe("workspace context", () => {
         seen = workspaceCwd();
       });
       expect(seen).toBe(cwd);
-      // outside the context there is no workspace
       expect(workspaceCwd()).toBeUndefined();
     } finally {
       rmSync(cwd, { recursive: true, force: true });
@@ -110,19 +109,15 @@ describe("workspace isolation", () => {
     const b = tempWorkspace("dsh-ws-b-");
     const content = "one\ntwo\nthree\n";
     try {
-      // Write a snapshot in workspace A only (lineHashes persists it
-      // keyed by path + real checksum).
       await withWorkspace(a, async () => {
         await lineHashes(content, join(a, "f.txt"));
       });
 
-      // Workspace B must NOT see A's snapshot (separate store file).
       await withWorkspace(b, async () => {
         const store = await loadHashStore();
         expect(store.getSnapshot(join(a, "f.txt"), content, false)).toBeUndefined();
       });
 
-      // Workspace A still sees it.
       await withWorkspace(a, async () => {
         const store = await loadHashStore();
         expect(store.getSnapshot(join(a, "f.txt"), content, false)).toBeDefined();
@@ -142,11 +137,6 @@ describe("stale served tail (regression)", () => {
     const path = join(ws, "f.txt");
     const session = "sess-tail";
     try {
-      // Serve an 8-line file (a full read), then a 2-line file (the
-      // write auto-read). Before the fix the second serve left the stale
-      // positions 2..7 in the array, so the surviving "c" line's hash
-      // appeared at BOTH its old position 2 and its new position 1 —
-      // and any edit targeting it failed E_UNSERVED_RANGE.
       await withWorkspace(ws, async () => {
         const big = "a\nb\nc\nd\ne\nf\ng\nh\n";
         writeFileSync(path, big);

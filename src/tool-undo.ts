@@ -97,9 +97,9 @@ export function buildUndoTool(io: FileIO, sandbox: FsSandboxController) {
         assertUndoRequest(canonical);
         const path = canonical.path;
         const absolutePath = await io.resolve(path, cwd, signal);
-        // SAFETY: canonical validated by assertUndoRequest; shape is compatible with FsEscalationArgs (path + optional sandbox fields) — narrowing for sandbox.resolvePolicy
         const sandboxPolicy = await sandbox.resolvePolicy(
           "undo_last_edit",
+          // SAFETY: canonical validated by assertUndoRequest; shape is compatible with FsEscalationArgs (path + optional sandbox fields) — narrowing for sandbox.resolvePolicy
           canonical as unknown as FsEscalationArgs,
           exec,
         );
@@ -108,17 +108,10 @@ export function buildUndoTool(io: FileIO, sandbox: FsSandboxController) {
         if (!undo) {
           return `No undo history for ${path}. There is no previous edit to revert.`;
         }
-        // #171: the edit wrote ONE ending (`effectiveEnding`); `originalEnding` is the pre-image's
-        // `detectEnding` answer, which for a mixed pre-image is neither what the edit wrote nor what
-        // the file holds now. Staleness and the restore both use the ending the edit used, or a
-        // perfectly intact file would read as externally modified.
         const effectiveEnding = undo.effectiveEnding ?? undo.originalEnding;
 
         let currentRaw: string;
         try {
-          // Issue #112: the staleness read consumes the encoding recorded by the preceding
-          // read, so a file admitted by read({ encoding }) compares as decoded text instead
-          // of mojibake (which would misreport a false E_UNDO_STALE "modified").
           const currentVersion = await io.statVersion(absolutePath, signal);
           const encodingHint = encodingHintAtVersion(absolutePath, currentVersion);
           currentRaw = await io.readText(absolutePath, signal, encodingHint);
@@ -129,10 +122,6 @@ export function buildUndoTool(io: FileIO, sandbox: FsSandboxController) {
           }
           throw error;
         }
-        // WHY (#209): a `"utf8bom"` migration leaves post-image bytes carrying a UTF-8 BOM that the
-        // undo pair's pre-image `bom` column does not describe (it records the ABANDONED codec's
-        // BOM, e.g. utf16le's). A DSH backend restores that BOM on read, so the exact compare would
-        // blame an external write for the tool's own migration target.
         const expectedResult = restoreEndings(undo.resultContent, effectiveEnding);
         const matchesMigratedTarget =
           undo.migration !== undefined && stripBOM(currentRaw).text === expectedResult;
@@ -143,12 +132,7 @@ export function buildUndoTool(io: FileIO, sandbox: FsSandboxController) {
 
         const { text: currentStripped } = stripBOM(currentRaw);
         const currentNormalized = toLF(currentStripped);
-        // Per-session reservations: retired/ served are per (session, path) per ADR-0013; file snapshots stay global last-writer-wins
         const reservations = await loadAnchorReservations(sessionKey, absolutePath);
-        // Anchor-space promotion mirrors the edit path (src/mutation/engine.ts): on exhaustion,
-        // clear this (session, path)'s retired anchors to free hash space and retry once; a retry
-        // that still exhausts is a hard capacity refusal (E_LARGE_FILE hash-space). The in-memory
-        // reservation sets track the cleared store so the restore rehash below sees them too.
         let reservedHashes = new Set(reservations.reservedHashes);
         let retiredHashes = new Set(reservations.retiredHashes);
         const promoteRetiredForAnchorSpace = async (): Promise<void> => {
@@ -158,11 +142,10 @@ export function buildUndoTool(io: FileIO, sandbox: FsSandboxController) {
             try {
               store.clearCards(sessionKey, absolutePath);
             } catch {
-              // Best-effort: card state is a cache; the retry proceeds without it.
+              // HACK: card state is a cache; the retry proceeds without it
             }
           } catch {
-            // Best-effort: a store fault here must not fail the undo — the retry proceeds on the
-            // in-memory reservation state (ADR-0020 R2, promotion/wipe arm).
+            // HACK: a store fault must not fail the undo — the in-memory reservation state carries on (ADR-0020 R2)
           }
           const served = new Set([...reservedHashes].filter((h) => !retiredHashes.has(h)));
           retiredHashes = new Set();
@@ -181,12 +164,6 @@ export function buildUndoTool(io: FileIO, sandbox: FsSandboxController) {
             ),
           promoteRetiredForAnchorSpace,
         );
-        // Restore the pre-edit assignment verbatim (ADR-0017 reversal): `undo.hashes` are
-        // the anchors the restored content carried before the edit, and `undo.content` is
-        // byte-identical to the content they were assigned to. The edit retired them; that
-        // retirement is reversed with the restore below, so the pass no longer lists them
-        // as removed. What still blocks reuse is the superseded post-edit assignment
-        // (`currentHashes`, live on the file right now) plus this session's reserved set.
         const restoredHashes = await hashWithAnchorSpacePromotion(
           () =>
             lineHashes(
@@ -200,12 +177,6 @@ export function buildUndoTool(io: FileIO, sandbox: FsSandboxController) {
             ),
           promoteRetiredForAnchorSpace,
         );
-        // WHY: #96 (pi-better-edit@665a05d, upstream #173) — the summary counts come from the
-        // WHY: source line multisets, never from the rendered projection: a deleted run past
-        // WHY: DIFF_REMOVED_CAP collapses behind a marker row at context 0, so counting `-` rows
-        // WHY: underreported the restored lines. A line the edit added is one present in the
-        // WHY: current file beyond its occurrence count in `undo.content`; a removed line is the
-        // WHY: converse. Collapsed and expanded projections therefore report identical counts.
         const remainingUndoCounts = new Map<string, number>();
         for (const line of visLines(undo.content)) {
           remainingUndoCounts.set(line, (remainingUndoCounts.get(line) ?? 0) + 1);
@@ -232,17 +203,8 @@ export function buildUndoTool(io: FileIO, sandbox: FsSandboxController) {
         }
         const restoredRange = changedRange(currentNormalized, undo.content);
         const restoredSet = new Set(restoredHashes);
-        // Retirement moves with the restore: the anchors the edit retired for lines that come
-        // back byte-identically are revived in the same unit that retires the superseded
-        // post-edit assignment. An anchor whose line does not come back stays retired, and no
-        // anchor is rebound to different content — the restore is byte-identical or refused.
         const revivedByUndo = [...restoredSet].filter((hash) => retiredHashes.has(hash));
-        // WHY (#98, port of upstream CAND-3): retirement waits for the write. Committing it
-        // before `writeText` let a failed revert leave anchors retired for a file that still
-        // holds them — a torn store state with no later read likely to notice.
         const retiredByUndo = currentHashes.filter((hash) => !restoredSet.has(hash));
-        // The revert goes through the same save seam as every other write, so an
-        // encoding that cannot round-trip refuses BEFORE any write (#112).
         const recorded = getEncodingState(absolutePath) ?? {
           encoding: undo.bom ? "utf8bom" : "utf8",
           hasBOM: undo.bom !== "",
@@ -250,12 +212,8 @@ export function buildUndoTool(io: FileIO, sandbox: FsSandboxController) {
           version: undefined,
         };
         const prepared = prepareForSave(undo.content, recorded, {
-          // Same ladder as every other save seam, so the fleet consent applies to a revert too.
           migrationConsent: resolveEncodingMigrationConsent(undefined, loadConfig()),
           displayPath: path,
-          // #171: the memo still describes the PRE-edit bytes (its `lineEnding` is the pre-image's),
-          // so the resolved ending has to be named or the restore would be re-spelled at the wrong
-          // one. The same option rides the write below: the IO seam re-prepares against that memo.
           lineEnding: effectiveEnding,
         });
 
@@ -275,16 +233,7 @@ export function buildUndoTool(io: FileIO, sandbox: FsSandboxController) {
           throw sandbox.mapError(error, sandboxPolicy);
         }
 
-        // The file is reverted; the store state must move as ONE unit: the snapshot/lineage adopt
-        // (`upsertSnapshot`), the retirement of the anchors the revert freed, and the undo-pair
-        // clear (`deleteUndoPair`) are all-or-nothing. `withStore` routes every call through the
-        // store's single re-entrant transaction owner (the store was just loaded for this
-        // workspace, so `currentStore()` is that same handle). Fail loud: a cleared pair over an
-        // un-adopted snapshot, or a revert without its retirement, is a desync no later read or
-        // edit can see.
         // SAFETY: loadHashStore returns the InternalHashStore
-        // (HashStore & ServedPersistence & LineageStore); its public return type is narrowed, and
-        // this unit needs the served face for the retirement that commits with the adopt.
         const store = (await loadHashStore()) as InternalHashStore;
         try {
           withStore(() => {
@@ -300,7 +249,6 @@ export function buildUndoTool(io: FileIO, sandbox: FsSandboxController) {
             store.deleteUndoPair(absolutePath);
           });
         } catch (error) {
-          // Not a swallow: the raw cause is logged for diagnosis, then the tool fails loud.
           console.error("Failed to record the undo restore in the hash store:", error);
           throw new DomainError("E_UNDO_NOT_RECORDED", { path });
         }
@@ -311,18 +259,11 @@ export function buildUndoTool(io: FileIO, sandbox: FsSandboxController) {
             `Removed ${linesAddedByEdit} line(s) that were added and restored ${linesRemovedByEdit} line(s) that were removed.`,
           );
         }
-        // #171: a mixed pre-image cannot come back as it was — the revert writes ONE ending. Saying
-        // so is the disclosure; saying nothing would claim the mixture was restored. Uniform rows
-        // push nothing: the bytes are identical to the pre-edit file.
         if (undo.preImageMixed) {
           parts.push(
             `Restored at ${endingName(effectiveEnding)}; the pre-edit mixture is not restored.`,
           );
         }
-        // #191: a migration revert still writes UTF-8 — it never refuses and never claims the old
-        // bytes came back. The codec is named verbatim from the stored verdict (taken once at the
-        // save seam, never recomputed), so silence cannot read as restoration. Absent = no verdict:
-        // rows that migrated nothing (and all pre-#191 rows) push no such clause.
         if (undo.migration !== undefined) {
           parts.push(
             undo.migration.hasBOM
@@ -330,9 +271,6 @@ export function buildUndoTool(io: FileIO, sandbox: FsSandboxController) {
               : `Restored as UTF-8; the pre-edit ${undo.migration.encoding} encoding is not restored.`,
           );
         }
-        // The serve write is a SECOND unit, deliberately outside the committed pair: a fault
-        // here must not roll the revert back. But it decides whether the anchors below are
-        // usable, so the claim is made only when the serve landed.
         let serveLanded = true;
         if (undoDenseRows.length > 0) {
           serveLanded = await recordServedTruncated(
