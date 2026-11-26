@@ -21,6 +21,12 @@
  * sidecar — so a definition whose body never resolves or opens the store (`str_replace_editor`, a
  * governed mutation with no `hash-store` import) is registered undecorated.
  *
+ * SCOPES MAY NEST ON ONE PATH, and nesting is safe because a scope never awaits a drain:
+ * `withStoreScope` only moves the path's in-flight counter, `awaitDrainingClose` is a no-op inside its
+ * own slot's scope, and the LAST scope to end is the one that finishes the pending close. Today the
+ * write hook's scope and a tool body's scope are sequential, never nested; a future site that nests
+ * inside one of them inherits the deferral for free — the close waits for the outermost scope.
+ *
  * @module dsh-better-edit/agent-store
  */
 

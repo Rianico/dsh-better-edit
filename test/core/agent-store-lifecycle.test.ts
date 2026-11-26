@@ -13,7 +13,8 @@
  */
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { existsSync } from "node:fs";
+import { basename, dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import type { ToolExecution, ToolRunContext } from "@deepseek-ai/dsh-tools";
 
@@ -412,6 +413,43 @@ describe("agent-store — attach, scope and teardown wiring", () => {
     expect(handleIsOpen(store)).toBe(false);
     await detached;
     await expect(rm(cwd, { recursive: true })).resolves.toBeUndefined();
+  });
+
+  it("K. central mode: the last detach leaves a closable cache dir, no open fd", async () => {
+    // T3's case F pins the workspace store; the central store lives under `$DSH_HOME/.../runtime/`
+    // and is the path a bare `rm` of the cache would hit. The claim is the same in one respect —
+    // the handle is dead when the last detach returns, so nothing holds the file — and different
+    // in another: the directory is not the workspace, so its removal proves the cached entry (not
+    // the cwd) was what kept it open.
+    await writeFile(join(workspace, "k.txt"), "kappa\n", "utf-8");
+    const token = useToken("last-agent");
+    const readTool = wrapToolWithAgentStore(buildReadTool(localIO()));
+    await callTool(readTool, { path: "k.txt" }, makeExec(workspace, token));
+
+    const store = await loadHashStore(workspace);
+    expect(handleIsOpen(store)).toBe(true);
+
+    const detached = detachAgent(token);
+    // 1 -> 0 runs the close synchronously inside the detach: no handle outlives this line.
+    expect(handleIsOpen(store)).toBe(false);
+    await detached;
+
+    // The close dropped the cache entry too, so a later load is a fresh handle, not the dead one.
+    const reopened = await loadHashStore(workspace);
+    expect(reopened).not.toBe(store);
+    expect(handleIsOpen(reopened)).toBe(true);
+
+    const cacheDir = dirname(hashStorePath(workspace));
+    expect(cacheDir).toBe(
+      join(home, ".dsh", "plugins", "dsh-better-edit", "runtime", basename(cacheDir)),
+    );
+    expect(existsSync(cacheDir)).toBe(true);
+
+    // Close the fresh handle first: the removal claim is about the store's own fd, not about a
+    // caller that chose to keep a handle open across the delete.
+    shutdownHashStore();
+    await expect(rm(cacheDir, { recursive: true, force: true })).resolves.toBeUndefined();
+    expect(existsSync(cacheDir)).toBe(false);
   });
 
   it("G. a path-resolution fault is reported, never raised: the body still runs", async () => {

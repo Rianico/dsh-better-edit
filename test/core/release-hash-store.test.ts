@@ -23,6 +23,7 @@ import {
   detachAgent,
   inFlightCount,
   ownerCount,
+  withStoreScope,
 } from "../../src/store-lifecycle-slot.js";
 import { _resetConfigCache } from "../../src/store-config.js";
 import { hashStorePath } from "../../src/store-tenancy.js";
@@ -401,5 +402,79 @@ describe("releaseHashStore — host release + root dispose", () => {
       "the plugin dispose failure warning",
     );
     await flushMicrotasks();
+  });
+
+  it("M. a no-arg release bumps only the path it can close", async () => {
+    // The mixed case there is no one-path test for: one OPEN path nobody claims (the release can
+    // close it, so it bumps that path's epoch) beside one path a token holds (refused, untouched).
+    // A load in flight on the first must therefore fail loudly; a load on the second must not.
+    const bareWorkspace = await workspaceAt("workspace-bare");
+    const ownedWorkspace = await workspaceAt("workspace-owned");
+    const barePath = hashStorePath(bareWorkspace);
+    const ownedPath = hashStorePath(ownedWorkspace);
+
+    // Publish the bare path first: the no-arg release enumerates OPEN entries, and only a path it
+    // counts there can have its epoch bumped (a path with no entry never closes here).
+    await loadHashStore(bareWorkspace);
+
+    // Held scope + a detach: the drain is deferred, so the load issued next blocks on it while the
+    // entry — the thing the release enumerates — is still published.
+    let releaseGate!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      releaseGate = resolve;
+    });
+    const scope = withStoreScope(barePath, () => gate);
+    attach(barePath, "starter");
+    const drained = detachAgent("starter");
+
+    const barePending = loadHashStore(bareWorkspace);
+    const ownedPending = loadHashStore(ownedWorkspace);
+    await waitForOpenScope(ownedPath);
+    attach(ownedPath, "keeper");
+
+    const released = releaseHashStore(undefined);
+    // The bump happened synchronously inside that call; its SETTLEMENT waits for the bare drain,
+    // because a release joins the drain instead of closing out from under the scope.
+    releaseGate();
+    await expect(released).resolves.toBe(false);
+
+    // The bumped side: the overlapping load fails loudly instead of resurrecting the closed handle.
+    await expect(barePending).rejects.toThrow(/released while the store was opening/i);
+
+    // The refused side: no bump, no close, claim intact — the load it overlapped opens normally.
+    const owned = await ownedPending;
+    expect(handleIsOpen(owned)).toBe(true);
+    expect(ownerCount(ownedPath)).toBe(1);
+
+    // The claim owns the close: only the detach ends it.
+    const detachedKeeper = detachAgent("keeper");
+    expect(handleIsOpen(owned)).toBe(false);
+    await detachedKeeper;
+    await drained;
+    await scope;
+  });
+
+  it("N. a racing attach cancels a graceful drain", async () => {
+    const store = await loadHashStore(workspace);
+    const storePath = hashStorePath(workspace);
+
+    let releaseGate!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      releaseGate = resolve;
+    });
+    const scope = withStoreScope(storePath, () => gate);
+
+    // Unowned, so the release starts a cancellable drain; the held scope keeps it from finishing.
+    const released = releaseHashStore(workspace);
+    // An attach at zero owners is the one case that revokes a decided close (a forced drain never
+    // is) — it takes no epoch involvement, which is the teardown-only limit this case pins.
+    attach(storePath, "late");
+
+    releaseGate();
+    await expect(released).resolves.toBe(false);
+    // Cancelled, not closed-then-reopened: the same handle is live and the new claim owns it.
+    expect(handleIsOpen(store)).toBe(true);
+    expect(ownerCount(storePath)).toBe(1);
+    await scope;
   });
 });
