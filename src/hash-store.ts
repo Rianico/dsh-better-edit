@@ -19,6 +19,11 @@ import { dirname } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { hashStorePath } from "./store-tenancy.js";
 import { onStoreOpen, setStoresGetter } from "./store-lifecycle.js";
+import {
+  awaitDrainingClose,
+  configureStoreLifecycle,
+  withStoreScope,
+} from "./store-lifecycle-slot.js";
 import { workspaceCwd } from "./workspace-context.js";
 import { errCode, splitLines } from "./utils.js";
 import { initHasher, HASH_CLASS, HASH_RE } from "./hashline/hash-assign.js";
@@ -402,6 +407,9 @@ setStoresGetter(
   () => stores as Map<string, { path: string }>,
   () => openings as Map<string, Promise<any>>,
 );
+// The lifecycle registry decides WHEN this map's handle closes; both hooks read the one map, so a
+// close and the open path can never disagree about which connection a path owns.
+configureStoreLifecycle({ close: closeStoreAtPath, isOpen: isStoreOpenAtPath });
 
 function openDb(storePath: string): { db: DatabaseSync; stmts: Prepared } {
   const db = new DatabaseSync(storePath, {
@@ -930,6 +938,7 @@ export const DRIFT_EPISODE_RE = new RegExp(`^${DRIFT_EPISODE_PREFIX}${HASH_CLASS
 
 /** Wire the domain methods over the prepared statements. */
 function makeDomainStore(
+  storePath: string,
   stmts: Prepared,
   lineageStore: LineageStore,
   db: DatabaseSync,
@@ -1283,16 +1292,21 @@ function makeDomainStore(
     },
 
     async pruneMissing() {
-      const rows = stmts.allPaths() as { path: string }[];
-      const missing = await statMissing(rows);
-      if (missing.length === 0) return;
-      // Transaction owner: withStore — one unit for every v7 family (the shells are not v7's).
-      withStore(() => {
-        for (const path of missing) {
-          lineageStore.deleteByPath(path);
-          stmts.fileUndoDelete(path);
-          stmts.servedMetaDeletePath(path);
-        }
+      // Its own barrier: onStoreOpen launches this without awaiting, so the open's scope has already
+      // ended by the time the fs stats resolve. Without this scope the delete can run bare on a handle
+      // a 1→0 drain closed.
+      return withStoreScope(storePath, async () => {
+        const rows = stmts.allPaths() as { path: string }[];
+        const missing = await statMissing(rows);
+        if (missing.length === 0) return;
+        // Transaction owner: withStore — one unit for every v7 family (the shells are not v7's).
+        withStore(() => {
+          for (const path of missing) {
+            lineageStore.deleteByPath(path);
+            stmts.fileUndoDelete(path);
+            stmts.servedMetaDeletePath(path);
+          }
+        });
       });
     },
     vacuumSnapshots() {
@@ -1336,6 +1350,27 @@ function shutdownDb(db: DatabaseSync): void {
     ); // best-effort checkpoint before close
   }
   db.close();
+}
+
+/**
+ * Close ONE path: checkpoint + close that connection, then drop its map entry. The entry stays
+ * in `stores` until db.close() returns, so the central janitor keeps excluding a draining
+ * directory; only a closed idle cache becomes eviction-eligible. `openings` is untouched: an
+ * open is always inside a scope, so a drain cannot land mid-open.
+ */
+function closeStoreAtPath(storePath: string): void {
+  const entry = stores.get(storePath);
+  if (entry === undefined) return;
+  try {
+    shutdownDb(entry.db);
+  } finally {
+    stores.delete(storePath);
+  }
+}
+
+function isStoreOpenAtPath(storePath: string): boolean {
+  const entry = stores.get(storePath);
+  return entry !== undefined && entry.db.isOpen;
 }
 
 const STAT_BATCH = 64;
@@ -1383,7 +1418,7 @@ async function openStore(storePath: string): Promise<HashStore> {
   const { db, stmts } = opened;
 
   const lineageStore = createLineageStore(db);
-  const store = makeDomainStore(stmts, lineageStore, db);
+  const store = makeDomainStore(storePath, stmts, lineageStore, db);
   stores.set(storePath, { path: storePath, db, stmts, store });
   await onStoreOpen(storePath, stmts, store);
 
@@ -1402,18 +1437,37 @@ function storePathFor(cwd?: string): string {
  * @param cwd - optional explicit workspace root; defaults to the active workspace.
  */
 export function loadHashStore(cwd?: string): Promise<HashStore> {
-  const storePath = storePathFor(cwd);
+  return loadHashStoreAtPath(storePathFor(cwd));
+}
+
+async function loadHashStoreAtPath(storePath: string): Promise<HashStore> {
+  // Outside any scope: a pending drain must finish before a bare open can publish onto it.
+  await awaitDrainingClose(storePath);
   const cached = stores.get(storePath);
-  if (cached && cached.db.isOpen) {
-    return Promise.resolve(cached.store);
-  }
+  if (cached && cached.db.isOpen) return cached.store;
   const existing = openings.get(storePath);
-  if (existing) return existing;
-  const promise = openStore(storePath).finally(() => {
+  if (existing) return reopenIfDrained(existing, storePath);
+  const promise = withStoreScope(storePath, () => openStore(storePath)).finally(() => {
     openings.delete(storePath);
   });
   openings.set(storePath, promise);
-  return promise;
+  return reopenIfDrained(promise, storePath);
+}
+
+/**
+ * A resolved open is not proof of a live handle: the scope that opened it can be the scope a
+ * drain was waiting for, so the drain may close it as that scope ends. Wait that drain out and
+ * open again. Termination holds because the retry awaits the drain first, and a fresh drain
+ * needs a fresh external detach or release.
+ */
+async function reopenIfDrained(opened: Promise<HashStore>, storePath: string): Promise<HashStore> {
+  const store = await opened;
+  // Liveness is read through the same hook the registry uses: the public store face exposes no
+  // handle, and `stores` holds exactly one entry per path, so the entry the open just published is
+  // the connection this promise resolved with.
+  if (isStoreOpenAtPath(storePath)) return store;
+  await awaitDrainingClose(storePath);
+  return loadHashStoreAtPath(storePath);
 }
 
 /** The cached store entry for the active workspace (or the shared-home fallback), if open. */
@@ -1426,10 +1480,10 @@ function currentStore():
 
 /** Close every open store (process exit, HMR, tests). */
 export function shutdownHashStore(): void {
-  for (const [, entry] of stores) {
-    shutdownDb(entry.db);
-  }
-  stores.clear();
+  // Snapshot the keys: closeStoreAtPath deletes its own entry, so the close-all walks a list that
+  // stays whole while it runs.
+  const openPaths = [...stores.keys()];
+  for (const storePath of openPaths) closeStoreAtPath(storePath);
   openings.clear();
 }
 
@@ -1437,7 +1491,8 @@ export function shutdownHashStore(): void {
  * Run `fn` inside one BEGIN IMMEDIATE transaction on the active workspace's
  * store. Without an open store for this context the call runs bare (the
  * caller has already loaded the store in every in-process path). Re-entrant:
- * when a store already has a transaction open, `fn` joins it.
+ * when a store already has a transaction open, `fn` joins it. The caller's
+ * `withStoreScope` is the in-flight barrier for a transaction body.
  */
 export function withStore(fn: () => void): void {
   const store = currentStore();
