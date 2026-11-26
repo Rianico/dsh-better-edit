@@ -11,6 +11,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.3.1] - 2026-11-26
+
 ### Bug Fixes
 
 * **read:** keep the intrinsic 200 KiB line cap apart from the multi-window response budget. A later window whose first row fits a lone read but misses what is left of the budget is omitted with a `[Section does not fit in the remaining … read budget; not shown. Re-read it on its own.]` notice and honest byte truncation, spending only the notice so smaller windows still render; an intrinsically oversized row cites `200.0KB` instead of the shrunken budget, and the warning names only rows the shown prefix reached (closes #229). (#231)
