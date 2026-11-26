@@ -1,16 +1,6 @@
 {
   "entries": [
     {
-      "path": "scripts/comment-gate-predicate.mjs",
-      "text": "*\n * A `/** *\\/` block carrying a retired tag as TEXT. Containment, not anchoring, and on purpose: a\n * docblock has no tag position to anchor to, and a retired token inside one is precisely the escape\n * hatch the `//` rule closes — without this arm a block would become the place a stolen reason goes\n * to live. All four retired tokens are listed, not only the two shaped like a tag: `See ADR-` and\n * `via https://` are citations a reader can follow, so `Ref:` is the only surviving citation form.\n * The fix is the same either way (delete the token, or cite a record with `Ref:`), so it shares the\n * `prose` key instead of adding a rule kind.\n ",
-      "occurrence": 0
-    },
-    {
-      "path": "scripts/comment-gate-predicate.mjs",
-      "text": "*\n * Tags that make a `//` or `/* *\\/` comment carry a reason instead of prose. ANCHORED: the tag must\n * OPEN the text it is matched against, because an unanchored alternation let a tag anywhere in a\n * sentence satisfy the gate — a mid-sentence `(why: never break the view)` passed without being a\n * reason, which is the whole failure this gate exists to prevent.\n *\n * `Ref:` is the SOLE source-citation tag, and it takes a resolvable target: a repo-relative doc or\n * record path, or an absolute `http(s)` link. The `WHY` and `Invariant` tokens, `See ADR-` and\n * `via https://` are gone by owner decision: a reason that needs a tag needs a citation a reader\n * can follow, and a bare tag was the shape that let unreviewable prose through.\n ",
-      "occurrence": 0
-    },
-    {
       "path": "src/constants.ts",
       "text": " #188: `line_lineage.raw_hash` (nullable, backfilled in place at open; legacy rows read as no",
       "occurrence": 0

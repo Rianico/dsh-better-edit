@@ -44,7 +44,7 @@ drain `src/` and `test/` in one change without turning a gate into a rewrite.
   executable script's first line is not a violation.
 - **The gate is armed as a ratchet, not a drain.** `.oxlintrc.json` enables
   `harness/no-comments` as `"error"` over root configs, `src/`, `test/` and `scripts/`, ignoring
-  `.lane/`, `lib/`, `dist/`, `coverage/` and `benchmark/`. The 3,692 pre-existing `src/`+`test/`
+  `.lane/`, `lib/`, `dist/`, `coverage/` and `benchmark/`. The 3,690 pre-existing `src/`+`test/`
   violations are recorded in `test/arch/comment-gate-baseline.json`; root configs and `scripts/`
   hold zero. A new violation at any scope fails `pnpm run lint`.
 - **The ceiling is a literal in the arch suite.** `EXPECTED_MAX_LEGACY_COMMENTS` in

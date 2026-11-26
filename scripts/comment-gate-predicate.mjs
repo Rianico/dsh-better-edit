@@ -16,9 +16,10 @@
  * reason, which is the whole failure this gate exists to prevent.
  *
  * `Ref:` is the SOLE source-citation tag, and it takes a resolvable target: a repo-relative doc or
- * record path, or an absolute `http(s)` link. The `WHY` and `Invariant` tokens, `See ADR-` and
- * `via https://` are gone by owner decision: a reason that needs a tag needs a citation a reader
- * can follow, and a bare tag was the shape that let unreviewable prose through.
+ * record path, or an absolute `http(s)` link. The two old tag words, the bare ADR-citation prefix
+ * and the URL-prefix citation are gone by owner decision (the regex below is the exact list): a
+ * reason that needs a tag needs a citation a reader can follow, and a bare tag was the shape that
+ * let unreviewable prose through.
  */
 export const ALLOWLIST_RE =
   /^(?:SAFETY:|TODO\(#\d+\):|HACK:|Ref: (?:docs\/[\w./-]+|https?:\/\/\S+))/;
@@ -27,10 +28,10 @@ export const ALLOWLIST_RE =
  * A `/** *\/` block carrying a retired tag as TEXT. Containment, not anchoring, and on purpose: a
  * docblock has no tag position to anchor to, and a retired token inside one is precisely the escape
  * hatch the `//` rule closes — without this arm a block would become the place a stolen reason goes
- * to live. All four retired tokens are listed, not only the two shaped like a tag: `See ADR-` and
- * `via https://` are citations a reader can follow, so `Ref:` is the only surviving citation form.
- * The fix is the same either way (delete the token, or cite a record with `Ref:`), so it shares the
- * `prose` key instead of adding a rule kind.
+ * to live. All four retired forms are listed, not only the two shaped like a tag: the old ADR
+ * prefix and the old URL prefix were citations a reader could follow, so `Ref:` is the only
+ * surviving citation form. The fix is the same either way (delete the token, or cite a record
+ * with `Ref:`), so it shares the `prose` key instead of adding a rule kind.
  */
 export const RETIRED_TAG_RE = /(?:WHY:|Invariant:|See ADR-|via https:\/\/)/;
 
