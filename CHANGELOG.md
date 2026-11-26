@@ -45,6 +45,8 @@ All notable changes to this project will be documented in this file.
 
 * **lint:** drain every grandfathered comment-gate violation under `src/` to zero. Redundant prose is deleted, over-cap docblocks shrink to the 12-line module cap, non-cast `SAFETY:` notes become `HACK:` reasons, the one real cast guard moves onto its cast, and 18 explanation-only `catch` blocks regain a legal `HACK:` reason. The baseline falls 3,690 -> 2,465 and the arch ceiling follows; behaviour, wire contracts and public types are unchanged (ADR-0056, closes #233). (#233)
 
+* **lint:** drain every grandfathered comment-gate violation under `test/` to zero. Redundant prose is deleted, over-cap docblocks shrink to the 12-line module cap, guard inventories move to `docs/agents/arch-guard-inventory.md`, unused imports and bindings are cleaned so the touched files pass the lens no-unused-vars gate, and the two test SQL fixtures stop interpolating table names. The baseline is empty and the arch ceiling is 0: the gate now refuses every new violation at every scope (ADR-0056, closes #234). (#234)
+
 ## [1.3.0] - 2026-11-25
 
 ### Bug Fixes

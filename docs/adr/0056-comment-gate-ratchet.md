@@ -73,8 +73,9 @@ drain `src/` and `test/` in one change without turning a gate into a rewrite.
 
 ## What this deliberately does not do
 
-- It does not drain the legacy `test/` corpus. `src/` is drained (#233) and the ceiling literal
-  already fell from 3,690 to 2,465; the remaining work falls as it lands.
+- It does not preserve long design rationale in `src/` or `test/` comments. That rationale lives in
+  ADRs and in `docs/agents/arch-guard-inventory.md`; the pre-drain baseline history in git keeps the
+  deleted text recoverable.
 - It does not adopt upstream's `pi-lens-ignore` prefix or its `docs/agents/verification-standards.md`
   provenance page; this ADR is the downstream provenance.
 - It does not move the upstream sync cursor. `51cb819` is a targeted port outside `0b1934c`.
