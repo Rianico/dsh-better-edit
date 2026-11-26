@@ -15,7 +15,6 @@ import {
 } from "../../src/domain-errors.js";
 import {
   CODE_SHAPE,
-  REGEX_LIMIT_TRIGGER,
   listSources,
   namesInCode,
   producedCodes,
@@ -276,13 +275,7 @@ describe("arch: domain-error registry", () => {
         FIELD_PREDICATES[field as keyof typeof FIELD_PREDICATES],
       );
     }
-    // DECLARED LIMIT 3's trigger is multi-line, so it is pinned by its
-    // discriminating tokens — still refutable: `() => true` contains none.
-    const limitSource = String(REGEX_LIMIT_TRIGGER.holds);
-    expect(limitSource).toContain("package.json");
-    expect(limitSource).toContain("PARSER_DEPS.some");
-    expect(limitSource).not.toContain("=> true");
-    expect(REGEX_LIMIT_TRIGGER.holds(new Set()), "no parser dependency has arrived yet").toBe(true);
+    // Ref: docs/adr/0056-comment-gate-ratchet.md — the limit-3 availability trigger retired with @babel/parser; the C19 cell keeps the regex-literal blind spot asserted.
   });
 
   it("the deferred predicates refute a constant: their own code falsifies, others do not", () => {

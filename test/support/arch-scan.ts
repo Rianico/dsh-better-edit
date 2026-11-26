@@ -2,40 +2,14 @@ import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { expect } from "vitest";
 
-import type { AllowlistTrigger } from "../../src/domain-errors.js";
-
 /**
- * DECLARED LIMIT 3's trigger (H4/H7). `text` names the artifact whose arrival
- * makes this entry actionable; `holds()` is a PREDICATE against the live
- * manifest — shrink-only, so the moment a parser enters `package.json` the guard
- * fails and forces this entry's removal instead of letting it rot. The oracle
- * pins `String(REGEX_LIMIT_TRIGGER.holds)` too, because `holds: () => true` is
- * otherwise unrefutable (H1).
+ * DECLARED LIMIT 3's former availability trigger (H4/H7) has retired. It was a
+ * predicate over the live manifest: `holds()` failed the moment a tokenizer
+ * entered `package.json`, forcing this entry's reconciliation instead of letting
+ * it rot. It fired when `@babel/parser` arrived with the comment gate (ADR-0056),
+ * so lexing is now an available next step rather than a blocked one. The limit
+ * itself stays declared and asserted by the oracle's C19 cell.
  */
-export const REGEX_LIMIT_TRIGGER: AllowlistTrigger = {
-  text: "a JS parser/tokenizer enters the dependency list",
-  holds: () => {
-    const manifest = JSON.parse(readFileSync(join(process.cwd(), "package.json"), "utf-8")) as {
-      dependencies?: Record<string, string>;
-      devDependencies?: Record<string, string>;
-    };
-    const deps = new Set([
-      ...Object.keys(manifest.dependencies ?? {}),
-      ...Object.keys(manifest.devDependencies ?? {}),
-    ]);
-    return !PARSER_DEPS.some((dep) => deps.has(dep));
-  },
-};
-
-/** Tokenizers whose presence would let the scanner stop regex-matching. */
-const PARSER_DEPS = [
-  "acorn",
-  "@babel/parser",
-  "meriyah",
-  "es-module-lexer",
-  "oxc-parser",
-  "@typescript-eslint/typescript-estree",
-];
 
 /**
  * Shared, pure-ish scanner for the arch oracles (`test/arch/**`). It is fed
@@ -88,11 +62,11 @@ const PARSER_DEPS = [
  * `E_AMBIGUOUS_MATCH` producer on one line ⇒ `tsc --noEmit` exit 0, oracle
  * `1 failed | 10 passed` (RED); control `void /a/;` + the same producer ⇒
  * `11 passed` (GREEN).
- * **DEFERRED ITEM — the trigger is a predicate, not a phrase:** lex the input
- * with a real JS tokenizer once one is already a dependency — see
- * `REGEX_LIMIT_TRIGGER`, whose `holds()` shrinks the moment a parser enters
- * `package.json` and whose source text the oracle pins (H1/H7). Until then the
- * C19 cell asserts this blindness on a planted temp tree.
+ * **RETIRED DEFERRAL (it was a predicate, not a phrase):** the trigger fired — a
+ * real JS tokenizer (`@babel/parser`) is a dev dependency since ADR-0056, so
+ * lexing the input is an available next step, not a blocked one. The C19 cell
+ * keeps this blindness asserted on a planted temp tree until that conversion
+ * lands.
  *
  * ── TWO INDEPENDENT REFERENTS (the rule that made the field allowlist structural) ──
  * Every guard here must compare two independently produced values: a source of
