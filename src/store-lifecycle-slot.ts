@@ -14,12 +14,25 @@ import { AsyncLocalStorage } from "node:async_hooks";
  * handle, so the registry cannot double-close. Recovery paths that close on their own account
  * stay callable; `isOpen` is the overlap guard between the two.
  *
+ * WHEN A CLOSE THROWS. The throw leaves the drain record retired (`isDraining` is false) and is
+ * re-raised by whatever ran the close. When a caller ran it, that call's promise rejects. When a
+ * scope's end ran it, the error supersedes the scope's body result: the scope promise rejects
+ * with the close error while the drain waiters already resolved, because the drain finished
+ * either way. `isOpen` still reports the handle, so a later release retries the close.
+ *
  * CALLING RULE FOR DRAIN WAITERS. A caller that awaits a drain must be outside that path's
  * `withStoreScope`: a drain started inside a scope cannot finish before the scope ends, so an
- * in-scope wait can never settle. `detach` and `release` throw instead of awaiting their own
- * scope's drain — the drain was already started, so the close still runs when the scope ends —
- * while `awaitDrainingClose` stays a silent no-op there, because a bare load only needs the
- * refusal, not a diagnostic.
+ * in-scope wait can never settle. Only a call that must AWAIT a drain can throw — a detach that
+ * removes the last owner, and a release that starts or joins a drain — and it throws there
+ * instead of deadlocking, because the drain was already started and its close still runs when
+ * the scope ends. A non-forced release refused by an attached owner returns `false` without
+ * throwing, and a detach that leaves another owner returns silently. `awaitDrainingClose` stays
+ * a silent no-op there, because a bare load only needs the refusal, not a diagnostic.
+ *
+ * PER PATH, NOT PER AGENT. Scopes are per path and the `AsyncLocalStorage` that marks one is per
+ * slot, so a detach called from inside A's scope still detaches and closes an idle B
+ * synchronously; only A's own drain wait rejects. That asymmetry is the one deliberate
+ * multi-store deviation — the upstream referent tracks a single store, so it has no analogue.
  *
  * WHY A LEAF MODULE. Only `node:async_hooks` is imported — no `hash-store`, no
  * `store-lifecycle`, nothing else under `src/`. `store-retry.ts` is the same shape for the same
@@ -119,6 +132,8 @@ class Slot {
    * already-started drain still closes when the scope ends.
    */
   async detach(token: string): Promise<void> {
+    // Defensive: the registry is the only caller and it never leaves an idle empty slot, so an
+    // unknown token is unreachable from there; its reachable no-op is the registry early return.
     if (!this.#owners.delete(token)) return;
     if (this.#owners.size > 0) return;
     await this.#awaitDrain(this.#beginDrain(false));
@@ -261,7 +276,7 @@ export function attachStore(storePath: string, agentToken: string): void {
 /**
  * Detaches one agent id from every store it attached to. Every path is detached before the first
  * `await`, so the synchronous close fast path survives for all of them; only then does this wait
- * for their drains, and it prunes the slots they left idle.
+ * for their drains, and it prunes the slots they left idle — even when a drain rejects.
  */
 export async function detachAgent(agentToken: string): Promise<void> {
   const paths = byToken.get(agentToken);
@@ -273,8 +288,12 @@ export async function detachAgent(agentToken: string): Promise<void> {
     const slot = slots.get(storePath);
     if (slot !== undefined) pending.push(slot.detach(agentToken));
   }
-  await Promise.all(pending);
-  for (const storePath of known) prune(storePath);
+  try {
+    await Promise.all(pending);
+  } finally {
+    // A rejecting drain must not strand the slots this detach left idle.
+    for (const storePath of known) prune(storePath);
+  }
 }
 
 /**
@@ -318,9 +337,13 @@ export async function releaseStore(
     if (force) purgeTokenIndex(path, slot);
     pending.push(slot.release(options));
   }
-  const outcomes = await Promise.all(pending);
-  for (const path of known) prune(path);
-  return outcomes.every((released) => released);
+  try {
+    const outcomes = await Promise.all(pending);
+    return outcomes.every((released) => released);
+  } finally {
+    // A rejecting release must not strand the paths this release left idle.
+    for (const path of known) prune(path);
+  }
 }
 
 /** Joins the pending close for this path, if any. A path the registry never saw is a no-op. */
@@ -347,6 +370,11 @@ export function isDraining(storePath: string): boolean {
 /** Read-only probe: how many store paths this token is recorded against. */
 export function agentPathCount(agentToken: string): number {
   return byToken.get(agentToken)?.size ?? 0;
+}
+
+/** Test-only probe: how many slots the registry currently holds. */
+export function _slotCountForTests(): number {
+  return slots.size;
 }
 
 /** Test-only: drops the hooks and every slot, so each case starts from nothing. */

@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import {
   agentPathCount,
   _resetForTests,
+  _slotCountForTests,
   attachStore,
   awaitDrainingClose,
   configureStoreLifecycle,
@@ -71,6 +72,32 @@ describe("store-lifecycle-slot", () => {
 
     expect(ownerCount(A)).toBe(1);
     expect(closes).toEqual([]);
+  });
+
+  it("an unknown-token detach does not disturb a pending drain", async () => {
+    const gate = deferred();
+    const scoped = withStoreScope(A, async () => {
+      await gate.promise;
+    });
+    attachStore(A, "owner");
+    const drained = detachAgent("owner");
+
+    expect(isDraining(A)).toBe(true);
+    expect(ownerCount(A)).toBe(0);
+
+    // No reverse-index entry, so the registry returns early: nothing starts and nothing finishes.
+    await detachAgent("ghost");
+
+    expect(isDraining(A)).toBe(true);
+    expect(closes).toEqual([]);
+    expect(ownerCount(A)).toBe(0);
+
+    gate.resolve();
+    await scoped;
+    await drained;
+
+    expect(closes).toEqual([A]);
+    expect(_slotCountForTests()).toBe(0);
   });
 
   it("the 1 → 0 close runs synchronously inside detachAgent, before its promise settles", async () => {
@@ -406,6 +433,31 @@ describe("store-lifecycle-slot", () => {
     expect(closes).toEqual([A]);
   });
 
+  it("a multi-path detach that rejects still prunes the paths it left idle", async () => {
+    attachStore(A, "shared");
+    attachStore(B, "shared");
+
+    let failure: unknown = null;
+    await withStoreScope(A, async () => {
+      failure = await detachAgent("shared").then(
+        () => null,
+        (error: unknown) => error,
+      );
+
+      // B holds no scope of its own: it closed synchronously, inside the call, before the wait.
+      expect(closes).toEqual([B]);
+      expect(isDraining(A)).toBe(true);
+    });
+
+    expect(failure).toBeInstanceOf(Error);
+    expect((failure as Error).message).toMatch(/own scope/);
+    expect(closes.slice().sort()).toEqual([A, B].sort());
+    expect(ownerCount(A)).toBe(0);
+    expect(isDraining(A)).toBe(false);
+    // The rejecting detach must not leave B's empty idle slot behind.
+    expect(_slotCountForTests()).toBe(0);
+  });
+
   it("releaseStore inside its own scope fails loud instead of deadlocking", async () => {
     let failure: unknown = null;
 
@@ -578,5 +630,67 @@ describe("store-lifecycle-slot", () => {
 
     expect(await releaseStore(A)).toBe(true);
     expect(closes).toEqual([A]);
+  });
+
+  it("a throwing close during detachAgent still prunes the slot it left idle", async () => {
+    let failNext = true;
+    configureStoreLifecycle({
+      close: (storePath) => {
+        if (failNext) {
+          failNext = false;
+          throw new Error("close exploded");
+        }
+        open.delete(storePath);
+        closes.push(storePath);
+      },
+      isOpen: (storePath) => open.has(storePath),
+    });
+    attachStore(A, "agent-1");
+
+    await expect(detachAgent("agent-1")).rejects.toThrow("close exploded");
+
+    // The close failed, but the drain retired and the now-idle slot must not be stranded.
+    expect(ownerCount(A)).toBe(0);
+    expect(isDraining(A)).toBe(false);
+    expect(_slotCountForTests()).toBe(0);
+  });
+
+  it("a close that throws while a scope settles rejects the scope, not the drain waiter", async () => {
+    let failNext = true;
+    configureStoreLifecycle({
+      close: (storePath) => {
+        if (failNext) {
+          failNext = false;
+          throw new Error("close exploded");
+        }
+        open.delete(storePath);
+        closes.push(storePath);
+      },
+      isOpen: (storePath) => open.has(storePath),
+    });
+    const gate = deferred();
+    const scoped = withStoreScope(A, async () => {
+      await gate.promise;
+      return "body";
+    });
+    attachStore(A, "agent-1");
+    const drained = detachAgent("agent-1");
+
+    expect(isDraining(A)).toBe(true);
+    expect(closes).toEqual([]);
+
+    gate.resolve();
+    // The close error supersedes the scope's body result...
+    await expect(scoped).rejects.toThrow("close exploded");
+    // ...while the drain waiter resolved: the drain record retired either way.
+    await drained;
+
+    expect(isDraining(A)).toBe(false);
+    expect(closes).toEqual([]);
+
+    // The throwing close left the handle open, so the retry closes it for real.
+    expect(await releaseStore(A)).toBe(true);
+    expect(closes).toEqual([A]);
+    expect(_slotCountForTests()).toBe(0);
   });
 });
