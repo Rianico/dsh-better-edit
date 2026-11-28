@@ -40,12 +40,12 @@ Deliberately NOT ported: ~~upstream `windows: ReadWindow[]`~~ — **overruled an
 Procedure — repeat every sync and record the new hash here:
 
 1. Fetch: `git fetch upstream` or `git -C ../pi-better-edit fetch origin && git -C ../pi-better-edit log <last>..HEAD --oneline`.
-2. Diff the range: `git -C ../pi-better-edit diff <last>..HEAD --stat` + `docs/adr/` scan + `benchmarks/results/` if present.
+2. Diff the range: `git -C ../pi-better-edit diff <last>..HEAD --stat` + `docs/adr/` scan + `benchmarks/results/` if present. Read `docs/divergence-from-upstream.md` first: it carries the pins, the `D-*` register, and the class each surface already has (`PLATFORM`, `DESIGN`, `UPSTREAM-ONLY`, `DEBT`) before the diff is read.
 3. Pin sweep: re-derive every upstream line citation before planning — `grep -rn '<cursor>:' src/` (10 sites at `b92e0ec`) and spot-check each cited upstream line still holds the referenced logic; where a cite can name its symbol, prefer symbol+anchor (`lease-resolve.ts:throwUnknownOrForeign`) over bare line numbers, which decay on any upstream edit to those files (keel K-7).
-4. Plan: refresh `docs/absorption-plan.md` with Basis (`pi-better-edit@<last>..HEAD`), Decisions, Phases — preserve deep seams (HashAssign, SessionView, FileView, Mutation, AnchorPipeline), no flatten — and name the downstream ADR(s) the range needs (a new `docs/adr/NNNN-*` file, or an amendment section when the decision extends an existing ADR).
+4. Plan: refresh `docs/absorption-plan.md` with Basis (`pi-better-edit@<last>..HEAD`), Decisions, Phases — preserve deep seams (HashAssign, SessionView, FileView, Mutation, AnchorPipeline), no flatten — and name the downstream ADR(s) the range needs (a new `docs/adr/NNNN-*` file, or an amendment section when the decision extends an existing ADR). Reconcile `docs/divergence-from-upstream.md` §10: a new divergence adds a `D-*` row, and a changed class updates its row.
 5. Port: per-ticket worktrees `absorb/tN-*` on seams, then integration `absorb/tN-integration`; keep the named-object payload contract `{file, edits: [{anchor_from, anchor_to, replace_with}, …]}` folded by `src/contract.ts` `editRequestFrom` (legacy tuple items and legacy key spellings fold pre-validation; upstream ADR-0015 governs — ADR-0003 is history, see its own amendments), trim-only canon `CANON_VERSION=4` (ADR-0002, amended by ADR-0040) with raw-byte anchor identity `ANCHOR_GENERATION=2` (ADR-0041).
 6. Verify each worktree and integration: `pnpm run typecheck && pnpm test` (integration also `pnpm run build`).
-7. Record: update this section's `Last absorbed checkpoint` to the new upstream HEAD hash (full 40-char), append to `Checkpoint history` below and to `CHANGELOG.md` absorbed-range note, AND file the downstream ADR(s) named in step 4 — every sync that ports semantic behavior lands a decision record; a lane that lands behavior with no ADR is incomplete and must file one as follow-up (precedent: ADR-0027, filed as PR #93 after PR #92 ported the v2.3.0 collapse contract with only code + glossary).
+7. Record: update this section's `Last absorbed checkpoint` to the new upstream HEAD hash (full 40-char), append to `Checkpoint history` below and to `CHANGELOG.md` absorbed-range note, AND file the downstream ADR(s) named in step 4 — every sync that ports semantic behavior lands a decision record; a lane that lands behavior with no ADR is incomplete and must file one as follow-up (precedent: ADR-0027, filed as PR #93 after PR #92 ported the v2.3.0 collapse contract with only code + glossary). Also refresh `docs/divergence-from-upstream.md`: the pins table, the unabsorbed-backlog count, and every `D-*` row the range touched.
 8. Commit/PR: `absorb: pi-better-edit <short> — <summary>`, branch `absorb/<topic>`, PR with `Closes #NN`.
 
 Checkpoint history (newest first):
@@ -73,7 +73,7 @@ The five canonical triage labels: `needs-triage`, `needs-info`, `ready-for-agent
 
 ### Domain docs
 
-Single-context — one `GLOSSARY.md` plus `docs/adr/` at the repo root. Config snapshot: `docs/agents/env.yaml`. See `docs/agents/domain.md`.
+Single-context — one `GLOSSARY.md` plus `docs/adr/` at the repo root. Config snapshot: `docs/agents/env.yaml`. See `docs/agents/domain.md`. Upstream comparison evidence: `docs/divergence-from-upstream.md` (divergence ledger, `D-*` register) and `docs/dsh-unique-design.md` (host-owned designs with no upstream counterpart). Navigation index: `docs/README.md`.
 
 ### Toolchain
 
