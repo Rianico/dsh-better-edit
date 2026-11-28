@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { mkdtemp, rm, mkdir, writeFile, readFile } from "node:fs/promises";
+import { mkdtemp, rm, mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { existsSync, appendFileSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { getWritableTempRoot } from "../support/fixtures.js";
 import { shutdownHashStore } from "../../src/hash-store.js";
 
@@ -20,7 +20,6 @@ describe("store-lifecycle coverage agent-a", () => {
       if (prevDsh === undefined) delete process.env.DSH_HOME;
       else process.env.DSH_HOME = prevDsh;
     };
-    // force fresh module state
     const mod = await import("../../src/store-lifecycle.js");
     mod._resetLifecycleForTests();
   });
@@ -43,9 +42,8 @@ describe("store-lifecycle coverage agent-a", () => {
     } as any;
     let servedPruneArgs: number[] = [];
     const stmts = {
-      servedPruneOlderThan: (ts: number) => servedPruneArgs.push(ts),
+      servedMetaPruneOlderThan: (ts: number) => servedPruneArgs.push(ts),
     };
-    // ensure config exists
     const cfgDir = join(dir, ".dsh", "plugins", "dsh-better-edit");
     await mkdir(cfgDir, { recursive: true });
     await writeFile(join(cfgDir, "config.yaml"), "storeDir: central\nundo_ttl_s: 100\n", "utf-8");
@@ -54,21 +52,18 @@ describe("store-lifecycle coverage agent-a", () => {
     await mod.onStoreOpen(storePath, stmts as any, store);
 
     expect(servedPruneArgs.length).toBe(1);
-    // The janitor must go through the pair-atomic store face, never a half-pair stmt.
     expect(store.pruneUndoOlderThan).toHaveBeenCalledWith(expect.any(Number));
     expect(store.pruneUndoOlderThan).toHaveBeenCalledTimes(1);
     expect(store.pruneMissing).toHaveBeenCalledTimes(1);
 
-    // second call throttled within 24h should not call pruneMissing again
     servedPruneArgs = [];
     await mod.onStoreOpen(storePath, stmts as any, store);
-    expect(store.pruneMissing).toHaveBeenCalledTimes(1); // still 1
-    expect(store.pruneUndoOlderThan).toHaveBeenCalledTimes(2); // undo prune is not throttled
+    expect(store.pruneMissing).toHaveBeenCalledTimes(1);
+    expect(store.pruneUndoOlderThan).toHaveBeenCalledTimes(2);
 
-    // different store path should trigger pruneMissing
     const store2 = { pruneMissing: vi.fn(async () => {}), vacuumSnapshots: vi.fn() } as any;
     const otherPath = join(dir, "other.sqlite");
-    await mod.onStoreOpen(otherPath, { servedPruneOlderThan: () => {} } as any, store2);
+    await mod.onStoreOpen(otherPath, { servedMetaPruneOlderThan: () => {} } as any, store2);
     expect(store2.pruneMissing).toHaveBeenCalledTimes(1);
   });
 
@@ -78,7 +73,7 @@ describe("store-lifecycle coverage agent-a", () => {
     await mkdir(cfgDir, { recursive: true });
     await writeFile(join(cfgDir, "config.yaml"), "storeDir: central\nundo_ttl_s: -1\n", "utf-8");
     const stmts = {
-      servedPruneOlderThan: () => {
+      servedMetaPruneOlderThan: () => {
         throw new Error("served fail");
       },
     };
@@ -89,10 +84,8 @@ describe("store-lifecycle coverage agent-a", () => {
       pruneUndoOlderThan: vi.fn(),
       vacuumSnapshots: vi.fn(),
     } as any;
-    // should not throw despite failures (warns)
     await mod.onStoreOpen(join(dir, "x.sqlite"), stmts as any, store);
-    expect(store.pruneUndoOlderThan).not.toHaveBeenCalled(); // undo_ttl_s -1 skips
-    // even though pruneMissing throws, the catch via .catch handles async error, no throw
+    expect(store.pruneUndoOlderThan).not.toHaveBeenCalled();
     await new Promise((r) => setTimeout(r, 10));
   });
 
@@ -111,7 +104,7 @@ describe("store-lifecycle coverage agent-a", () => {
     await mkdir(join(ws, ".dsh_better_edit"), { recursive: true });
     await writeFile(storePath, "", "utf-8");
     const spyWarn = vi.spyOn(console, "warn").mockImplementation(() => {});
-    const stmts = { servedPruneOlderThan: () => {} } as any;
+    const stmts = { servedMetaPruneOlderThan: () => {} } as any;
     const store = {
       pruneMissing: vi.fn(async () => {}),
       pruneUndoOlderThan: vi.fn(),
@@ -120,19 +113,16 @@ describe("store-lifecycle coverage agent-a", () => {
     await mod.onStoreOpen(storePath, stmts, store);
     expect(existsSync(join(ws, ".gitignore"))).toBe(true);
     expect(readFileSync(join(ws, ".gitignore"), "utf-8")).toContain(".dsh_better_edit/");
-    // second call with existing .gitignore without entry appends
     await rm(join(ws, ".gitignore"));
     await writeFile(join(ws, ".gitignore"), "node_modules\n", "utf-8");
     mod._resetLifecycleForTests();
     await mod.onStoreOpen(storePath, stmts, store);
     expect(readFileSync(join(ws, ".gitignore"), "utf-8")).toContain(".dsh_better_edit/");
-    // when .gitignore already has entry, no duplication
     const contentBefore = readFileSync(join(ws, ".gitignore"), "utf-8");
     mod._resetLifecycleForTests();
     await mod.onStoreOpen(storePath, stmts, store);
     const contentAfter = readFileSync(join(ws, ".gitignore"), "utf-8");
     expect(contentAfter).toBe(contentBefore);
-    // content without trailing newline prefix handling
     await writeFile(join(ws, ".gitignore"), "node_modules", "utf-8");
     mod._resetLifecycleForTests();
     await mod.onStoreOpen(storePath, stmts, store);
@@ -156,7 +146,7 @@ describe("store-lifecycle coverage agent-a", () => {
     await mkdir(join(ws, ".dsh_better_edit"), { recursive: true });
     await writeFile(storePath, "", "utf-8");
     const spy = vi.spyOn(console, "warn").mockImplementation(() => {});
-    const stmts = { servedPruneOlderThan: () => {} } as any;
+    const stmts = { servedMetaPruneOlderThan: () => {} } as any;
     const store = {
       pruneMissing: vi.fn(async () => {}),
       pruneUndoOlderThan: vi.fn(),
@@ -166,10 +156,9 @@ describe("store-lifecycle coverage agent-a", () => {
     expect(spy).toHaveBeenCalledWith(expect.stringContaining("not in .gitignore"));
     spy.mockClear();
     await mod.onStoreOpen(storePath, stmts, store);
-    expect(spy).not.toHaveBeenCalled(); // warned once per ws
+    expect(spy).not.toHaveBeenCalled();
     spy.mockRestore();
 
-    // storeDir central skips handling
     await writeFile(
       join(cfgDir, "config.yaml"),
       "storeDir: central\nautoGitignore: true\n",
@@ -181,7 +170,6 @@ describe("store-lifecycle coverage agent-a", () => {
     expect(spy2).not.toHaveBeenCalledWith(expect.stringContaining(".gitignore"));
     spy2.mockRestore();
 
-    // no .git dir skips
     await writeFile(
       join(cfgDir, "config.yaml"),
       "storeDir: workspace\nautoGitignore: false\n",
@@ -202,30 +190,24 @@ describe("store-lifecycle coverage agent-a", () => {
 
   it("runCentralJanitorIfDue throttled, handles ENOENT, workspace skip, loadConfig fail", async () => {
     const mod = await import("../../src/store-lifecycle.js");
-    // workspace skip
     const cfgDir = join(dir, ".dsh", "plugins", "dsh-better-edit");
     await mkdir(cfgDir, { recursive: true });
     await writeFile(join(cfgDir, "config.yaml"), "storeDir: workspace\n", "utf-8");
     mod._resetLifecycleForTests();
-    await mod.runCentralJanitorIfDue(); // should return quickly due to workspace
-    // throttling: second call within 24h no-op
+    await mod.runCentralJanitorIfDue();
     await mod.runCentralJanitorIfDue();
 
-    // central mode with no runtime dir -> ENOENT
     await writeFile(
       join(cfgDir, "config.yaml"),
       "storeDir: central\nstoreMaxAgeS: 0\nstoreMaxTotalBytes: 1000\n",
       "utf-8",
     );
     mod._resetLifecycleForTests();
-    await mod.runCentralJanitorIfDue(); // ENOENT returns
+    await mod.runCentralJanitorIfDue();
 
-    // loadConfig fail via broken yaml? write invalid yaml to trigger throw
     await writeFile(join(cfgDir, "config.yaml"), ":\n: :\n", "utf-8");
     mod._resetLifecycleForTests();
-    // invalid yaml may not throw; ensure no throw and at least not crash
     await mod.runCentralJanitorIfDue();
-    // if it does warn, that's also ok – just ensure it doesn't throw
   });
 
   it("runCentralJanitor deletes old dirs, respects liveDirs, handles wal_checkpoint", async () => {
@@ -233,15 +215,13 @@ describe("store-lifecycle coverage agent-a", () => {
     const home = dir;
     const runtimeDir = join(home, ".dsh", "plugins", "dsh-better-edit", "runtime");
     await mkdir(runtimeDir, { recursive: true });
-    // create old dirs
     const oldDir = join(runtimeDir, "old-" + Date.now());
     const newDir = join(runtimeDir, "new-" + Date.now());
     await mkdir(oldDir, { recursive: true });
     await mkdir(newDir, { recursive: true });
     await writeFile(join(oldDir, "hash-store.sqlite"), "dummy", "utf-8");
     await writeFile(join(newDir, "hash-store.sqlite"), "dummy", "utf-8");
-    // make old dir mtime old by touching via utimes?
-    const oldTime = Date.now() - 1000 * 60 * 60 * 24 * 60; // 60 days ago
+    const oldTime = Date.now() - 1000 * 60 * 60 * 24 * 60;
     const { utimes } = await import("node:fs/promises");
     await utimes(oldDir, oldTime / 1000, oldTime / 1000);
 
@@ -253,7 +233,6 @@ describe("store-lifecycle coverage agent-a", () => {
       "utf-8",
     );
     mod._resetLifecycleForTests();
-    // set liveDirs via setStoresGetter
     const livePath = join(runtimeDir, "live123", "hash-store.sqlite");
     mod.setStoresGetter(
       () => new Map([[livePath, { path: livePath }]]),
@@ -265,9 +244,7 @@ describe("store-lifecycle coverage agent-a", () => {
 
     await mod.runCentralJanitorIfDue();
 
-    // oldDir should be deleted due to age, liveDir retained
     expect(existsSync(liveDir)).toBe(true);
-    // throttled second call does nothing
     await mod.runCentralJanitorIfDue();
     mod.setStoresGetter(
       () => new Map(),
@@ -282,7 +259,6 @@ describe("store-lifecycle coverage agent-a", () => {
     mod._resetLifecycleForTests();
     await mod.onAppStart();
     await mod.onSessionStart();
-    // both delegate without throwing; throttling may skip second janitor but no error
     expect(true).toBe(true);
   });
 
@@ -294,7 +270,6 @@ describe("store-lifecycle coverage agent-a", () => {
       () => m1 as any,
       () => m2 as any,
     );
-    // verify janitor respects it by not throwing
     mod._resetLifecycleForTests();
     await mod.runCentralJanitorIfDue();
   });

@@ -1,24 +1,15 @@
 #!/usr/bin/env node
 /**
- * T3h mutation-ledger applier + runner.
- *
- * Makes ADR-0018 `## Reproduce` re-derivable from the committed tree: it archives HEAD into a temp
- * tree, applies one mutation to the COPY (the worktree is never written to), runs vitest there, and
- * compares the failing cells against the expected RED set recorded in the ADR.
- *
- * Usage:
- *   node test/tools/mutate-ledger.mjs --list
- *   node test/tools/mutate-ledger.mjs <id> [--full] [--keep] [--expect-rev=<sha>]
- *
- * Contract:
- *   - prints `git rev-parse HEAD` and refuses to run when `git status --porcelain -- src test docs`
- *     is non-empty (ignored handoff/scratch paths are not the artifact, so they are out of scope);
- *   - `--expect-rev=<sha>` additionally asserts the revision the recipe was verified at;
- *   - asserts each anchor occurs exactly once (a drifted tree fails loudly here);
- *   - prints `applied <id>`, then greps the inserted line back out of the mutated file, so mutant
- *     presence is recorded rather than inferred;
- *   - prints both vitest summary lines and the failing cell titles, then `RED SET MATCH` or
- *     `MISMATCH` + the missing/extra diff; exits non-zero on mismatch.
+ * Mutation-ledger applier + runner for ADR-0018 `## Reproduce`.
+ * It archives HEAD into a temp tree, applies one mutation to the COPY (never the
+ * worktree), runs vitest there, and compares failing cells against the ADR's
+ * expected RED set.
+ * Usage: `node test/tools/mutate-ledger.mjs --list` or `<id> [--full] [--keep]
+ * [--expect-rev=<sha>]`. It prints `git rev-parse HEAD`, refuses a dirty
+ * `git status --porcelain -- src test docs`, asserts each anchor occurs exactly
+ * once, prints `applied <id>` and greps the inserted line back out, then prints
+ * both vitest summaries and the failing cell titles followed by `RED SET MATCH`
+ * or `MISMATCH`; a mismatch exits non-zero.
  */
 import { spawnSync } from "node:child_process";
 import {
@@ -47,10 +38,7 @@ const DOMAIN_ERRORS = "src/domain-errors.ts";
  *  - T4 (`T4M1`–`T4M5`, full suite): see ADR-0018's "T4 ledger" subsection.
  * The T4 ids are prefixed because the T3h ledger already owns `M1`/`M2`/`M4`.
  */
-// FROZEN vs MOVING: the three revisions below are FROZEN baseline labels for closed corpora (T3h, T4,
-// T4-r3) — keep them; their immutability is the information. A literal claiming a measurement of the
-// CURRENT sets is a MOVING referent: it rots at the next cell addition, so it is removed rather than
-// updated (see the T5 header's invariant: the run asserts its own revision).
+// Ref: docs/adr/0018-exact-position-served-span-verification.md — the frozen revisions are baseline labels for closed corpora; the run asserts its own revision.
 const VERIFIED_AT = "ba430557912b8b2934261654d3e09034188d8571";
 /** T4 (T4M1–T4M5) expected RED sets were measured at this revision. */
 const T4_VERIFIED_AT = "ddce82b333a2c6cc5854823de92264971f5e84f2";
@@ -69,8 +57,8 @@ const T = {
   batchAbort:
     "batch abort (one part rejecting) records nothing — served rows and grants byte-identical",
   noopLoop:
-    "noop-loop rejection records nothing — served rows and grants byte-identical, next read ≡ control",
-  malformed: "malformed anchor on an existing file rejects E_BATCH_ABORT and writes nothing",
+    "noop-loop rejection re-serves the echoed row against the current snapshot, next read ≡ control",
+  malformed: "malformed anchor on an existing file rejects E_MALFORMED_ANCHOR and writes nothing",
 };
 
 /** T4 CP1-r2 cell titles (ADR-0018 "T4 ledger" / ADR-0013 "Reproduce"). */
@@ -90,24 +78,13 @@ const T6 = {
   formatterHint: "E_STALE_RANGE with rows renders the heading and the named region's rows (T6)",
   regionOracle: "span-length arm carries the named region's rows",
   armFlag: "no range-family arm carries the deleted retry flag (arm counts pinned)",
-  // `nullRowGate` retired here: FU-3 (edc516d, upstream ADR-0024 decision 1) turned the
-  // null-row-in-window rejection into an ACCEPTANCE cell, so no cell under this title can
-  // redden; the acceptance is pinned by "accepts an unread interior row between two leased
-  // boundaries" and the direct-call gate arms stay pinned separately.
   lengthDisagree: "rejects a window whose served and rebased lengths disagree",
-  // FU-5 re-anchor: the producers landed in src/hashline/served-guard.ts (ADR-0025
-  // amendment); the guard-holds cells flipped to producer-present conjunctions, and
-  // the mutants below flipped from PLANT a producer to DELETE one.
   neverGuard: "W_NEVER_SERVED_SHAPE is a union member with a literal producer (FU-5)",
   mismatchGuard: "W_SERVED_PREFIX_MISMATCH is a union member with a literal producer (FU-5)",
   deferredRefute:
     "the deferred predicates refute a constant: their own code falsifies, others do not",
   orderIndependence:
     "the witness is per-call: a different source set yields a different witness and verdicts",
-  // `deletedExternally` retired here: FU-4 renamed the cell to "rejects E_TARGET_LOST …" and the
-  // rejection no longer routes through the `E_STALE_RANGE` formatter, so T6M1 cannot redden it.
-  // The retry-affordance ban is still pinned by T4.spanLength, T6.regionOracle and the E_TARGET_LOST
-  // cell's own `not.toContain(Retry with these anchors)` assertion.
 };
 
 /**
@@ -190,12 +167,6 @@ const T4R6 = {
  * An `expected: []` entry is a measured GREEN mutant, diagnosed by one of: (1) a real gap, (2) the
  * mutation did not apply, (3) the claim was too strong, (4) another mechanism covered the effect
  * (T5M22/T5M26/T5M28: the FK cascade or the serve write's re-materialization, per the P1 matrix).
- * Adding a cell can widen the RED sets of EXISTING mutants, so a new mutant's line alone is not
- * evidence: re-run the full sweep (`for i in $(seq 1 30); do node test/tools/mutate-ledger.mjs T5M$i; done`),
- * because the ledger exits non-zero on any mismatch — it is a gate, not a report. Two assertion rules
- * from cell 29: bracket the boundary (probe just past it, in both directions) and require a delimiter
- * in the match — a substring a longer name can satisfy (`b 1` vs `b 10`) is a paper tiger inside the
- * assertion itself.
  */
 const T5 = {
   window:
@@ -260,6 +231,15 @@ const SESS_IMPORT = {
   new: '  retireAnchors,\n  recordServed,\n} from "../session-view.js";',
 };
 
+/**
+ * #215 moved the rejection recorder out of `collectAbortPart` and into the assembler seam, and it
+ * removed the zero-row `echoRows` fallback these two mutants injected (the payload no longer unions
+ * a window nobody proved served). The recipes below are still the pre-#215 text, which was ALREADY
+ * drifted at base `1018480f` (the anchor's `: undefined;` indentation moved in an earlier
+ * refactor), so they refuse loudly rather than red a false set. Re-deriving M1/M2 is a lane-close
+ * sweep item, not a #215 port.
+ */
+
 const M1_TITLES = [
   T.twinRecords,
   T.twinGrants,
@@ -272,9 +252,11 @@ const M1_TITLES = [
 
 const MUTANTS = {
   M1: {
-    what: "full write at collectAbortPart (rows + snapshot context)",
+    what: "full write at the rejection recorder (rows + snapshot context)",
     scope: [CONTRACT],
     expected: M1_TITLES,
+    caveat:
+      "retired carrier: targets the pre-#215 `collectAbortPart` site (drifted since base 1018480f) and its fake row source was that site's zero-row fallback; re-derive at lane close",
     edits: [
       SESS_IMPORT,
       {
@@ -294,6 +276,8 @@ const MUTANTS = {
     what: "same site, rows only — no snapshot context",
     scope: [CONTRACT],
     expected: M1_TITLES.filter((t) => t !== T.twinGrants),
+    caveat:
+      "same drifted site as M1: the zero-row fallback that gave the mutant a row source is gone (#215); re-derive at lane close",
     edits: [
       SESS_IMPORT,
       {
@@ -310,6 +294,8 @@ const MUTANTS = {
     what: "full write at the batch noop guard's call site",
     scope: [CONTRACT],
     expected: [T.noopLoop],
+    caveat:
+      "drifted since base 1018480f: the call site is now indented 8 spaces (the recipe matches 6), so the anchor is refused loudly — re-derive at lane close; #216 makes the guard's rejection record its own rows by design, so the extra-write mutant has no carrier — re-derive at lane close",
     edits: [
       SESS_IMPORT,
       {
@@ -329,8 +315,9 @@ const MUTANTS = {
     scope: [CONTRACT],
     expected: [T.malformed],
     caveat:
-      "the RED is the cause assertion (contract :759); the envelope assertion (:758) passes because " +
-      "the E_BATCH_ABORT envelope survives, and the two nothing-written asserts (:760-761) are NOT reached",
+      "the RED is the malformed-anchor cell: the mutant makes the parser accept the token, so the " +
+      "refusal carries a different code and the E_MALFORMED_ANCHOR assertion fails; the " +
+      "nothing-recorded and nothing-written asserts are NOT reached",
     edits: [
       {
         file: ANCHOR_PIPELINE,
@@ -341,26 +328,34 @@ const MUTANTS = {
   },
   Z3b: {
     what: "throw in enforceNoopLoop's batch branch",
-    scope: null, // full suite
+    scope: null,
+    caveat:
+      "measured: the raw Error surfaces as E_UNKNOWN at the tool boundary, so every cell that " +
+      "asserts the E_NOOP_LOOP code or message reds, plus the dry-run tally cell",
     expected: [
-      "batch_edit rejects repeated noop edits at the loop threshold",
       T.noopLoop,
-      "second identical no-op warns applied, third rejects E_NOOP_LOOP, file untouched",
-      "batch: throws at threshold and notice at 2",
+      "leaves a live tally it neither advanced nor cleared",
+      "batch_edit rejects repeated noop edits at the loop threshold",
+      "a two-item loop renders one verdict and one bullet, and its echoed interior rows resolve",
+      "a one-item loop renders the bare diagnosis, and its rows still resolve next call",
+      "shows no rows and names the current-file lines a read would serve",
+      "batch: rejects at threshold and notice at 2",
       "batch reject renders the on-disk heading exactly once",
-      "batch without echoRows still throws",
+      "batch without echoRows still refuses",
+      "second identical no-op warns applied, third rejects E_NOOP_LOOP, file untouched",
+      "two sessions on one file keep independent counts",
     ],
     edits: [
       {
         file: ENGINE,
-        old: "  if (count >= NOOP_LOOP_THRESHOLD) {\n    const originalLines = splitLines(opts.originalNormalized);",
-        new: '  if (count >= NOOP_LOOP_THRESHOLD) {\n    throw new Error("Z3b");\n    const originalLines = splitLines(opts.originalNormalized);',
+        old: "  if (count >= NOOP_LOOP_THRESHOLD) {\n    const ref = `edits[${index}] (${displayPath})`;",
+        new: '  if (count >= NOOP_LOOP_THRESHOLD) {\n    throw new Error("Z3b");\n    const ref = `edits[${index}] (${displayPath})`;',
       },
     ],
   },
   T4M4: {
     what: "restore the read-free E_STALE_ANCHOR remedy string",
-    scope: null, // full suite
+    scope: null,
     expected: [T4.staleAnchorReread],
     edits: [
       {
@@ -372,16 +367,12 @@ const MUTANTS = {
   },
   T6M1: {
     what: "restore the deleted retry affordance on the stale-range formatter",
-    scope: null, // full suite
+    scope: null,
     expected: [
       T4.spanLength,
       T6.lengthDisagree,
       T6.regionOracle,
       T6.formatterHint,
-      // T6b (ADR-0023): the two multi-region cells assert their E_STALE_RANGE payloads through
-      // `assertRegionPayload`, which bans the restored affordance — measured 3/3 in this file.
-      // FU-4 re-measure (b65d437): dropped `nullRowGate` (cell turned into an acceptance by
-      // FU-3) and `deletedExternally` (cell renamed and rerouted to E_TARGET_LOST) — 6/6.
       T6b.overlap,
       T6b.disjoint,
     ],
@@ -401,7 +392,7 @@ const MUTANTS = {
   },
   T6M2: {
     what: "re-add the deleted retry flag at one range arm",
-    scope: null, // full suite
+    scope: null,
     expected: [T6.armFlag],
     edits: [
       {
@@ -413,14 +404,7 @@ const MUTANTS = {
   },
   T6M3: {
     what: "delete the REAL W_NEVER_SERVED_SHAPE producer from served-guard — the landed code must be refutable (FU-5 re-anchor; per-code isolation: the mismatch guard stays green)",
-    scope: null, // full suite
-    // FU-5 flipped plant→delete: the deferral is gone, so adding a producer reddens
-    // nothing — the refuting mutation is removing the real one. Reddens totality
-    // forward (union member with neither producer nor deferral), the producer-present
-    // cell, the witness cell's live-tree conjunctions, and the p063 response pin.
-    // FU-R re-point: the engine now renders the one per-call hint, so the two batch
-    // engine cells and the two singular/plural format pins ride the same builder —
-    // measured at the FU-R commit (got 8, expected 4 → 8).
+    scope: null,
     expected: [
       T4R3.forward,
       T6.neverGuard,
@@ -441,7 +425,7 @@ const MUTANTS = {
   },
   T6M4: {
     what: "break the region oracle's real per-row identity guard",
-    scope: null, // full suite
+    scope: null,
     expected: ["negative control: a misplaced row fails the live-mapping check"],
     edits: [
       {
@@ -457,11 +441,7 @@ const MUTANTS = {
   },
   T6M5: {
     what: "delete the W_SERVED_PREFIX_MISMATCH producer ONLY — per-code isolation (W_NEVER_SERVED_SHAPE's producer-present cell must stay green)",
-    scope: null, // full suite
-    // FU-5 re-anchor (see T6M3): plant→delete. The p063 pin rides the never-served
-    // header only, so it stays green here — that asymmetry IS the isolation proof.
-    // FU-R re-point: the mismatch format pin joins (the never-served pins stay green,
-    // extending the same asymmetry to the FU-R cells; measured got 4, expected 3 → 4).
+    scope: null,
     expected: [T4R3.forward, T6.mismatchGuard, T6.orderIndependence, FUR.mismatchPin],
     edits: [
       {
@@ -478,15 +458,7 @@ const MUTANTS = {
   },
   M6: {
     what: "re-add E_FOREIGN_ANCHOR to DEFERRED_PRODUCERS as a bare rot-marker string",
-    scope: null, // full suite
-    // `T6.orderIndependence` renamed in CP3 (the old title claimed a property its re-read could
-    // not falsify); M6 no longer reddens the renamed cell — its loop dereferences named codes.
-    // FU-4 re-measure: `E_FOREIGN_ANCHOR` is a real ported code with a producer now, so the
-    // marker refutes through `totality backward` and the constant-refutation pin; the
-    // stays-deleted cell no longer fires for a code whose producer exists (measured at b65d437).
-    // FU-5 re-anchor: DEFERRED_PRODUCERS is now EMPTY (both producers landed), so the marker
-    // plants into the empty map; `totality backward`'s identity pin ({} vs the planted entry)
-    // and the dereferencing loop still redden.
+    scope: null,
     expected: [T4R3.backward, T6.deferredRefute],
     edits: [
       {
@@ -499,15 +471,9 @@ const MUTANTS = {
       },
     ],
   },
-  // M7 retired here: its subject was re-adding `E_TARGET_LOST` as a union member with no
-  // producer and no deferral — FU-4 ports the code WITH a producer
-  // (src/hashline/served-evidence.ts, `interceptLeaseBoundaries`),
-  // so the scenario no longer exists. Re-anchoring it to a fictional member would duplicate
-  // M14 (declared-without-registry-entry); the unproduced-member guard stays pinned by
-  // T4R3.forward's own cell.
   M8: {
     what: "delete DECLARATION_ONLY_FIELDS while `remedy` still has no reader",
-    scope: null, // full suite
+    scope: null,
     expected: [T4R3.fields, T4R5.fieldIdentity],
     edits: [
       {
@@ -528,7 +494,7 @@ const MUTANTS = {
   },
   M9: {
     what: "add a `remedy` reader (append it in staleAnchorFormat) without de-allowlisting it",
-    scope: null, // full suite
+    scope: null,
     expected: [T4R3.fields, T4R5.fieldIdentity, T4R3.contextMessage],
     edits: [
       {
@@ -544,7 +510,7 @@ const MUTANTS = {
   },
   M10: {
     what: "revert F12: glue the echo block back onto the inner message",
-    scope: null, // full suite
+    scope: null,
     expected: [T4R4.glueRows, T4R4.glueFallback],
     edits: [
       {
@@ -556,7 +522,7 @@ const MUTANTS = {
   },
   M11: {
     what: "revert G1: scan producers without stripping comments",
-    scope: null, // full suite
+    scope: null,
     expected: [T4R5.commentFake, T4R6.limitRegex],
     edits: [
       {
@@ -568,7 +534,7 @@ const MUTANTS = {
   },
   M12: {
     what: "revert G2: accept double quotes only",
-    scope: null, // full suite
+    scope: null,
     expected: [T4R5.singleQuote],
     edits: [
       {
@@ -580,7 +546,7 @@ const MUTANTS = {
   },
   M13: {
     what: "revert G3: exclude digits from the code shape",
-    scope: null, // full suite
+    scope: null,
     expected: [T4R5.digits, T4R6.shapeDerivation],
     edits: [
       {
@@ -592,12 +558,10 @@ const MUTANTS = {
   },
   M14: {
     what: "add a union member with no registry entry",
-    scope: null, // full suite
+    scope: null,
     expected: [T4R5.parity, T4R3.forward],
     edits: [
       {
-        // Re-anchored by FU-4: the union now carries the ported codes between E_STALE_RANGE
-        // and E_MALFORMED_ANCHOR, so the insertion point moved with the neighbor.
         file: DOMAIN_ERRORS,
         old: '  | "E_STALE_RANGE"\n  | "E_TARGET_LOST"',
         new: '  | "E_STALE_RANGE"\n  | "E_ORPHAN"\n  | "E_TARGET_LOST"',
@@ -606,7 +570,7 @@ const MUTANTS = {
   },
   M15: {
     what: "field allowlist owner is a bare lane letter (not an addressable identity)",
-    scope: null, // full suite
+    scope: null,
     expected: [T4R5.fieldIdentity],
     edits: [
       {
@@ -618,7 +582,7 @@ const MUTANTS = {
   },
   M16: {
     what: "holds: () => true in a DECLARATION_ONLY_FIELDS entry (unrefutable predicate)",
-    scope: null, // full suite
+    scope: null,
     expected: [T4R6.holdsPins],
     edits: [
       {
@@ -628,15 +592,9 @@ const MUTANTS = {
       },
     ],
   },
-  // M17 retired here: FU-5 landed both W_* producers and emptied DEFERRED_PRODUCERS, so no live
-  // `holds(fired)` predicate remains to caricature (its anchor — the W_NEVER_SERVED_SHAPE
-  // predicate line — is gone with the deferral). The predicate mechanism's refutability stays
-  // pinned by M6 (rot-marker through backward + deferredRefute) and the generic loop cells in
-  // test/arch/domain-error-registry.test.ts; re-anchoring would mean inventing a deferral that
-  // does not exist. R15's real mutant is now T6M3's producer deletion.
   M18: {
     what: "reintroduce a private shape literal in unionMembers (no knob change)",
-    scope: null, // full suite
+    scope: null,
     expected: [T4R6.shapeDerivation],
     edits: [
       {
@@ -646,7 +604,6 @@ const MUTANTS = {
       },
     ],
   },
-  // ---- T5: LRU snapshot vacuum ----
   T5M1: {
     what: "drop the per-path retention arm (global budget only)",
     scope: [VACUUM_UNIT],
@@ -774,8 +731,6 @@ const MUTANTS = {
   T5M9: {
     what: "the overflow warning is deleted (the deferred state is returned, never reported)",
     scope: [VACUUM_UNIT],
-    // COUPLING (CP2-r4): cell 29 asserts warned(target) === 1 while the context is retained, so
-    // deleting this warning drives that count to 0 — the same warn-count path this site feeds.
     expected: [T5.loudDeferral, T5.reportPayload, T5.reportRearm, T5.reportCap],
     edits: [
       {
@@ -842,11 +797,6 @@ const MUTANTS = {
   T5M14: {
     what: "the sweep also deletes the legacy `snapshots` row (D2 breached)",
     scope: [VACUUM_INTERACTION],
-    // FU-8 sweep re-anchor: FU-4 (b65d437) flipped cell 11 to the lease-boundary interception —
-    // the evicted edit now fails closed where identity is checked before any snapshot row is
-    // consulted, so deleting the legacy row no longer changes its outcome (measured 1/1 at
-    // a2b211d). `evictedTarget` stays refutable through T5M29; D2 itself is still directly
-    // refuted here by `crossTable` (its legacy-row-count assertion fails under this mutant).
     expected: [T5.crossTable],
     edits: [
       {
@@ -875,7 +825,6 @@ const MUTANTS = {
       },
     ],
   },
-  // ---- T5 round 2: guards, reports, the pair, the cross-table pin ----
   T5M16: {
     what: "the in-sweep deferral guard is removed (a joined sweep runs)",
     scope: [VACUUM_UNIT],
@@ -913,8 +862,6 @@ const MUTANTS = {
   T5M18: {
     what: "the overflow dedup early-return is deleted (warn on every over-budget pass)",
     scope: [VACUUM_UNIT],
-    // COUPLING (CP2-r4): without the dedup a retained context warns again, breaking cell 29's
-    // count-1 assertion — the same warn-count path this site feeds.
     expected: [T5.reportPayload, T5.reportCap],
     edits: [
       {
@@ -963,7 +910,7 @@ const MUTANTS = {
   T5M22: {
     what: "the pair delete order is swapped (snapshot before lineage)",
     scope: [VACUUM_UNIT],
-    expected: [], // GREEN (meaning 4 — the mutation applies and TWO mechanisms cover its effect): `withTransaction` (src/snapshot-store/vacuum.ts:323) makes the pair atomic, and `ON DELETE CASCADE` (src/snapshot-store/lineage-store.ts:161) removes the lineage rows together with the snapshot. Row-count matrix measured on the pair's own DDL/SQL, kept-vs-dropped x FK-ON/FK-OFF: FK-ON baseline removes [lineage 2, snapshot 1], swapped removes [snapshot 1, lineage 0] — different work, identical final set {snapshots 0, lineage 0, orphans 0}; FK-OFF both orders give the same final set, because two DELETEs on different tables commute. The order IS load-bearing, but only for a crash mid-pair with no transaction wrapper AND FKs off, which leaves 2 orphan lineage rows the adopt path cannot repair (it keys on the snapshot row, so an orphan snapshot self-heals while an orphan lineage does not). No shipped opener configures that: `PRAGMA foreign_keys` measures 1, and `enableForeignKeyConstraints:false` / `PRAGMA foreign_keys = OFF` have 0 hits in src/. NOT meaning 1 — no cell is missing; under every configuration the product builds, the swapped order has no observable effect.
+    expected: [],
     edits: [
       {
         file: VACUUM,
@@ -1016,7 +963,7 @@ const MUTANTS = {
   T5M26: {
     what: "the explicit lineage delete is dropped (cascade-masked, P1 meaning 4)",
     scope: [VACUUM_UNIT],
-    expected: [], // GREEN (meaning 4 — `what` claimed cascade-masking; this is the count that proves it): dropping the explicit `deleteLineage` leaves FK-ON removing [snapshot 1] and landing on {snapshots 0, lineage 0, orphans 0}, the identical final set the baseline reaches via [lineage 2, snapshot 1], because `ON DELETE CASCADE` (src/snapshot-store/lineage-store.ts:161) does the lineage work itself. The deleted line is NOT vestigial — under FK-OFF the same mutation lands on {snapshots 0, lineage 2, orphans 2}, so the explicit delete is the belt to the cascade's braces and the mutation's effect is real wherever foreign keys are disabled. It is GREEN here only because no shipped opener disables them: `PRAGMA foreign_keys` measures 1 (src/hash-store.ts:549 sets it ON and `node:sqlite` defaults it ON), and `enableForeignKeyConstraints:false` / `PRAGMA foreign_keys = OFF` have 0 hits in src/. NOT meaning 1 — the cell that would redden this needs an FK-OFF store the product never constructs.
+    expected: [],
     edits: [
       {
         file: VACUUM,
@@ -1050,7 +997,7 @@ const MUTANTS = {
   T5M28: {
     what: "`getSnapshot`'s lineage-first branch is disabled (the legacy row serves)",
     scope: [VACUUM_INTERACTION],
-    expected: [], // GREEN: the serve write's re-materialization covers the disabled branch
+    expected: [],
     edits: [
       {
         file: HASH_STORE,
@@ -1104,13 +1051,7 @@ const MUTANTS = {
   },
   RX1M1: {
     what: "invert the leased route's interior-hole rule in `acceptsInteriorHole` — boundaries accepted, holes rejected (the RX-1 flip-test, made durable)",
-    scope: null, // full suite
-    // `acceptsInteriorHole` lives in src/hashline/served-evidence.ts (the seam split, ADR-0037), not
-    // in anchor-pipeline.ts — the `file:` below names the module these comments describe.
-    // Measured at the RX-1 commit: the RED set is exactly the interior-hole family — the gate's
-    // accept/boundary arms and the end-to-end hole cell (lease-resolve-seam), the C2 leased-route
-    // truth (range-family-retry-truth), the three conjunction cells (served-evidence-route), and
-    // the multi-window span cell whose edit crosses an unserved gap (read-windows). 8/8.
+    scope: null,
     expected: [
       "accepts an unread interior row between two leased boundaries (upstream ADR-0024 decision 1)",
       "accepts the same hole end-to-end through verifyServedRange with a lease source",
@@ -1131,10 +1072,7 @@ const MUTANTS = {
   },
   RX2M1: {
     what: "relax the shifted-survivor arm — one stale bound serves E_UNVERIFIED_RANGE even when the survivor moved (CRUX-P2-1 refuter)",
-    scope: null, // full suite
-    // Measured at the RX-2 commit: the geometry (one stale + shifted-live survivor) is
-    // refuted exactly by the ported upstream cell; no other full-suite path reaches
-    // `exactlyOneStale && !survivorLiveUnshifted`. 1/1.
+    scope: null,
     expected: ["emits E_TARGET_LOST when the live bound shifted (one stale, one moved)"],
     edits: [
       {
@@ -1146,11 +1084,7 @@ const MUTANTS = {
   },
   RX3M1: {
     what: "silence the identity-read degrade signal — restore the silent fail-open catch (KEEL K-1 refuter)",
-    scope: null, // full suite
-    // The mutate-ledger anchor is the whole catch block; the mutation removes the report call
-    // and the binding (behavior unchanged — only the signal goes). Measured at the RX-3
-    // commit: both K-1 cells ride the warn assertion; the edit itself still applies under
-    // either code, so no other full-suite cell moves. 2/2.
+    scope: null,
     expected: [
       "warns exactly once per file on the first degrade and stays silent on repeats",
       "the edit still applies under the degrade — signal added, behavior unchanged",
@@ -1169,13 +1103,7 @@ const MUTANTS = {
   },
   RX4M1: {
     what: "break the windows single-source rule — `[]` counts as windows in the shared predicate (APSD-P2 refuter)",
-    scope: null, // full suite
-    // `hasRequestedWindows` (src/file-view.ts) is the one owner of the `undefined`/`[]` →
-    // no-windows mapping; counting `[]` as windows diverges the serve-side full-read contract
-    // from the preview fallback. Measured at the RX-4 commit: the preview unit cell, the
-    // direct-seam full-read cell, and the preview-echo tool cell all go red; the predicate's
-    // `normWindows` consumer keeps rendering full reads (an empty array is still falsy at the
-    // dispatch), so only the full-read/drift side moves. 3/3.
+    scope: null,
     expected: [
       "treats an empty windows array as no windows",
       "treats windows: [] as a full read and a partial read as not",

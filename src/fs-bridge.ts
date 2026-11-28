@@ -2,17 +2,6 @@
  * IO seam for the hashline tool layer. The tools resolve, read, and write
  * through this bridge so they honor the deployment's `ctx.fs` backend — a
  * sandboxed or remote filesystem — instead of reaching around it.
- *
- * The bridge also participates in dsh's `fs/*` event gate exactly like the
- * built-in tools: writes dispatch `fs/write-intent` (so the observation policy
- * derives its create/replace guard and stale-version checks) and every
- * successful read/mutation emits `fs/observed` with the resulting version. A
- * hashline tool that silently skipped those events would leave the policy's
- * observed state stale, and the next built-in `write` on the same file would
- * fail with `FS_NOT_OBSERVED` / `FS_STALE_VERSION`.
- *
- * The local implementation exists for tests and pure-pipeline verification.
- * @module dsh-better-edit/fs-bridge
  */
 
 import { readFile } from "node:fs/promises";
@@ -44,7 +33,6 @@ import { DomainError } from "./domain-errors.js";
 import type { LineEnding } from "./edit-diff.js";
 import { resolveEncodingMigrationConsent } from "./encoding-consent.js";
 import type { EncodingMigrationConsent } from "./encoding-consent.js";
-// Re-export file encoding state seam for backward compat (file-view, read-and-serve, tests)
 export type { FileEncodingState } from "./file-encoding-state.js";
 export {
   _getEncodingState as getEncodingState,
@@ -55,7 +43,6 @@ export {
   _clearAutoGuessFooter as clearAutoGuessFooter,
 };
 
-// Keep alias for tests that import getAutoGuessFooter via fs-bridge
 export function getAutoGuessFooterCompat(k: string): string | undefined {
   return _getAutoGuessFooter(k);
 }
@@ -98,16 +85,6 @@ export interface FileIO {
    * @param sandboxPolicy - the per-call sandbox mode + workspace root the
    *   confined backend checks (resolved from the session by the tool layer);
    *   omitted on an unsandboxed backend.
-   * @param guard - the create-or-fail demand of the `create` path; omitted by
-   *   every other caller, which keeps the unconditional create-or-overwrite
-   *   intent. The dsh backend turns it into the `{ kind: "createIfAbsent" }`
-   *   write intent (and reports the refusal as `E_FILE_EXISTS`), the local
-   *   backend opens the target exclusively.
-   * @param options - the resolved effective terminator for this write, and optionally the
-   *   migration consent it was decided under. The seam re-prepares the text against the memo,
-   *   which still describes the OLD ending, so a planned EOL rewrite only survives the trip when
-   *   it is named here. `write` and `str_replace_editor` never pass either: their bytes are
-   *   unchanged, and an unnamed consent is resolved from the config inside the seam.
    */
   writeText(
     absolutePath: string,
@@ -138,7 +115,6 @@ export interface FileIO {
 export function mapFsError(error: unknown, displayPath: string): never {
   if (error instanceof Error && typeof (error as { code?: unknown }).code === "string") {
     // SAFETY: provider failures (FsError or the local backend's plain Error) carry a
-    // string `code` field that the published error type does not declare.
     const code = (error as unknown as { code: string }).code;
     if (code === "FS_NOT_FOUND") {
       throw new DomainError("E_NOT_FOUND", { path: displayPath });
@@ -172,7 +148,6 @@ export function mapFsError(error: unknown, displayPath: string): never {
           "The file changed on disk since it was read (version guard rejected the write). Call read() to get fresh anchors, then retry.",
         servedRows: [],
         servedBlock: "",
-        // F7: row-less and read-required — no `Current range:` section, no retry hint.
       });
     }
     if (code === "FS_NOT_OBSERVED") {
@@ -207,8 +182,6 @@ async function restoreStrippedUtf8Bom(
   text: string,
   signal?: AbortSignal,
 ): Promise<{ text: string; version: string | undefined }> {
-  // BOM already preserved: one metadata stat for the read-first gate version
-  // (issue #69). No byte probe here — readBytes stays forbidden in this branch.
   if (text.startsWith(UTF8_BOM)) {
     const info = await fs.stat(target, signal).catch(() => undefined);
     return { text, version: info?.version as string | undefined };
@@ -246,7 +219,6 @@ export function ctxFsIO(fs: FileSystem, ctx: Context): FileIO {
       return fs.processPath(target);
     },
     async readText(absolutePath, signal, encodingHint?: string) {
-      // explicit encoding override (Reopen with Encoding) — bytes + seam
       if (encodingHint) {
         const target = await fs.resolve(absolutePath, {
           ...(signal === undefined ? {} : { signal }),
@@ -275,20 +247,14 @@ export function ctxFsIO(fs: FileSystem, ctx: Context): FileIO {
           ...(signal === undefined ? {} : { signal }),
         });
         const text = await fs.readText(target, signal);
-        // Thread the restore path's stat version into the encoding memo so the
-        // read-first gate validates against the real version (issue #69 fix 2).
-        // The BOM-preserved branch stats for version only — no byte probe.
         const { text: restored, version } = await restoreStrippedUtf8Bom(fs, target, text, signal);
-        // record file encoding state for round-trip (BOM + lineEnding)
         try {
           const hasBOM = restored.startsWith(UTF8_BOM);
           const clean = hasBOM ? restored.slice(1) : restored;
-          // use seam to record with correct lineEnding detection
           recordOpenState(absolutePath, clean, hasBOM ? "utf8bom" : "utf8", hasBOM, version);
-          // clear any stale autoGuess footer on clean UTF-8 read
           _clearAutoGuessFooter(absolutePath);
         } catch {
-          // best-effort
+          // HACK: best-effort
         }
         return restored;
       } catch (error) {
@@ -302,7 +268,6 @@ export function ctxFsIO(fs: FileSystem, ctx: Context): FileIO {
           const maxBytes = info?.size ?? 10 * 1024 * 1024;
           if (info && info.size !== undefined && info.size > maxBytes) throw error;
           const bytes = await fs.readBytes(target, signal, maxBytes);
-          // Delegate deterministic admission to the deep seam
           const decoded = await decodeForOpen(bytes, cfg, { displayPath: absolutePath });
           recordOpenState(
             absolutePath,
@@ -322,15 +287,10 @@ export function ctxFsIO(fs: FileSystem, ctx: Context): FileIO {
         const target = await fs.resolve(absolutePath, {
           ...(signal === undefined ? {} : { signal }),
         });
-        // Drop a memo that no longer matches the on-disk version before deciding:
-        // the save verdict must describe the bytes actually being replaced.
         const info = await fs.stat(target, signal).catch(() => undefined);
         const version = info?.version as string | undefined;
         invalidateIfStale(absolutePath, version);
 
-        // The seam owns the round-trip verdict. It throws E_ENCODING_UNWRITABLE
-        // BEFORE the provider sees a write when the recorded encoding cannot be
-        // reproduced through the text-only write (issue #112).
         const cfgW = loadConfig();
         const existing = _getEncodingState(absolutePath);
         const consent =
@@ -344,15 +304,8 @@ export function ctxFsIO(fs: FileSystem, ctx: Context): FileIO {
         const intent = await ctx.waterfall("fs/write-intent", target, exec, () =>
           guard?.createIfAbsent === true ? { kind: "createIfAbsent" as const } : undefined,
         );
-        // Under the create guard the demand is a floor, not a default: a listener may
-        // resolve `undefined` or any other concrete kind (an observation-policy
-        // `replaceIfVersion`, say), and handing that to the provider would let a
-        // version match overwrite the competitor this guard exists to protect. A
-        // create therefore leaves this seam as `createIfAbsent` and nothing else.
         const effectiveIntent =
           guard?.createIfAbsent === true ? ({ kind: "createIfAbsent" } as const) : intent;
-        // The provider encodes the string as UTF-8; prep.textToWrite already carries
-        // the restored BOM + line endings (or the consented migration's UTF-8 shape).
         const outcome = await fs.writeText(
           target,
           prep.textToWrite,
@@ -361,7 +314,6 @@ export function ctxFsIO(fs: FileSystem, ctx: Context): FileIO {
           sandboxPolicy,
         );
         ctx.emit("fs/observed", target, { kind: "present", version: outcome.version }, exec);
-        // Memo/bytes agreement: every write records the state of the bytes just written.
         if (prep.newState) {
           const written: FileEncodingState = {
             ...prep.newState,
@@ -370,10 +322,6 @@ export function ctxFsIO(fs: FileSystem, ctx: Context): FileIO {
           _setEncodingState(absolutePath, written);
         }
       } catch (error) {
-        // The host documents `FS_NOT_OBSERVED` from `writeText` as the
-        // `createIfAbsent`-over-existing-target rejection, so on the create
-        // path it reports the fact the caller asked about ("already exists"),
-        // not a blind replace. Every other code keeps the shared mapping.
         if (guard?.createIfAbsent === true && errCode(error) === "FS_NOT_OBSERVED") {
           throw new DomainError("E_FILE_EXISTS", { path: absolutePath });
         }
@@ -435,7 +383,6 @@ export function localIO(): FileIO {
         if (decoded.footer) recordFooter(absolutePath, decoded.footer);
         return decoded.text;
       }
-      // Deterministic path via seam, with local fallback for E_UNSUPPORTED_FILE when autoGuess off
       try {
         const bytes = await readFile(absolutePath);
         const cfgL = loadConfig();
@@ -451,7 +398,6 @@ export function localIO(): FileIO {
         if (decoded.footer) recordFooter(absolutePath, decoded.footer);
         return decoded.text;
       } catch (error) {
-        // Local fallback: when autoGuess off, E_UNSUPPORTED_FILE should fall back to raw UTF-8 with � (no throw)
         if (codeOf(error) === "E_UNSUPPORTED_FILE") {
           return readFile(absolutePath, "utf-8");
         }
@@ -460,8 +406,6 @@ export function localIO(): FileIO {
     },
     async writeText(absolutePath, content, signal, _exec, _sandboxPolicy, guard, options) {
       signal?.throwIfAborted();
-      // Drop a stale memo, then let the seam decide: it throws E_ENCODING_UNWRITABLE
-      // before writeAtomic when the recorded encoding cannot round-trip (#112).
       const info = await fileSnap(absolutePath).catch(() => undefined);
       invalidateIfStale(absolutePath, info?.snapshotId);
       const cfgL = loadConfig();
@@ -481,9 +425,7 @@ export function localIO(): FileIO {
         _setEncodingState(absolutePath, { ...prep.newState, version: after?.snapshotId });
       }
     },
-    async emitObserved() {
-      // No policy event gate on the host filesystem; nothing to record.
-    },
+    async emitObserved() {},
     async statVersion(absolutePath) {
       try {
         return (await fileSnap(absolutePath)).snapshotId;

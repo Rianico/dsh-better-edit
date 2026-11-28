@@ -7,7 +7,6 @@ describe("coverage-last-90-2", () => {
       const harness: any = setupIntegrationTest(cwd);
       expect(harness).toBeDefined();
       expect(harness.io).toBeDefined();
-      // This should hit makeTestSandbox
       const { FsSandboxController } = await import("../../src/sandbox.js");
       const ctrl = new (FsSandboxController as any)({
         fs: { sandboxMode: undefined },

@@ -1,9 +1,9 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { execSessionKey, sessionKeyFor } from "../../src/workspace-context.js";
-import { mkdtemp, writeFile, mkdir, rm, symlink, readFile } from "node:fs/promises";
+import { mkdtemp, writeFile, rm, symlink } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { existsSync } from "node:fs";
+import "node:fs";
 import { canonicalSync, canonicalAsync } from "../../src/canonical-path.js";
 import {
   _mergeServedRows,
@@ -11,7 +11,6 @@ import {
   currentPositionOfDrifted,
   computeDrift,
   driftEpisodeKey,
-  DRIFT_NOTICE_HEADING,
 } from "../../src/session-view.js";
 import {
   expand,
@@ -19,7 +18,7 @@ import {
   loadConfig,
   DEFAULT_CONFIG_YAML,
 } from "../../src/store-config.js";
-import { lineHashesPure } from "../../src/hashline/hash-assign.js";
+import "../../src/hashline/hash-assign.js";
 import { lineHashes } from "../../src/hashline/hash.js";
 import { initHasher } from "../../src/hashline/hash-assign.js";
 import { HASH_RE } from "../../src/hashline/hash-assign.js";
@@ -31,12 +30,10 @@ describe("coverage-agent-d canonical-path", () => {
     await writeFile(f, "hi");
     const resolved = canonicalSync(f);
     expect(resolved.endsWith("a.txt")).toBe(true);
-    // symlink with relative target to avoid /var symlink loop on macOS
     const link = join(tmp, "link.txt");
     await symlink("a.txt", link);
     const linkResolved = canonicalSync(link);
     expect(linkResolved.endsWith("a.txt")).toBe(true);
-    // ENOENT lexical tail
     expect(canonicalSync(join(tmp, "nope", "sub.txt"))).toContain("nope");
     await rm(tmp, { recursive: true, force: true });
   });
@@ -90,7 +87,6 @@ describe("coverage-agent-d session-view", () => {
     expect(sessionKeyFor("my-id")).toBe("my-id");
     expect(() => sessionKeyFor("")).toThrow(/carries no session/);
     expect(() => sessionKeyFor(undefined)).toThrow(/carries no session/);
-    // fail-loud is stable: repeated calls keep throwing, no key is minted
     expect(() => sessionKeyFor(undefined)).toThrow(/carries no session/);
   });
   it("execSessionKey propagates the throw for an execution without a session", () => {
@@ -109,27 +105,18 @@ describe("coverage-agent-d session-view", () => {
   });
   it("_mergeServedRows branches", () => {
     const cur: (string | null)[] = ["aaa", "bbb", null];
-    // truncate
     expect(_mergeServedRows(cur, [{ position: 0, hash: "ccc" }], { truncateTo: 2 })).toEqual([
       "ccc",
       "bbb",
     ]);
-    // clearFrom
-    // clearFrom with trailing null pop: ["aaa",null,null] pops to ["aaa"]
     expect(_mergeServedRows(["aaa", "bbb", "ccc"], [], { clearFrom: 1 })).toEqual(["aaa"]);
-    // duplicate: NOT healed — the old position keeps its hash and the new position
-    // records the same anchor. Verification rejects the ambiguity later
-    // (E_UNSERVED_RANGE "was served at 2 positions") instead of nulling a slot.
     const withDup = _mergeServedRows(["aaa", "bbb"], [{ position: 2, hash: "aaa" }]);
     expect(withDup[0]).toBe("aaa");
     expect(withDup[2]).toBe("aaa");
-    // invalid position
     expect(() => _mergeServedRows([], [{ position: -1, hash: "aaa" }])).toThrow();
     expect(() => _mergeServedRows([], [{ position: 0, hash: "ZZ" }])).toThrow();
-    // null hash clears
     const r = _mergeServedRows(["aaa", "bbb"], [{ position: 0, hash: null }]);
     expect(r[0]).toBeNull();
-    // trailing null pop
     expect(_mergeServedRows(["aaa", null], [{ position: 1, hash: null }])).toEqual(["aaa"]);
   });
   it("servedPositionsOf", () => {
@@ -144,9 +131,7 @@ describe("coverage-agent-d session-view", () => {
       ["ccc", 2],
     ]);
     const surviving = new Set(["aaa", "ccc"]);
-    // below
     expect(currentPositionOfDrifted(served, posMap, surviving, 1, 0)).toBe(1);
-    // above
     expect(
       currentPositionOfDrifted(
         ["bbb", "aaa", "ccc"],
@@ -159,11 +144,9 @@ describe("coverage-agent-d session-view", () => {
         0,
       ),
     ).toBe(9);
-    // fallback
     expect(currentPositionOfDrifted(["aaa"], new Map(), new Set(), 0, 5)).toBe(5);
   });
   it("computeDrift branches", () => {
-    // no drift
     expect(
       computeDrift({
         served: ["aaa"],
@@ -173,18 +156,15 @@ describe("coverage-agent-d session-view", () => {
         reported: new Set(),
       }),
     ).toBeUndefined();
-    // all reported: served has bbb outside range, result does not contain bbb
     const r = computeDrift({
       served: ["aaa", "bbb"],
       resultHashes: ["aaa"],
       resultLines: ["a"],
       range: { startHash: "aaa", endHash: "aaa", startLine: 1, endLine: 1, delta: 0 } as any,
-      // Episode identity is the rebased position (#98, CAND-9): bbb rebases to position 1.
       reported: new Set([driftEpisodeKey(1)]),
     });
     expect(r?.allAlreadyReported).toBe(true);
     expect(r?.text).toContain("already reported");
-    // drifted with window
     const hashes = ["h0", "h1", "h2", "h3"];
     const lines = ["l0", "l1", "l2", "l3"];
     const r2 = computeDrift({
@@ -233,7 +213,6 @@ describe("coverage-agent-d store-config", () => {
     const cfg = loadConfig();
     expect(cfg.autoGitignore).toBe(true);
     expect(cfg.autoGuessEncoding).toBe(true);
-    // cached
     const cfg2 = loadConfig();
     expect(cfg2).toBe(cfg);
     _resetConfigCache();
@@ -258,7 +237,6 @@ describe("coverage-agent-d hash-assign", () => {
     const hashes = await lineHashes("a\nb\nc", "/tmp/f.txt");
     expect(hashes.length).toBe(3);
     expect(hashes.every((h) => HASH_RE.test(h))).toBe(true);
-    // empty
     const empty = await lineHashes("", "/tmp/empty.txt");
     expect(empty.length).toBe(1);
   });

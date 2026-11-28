@@ -5,19 +5,6 @@
  * migration notice. Those two claims only hold together if the bytes and both disclosures agree
  * in the same run, so this spec drives `read`, `edit` and `undo_last_edit` through their tool
  * seams — never the engine — and pins the bytes on disk plus the result text per case.
- *
- * Every case asserts BOTH columns: the on-disk bytes (`readFile` with no encoding, compared
- * as a `Buffer`) and the tool result text. The warning vocabulary under test is small on
- * purpose — one applied-tier code (`[W_ENCODING_MIGRATED]`, audience included) next to the
- * EOL tier it follows — and every assertion names the exact rendered line, not a substring
- * of it, except where a count pins the shape instead.
- *
- * Harness model: `test/integration/eol-matrix.test.ts` — the same `textOf`/`countOf` joins
- * (a notice carries on a block after the diff, so the matrix asserts the summary block
- * carries the warning, never that the text ends with it) and the same UTF-16LE/Windows-1251
- * byte fixtures as `test/core/undo-encoding.test.ts`. Nothing here duplicates the store
- * round-trip unit (`undo-encoding.test.ts` owns the on-disk pair); case 6 drops only the
- * in-process memo, which is the restart-shaped half of that same guarantee.
  */
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -198,7 +185,6 @@ describe("windows-1251 ASCII-only under the opt-in", () => {
         encoding: "windows-1251",
       });
 
-      // The faithful body is already UTF-8 byte-for-byte: nothing migrated, so nothing is announced.
       expect(editText).not.toContain(MIGRATED_MARK);
       expect((await readFile(path)).equals(Buffer.from("ALPHA\nbeta\n", "utf-8"))).toBe(true);
 
@@ -276,7 +262,6 @@ describe("restart between a migration edit and its undo", () => {
         const { harness, editText } = await readAndEdit(cwd, "u16-restart.txt", "вторая", "другая");
         expect(countOf(editText, MIGRATED_MARK)).toBe(1);
 
-        // The verdict rides the durable undo pair, not the in-process memo.
         clearEncodingState();
 
         const undoText = getText(await harness.undoTool.execute("u1", { path: "u16-restart.txt" }));
@@ -315,8 +300,6 @@ describe("aborting batch with a migrating item", () => {
           }),
         ).rejects.toMatchObject({ code: "E_BATCH_ABORT" });
 
-        // The abort throws before any applied-tier warning exists; the observable halves of
-        // "announced nothing" are the untouched bytes and the missing undo row.
         expect((await readFile(path)).equals(before)).toBe(true);
         expect(getText(await harness.undoTool.execute("u1", { path: "u16-batch.txt" }))).toContain(
           NO_HISTORY,
@@ -336,13 +319,9 @@ describe("pre-change row with both migration columns NULL", () => {
         const { harness } = await readAndEdit(cwd, "u16-old.txt", "вторая", "другая");
         const abs = await resolveTarget(path);
 
-        // Model the pre-change row: the pair exists but carries no verdict on either half.
         shutdownHashStore();
         const raw = new DatabaseSync(hashStorePath(cwd));
-        raw.exec(
-          "UPDATE undo SET migrated_from = NULL, migrated_from_bom = NULL; " +
-            "UPDATE file_undo SET migrated_from = NULL, migrated_from_bom = NULL;",
-        );
+        raw.exec("UPDATE file_undo SET migrated_from = NULL, migrated_from_bom = NULL;");
         raw.close();
 
         await withWorkspace(cwd, async () => {
@@ -384,9 +363,6 @@ describe("stale revert after a migration edit", () => {
 
 describe("multi-item applied payload on a migrating file", () => {
   it("one two-range file+edits call carries exactly one migration notice", async () => {
-    // Refutability: this is the only success-path coverage of the multi-item applied branch in
-    // `src/mutation.ts` (`pushAppliedWriteNotices` after the multi-item commit). Emptying that
-    // call silences this notice while the single-call branch keeps working.
     await withTempBytes(
       "u16m.txt",
       utf16leBytes("первая\r\nвторая\r\nтретья\r\n"),
@@ -426,9 +402,6 @@ describe("multi-item applied payload on a migrating file", () => {
 
 describe("EOL rewrite before the encoding notice", () => {
   it("a mixed-endings migration carries both notices with the EOL one first, exactly once", async () => {
-    // Refutability: `pushAppliedWriteNotices` pushes the EOL notice before the migration notices.
-    // Swapping the two pushes keeps every count green while the order inverts, so this case pins
-    // the order, not just the presence.
     await withTempBytes(
       "u16mix.txt",
       utf16leBytes("первая\r\nвторая\nтретья\r\n"),
@@ -454,26 +427,9 @@ describe("EOL rewrite before the encoding notice", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// #211 — the migration TARGETS and the consent PRECEDENCE ladder, end to end.
 //
-// #209 admitted a per-call consent (`allow_encoding_migration: "refuse" | "utf8" | "utf8bom"`)
-// and put it above the config setting, which in turn outranks the legacy `normalizeToUtf8: true`
-// spelling. Those are claims about BYTES, so each row below reads the file back with `readFile`
-// and compares Buffers: the tool's own sentence is never the evidence for what landed. The
-// payload is always the canonical `{ file, edits: [...] }` shape — the fixture's legacy
-// single-edit fold keeps only `file`/`anchor_from`/`anchor_to`/`replace_with`, so a consent or a
-// `dry_run` sent the old way would be dropped silently and the row would prove nothing.
 //
-// Every fixture is the lowercase windows-1251 body "привет\nмир\n"; the edit replaces the line
-// "мир" with "пока", whose UTF-8 image starts 0xD0 0xBF — the matrix's `D0 BF…`. Each case reads
-// with `{ encoding: "windows-1251" }` first, so the in-process memo describes the legacy codec
-// from a plain read rather than from any memo API.
 //
-// One refusal row (#13) captures the thrown `[E_ENCODING_UNWRITABLE]` text: the arch guard in
-// `test/arch/encoding-refusal-surface.test.ts` pins the registry strings, this half pins what a
-// model actually receives through the tool seam.
-// ---------------------------------------------------------------------------
 
 /** The lowercase windows-1251 fixture every target row starts from, and the body "мир"→"пока". */
 const CP1251_LOWER = "привет\nмир\n";
@@ -591,9 +547,6 @@ describe("#211 encoding-migration targets and the consent ladder, pinned by byte
       expect([...edited.subarray(0, 2)]).toEqual([0xd0, 0xbf]);
       expect([...edited.subarray(0, 3)]).not.toEqual(UTF8_BOM);
 
-      // The post-write state is UTF-8 as the read ladder sees it: a SECOND canonical edit with
-      // NO consent is not refused (a legacy non-ASCII file would refuse), converts nothing, and
-      // announces nothing.
       const second = await settleEdit(cwd, name, "пока", "ПОКА", {});
       expect(appliedText(second.outcome)).not.toContain(MIGRATED_MARK);
 
@@ -665,7 +618,6 @@ describe("#211 encoding-migration targets and the consent ladder, pinned by byte
       await writeFile(bPath, preImage);
       setConsentEnv(undefined);
 
-      // B first: the payload alone, while no config file exists yet.
       const b = await settleEdit(cwd, "b.txt", "мир", "пока", {
         read: { encoding: "windows-1251" },
         edit: { allow_encoding_migration: "utf8bom" },
@@ -697,7 +649,6 @@ describe("#211 encoding-migration targets and the consent ladder, pinned by byte
       setConsentEnv(undefined);
       setNormalizeToUtf8(false);
 
-      // B first: the payload alone, with no legacy rung configured yet.
       const b = await settleEdit(cwd, "b.txt", "мир", "пока", {
         read: { encoding: "windows-1251" },
         edit: { allow_encoding_migration: "utf8" },
@@ -747,7 +698,6 @@ describe("#211 encoding-migration targets and the consent ladder, pinned by byte
       });
       const previewText = appliedText(preview.outcome);
       expect(previewText.split("\n")[0] ?? "").toMatch(/^\[DRY RUN\] /);
-      // A noop preview would satisfy "no notice" for the wrong reason: the change was real.
       expect(previewText).toContain("would be applied");
       expect(previewText).not.toContain(MIGRATED_MARK);
       expect((await readFile(path)).equals(before)).toBe(true);
@@ -842,7 +792,6 @@ describe("#211 encoding-migration targets and the consent ladder, pinned by byte
       expect(refusal.message).toContain("allowEncodingMigration");
       expect(refusal.message).not.toContain("normalizeToUtf8");
       expect(namesCallerEnvironment(refusal.message)).toBe(false);
-      // Control: the scan fires on a host-naming sentence, so the empty result above is a fact.
       expect(namesCallerEnvironment("run it in bash, then retry")).toBe(true);
     });
   });

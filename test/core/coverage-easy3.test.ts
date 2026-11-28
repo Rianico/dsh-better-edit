@@ -41,7 +41,6 @@ describe("easy3 tool-edit", () => {
     } as any);
     const tool = buildEditTool(localIO(), sandbox as any);
     expect(tool.name).toBe("edit");
-    // just check that tool can be executed with valid params (may succeed or return error object, but not throw sync)
     try {
       const res = await tool.execute("edit", {
         path: "a.txt",
@@ -134,7 +133,9 @@ describe("easy3 hash-store", () => {
     const p = join(tmpdir(), "easy3-hash-" + Date.now() + ".txt");
     try {
       await store.upsertSnapshot?.(p, "hash123", 3, ["a", "b", "c"]);
-    } catch {}
+    } catch {
+      // HACK: the test ignores this cleanup failure by design.
+    }
     let snap: any;
     try {
       snap = await store.getSnapshot?.(p, "hash123", 3);
@@ -144,7 +145,9 @@ describe("easy3 hash-store", () => {
     expect(snap === undefined || Array.isArray(snap)).toBe(true);
     try {
       await store.upsertSnapshot?.(p, "bad", 1, ["not-3-char" as any]);
-    } catch {}
+    } catch {
+      // HACK: the test ignores this cleanup failure by design.
+    }
     expect(true).toBe(true);
   });
 });

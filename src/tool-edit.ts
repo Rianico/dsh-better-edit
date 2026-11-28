@@ -40,9 +40,6 @@ export function buildEditTool(io: FileIO, sandbox: FsSandboxController) {
       file: {
         oneOf: [
           { type: "string", description: "Text file to edit (a file, never a directory)" },
-          // #117: null stays wire-admissible so the domain rejects it with
-          // E_BAD_PAYLOAD; dsh would otherwise answer INVALID_ARGS before the
-          // contract runs. Undocumented and never inferable.
           { type: "null" },
         ],
       },
@@ -77,11 +74,6 @@ export function buildEditTool(io: FileIO, sandbox: FsSandboxController) {
         enum: ["refuse", "utf8", "utf8bom"],
         description:
           'Per-call encoding-migration consent: "refuse" never converts this file, "utf8" / "utf8bom" convert it to UTF-8 without / with a BOM on this write (omit it to let the config decide)',
-        // The declared wire enum is the first gate: the host refuses a value outside it before the
-        // tool body runs — an out-of-enum string names the three values
-        // (`"arguments.allow_encoding_migration" must be one of ["refuse","utf8","utf8bom"]`), while
-        // a wrong type (`null`, boolean, number) reports `must be a string`. The contract's own
-        // `E_BAD_PAYLOAD` names the three values for any wrong value that reaches it.
       },
       ...(sandbox.escalationModes.length > 0 ? sandbox.schemaFields() : {}),
     },
@@ -98,20 +90,14 @@ export function buildEditTool(io: FileIO, sandbox: FsSandboxController) {
 
           const canonical = normReq(args);
           assertEditRequest(canonical);
-          // `assertEditRequest` narrows the raw args to the normalized contract.
           const req = canonical;
-          // #117: a null/absent file is rejected at admission (assertEditRequest);
-          // the retired anchor-inference arm never resolves one here.
           const resolvedFile = req.file;
           const dryRun = req.dry_run === true;
-          // WHY (#145): a preview writes nothing, so it resolves no write policy — that would ask for
-          // a permission the call cannot use, and a refusal would mask a pure preview behind it.
           const sandboxPolicy = dryRun
             ? undefined
             : await sandbox.resolvePolicy(
                 "edit",
                 // SAFETY: `resolvePolicy` reads only sandbox_permissions/justification;
-                // the file/edits fields are legacy context it ignores.
                 { file: resolvedFile, edits: req.edits } as unknown as FsEscalationArgs,
                 exec,
               );
@@ -131,7 +117,6 @@ export function buildEditTool(io: FileIO, sandbox: FsSandboxController) {
             });
           }
 
-          // Deep seam: one interface, all lifecycle branching concentrates in Mutation
           return execute({
             io,
             items,
@@ -141,7 +126,6 @@ export function buildEditTool(io: FileIO, sandbox: FsSandboxController) {
             sandbox,
             sandboxPolicy,
             dryRun,
-            // Carried only when the payload named it: absent means "the config decides".
             ...(req.allow_encoding_migration === undefined
               ? {}
               : { allowEncodingMigration: req.allow_encoding_migration }),

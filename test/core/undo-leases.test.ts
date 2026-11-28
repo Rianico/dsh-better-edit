@@ -33,7 +33,6 @@ describe("undo leases — read, edit, undo through the real tools", () => {
       const leases = () => withWorkspace(cwd, () => internalStore());
       const fileText = () => readFile(path, "utf8");
 
-      // Step 1 — read: full serve, ids 1..4 on a fresh path.
       const servedA = await read();
       expect(servedA).toHaveLength(4);
       const betaAnchor = servedA[1]!;
@@ -43,7 +42,6 @@ describe("undo leases — read, edit, undo through the real tools", () => {
       );
       expect(lineageA.map((row) => row.lineId)).toEqual([1, 2, 3, 4]);
 
-      // Step 2 — edit 1 removes the beta line (beta's lease must retire).
       await editTool.execute("edit", {
         path: "undo-flow.txt",
         anchor_from: betaAnchor,
@@ -59,7 +57,6 @@ describe("undo leases — read, edit, undo through the real tools", () => {
       expect(betaLease).toBeDefined();
       expect(betaLease?.retiredAt).not.toBeNull();
 
-      // Step 3 — edit 2 renames gamma to GAMMA (granted live now, gone after undo).
       const gammaAnchorB1 = await withWorkspace(cwd, async () => {
         const store = await leases();
         const rows = store.lineageFor(path, snapshotHashFor(textB1));
@@ -84,14 +81,10 @@ describe("undo leases — read, edit, undo through the real tools", () => {
       );
       expect(gammaLive?.retiredAt).toBeNull();
 
-      // Step 4 — undo reverts edit 2, restoring the edit-1 content.
       const undoTool = harness.getTool("undo_last_edit");
       await undoTool.execute("undo", { path: "undo-flow.txt" });
       expect(await fileText()).toBe(textB1);
 
-      // Evidence 1: the restore revives the exact pre-edit assignments — same anchor,
-      // same line id (ADR-0017 reversal). The revived anchor is live again; the
-      // superseded post-edit anchor is the one that retires.
       const storeU = await leases();
       const lineageU = await withWorkspace(cwd, async () =>
         storeU.lineageFor(path, snapshotHashFor(textB1)),
@@ -107,21 +100,15 @@ describe("undo leases — read, edit, undo through the real tools", () => {
       expect(gammaRestored).toBeDefined();
       expect(gammaRestored?.retiredAt).toBeNull();
       expect(gammaRestored?.lineId).toBe(3);
-      // Adopt, not fresh: exact pre-edit ids per line (fresh would differ).
       const idByCanon = new Map(lineageU.map((row) => [row.canonHash, row.lineId] as const));
       expect(idByCanon.get(canonDigest("alpha"))).toBe(1);
       expect(idByCanon.get(canonDigest("gamma"))).toBe(3);
       expect(idByCanon.get(canonDigest("delta"))).toBe(4);
-      // The superseded assignment is never resurrected.
-      // The superseded post-edit assignment never comes back: the line it named left the
-      // restored content, so its anchor stays retired.
       const gammaSuperseded = await withWorkspace(cwd, async () =>
         storeU.leaseFor("test-session", path, gammaAnchorNow),
       );
       expect(gammaSuperseded?.retiredAt).not.toBeNull();
 
-      // Evidence 2: the line the edit removed and the undo never re-served stays retired
-      // (the restored assignment is the pre-edit one, not a fresh allocation).
       const betaStill = await withWorkspace(cwd, async () =>
         storeU.leaseFor("test-session", path, betaAnchor),
       );
@@ -131,9 +118,6 @@ describe("undo leases — read, edit, undo through the real tools", () => {
   });
 
   it("stale post-edit anchors fail loudly and change nothing", async () => {
-    // Guard mechanism: the served-anchor hash-equality check in applyEdit
-    // (anchor-pipeline.ts) rejects anchors absent from the current assignment —
-    // after the restore that is the superseded post-edit anchor, not the pre-edit one.
     await withTempFile("undo-stale.txt", "alpha\nbeta\ngamma\ndelta\n", async ({ cwd, path }) => {
       const harness = setupIntegrationTest(cwd);
       const readTool = harness.getTool("read");
@@ -194,7 +178,7 @@ describe("undo leases — read, edit, undo through the real tools", () => {
         staleMessage = error instanceof Error ? error.message : String(error);
       }
       expect(threw).toBe(true);
-      expect(staleCode).toBe("E_BATCH_ABORT");
+      expect(staleCode).toBe("E_STALE_ANCHOR");
       expect(staleMessage).toContain("[E_STALE_ANCHOR]");
       expect(await fileText()).toBe(beforeStale);
     });

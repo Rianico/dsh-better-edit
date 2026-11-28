@@ -5,17 +5,14 @@ describe("coverage-agent-e last2", () => {
   it("covers undo-edit and tool-read", async () => {
     await withTempFile("a.txt", "a\nb\nc\n", async ({ cwd }) => {
       const harness = setupIntegrationTest(cwd);
-      // read with offset/limit
       const r1 = await harness.readTool.execute("read", {
         path: "a.txt",
         offset: 1,
         limit: 1,
       } as any);
       expect(getText(r1).length).toBeGreaterThan(0);
-      // read with invalid offset
       const r2 = await harness.readTool.execute("read", { path: "a.txt", offset: 100 } as any);
       expect(typeof getText(r2)).toBe("string");
-      // undo with no history
       const u1 = await harness
         .getTool("undo_last_edit")
         .execute("undo_last_edit", { path: "a.txt" } as any);

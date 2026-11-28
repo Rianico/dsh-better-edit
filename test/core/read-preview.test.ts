@@ -223,3 +223,133 @@ describe("fmtReadPreview — maxTruncLines budget", () => {
     expect(result.nextOffset).toBe(3);
   });
 });
+
+describe("fmtReadPreview — multi-window budget vs intrinsic line cap", () => {
+  const BIG = "x".repeat(160_000);
+  const MID = "y".repeat(100_000);
+
+  it("omits a recoverable window with a budget notice and honest truncation (#153 repro)", async () => {
+    const content = [BIG, "skip", MID].join("\n") + "\n";
+    const result = await fmtReadPreview(
+      content,
+      {
+        windows: [
+          { offset: 1, limit: 1 },
+          { offset: 3, limit: 1 },
+        ],
+      },
+      undefined,
+      home.testPath,
+    );
+    expect(result.text).toContain("=== Lines 3-3 of 3 ===");
+    expect(result.text).toContain(
+      "[Section does not fit in the remaining 43.7KB read budget; not shown. Re-read it on its own.]",
+    );
+    expect(result.text).not.toContain("43.7KB limit");
+    expect(result.text).not.toContain("cannot show");
+    expect(result.served.map((row) => row.position)).toEqual([0]);
+    expect(result.text).not.toContain("y".repeat(1000));
+    expect(result.text.length).toBeLessThan(161_000);
+    expect(result.truncation?.truncated).toBe(true);
+    expect(result.truncation?.truncatedBy).toBe("bytes");
+    expect(result.truncation?.outputLines).toBe(0);
+  });
+
+  it("recovers the omitted line from a standalone read", async () => {
+    const content = [BIG, "skip", MID].join("\n") + "\n";
+    const result = await fmtReadPreview(content, { offset: 3, limit: 1 }, undefined, home.testPath);
+    expect(result.text).toMatch(/^[A-Za-z0-9]{3}│y{100000}$/);
+    expect(result.served.map((row) => row.position)).toEqual([2]);
+    expect(result.truncation).toBeUndefined();
+  });
+
+  it("keeps a smaller later section renderable after a budget-omitted one", async () => {
+    const content = [BIG, "skip", MID, "gap", "tiny"].join("\n") + "\n";
+    const result = await fmtReadPreview(
+      content,
+      {
+        windows: [
+          { offset: 1, limit: 1 },
+          { offset: 3, limit: 1 },
+          { offset: 5, limit: 1 },
+        ],
+      },
+      undefined,
+      home.testPath,
+    );
+    expect(result.text).toContain(
+      "[Section does not fit in the remaining 43.7KB read budget; not shown. Re-read it on its own.]",
+    );
+    expect(result.text).toContain("=== Lines 5-5 of 5 ===");
+    expect(result.text).toContain("│tiny");
+    expect(result.served.map((row) => row.position)).toEqual([0, 4]);
+    expect(result.truncation?.truncatedBy).toBe("bytes");
+  });
+
+  it("stops a mixed later section at the budget and serves only its shown rows", async () => {
+    const content = [BIG, "skip", "small", MID].join("\n") + "\n";
+    const result = await fmtReadPreview(
+      content,
+      {
+        windows: [
+          { offset: 1, limit: 1 },
+          { offset: 3, limit: 2 },
+        ],
+      },
+      undefined,
+      home.testPath,
+    );
+    expect(result.text).toContain("=== Lines 3-4 of 4 ===");
+    expect(result.text).toContain("│small");
+    expect(result.text).not.toContain("[Line 4: ");
+    expect(result.text).not.toContain("exceeds the");
+    expect(result.text).not.toContain("y".repeat(1000));
+    expect(result.served.map((row) => row.position)).toEqual([0, 2]);
+    expect(result.truncation?.truncatedBy).toBe("bytes");
+    expect(result.truncation?.outputLines).toBe(1);
+  });
+
+  it("cites the intrinsic 200 KiB cap for an oversized line in a later section", async () => {
+    const content = [BIG, "skip", "z".repeat(210_000)].join("\n") + "\n";
+    const result = await fmtReadPreview(
+      content,
+      {
+        windows: [
+          { offset: 1, limit: 1 },
+          { offset: 3, limit: 1 },
+        ],
+      },
+      undefined,
+      home.testPath,
+    );
+    expect(result.text).toContain("[Line 3: 205.1KB; not shown.]");
+    expect(result.text).toContain(
+      "[Line 3 exceeds the 200.0KB limit; the read tool cannot show it.]",
+    );
+    expect(result.text).not.toContain("43.7KB limit");
+    expect(result.served.map((row) => row.position)).toEqual([0]);
+  });
+
+  it("does not warn about an oversized row the shown prefix never reached", async () => {
+    const content =
+      [BIG, "skip", "a".repeat(30_000), "b".repeat(30_000), "z".repeat(210_000)].join("\n") + "\n";
+    const result = await fmtReadPreview(
+      content,
+      {
+        windows: [
+          { offset: 1, limit: 1 },
+          { offset: 3, limit: 3 },
+        ],
+      },
+      undefined,
+      home.testPath,
+    );
+    expect(result.text).toContain("=== Lines 3-5 of 5 ===");
+    expect(result.text).toContain("│a");
+    expect(result.text).not.toContain("[Line 5: ");
+    expect(result.text).not.toContain("exceeds the");
+    expect(result.text).not.toContain("│b");
+    expect(result.served.map((row) => row.position)).toEqual([0, 2]);
+    expect(result.truncation?.truncatedBy).toBe("bytes");
+  });
+});

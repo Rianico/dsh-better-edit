@@ -18,11 +18,6 @@ import { codeOf } from "../../src/utils.js";
  * Flip procedure (load-bearing proof, run before committing any change to the route):
  * invert `acceptsInteriorHole` in src/hashline/served-evidence.ts
  * (`k !== 0 && k !== servedLen - 1` → `k === 0 || k === servedLen - 1`) and run `pnpm test`:
- * the authoritative RED set is ledger id RX1M1 (test/tools/mutate-ledger.mjs) — 8/8
- * interior-hole cells spanning this file, lease-resolve-seam, range-family-retry-truth
- * (C2) and read-windows; run `node test/tools/mutate-ledger.mjs RX1M1` (NO_COLOR=1) to
- * re-measure. The same one-family property holds for `owesInteriorScan` and
- * `checksPosition` — the falsifier comments below name the landing per cell.
  */
 
 const FILE_LINES = ["alpha", "beta", "gamma"];
@@ -102,23 +97,14 @@ function verifyGate(served: (string | null)[]): void {
 
 describe("interior-hole conjunction — ServedEvidenceRoute answers the five sites (APSD-P1)", () => {
   it("interior-hole conjunction: the leased route accepts a holed window end-to-end", () => {
-    // The ONLY permissive decisions on this path are the gate's `acceptsInteriorHole` and the
-    // position-check `checksPosition` skip; the scan is off via `owesInteriorScan`.
-    // Falsifier: invert `acceptsInteriorHole` or `checksPosition` → E_STALE_RANGE at line 2;
-    // flip the scan's route test to run on leased → E_UNSERVED_RANGE. Both land in this family.
     expect(codeOfCall(() => verifyE2E(denseSource()))).toBeUndefined();
   });
 
   it("interior-hole conjunction: the gate accepts an interior null and verifies the boundary leases", () => {
-    // Falsifier: invert `acceptsInteriorHole` → E_STALE_RANGE "was never served" at line 2.
     expect(codeOfCall(() => verifyGate([H0, null, H2]))).toBeUndefined();
   });
 
   it("interior-hole conjunction: the gate rejects a null end-boundary — the named anchor stays fail-closed", () => {
-    // The same window with the hole at k = servedLen - 1: `acceptsInteriorHole` must say no.
-    // Falsifier: invert `acceptsInteriorHole` → the boundary is accepted, falls to
-    // `leaseFor(null)` and the headline changes to "no served line identity." — this assert
-    // goes RED while the interior-accept cells above flip in the same run: one family.
     const error = rejectionFrom(() => verifyGate([H0, H1, null]));
     expect(codeOf(error)).toBe("E_STALE_RANGE");
     expect(String(error.message)).toContain("line 3 in x.ts was never served.");
@@ -126,10 +112,6 @@ describe("interior-hole conjunction — ServedEvidenceRoute answers the five sit
   });
 
   it("interior-hole conjunction: the mirror route rejects the same hole via its interior scan", () => {
-    // Decision 2: on the mirror route the scan owns the hole — the gate never runs.
-    // Falsifier: invert `owesInteriorScan` (leased↔mirror) → this rejects with E_STALE_RANGE
-    // from the position comparison instead; the leased end-to-end cell flips to
-    // E_UNSERVED_RANGE. Both are interior-hole-conjunction cells.
     const error = rejectionFrom(() => verifyE2E());
     expect(codeOf(error)).toBe("E_UNSERVED_RANGE");
     expect(error.unservedKind).toBe("interior");
@@ -137,8 +119,6 @@ describe("interior-hole conjunction — ServedEvidenceRoute answers the five sit
   });
 
   it("interior-hole conjunction: the mirror route accepts a dense window (the scan is not a blanket reject)", () => {
-    // Guards against a route inversion that would make the mirror scan reject everything:
-    // a holed-out mirror is still refused (cell above), a served-dense mirror passes.
     expect(
       codeOfCall(() =>
         verifyServedRange({
@@ -155,10 +135,6 @@ describe("interior-hole conjunction — ServedEvidenceRoute answers the five sit
   });
 
   it("interior-hole conjunction: an unleased boundary is refused at the interception before the hole is judged", () => {
-    // The boundary-interception site consults the SAME route value: leased kind, missing
-    // boundary lease → E_UNKNOWN_ANCHOR, no rows, the hole never reaches the gate.
-    // Falsifier: hard-code the interception to always run (drop the route test) → the mirror
-    // cells above turn RED with E_UNKNOWN_ANCHOR (the mirror route has no source to consult).
     const noStartLease: LeaseSpanSource = {
       leaseFor: (anchor) => (anchor === H2 ? denseSource().leaseFor(H2) : undefined),
       rebasedLineOf: () => 3,

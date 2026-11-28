@@ -9,7 +9,6 @@
  * here: they live in `store-tenancy`/`store-lifecycle`, and re-exporting the
  * store barrel from this file closed the cycle
  * `paths → store/index → store-lifecycle → paths`. Name the owning leaf.
- * @module dsh-better-edit/paths
  */
 import { isAbsolute } from "node:path";
 import { resolve as resolvePath } from "node:path";

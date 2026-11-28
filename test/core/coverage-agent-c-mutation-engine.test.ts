@@ -18,13 +18,10 @@ describe("coverage: mutation engine collectRemovedHashes / countLineChanges", ()
     const hashes = ["aaa", "bbb", "ccc", "ddd"];
     const edit: any = { hash_bounds: [{ hash: "bbb" }, { hash: "ccc" }], content_lines: ["x"] };
     expect(collectRemovedHashes(edit, hashes).size).toBe(2);
-    // reversed hashes still collect
     const editRev: any = { hash_bounds: [{ hash: "ccc" }, { hash: "bbb" }], content_lines: ["x"] };
     expect(collectRemovedHashes(editRev, hashes).size).toBe(2);
-    // not found -> empty
     const editMiss: any = { hash_bounds: [{ hash: "zzz" }, { hash: "yyy" }], content_lines: ["x"] };
     expect(collectRemovedHashes(editMiss, hashes).size).toBe(0);
-    // one found one not -> empty
     const editOneMiss: any = {
       hash_bounds: [{ hash: "bbb" }, { hash: "zzz" }],
       content_lines: ["x"],
@@ -46,15 +43,12 @@ describe("coverage: mutation engine collectRemovedHashes / countLineChanges", ()
       hash_bounds: [{ hash: "h2" }, { hash: "h3" }],
       content_lines: ["a", "b", "c"],
     };
-    // removed 2 lines (h2-h3), added 3 minus autoFixes 1 => 2
     expect(countLineChanges(edit, hashes, false, 1)).toEqual({
       totalAddedLines: 2,
       totalRemovedLines: 2,
     });
-    // reversed bounds still works via indexOf
     const editRev: any = { hash_bounds: [{ hash: "h3" }, { hash: "h2" }], content_lines: ["a"] };
     expect(countLineChanges(editRev, hashes, false, 0).totalRemovedLines).toBe(2);
-    // hashes not found -> removed 0
     const editMiss: any = {
       hash_bounds: [{ hash: "zz" }, { hash: "yy" }],
       content_lines: ["a", "b"],
@@ -126,7 +120,6 @@ describe("coverage: mutation engine applyOne", () => {
     const content = "a\nb\nc";
     const hashes = lineHashesPure(content);
     let rejected: any;
-    // use stale hash
     await applyOne(
       {
         content,
@@ -174,21 +167,22 @@ describe("coverage: mutation engine applyOne", () => {
 });
 
 describe("coverage: mutation engine enforceNoopLoop", () => {
-  it("batch: throws at threshold and notice at 2", async () => {
+  it("batch: rejects at threshold and notice at 2", async () => {
     const { NOOP_LOOP_THRESHOLD } = await import("../../src/constants.js");
-    await expect(
-      enforceNoopLoop({
-        anchorFrom: "aaa",
-        anchorTo: "aaa",
-        displayPath: "a.txt",
-        index: 0,
-        count: NOOP_LOOP_THRESHOLD,
-        originalNormalized: "a\nb\nc",
-        echoRows: [{ position: 0, hash: "h1" }],
-      }),
-    ).rejects.toThrow(/E_NOOP_LOOP/);
+    const rejected = await enforceNoopLoop({
+      anchorFrom: "aaa",
+      anchorTo: "aaa",
+      displayPath: "a.txt",
+      index: 0,
+      count: NOOP_LOOP_THRESHOLD,
+      originalNormalized: "a\nb\nc",
+      echoRows: [{ position: 0, hash: "h1" }],
+    });
+    expect(rejected).toMatchObject({ action: "reject" });
+    if (rejected?.action !== "reject") throw new Error("expected a reject decision");
+    expect(rejected.error.message).toContain("[TO MODEL] [E_NOOP_LOOP]");
 
-    const notice = await enforceNoopLoop({
+    const decision = await enforceNoopLoop({
       anchorFrom: "aaa",
       anchorTo: "aaa",
       displayPath: "a.txt",
@@ -196,8 +190,10 @@ describe("coverage: mutation engine enforceNoopLoop", () => {
       count: 2,
       originalNormalized: "a\nb\nc",
     });
-    expect(notice).toMatch(/^\[MODEL\] \[W_NOOP\] Notice:/);
-    expect(notice).toMatch(/Resend will reject the batch\./);
+    expect(decision?.action).toBe("warn");
+    if (decision?.action !== "warn") throw new Error("expected a warn decision");
+    expect(decision.notice).toMatch(/^\[MODEL\] \[W_NOOP\] Notice:/);
+    expect(decision.notice).toMatch(/Resend will reject the batch\./);
 
     const none = await enforceNoopLoop({
       anchorFrom: "aaa",
@@ -210,44 +206,38 @@ describe("coverage: mutation engine enforceNoopLoop", () => {
     expect(none).toBeUndefined();
   });
 
-  // F5 pin: the registry owns the single `Current on-disk range:` heading —
-  // the engine passes raw rows, so the heading renders exactly once.
   it("batch reject renders the on-disk heading exactly once", async () => {
     const { NOOP_LOOP_THRESHOLD } = await import("../../src/constants.js");
-    let caught: Error | undefined;
-    try {
-      await enforceNoopLoop({
-        anchorFrom: "aaa",
-        anchorTo: "aaa",
-        displayPath: "a.txt",
-        index: 0,
-        count: NOOP_LOOP_THRESHOLD,
-        originalNormalized: "a\nb\nc",
-        echoRows: [{ position: 0, hash: "h1" }],
-      });
-    } catch (error) {
-      caught = error as Error;
-    }
-    expect(caught).toBeDefined();
-    expect(caught!.message).toBe(
-      "[TO MODEL] [E_NOOP_LOOP] edits[0] (a.txt): identical edit (aaa → aaa) submitted 3×, no changes each time. " +
+    const decision = await enforceNoopLoop({
+      anchorFrom: "aaa",
+      anchorTo: "aaa",
+      displayPath: "a.txt",
+      index: 0,
+      count: NOOP_LOOP_THRESHOLD,
+      originalNormalized: "a\nb\nc",
+      echoRows: [{ position: 0, hash: "h1" }],
+    });
+    if (decision?.action !== "reject") throw new Error("expected a reject decision");
+    expect(decision.error.message).toBe(
+      "[TO MODEL] [E_NOOP_LOOP] identical edit (aaa → aaa) submitted 3×, no changes each time. " +
         "Range already contains this text; resend will reject the batch.\nCurrent on-disk range:\nh1│a",
     );
-    expect(caught!.message.match(/Current on-disk range:/g)).toHaveLength(1);
+    expect(decision.error.message.match(/Current on-disk range:/g)).toHaveLength(1);
   });
 
-  it("batch without echoRows still throws", async () => {
+  it("batch without echoRows still refuses", async () => {
     const { NOOP_LOOP_THRESHOLD } = await import("../../src/constants.js");
-    await expect(
-      enforceNoopLoop({
-        anchorFrom: "aaa",
-        anchorTo: "aaa",
-        displayPath: "a.txt",
-        index: 1,
-        count: NOOP_LOOP_THRESHOLD,
-        originalNormalized: "a\nb\nc",
-      }),
-    ).rejects.toThrow(/E_NOOP_LOOP/);
+    const decision = await enforceNoopLoop({
+      anchorFrom: "aaa",
+      anchorTo: "aaa",
+      displayPath: "a.txt",
+      index: 1,
+      count: NOOP_LOOP_THRESHOLD,
+      originalNormalized: "a\nb\nc",
+    });
+    if (decision?.action !== "reject") throw new Error("expected a reject decision");
+    expect(decision.error.servedRows).toEqual([]);
+    expect(decision.error.servedBlock).toBe("");
   });
 });
 
@@ -335,7 +325,6 @@ describe("coverage: mutation engine persistUndoAndWrite", () => {
         undoUnavailableMessage: (p) => `undo ${p}`,
       }),
     ).rejects.toThrow(/disk full/);
-    // first file was written then restored via second writeText call for restore + restore undo
     expect(restore1).toHaveBeenCalled();
     saveSpy.mockRestore();
   });
@@ -370,8 +359,6 @@ describe("coverage: mutation engine persistUndoAndWrite", () => {
     saveSpy.mockRestore();
   });
 
-  // ADR-0034: a write failure restores the undo rows of the files it never wrote. The transaction
-  // owns that decision — the arity of the request must not enter into it.
   it("restores the unwritten undo rows on a failed write (arity must not decide)", async () => {
     const r1 = vi.fn(async () => {});
     const r2 = vi.fn(async () => {});
@@ -409,7 +396,6 @@ describe("coverage: mutation engine persistUndoAndWrite", () => {
         undoUnavailableMessage: () => "x",
       }),
     ).rejects.toThrow();
-    // r2 is the undo row of file 2, which was never written — it must be restored.
     expect(r2).toHaveBeenCalled();
     saveSpy.mockRestore();
   });
@@ -449,7 +435,6 @@ describe("mutation transaction — a failed multi-item write leaves undo history
         return extractHash(row);
       };
 
-      // The previous edit — its undo row is the authority that must survive the failure.
       const served = await readTool.execute("read-1", { path: "failed-batch-undo.txt" });
       const two = anchorOf(served, "two");
       await editTool.execute("edit-1", {
@@ -458,7 +443,6 @@ describe("mutation transaction — a failed multi-item write leaves undo history
       });
       expect(await readFile(path, "utf-8")).toBe(afterFirstEdit);
 
-      // A two-item edit takes the batch branch (`items.length > 1`) and its write fails.
       const reServed = await readTool.execute("read-2", { path: "failed-batch-undo.txt" });
       const one = anchorOf(reServed, "one");
       const three = anchorOf(reServed, "three");
@@ -472,14 +456,11 @@ describe("mutation transaction — a failed multi-item write leaves undo history
           ],
         }),
       ).rejects.toThrow(/disk full/);
-      // The failed edit wrote nothing.
       expect(await readFile(path, "utf-8")).toBe(afterFirstEdit);
 
       failWrites = false;
       const undone = await undoTool.execute("undo_last_edit", { path: "failed-batch-undo.txt" });
-      // It must not report the previous edit as externally modified.
       expect(getText(undone)).not.toContain("E_UNDO_STALE");
-      // It must revert edit #1, which proves edit #1's undo row was still the authority.
       expect(await readFile(path, "utf-8")).toBe(initial);
     });
   });

@@ -6,11 +6,6 @@
  * write. The shadow did not, so a confining backend fell back to the deployment
  * default root and denied every `create` / `str_replace` / `insert` under
  * `workspace-write` — including targets inside the session workspace.
- *
- * The fake `ctx.fs` below enforces the real boundary — `writeText` refuses
- * unless the per-call policy is present and covers the target — so dropping the
- * policy again (the bug) fails these tests instead of only the real host.
- * @module dsh-better-edit/str-replace-sandbox-policy.test
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { FsError } from "@deepseek-ai/dsh-fs";
@@ -69,8 +64,6 @@ function makeConfinedFs() {
       ) => {
         const p = keyOf(t);
         writes.push({ path: p, content, policy });
-        // A missing policy falls back to the deployment default root, whose
-        // workspace-write boundary does not cover the session workspace.
         const root = policy?.mode === "danger-full-access" ? undefined : policy?.workspaceRoot;
         const contained =
           policy !== undefined &&
@@ -272,8 +265,6 @@ describe("shadow str_replace_editor stamps the sandbox policy", () => {
   });
 
   it("a rejected approval (approval policy never) fails the escalation closed before any write", async () => {
-    // ApprovalService with policy 'never' resolves every ask 'rejected'
-    // before any answerer sees it — exactly this mock.
     const { fake, tool, approvalRequest } = confinedTool("rejected");
     const p = `${OUTSIDE}/never.txt`;
     fake.seed(p, "alpha\nbravo\n");

@@ -8,12 +8,6 @@
  *
  * Private helpers inlined from the retired reader, renderer and truncate
  * modules: normFromText/fileSnap, fmtReadPreview, truncateHead.
- *
- * Two surfaces:
- *  - `fmtReadPreview` (pure, no IO) — tested without filesystem
- *  - `readView` (IO) — read + normalize + render + truncate + hashes
- *
- * @module dsh-better-edit/file-view
  */
 
 import { stat as fsStat } from "fs/promises";
@@ -39,12 +33,7 @@ export const MAX_HASH_LINES = HASH_SPACE;
 export const DEFAULT_MAX_LINES = 2000;
 export const DEFAULT_MAX_BYTES = 50 * 1024;
 
-// WHY: a multi-window read is still ONE tool result, so the window count is bounded — otherwise
-// WHY: `windows` would multiply the auto-read budget by N — and every window draws on the same
-// WHY: budget (buildWindowedPreview below). Co-located here with the other read budgets.
 export const MAX_READ_WINDOWS = 16;
-
-// --- Truncate (from truncate.ts, private to this seam) ---
 
 export interface TruncationResult {
   content: string;
@@ -146,9 +135,6 @@ export function truncateHead(
   };
 }
 
-// FU-6 (port of pi-better-edit@2334352, stat consolidation):
-// WHY: narrowing `fs.Stats` to the fields this codebase reasons about keeps `node:fs` out of the
-// WHY: domain types, so callers — tests included — can hand over a plain object, not a `Stats` fixture.
 /** Snapshot identity and size: the only `fs.Stats` fields this codebase reads. */
 export interface FileStats {
   ino: number;
@@ -156,8 +142,6 @@ export interface FileStats {
   mtimeMs: number;
   ctimeMs: number;
 }
-
-// --- File reader (private to this seam) ---
 
 export interface NormFile {
   absolutePath: string;
@@ -199,12 +183,6 @@ export async function fileSnap(
   preloadedStats?: FileStats,
 ): Promise<SnapInfo> {
   const canonicalPath = await resolveTarget(absolutePath);
-  // FU-6 (port of pi-better-edit@2334352, stat consolidation; upstream's `checksum` third
-  // parameter belongs to ADR-0013, which this tree does not carry — fmtSnapId has no checksum
-  // segment — so preloadedStats lands as the second argument):
-  // WHY: the load path stat'd this same canonical path to size the file and reject directories, so
-  // WHY: its `Stats` is authoritative for the snapshot id; re-stat'ing could only disagree with the
-  // WHY: bytes the caller has already read and hashed.
   const stats: FileStats = preloadedStats ?? (await fsStat(canonicalPath));
   return {
     snapshotId: fmtSnapId(canonicalPath, stats),
@@ -242,9 +220,6 @@ export async function normFromText(input: {
       throw new Error(eLargeFileMsg(displayPath, lineCount, input.maxLines));
     }
   }
-  // The served mirror is canon-joined, so it describes this content only while every line's canon
-  // still matches. A drifted read drops it and falls through to the cached snapshot / lineage
-  // alignment — the checksum-miss path — instead of re-deriving anchors from a stale map.
   const mirrorHolds =
     input.previous !== undefined &&
     input.previous.content ===
@@ -274,8 +249,6 @@ export async function normFromText(input: {
     hadUtf8DecodeErrors: input.hadUtf8DecodeErrors === true,
   };
 }
-
-// --- Read render (private to this seam) ---
 
 function normPosInt(value: number | undefined, name: string): number | undefined {
   if (value === undefined) return undefined;
@@ -354,12 +327,6 @@ export function formatPaginationHint(
   return `[Showing lines ${startLine}-${endLine} of ${totalLines}${sizeSuffix}. Use offset=${nextOffset} to continue.]`;
 }
 
-// FU-6 (port of pi-better-edit@2334352): the oversized and normal render paths were extracted
-// from fmtReadPreview's body into the builders below — the multi-window sections must route
-// through the SAME pipeline a single-window read uses, on ONE shared budget (same render arms,
-// budget-relative measurement — see buildWindowSection). Single-window behavior is unchanged
-// (pinned by read-preview tests).
-
 function oversizedLineFacts(oversized: { lineNumber: number }[]): {
   lineLabel: string;
   verb: string;
@@ -380,40 +347,62 @@ function buildOversizedPreview(params: {
   selectedHashes: string[];
   startLine: number;
   totalLines: number;
-  maxBytes: number;
+  /** The intrinsic per-line cap: a row longer than this is never rendered. */
+  maxLineBytes: number;
+  /** The response budget left for this page's rows: truncation stops here. */
+  remainingBytes: number;
   maxTruncLines: number;
-  // WHY: a window is a bounded ask, so its section must not advertise a page it never owed
-  // WHY: (mirrors buildNormalPreview); a genuinely truncated window still keeps its own hint.
   hintRemainder?: boolean;
+  /** Cite only the oversized rows the shown prefix reached (multi-window sections). */
+  listedWithinShownPrefix?: boolean;
 }): { text: string; truncation?: TruncationResult; nextOffset?: number; served: ServedRow[] } {
-  const { rowSizes, selected, selectedHashes, startLine, totalLines, maxBytes, maxTruncLines } =
-    params;
-  const oversized = rowSizes.filter((row) => row.bytes > maxBytes);
+  const {
+    rowSizes,
+    selected,
+    selectedHashes,
+    startLine,
+    totalLines,
+    maxLineBytes,
+    remainingBytes,
+    maxTruncLines,
+  } = params;
+  const oversized = rowSizes.filter((row) => row.bytes > maxLineBytes);
   const rows = rowSizes.map((row, index) =>
-    row.bytes > maxBytes
+    row.bytes > maxLineBytes
       ? `[Line ${row.lineNumber}: ${formatSize(row.bytes)}; not shown.]`
       : fmtRegion([selectedHashes[index]!], [selected[index]!]),
   );
-  const skippedTruncation = truncateHead(rows.join("\n"), { maxBytes, maxLines: maxTruncLines });
+  const skippedTruncation = truncateHead(rows.join("\n"), {
+    maxBytes: remainingBytes,
+    maxLines: maxTruncLines,
+  });
   const shownRowCount =
     skippedTruncation.content === "" ? 0 : skippedTruncation.content.split("\n").length;
   const lastShownLine = shownRowCount > 0 ? startLine + shownRowCount - 1 : startLine - 1;
-  const { lineLabel, verb, pronoun } = oversizedLineFacts(oversized);
-  const warning = `[${lineLabel} ${verb} the ${formatSize(maxBytes)} limit; the read tool cannot show ${pronoun}.]`;
+  const listed =
+    params.listedWithinShownPrefix === true && shownRowCount > 0
+      ? oversized.filter((row) => row.lineNumber < startLine + shownRowCount)
+      : oversized;
+  const { lineLabel, verb, pronoun } = oversizedLineFacts(listed);
+  const warning =
+    listed.length === 0
+      ? undefined
+      : `[${lineLabel} ${verb} the ${formatSize(maxLineBytes)} limit; the read tool cannot show ${pronoun}.]`;
+  const warningBlock = warning === undefined ? "" : `\n\n${warning}`;
   let preview = skippedTruncation.content;
   let nextOffset: number | undefined;
   if (shownRowCount > 0 && skippedTruncation.truncated) {
     nextOffset = lastShownLine + 1;
-    preview += `\n\n${warning}\n${formatPaginationHint(startLine, lastShownLine, totalLines, nextOffset, skippedTruncation.maxBytes)}`;
+    preview += `${warningBlock}\n\n${formatPaginationHint(startLine, lastShownLine, totalLines, nextOffset, skippedTruncation.maxBytes)}`;
   } else if (shownRowCount > 0 && params.hintRemainder !== false && lastShownLine < totalLines) {
     nextOffset = lastShownLine + 1;
-    preview += `\n\n${warning}\n${formatPaginationHint(startLine, lastShownLine, totalLines, nextOffset)}`;
+    preview += `${warningBlock}\n\n${formatPaginationHint(startLine, lastShownLine, totalLines, nextOffset)}`;
   } else {
-    preview += `\n\n${warning}`;
+    preview += warningBlock;
   }
   const served: ServedRow[] = [];
   for (let index = 0; index < shownRowCount; index++) {
-    if (rowSizes[index]!.bytes <= maxBytes) {
+    if (rowSizes[index]!.bytes <= maxLineBytes) {
       served.push({
         position: startLine - 1 + index,
         hash: selectedHashes[index]!,
@@ -436,8 +425,6 @@ function buildNormalPreview(params: {
   maxBytes: number;
   maxTruncLines: number;
   selectedHashes: string[];
-  // WHY: an entry of an explicit `windows` request is a bounded ask, not a page: the caller named
-  // WHY: exactly these lines, so a trailing "use offset=N to continue" would invent intent.
   hintRemainder?: boolean;
 }): {
   preview: string;
@@ -500,7 +487,6 @@ function mergeWindowRuns(windows: readonly ReadWindow[], totalLines: number): Wi
     }
     intervals.push({
       startLine: window.offset,
-      // WHY: the end is exclusive, and `offset + limit` can overshoot the file by thousands.
       endLine: Math.min(window.offset - 1 + window.limit, totalLines),
       order,
     });
@@ -516,17 +502,15 @@ function mergeWindowRuns(windows: readonly ReadWindow[], totalLines: number): Wi
     }
     runs.push({ kind: "run", ...interval });
   }
-  // WHY: the caller's order is part of the request; `order` is unique, so this sort is total.
   return [...runs, ...pastEof].sort((left, right) => left.order - right.order);
 }
 
 /**
- * Renders one window through the same oversized/truncation pipeline a single-window read uses, but
- * against the shared budget actually LEFT to this window: `maxBytes`/`maxTruncLines` are the
- * caller's remaining bytes/lines, not the single-read caps. The render arm is identical while the
- * measurement is not — a 120KB line under a 200KB single-read cap is reported oversized as
- * "exceeds the 80KB limit" once earlier windows spent the shared budget down to 80KB. A window degrades like
- * the same range read alone only while the shared budget is still unspent.
+ * Renders one window through the same oversized/truncation pipeline a single-window read uses, except
+ * that the intrinsic per-line cap (`maxLineBytes`) and the shared response budget (`remainingBytes`)
+ * stay separate: a recoverable row that misses the budget truncates or omits the section instead of
+ * being mistaken for an oversized line. Only a row longer than the intrinsic cap is oversized, so its
+ * placeholder and warning always cite that cap, never the budget the earlier sections spent.
  */
 function buildWindowSection(params: {
   rowSizes: { lineNumber: number; bytes: number }[];
@@ -535,8 +519,12 @@ function buildWindowSection(params: {
   startLine: number;
   endIdx: number;
   totalLines: number;
-  maxBytes: number;
-  maxTruncLines: number;
+  /** The full single-read line cap, so a section classifies oversized lines like a lone read. */
+  maxLineBytes: number;
+  /** The response budget left for this section's rows. */
+  remainingBytes: number;
+  /** The line budget left for this section's rows. */
+  remainingLines: number;
 }): { text: string; truncation?: TruncationResult; served: ServedRow[] } {
   const {
     rowSizes,
@@ -545,19 +533,33 @@ function buildWindowSection(params: {
     startLine,
     endIdx,
     totalLines,
-    maxBytes,
-    maxTruncLines,
+    maxLineBytes,
+    remainingBytes,
+    remainingLines,
   } = params;
-  if (rowSizes.some((row) => row.bytes > maxBytes)) {
+  const [firstRow] = rowSizes;
+  if (firstRow !== undefined && firstRow.bytes <= maxLineBytes && firstRow.bytes > remainingBytes) {
+    return {
+      text: `[Section does not fit in the remaining ${formatSize(remainingBytes)} read budget; not shown. Re-read it on its own.]`,
+      truncation: truncateHead(fmtRegion(selectedHashes, selected), {
+        maxBytes: remainingBytes,
+        maxLines: remainingLines,
+      }),
+      served: [],
+    };
+  }
+  if (rowSizes.some((row) => row.bytes > maxLineBytes)) {
     return buildOversizedPreview({
       rowSizes,
       selected,
       selectedHashes,
       startLine,
       totalLines,
-      maxBytes,
-      maxTruncLines,
+      maxLineBytes,
+      remainingBytes,
+      maxTruncLines: remainingLines,
       hintRemainder: false,
+      listedWithinShownPrefix: true,
     });
   }
   const normal = buildNormalPreview({
@@ -565,8 +567,8 @@ function buildWindowSection(params: {
     startLine,
     endIdx,
     totalLines,
-    maxBytes,
-    maxTruncLines,
+    maxBytes: remainingBytes,
+    maxTruncLines: remainingLines,
     selectedHashes,
     hintRemainder: false,
   });
@@ -585,24 +587,21 @@ function buildWindowSection(params: {
  * position — while every section draws on ONE shared byte/line budget so N windows cannot multiply
  * the auto-read budget by N. Rows are served only for the lines actually shown; because each
  * position belongs to exactly one run, the union's position record is injective by construction.
- * The record is SORTED by position but never de-duplicated: the sort is load-bearing (runs render
- * in request order, so run order is not position order), yet a collector that dropped duplicates
- * would mask a `mergeWindowRuns` regression — overlapping runs would collapse into one served row
- * instead of surfacing as two for the same position.
  */
 function buildWindowedPreview(params: {
   windows: ReadWindow[];
   allLines: string[];
   allHashes: string[];
   totalLines: number;
-  maxBytes: number;
+  /** The full single-read line cap, shared with every section's intrinsic oversized check. */
+  maxLineBytes: number;
   maxTruncLines: number;
 }): { text: string; truncation?: TruncationResult; served: ServedRow[] } {
-  const { windows, allLines, allHashes, totalLines, maxBytes, maxTruncLines } = params;
+  const { windows, allLines, allHashes, totalLines, maxLineBytes, maxTruncLines } = params;
   const sections: string[] = [];
   const servedRows: ServedRow[] = [];
   let truncation: TruncationResult | undefined;
-  let remainingBytes = maxBytes;
+  let remainingBytes = maxLineBytes;
   let remainingLines = maxTruncLines;
 
   for (const plan of mergeWindowRuns(windows, totalLines)) {
@@ -619,8 +618,6 @@ function buildWindowedPreview(params: {
       sections.push(
         `${header}\n[Read budget exhausted; this section is not shown. Re-read it on its own.]`,
       );
-      // WHY: `metrics.truncated` must be honest when the shared budget cut a section away, so the
-      // WHY: same function that reports truncation elsewhere derives it from the budget actually spent.
       const skipped = truncateHead(fmtRegion(selectedHashes, selected), {
         maxBytes: Math.max(0, remainingBytes),
         maxLines: Math.max(0, remainingLines),
@@ -639,8 +636,9 @@ function buildWindowedPreview(params: {
       startLine: plan.startLine,
       endIdx: plan.endLine,
       totalLines,
-      maxBytes: remainingBytes,
-      maxTruncLines: remainingLines,
+      maxLineBytes,
+      remainingBytes,
+      remainingLines,
     });
     sections.push(`${header}\n${built.text}`);
     for (const row of built.served) servedRows.push(row);
@@ -652,9 +650,6 @@ function buildWindowedPreview(params: {
   return {
     text: sections.join("\n\n"),
     ...(truncation ? { truncation } : {}),
-    // WHY: a multi-window request is N discrete slices, not one stream, so the result carries no root
-    // WHY: `nextOffset`: a scalar would invite `offset = nextOffset` and silently re-read a window the
-    // WHY: caller never asked to continue. A truncated window says so in its own section text.
     served: [...servedRows].sort((left, right) => left.position - right.position),
   };
 }
@@ -677,7 +672,6 @@ export async function fmtReadPreview(
   const startLine = normPosInt(options.offset, "offset") ?? 1;
   const windows = normWindows(options.windows);
   if (totalLines === 0) {
-    // FU-6 (2334352): an empty-file `windows` request reports the first window's offset.
     const emptyStart = windows?.[0]?.offset ?? startLine;
     if (emptyStart === 1) {
       const allHashes =
@@ -693,8 +687,6 @@ export async function fmtReadPreview(
       served: [],
     };
   }
-  // FU-6 (2334352): `windows` wins when both are given — the dispatch runs before the
-  // single-window startLine validation, so a past-EOF offset in one window never fails the read.
   if (windows) {
     const allHashes =
       precomputedHashes ?? (await (path ? lineHashes(text, path) : lineHashes(text)));
@@ -703,7 +695,7 @@ export async function fmtReadPreview(
       allLines,
       allHashes,
       totalLines,
-      maxBytes: maxLineBytes,
+      maxLineBytes,
       maxTruncLines,
     });
   }
@@ -731,7 +723,8 @@ export async function fmtReadPreview(
       selectedHashes,
       startLine,
       totalLines,
-      maxBytes,
+      maxLineBytes: maxBytes,
+      remainingBytes: maxBytes,
       maxTruncLines,
     });
   }
@@ -751,8 +744,6 @@ export async function fmtReadPreview(
     served: normal.served,
   };
 }
-
-// --- FileView public surface (unchanged) ---
 
 export interface FileView {
   text: string;
@@ -836,8 +827,6 @@ export async function readView(
     fileHashes,
     absolutePath,
   );
-  // The ONE computation of the full-read verdict (ADR-0035): the whole file, no page request, and
-  // nothing truncated away. Consumers read `view.fullRead`; none of them re-derives it.
   const fullRead =
     opts.offset === undefined &&
     opts.limit === undefined &&

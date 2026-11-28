@@ -53,14 +53,14 @@ The model-facing word for the `served span` — the span between `remove_from` a
 _Avoid_: range (use `served range` for verified span, `range` for current file run)
 
 **served-range staleness**:
-The condition where the `served range` (span between anchors) cannot be reconciled with served state: interior `served span` vs `current span` mismatch (`hash`/`canon`/`retired`/`len`). Reported as `[E_STALE_RANGE]` (changed) or `[E_UNSERVED_RANGE]` (never-served, `details.unservedKind` `boundary`|`interior`). Both do `reject-and-serve`; when the region is unidentifiable the rejection is a `target-lost rejection`.
+The condition where the `served range` (span between anchors) cannot be reconciled with served state: interior `served span` vs `current span` mismatch (`hash`/`canon`/`retired`/`len`). Reported as `[E_STALE_RANGE]` (changed) or `[E_UNSERVED_RANGE]` (never-served, `details.unservedKind` `boundary`|`interior`); both unserved-interior voices name the replaced file-line count, the unserved count and the exact absolute file lines. Both do `reject-and-serve`; when the region is unidentifiable the rejection is a `target-lost rejection`.
 _Avoid_: range staleness (use `served range` for span)
 
 **never-served**:
-An interior line with no entry in the served record — the model was never shown that line. `hint` span mode accepts it and discloses the replaced interior (`[W_UNSERVED_INTERIOR]`, blank diff gutter); `strict` refuses the edit before any write with a rowless `[E_UNSERVED_RANGE]` naming the unserved file lines (ADR-0045).
+An interior line with no entry in the served record — the model was never shown that line. `hint` span mode accepts it and discloses the replaced interior (`[W_UNSERVED_INTERIOR]`, blank diff gutter), naming the replaced file-line count, the unserved count and the exact absolute file lines; `strict` refuses the edit before any write with a rowless `[E_UNSERVED_RANGE]` carrying the same facts (ADR-0045, ADR-0053).
 
 **unserved interior**:
-A `never-served` line strictly inside a resolved range. `hint` tolerates it and discloses the replacement; `strict` refuses a span that replaces one before any write (ADR-0045).
+A `never-served` line strictly inside a resolved range. `hint` tolerates it and discloses the replacement; `strict` refuses a span that replaces one before any write (ADR-0045). Both voices render through one formatter (`src/unserved-span-message.ts`), so they share grammar, plural agreement and list compression; a single line prints `Unserved file line: N`, never a collapsed range.
 _Avoid_: stale interior (staleness is a failed reconciliation, not a missing serve)
 
 **span mode**:
@@ -118,11 +118,11 @@ The invariant that every agent-issued file mutation passes through `file encodin
 _Avoid_: encoding handling (implies best-effort, not a gate)
 
 **encoding migration**:
-A write that replaced a legacy codec with UTF-8 — one-way and disclosed, never restored by undo. The verdict is taken once at the save seam (on the non-faithful arm only) and rides the undo pair, so the revert names the abandoned codec and its BOM state while restoring the text as UTF-8; the original bytes do not come back. See `effective EOL` (the revert's one ending) and `W_MIXED_EOL` (the sibling pre-image disclosure) for the mixture half of the same contract.
+A write that replaced a legacy codec with UTF-8 — one-way and disclosed, never restored by undo. The verdict is taken once at the save seam (on the non-faithful arm only) and rides the undo row (`file_undo`), so the revert names the abandoned codec and its BOM state while restoring the text as UTF-8; the original bytes do not come back. See `effective EOL` (the revert's one ending) and `W_MIXED_EOL` (the sibling pre-image disclosure) for the mixture half of the same contract.
 _Avoid_: transcode (a byte operation, not the disclosed one-way write), migration notice (that is the warning's name, not the event)
 
 **encoding migration consent**:
-The explicit permission a write needs before it may replace a file's legacy codec with UTF-8, plus the UTF-8 shape it targets. Two distinct surfaces: the per-call `edit` payload key `allow_encoding_migration` (`"refuse" | "utf8" | "utf8bom"`, optional — omitted means the config decides) and the standing `allowEncodingMigration` config setting (`DSH_BETTER_EDIT_ALLOW_ENCODING_MIGRATION`), whose absence falls through to the legacy `normalizeToUtf8` spelling (`true` = `"utf8"`); with nothing set the consent is `"refuse"`. `"utf8"` writes no BOM; `"utf8bom"` writes one leading `EF BB BF` that BOM-aware readers decode as UTF-8. A byte-faithful ASCII body needs no consent and never gains a BOM.
+The explicit permission a write needs before it may replace a file's legacy codec with UTF-8, plus the UTF-8 shape it targets. Two distinct surfaces: the per-call `edit` payload key `allow_encoding_migration` (`"refuse" | "utf8" | "utf8bom"`, optional — omitted means the config decides) and the standing `allowEncodingMigration` config setting in `$DSH_HOME/plugins/dsh-better-edit/config.yaml` (env override `DSH_BETTER_EDIT_ALLOW_ENCODING_MIGRATION`), whose absence falls through to the legacy `normalizeToUtf8` spelling (`true` = `"utf8"`); with nothing set the consent is `"refuse"`. `"utf8"` writes no BOM; `"utf8bom"` writes one leading `EF BB BF` that BOM-aware readers decode as UTF-8. A byte-faithful ASCII body needs no consent and never gains a BOM.
 _Avoid_: normalize flag (the legacy boolean, not the consent), migration setting (ambiguous between the payload key and the config setting)
 
 **governed edit path**:
@@ -134,12 +134,16 @@ A file mutation that bypasses `encoding governance` — the built-in `write`/`ed
 _Avoid_: native edit path
 
 **reject-and-serve**:
-The staleness policy: reject the edit and return the current content of the region the submitted anchors identify as `HASH|content` rows — a _region-matched_ serve. A serve refreshes the model's inputs for that region and never substitutes another region for those anchors; the echoed rows are the current file's anchors and ARE recorded as serves (rows + canons + snapshot + leases) when the verifier identified the region from the committed snapshot, so the retry needs no read (ADR-0043). A refusal that cannot identify the region (a changed batch buffer, a `target-lost rejection`, an unresolved anchor) carries no rows; a window whose echoed anchor the served mirror already holds elsewhere is declined — both name the read. "Region-matched" is the upstream referent's name (`pi-better-edit` ADR-0018) for "the window the submitted anchors identify".
+The staleness policy: reject the edit and return the current content of the region the submitted anchors identify as `HASH|content` rows — a _region-matched_ serve. A serve refreshes the model's inputs for that region and never substitutes another region for those anchors; the echoed rows are the current file's anchors and ARE recorded as serves (rows + canons + snapshot + leases) when the verifier identified the region from the committed snapshot, so the retry needs no read (ADR-0043). A refusal that cannot identify the region (a changed batch buffer, a `target-lost rejection`, an unresolved anchor) carries no rows; a window whose echoed anchor the `served_session_meta` mirror already holds elsewhere is declined — both name the read. "Region-matched" is the upstream referent's name (`pi-better-edit` ADR-0018) for "the window the submitted anchors identify".
 _Avoid_: reject-then-reread (only a rowless or declined refusal needs the read), context serve (no such operation exists), region (use `served span` / `served range`)
 
 **target-lost rejection**:
 A rejection whose region cannot be identified: the submitted anchors no longer name a live span (both bounds stale, a survivor that shifted, or a window that collapses or misses the file). Its payload carries **no rows** and no `Current range` heading; the headline names the previously served position and instructs a read, so no served coordinate the model never targeted becomes committable. Realized locally as an `[E_STALE_RANGE]` payload with an empty `servedRows` (`src/fs-bridge.ts`, F7) — the local disjointness signal is the row count, not the code.
 _Avoid_: context serve (dropped: no such operation exists), unverified range (unported upstream code)
+
+**batch rejection**:
+The one model-facing shape a failed `edit` call renders. A multi-item call leads with one verdict line — `Batch rejected: <K> of <N> edits failed; nothing was written.` — then one bullet per failing item, `- edits[<i>] (<path>) [<E_CODE>]: <diagnosis>`, with every continuation line indented two spaces so one failure stays one list entry. `N` is the submitted `edits.length` and `K` the number of failing items, so the verdict is the call's own arithmetic; each bullet keeps its own code and its own instruction. A one-item call (`N === 1`) has no batch to roll back and throws that item's own diagnosis instead: the header is the actionable code and no verdict or bullet appears. One assembler (`src/mutation/batch-rejection.ts`, `throwBatchRejection`) builds, records and throws every rejection, so a refusal that shows rows always leases them; a row-carrying failure passed with no recorder throws `TypeError` (ADR-0046, amended 2026-11-25).
+_Avoid_: batch error (name the code each bullet carries), "1 of 1" (a one-item call is not a batch), multi-error response
 
 **drift**:
 The divergence between the served state and the current file: lines the model was shown whose content has changed on disk since they were served. Detected by comparing served hashes against current hashes.
@@ -167,7 +171,7 @@ _Avoid_: duplicate serve (conflates duplicated content with relocated-line-keeps
 The file condition where a line's content survives an external write and, because no probe collision occurs at its new spot, the same hash is reproduced by a fresh hashing pass. Distinct from "duplicated content" (same text at two positions in one file gets two different hashes via probing).
 _Avoid_: duplicate content (implies same hash, which perfect hashing prevents)
 
-**retired anchor** (replaces `tombstone` — ADR-0013 term, DB column `served.retired`, code var `tombstone` is now `retired`):
+**retired anchor** (replaces `tombstone` — ADR-0013 term, DB column `served_session_meta.retired`; the v6 `served` shell keeps its shape but v7 never reads or writes it, ADR-0016/ADR-0055; code var `tombstone` is now `retired`):
 A hash freed by an edit since the last epoch (full read) that must not be reallocated while the model may still hold it. Per `(session, path)`. GC analogy: garbage not yet reclaimable. Replaces `tombstone` everywhere in docs; see also `retired entry` and `hazard card`.
 _Avoid_: tombstone (legacy term — use `retired anchor` for the hash, `retired entry` for the per-position record)
 
@@ -237,6 +241,20 @@ _Avoid_: cwd (ambiguous: header vs live), project root
 The directory the session was CREATED in, kept immutable in the session header (`exec.agent.session.header.cwd`). Not the operation target once a session has moved — read the working directory instead.
 _Avoid_: workspace (the workspace follows the live directory, not the header)
 
+### Store
+
+**store attachment**:
+The claim one agent id (the toolkit's `exec.agent.id`) places on one workspace's store path when a tool execution resolves that path. Lazy and idempotent — every call re-claims the same path without counting, and an attachment never opens the database. The agent that holds it decides when the handle may close.
+_Avoid_: store lock, store session
+
+**store detachment**:
+Releasing every attachment one agent id holds at its Cordis tear-down. The last release makes a close due: synchronous when no tool call is in flight, otherwise after the last in-flight scope drains. It breaks the claim only — no snapshot, served row, lease or undo record is deleted, so a resumed session still reverts.
+_Avoid_: store shutdown (the process close-all), store eviction
+
+**store release**:
+The host-level close over one store path or all of them (`releaseHashStore(cwd?, { force? })`), graceful or forced. It reports whether every targeted path settled its drain and closed — a refusal while an agent still holds the path reads `false`. See [ADR-0057](docs/adr/0057-session-scoped-per-workspace-store-lifecycle.md).
+_Avoid_: detach (that is the agent claim)
+
 ### Guidance
 
 **Prompt section**:
@@ -273,7 +291,7 @@ Restoring the compiled default guidance and order for an override file. Triggere
 _Avoid_: restore, regenerate, "recover the default prompt"
 
 **source of truth**:
-The file bytes on disk plus the lease store (`served_leases`, snapshots, `line_lineage`) — the sole authority for retry coordinates. Rendered diff text is never the source of truth; coordinates resolve through leases, never by re-reading a projection.
+The file bytes on disk plus the lease store (`served_leases`, `file_snapshots`, `line_lineage`) — the sole authority for retry coordinates. Rendered diff text is never the source of truth; coordinates resolve through leases, never by re-reading a projection.
 _Avoid_: machine diff (a projection, not the table)
 
 **projection**:

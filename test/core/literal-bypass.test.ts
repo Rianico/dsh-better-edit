@@ -51,10 +51,6 @@ describe("literal mode bypass (W_LITERAL_BYPASS)", () => {
     });
   });
 
-  // F1: an undeclared mode dies at admission (the declared enum), before
-  // the contract gate — the E_BAD_PAYLOAD contract rejection for unknown
-  // modes is pinned at the assertEditRequest level in
-  // coverage-agent-c-contract.test.ts.
   it("rejects an unknown mode at admission and writes nothing", async () => {
     const initial = "alpha\nbeta\n";
     await withTempFile("literal-badmode.txt", initial, async ({ cwd, path }) => {
@@ -66,9 +62,6 @@ describe("literal mode bypass (W_LITERAL_BYPASS)", () => {
           .find((line) => line.endsWith("│alpha"))!,
       );
 
-      // N1: pin the admission channel, not just any rejection — an
-      // undeclared mode dies at dsh admission (ToolArgsError/INVALID_ARGS)
-      // before the registry is ever reached.
       const error = await editTool
         .execute("bad-mode", {
           path: "literal-badmode.txt",

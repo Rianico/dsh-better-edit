@@ -1,14 +1,14 @@
 import { describe, it, expect } from "vitest";
-import { mkdtemp, writeFile, mkdir, rm } from "node:fs/promises";
-import { join } from "node:path";
-import { tmpdir } from "node:os";
+import "node:fs/promises";
+import "node:path";
+import "node:os";
 import {
   formatSize,
   truncateHead,
   formatPaginationHint,
   fmtReadPreview,
 } from "../../src/file-view.js";
-import { DEFAULT_MAX_LINES, DEFAULT_MAX_BYTES } from "../../src/file-view.js";
+import { DEFAULT_MAX_BYTES } from "../../src/file-view.js";
 
 describe("coverage-agent-d file-view", () => {
   it("formatSize branches", () => {
@@ -64,7 +64,6 @@ describe("coverage-agent-d file-view", () => {
   it("fmtReadPreview pagination hint", async () => {
     const content = Array.from({ length: 20 }, (_, i) => `line ${i}`).join("\n");
     const r = await fmtReadPreview(content, { limit: 5 }, undefined, "/tmp/f.txt", 1_000_000, 5);
-    // truncated by lines
     expect(r.text).toContain("Showing lines");
     expect(r.nextOffset).toBeDefined();
   });

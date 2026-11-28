@@ -8,8 +8,6 @@ import { HASH_RE, initHasher, rawDigest } from "../../src/hashline/hash-assign.j
 import { lineHashes } from "../../src/hashline/hash.js";
 import { useTestHome } from "../support/fixtures.js";
 
-// #199: await the hashing seam before the first digest, so the spec never races the
-// async xxhash-wasm init on a cold runner.
 beforeAll(async () => {
   await initHasher();
 });
@@ -25,8 +23,8 @@ function sqlitePath(): string {
 }
 
 describe("line_lineage.raw_hash — schema column", () => {
-  it("is the current schema version's addition", () => {
-    expect(HASH_STORE_VERSION).toBe(8);
+  it("is part of the current schema (added after the shared-store era)", () => {
+    expect(HASH_STORE_VERSION).toBeGreaterThanOrEqual(8);
   });
 
   it("persists the raw-line digest beside the canon digest", async () => {

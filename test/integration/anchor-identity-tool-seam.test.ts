@@ -9,10 +9,6 @@
  *    bytes derive on a state-free re-derivation, and it moves when the bytes move;
  *  - alignment — a whitespace-only external rewrite (an edge run: re-indent) still applies through
  *    the pre-rewrite lease, because pairing/verification read the canon.
- *
- * The fixture bodies therefore differ at the EDGES of a line, never inside it: downstream canon v4
- * is trim-only (ADR-0040), so an interior rewrite is a canon change and rejects by design (pinned
- * by `test/integration/intra-literal-whitespace-135.test.ts`).
  */
 import { describe, expect, it } from "vitest";
 import { readFile, writeFile } from "node:fs/promises";
@@ -76,16 +72,12 @@ describe("issue #138 — anchors identify raw bytes at the tool seam", () => {
       const harness = setupIntegrationTest(cwd);
       const preEditRef = anchorFor(await servedRows(harness, "t.ts"), served);
 
-      // The replacement changes the line's EDGE run only: same canon, different bytes.
       const { error, code, text } = await editOne(harness, preEditRef, written);
       expect(error, `canon-unchanged edit must apply (${code ?? "no code"})`).toBeUndefined();
 
       const onDisk = await readFile(path, "utf-8");
       expect(onDisk).toBe(`const a = 1;\n${written}\nconst z = 2;\n`);
 
-      // Content-derived: the same anchors a store-backed derivation AND a state-free derivation
-      // give for the on-disk bytes. The state-free side is the discriminating one — a canon-keyed
-      // fresh allocation has to probe past the line it just replaced.
       const derived = await lineHashes(onDisk, path);
       const pure = lineHashesPure(onDisk);
       expect(derived).toEqual(pure);
@@ -93,7 +85,6 @@ describe("issue #138 — anchors identify raw bytes at the tool seam", () => {
       const reReadRef = anchorFor(await servedRows(harness, "t.ts"), written);
       expect(diffAnchorFor(text, written)).toBe(derived[1]);
       expect(reReadRef).toBe(derived[1]);
-      // The bytes moved, so the identity moved with them.
       expect(reReadRef).not.toBe(preEditRef);
     });
   });
@@ -107,7 +98,6 @@ describe("issue #138 — anchors identify raw bytes at the tool seam", () => {
         const harness = setupIntegrationTest(cwd);
         const betaRef = anchorFor(await servedRows(harness, "t.ts"), served);
 
-        // External formatter re-indents: the leading run changes, the canon does not.
         await writeFile(path, "const alpha = 1;\n  const beta = 2;\nconst gamma = 3;\n", "utf-8");
 
         const { error, code } = await editOne(harness, betaRef, "  const beta = 22;");
@@ -130,12 +120,9 @@ describe("issue #138 — anchors identify raw bytes at the tool seam", () => {
       const external = "func hello() {\n    }\n";
       await writeFile(path, external, "utf-8");
 
-      // The merged line is a different line entity, so its canon no longer matches the lease and
-      // the edit refuses fail-closed. Downstream's carrier for a canon mismatch is `[E_STALE_ANCHOR]`
-      // inside the batch envelope (upstream's name for this arm is `[E_TARGET_LOST]`).
       const { error, code, message } = await editOne(harness, sigRef, "func hello() /* marked */");
       expect(error, "the merged signature line must reject, not overwrite").toBeDefined();
-      expect(code).toBe("E_BATCH_ABORT");
+      expect(code).toBe("E_STALE_ANCHOR");
       expect(message).toContain("[E_STALE_ANCHOR]");
       expect(await readFile(path, "utf-8")).toBe(external);
     });

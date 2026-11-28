@@ -307,3 +307,22 @@ Tests: `test/core/anchor-raw-identity.test.ts` (both canon-equal trios: solo spe
 Adapted pins: `test/core/hashline.hash.test.ts` (anchor block), `test/core/canon-v4-disposition.test.ts` (its anchor block — the T1 ADAPTATION note above about downstream anchors being canon-derived is superseded here), `test/core/canon-scope.test.ts` (base index), `test/core/lineage-store.test.ts` and `test/core/hash-store.test.ts` key strings, and three hash-store upgrade tests that now pin the reclaim instead of a stale-row survival. Docs: `docs/adr/0041-anchor-identity-from-raw-bytes.md`, with amendments on ADR-0002 (derivation half) and ADR-0017 (schema-only boundary), plus README/GLOSSARY truth.
 
 Cursor UNCHANGED (`0b1934c`); `a14fbc7` is a targeted port outside the absorbed range.
+
+## Targeted port 2026-11-26 — lane `cgate` (comment gate, #232–#235)
+
+**Basis:** `pi-better-edit@51cb819` (`feat(comment-gate): hold tests and tooling to the comment grammar`, PR #280). This is a **targeted port outside the absorbed cursor**: the cursor stays `0b1934ccd39dbabcb97ea9957e84b08d730391e7`, and nothing in `0b1934c..f0c10d5` is claimed by this lane.
+
+| Ticket    | PR  | Subject                                                                               | Downstream commits                             |
+| --------- | --- | ------------------------------------------------------------------------------------- | ---------------------------------------------- |
+| #232 (T1) | —   | arm the shared predicate, oxlint rule, Babel baseline generator and arch parity suite | `ba91f4bb`, `baff9a39`, `67f6ac8c`, `f3bde8d6` |
+| #233 (T2) | —   | drain `src/` to zero                                                                  | `fbca066b`, `33b6c12c`                         |
+| #234 (T3) | —   | drain `test/` to zero; baseline empty, ceiling 0                                      | `1326dcae`, `36b685b9`                         |
+| #235 (T4) | —   | lock the ceiling, finish the governance record                                        | this section                                   |
+
+**What ports.** The settled grammar (`SAFETY:`, `TODO(#<digits>):`, `HACK:`, `Ref: docs/<path>` / `Ref: http(s)://<link>`, strict Gherkin, module-scope `/** */` at most 12 lines, a `SAFETY:` guard within two non-blank lines of a cast, `#!` as an interpreter directive), one shared predicate for both parsers, the second-parser baseline generator, the literal ceiling in the arch suite, and the parser-parity corpus. `WHY:`, `Invariant:`, `See ADR-` and `via https://` are prose everywhere, including inside a docblock.
+
+**Downstream deviations.** `benchmark/**` is ignored by `.oxlintrc.json` and excluded from the scan scope (measurement harness, not shipped code). `pi-lens-ignore` is not an accepted directive prefix (no pi-lens bridge here). The migration starts with an empty baseline instead of upstream's 4,213-entry ledger, because both scopes drain in the same lane. `docs/agents/verification-standards.md` does not exist downstream; the grammar lives in `docs/agents/comment-grammar.md`, and the decision in [ADR-0056](../docs/adr/0056-comment-gate-ratchet.md).
+
+**Drain disposition.** Deleted rationale is recoverable from the pre-drain baseline in git (`git show f3bde8d6:test/arch/comment-gate-baseline.json`). Guard inventories are preserved in `docs/agents/arch-guard-inventory.md`, and the scanner header keeps a 12-line pointer with the phrases its C20 cell pins. Two test SQL fixtures replaced table-name interpolation with static statements; unused imports/bindings that the touched files exposed were cleaned so the lens no-unused-vars gate stays clean. No assertion, threshold or tool wire contract changed: 2,396 tests pass before and after.
+
+Cursor UNCHANGED (`0b1934c`).

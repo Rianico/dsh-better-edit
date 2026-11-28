@@ -12,9 +12,6 @@ import { getText, setupIntegrationTest, withTempFile } from "../support/fixtures
  * `E_BAD_PAYLOAD` and leave every candidate file untouched — the `path` /
  * `file_path` alias folds stay a pre-validation convenience, not a fallback for
  * an explicitly-null file.
- *
- * Red until the inference seam lands (t2/t3); the alias-fold and no-`[E_` pins
- * hold on the current tree.
  */
 
 type ToolResult = { content: Array<{ text?: string }> };
@@ -148,7 +145,6 @@ describe("edit admission: file: null (#117)", () => {
 
       expect(error).toMatchObject({ code: "E_BAD_PAYLOAD" });
       expect((error as Error).message).toBe(UNNAMED_FILE_REFUSAL);
-      // Whole-request refusal: neither item reached the file.
       expect(await readFile(path, "utf-8")).toBe("a\nb\nc\n");
     });
   });
@@ -172,11 +168,6 @@ describe("edit admission: file: null (#117)", () => {
     },
   );
 
-  // #115 acceptance pinned by construction: a successful edit's output carries no
-  // `[E_*]` header (error headers are the rejection channel only). #115's null-file
-  // producer is eliminated by the admission refusal, so this case pins the tier for
-  // the remaining success paths; the producer's removal is pinned by the rejection
-  // cases above.
   it("successful edit output carries no [E_ header", async () => {
     await withTempFile("t.txt", "a\nb\nc\n", async ({ cwd }) => {
       const harness = setupIntegrationTest(cwd);

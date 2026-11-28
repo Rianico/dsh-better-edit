@@ -5,10 +5,6 @@ import { splitLines } from "../../src/utils.js";
 
 await initHasher();
 
-// Regression for #38: boundaryDups must NOT splice. Tool is pure range+replacement.
-// Before fix, trailingDups removed last line when it equaled fileLines[endLine].
-// Correct: loud duplicate is kept, model fixes next turn.
-
 describe("regression #38 — boundaryDups removed (no auto-fix)", () => {
   it("minimal a/b — a\\nb over a → 3 lines (not 2)", () => {
     const content = "a\nb\n";
@@ -30,7 +26,6 @@ describe("regression #38 — boundaryDups removed (no auto-fix)", () => {
       [],
     );
     const res = applyEdit(content, edit, undefined, hashes, "test.txt", [...hashes]);
-    // replacement ["a","b",""] → last non-empty "b" equals file "b", before fix would splice to ["a",""]
     expect(splitLines(res.content)).toEqual(["a", "b", "", "b"]);
   });
 
@@ -38,8 +33,8 @@ describe("regression #38 — boundaryDups removed (no auto-fix)", () => {
     const cpp = "void foo()\n{\n\tswitch (type) {\n\tcase A:\n\t{\n\t\tbody;\n\t}\n\t}\n}\n";
     const hashes = lineHashesPure(cpp);
     const lines = splitLines(cpp);
-    const idxA = lines.indexOf("\tcase A:"); // 3 (0-based)
-    const idxClose = lines.indexOf("\t}", idxA + 1); // first } after case
+    const idxA = lines.indexOf("\tcase A:");
+    const idxClose = lines.indexOf("\t}", idxA + 1);
     const edit = resEdit(
       {
         anchor_from: hashes[idxA]!,

@@ -1,25 +1,19 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { mkdtemp, rm, writeFile, readFile, stat } from "node:fs/promises";
+import { describe, it, expect, vi } from "vitest";
+import { mkdtemp, rm, writeFile, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
-// fs-write error branches
 describe("final-push fs-write error branches", () => {
   it("sweepStaleTemps handles readdir error", async () => {
     const { writeAtomic } = await import("../../src/fs-write.js");
-    // force sweepStaleTemps via two writes to same dir to trigger sweep only once
-    // first call sweeps, second is cached, but we can test error path by mocking
     const dir = await mkdtemp(join(tmpdir(), "final-push-fs-"));
     try {
-      // create a temp file that matches stale pattern but with old mtime
       const { writeFile: wf } = await import("node:fs/promises");
       const oldTemp = join(dir, ".tmp-12345678-1234-1234-1234-123456789012");
       await wf(oldTemp, "temp", "utf-8");
-      // make it old
       const { utimes } = await import("node:fs/promises");
       const oldTime = new Date(Date.now() - 2 * 60 * 60 * 1000);
       await utimes(oldTemp, oldTime, oldTime);
-      // this will trigger sweepStaleTemps which will stat and rm
       await writeAtomic(join(dir, "a.txt"), "hello");
       const exists = await readFile(join(dir, "a.txt"), "utf-8");
       expect(exists).toBe("hello");
@@ -42,7 +36,7 @@ describe("final-push fs-write error branches", () => {
         await writeAtomic(a, "new");
         expect(await readFile(a, "utf-8")).toBe("new");
       } catch {
-        // link may not be supported
+        // HACK: the test ignores this cleanup failure by design.
       }
     } finally {
       await rm(dir, { recursive: true, force: true });
@@ -90,7 +84,6 @@ describe("final-push encoding branches", () => {
     expect(isValidUtf8(new Uint8Array([0xff, 0xfe]))).toBe(false);
     expect(hasReplacementChar("a\uFFFD")).toBe(true);
     expect(hasReplacementChar("abc")).toBe(false);
-    // decode/encode roundtrip
     expect(decodeBytes(Buffer.from([0x61]), "utf8")).toBe("a");
     expect(encodeText("hi", "utf8")).toBeDefined();
   });
@@ -100,17 +93,14 @@ describe("final-push encoding branches", () => {
     const bytes = Buffer.from("hello world", "utf-8");
     const cands = top3Candidates(bytes, ["utf8", "gbk", "big5"]);
     expect(cands.length).toBeGreaterThan(0);
-    // scoreText branches
     expect(scoreText("hello", "utf8")).toBeGreaterThan(0);
     expect(scoreText("\uFFFD", "utf8")).toBeLessThan(100);
-    // decodeBytes with invalid encoding
     expect(decodeBytes(bytes, "utf8" as any)).toBeDefined();
     expect(decodeBytes(bytes, "nope" as any)).toBeUndefined();
   });
 
   it("detectWithChardet defensive branches via mock", async () => {
     const mod = await import("../../src/encoding.js");
-    // mock chardet to return edge cases
     vi.doMock("chardet" as any, () => ({
       analyse: () => [
         { name: 123 as any, confidence: "high" as any },
@@ -119,11 +109,8 @@ describe("final-push encoding branches", () => {
         { name: "gbk", confidence: 90 },
       ],
     }));
-    // need to re-import to trigger mock? but we can call directly with mocked analyse via manual
-    // Instead test that low confidence is skipped
     const bytes = Buffer.from("hello", "utf-8");
     const res = await mod.detectWithChardet(bytes, ["gbk", "utf8"]);
-    // should handle malformed entries gracefully
     expect(res === undefined || typeof res === "string").toBe(true);
     vi.doUnmock("chardet" as any);
   });
@@ -136,7 +123,6 @@ describe("final-push anchor-pipeline remaining", () => {
     const content = "a\nb\nc\nd\ne\nf";
     const hashes = lineHashesPure(content);
     const served = [...hashes];
-    // make one hash stale to trigger mismatch formatting
     const edit: any = { hash_bounds: [{ hash: "zzz" }, { hash: "zzz" }], content_lines: ["X"] };
     expect(() => applyEdit(content, edit, undefined, hashes, "file.txt", served as any)).toThrow(
       /E_STALE_ANCHOR/,
@@ -150,7 +136,6 @@ describe("final-push anchor-pipeline remaining", () => {
     const content = "a\nb\nc";
     const hashes = lineHashesPure(content);
     const served: (string | null)[] = [...hashes];
-    // verify success
     expect(() =>
       verifyServedRange({
         served,
@@ -162,7 +147,6 @@ describe("final-push anchor-pipeline remaining", () => {
         fileLines: ["a", "b", "c"],
       }),
     ).not.toThrow();
-    // applyEdit with warnings for hash echo
     const edit2: any = {
       hash_bounds: [{ hash: hashes[0]! }, { hash: hashes[0]! }],
       content_lines: ["new"],
@@ -205,14 +189,14 @@ describe("final-push hash-store branches", () => {
     expect(isValidHashList(["abc"])).toBe(true);
     expect(isValidHashList(["ab"])).toBe(false);
     expect(isValidHashList(null)).toBe(false);
-    // hash-store direct
     const { loadHashStore } = await import("../../src/hash-store.js");
     const store = await loadHashStore();
     expect(store).toBeDefined();
-    // try to trigger pruneMissing via lifecycle
-    const { pruneMissing } = await import("../../src/hash-store.js" as any).catch(() => ({
-      pruneMissing: undefined,
-    }));
+    const { pruneMissing: _pruneMissing } = await import("../../src/hash-store.js" as any).catch(
+      () => ({
+        pruneMissing: undefined,
+      }),
+    );
     expect(true).toBe(true);
   });
 });

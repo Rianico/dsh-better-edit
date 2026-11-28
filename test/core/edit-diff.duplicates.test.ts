@@ -9,10 +9,6 @@
  * way the mutation pipeline does (`lineHashesPure` for the pre-edit side, `mapStableHashes` with
  * the retired anchors blocked for the post-edit side) and assert every rendered row names the true
  * line identity at its position.
- *
- * The tool-level cases (d) drive the real read/edit/undo tools and pin the two promises the issue
- * asks for: a served context row resolves a chained follow-up edit, and undo renders the restored
- * duplicate with its pre-edit anchor while keeping the survivor's anchor.
  */
 import { readFile } from "node:fs/promises";
 

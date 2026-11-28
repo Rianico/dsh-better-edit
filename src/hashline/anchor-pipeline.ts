@@ -7,17 +7,6 @@
  * This seam co-locates the ordering invariant. Public surface is two functions:
  *   resEdit  — pre-validation (tool-layer, no file state)
  *   applyEdit — full pipeline (file + hashes + served verification)
- *
- * Private to this seam (not re-exported): stripBarePrefixes, stripDiffPrefixes,
- * swapReversedRanges, valEdit, warnUnicodeEsc,
- * resAnchorFromMap, assertAligned, etc. They remain exported from resolve.ts
- * for backwards compat but are marked @internal and should be imported via this
- * module only.
- *
- * The served-evidence verdict lives in served-evidence.ts (ADR-0037): this seam
- * calls `verifyServedRange` and owns nothing it decides.
- *
- * @module dsh-better-edit/hashline/anchor-pipeline
  */
 
 import { abortIf, splitLines, rejectUnknownFields, clipLine } from "../utils.js";
@@ -50,13 +39,13 @@ function diagRef(ref: string): { rawAnchor: string; reason: string } {
   const trimmed = ref.trim();
 
   if (!trimmed.length) {
-    return { rawAnchor: trimmed, reason: 'Expected a 3-char alphanumeric anchor (e.g. "aB3").' };
+    return { rawAnchor: trimmed, reason: 'Expected a 3-char alphanumeric anchor (e.g. "aB3")' };
   }
 
   if (/^\d+/.test(trimmed)) {
     return {
       rawAnchor: trimmed,
-      reason: 'Use the hash alone (e.g. "aB3") — no line numbers or trailing content.',
+      reason: 'Use the hash alone (e.g. "aB3") — no line numbers or trailing content',
     };
   }
 
@@ -64,13 +53,13 @@ function diagRef(ref: string): { rawAnchor: string; reason: string } {
     return {
       rawAnchor: trimmed,
       reason:
-        'anchor_from and anchor_to must contain the 3-char hash only — remove everything from "│" onward.',
+        'anchor_from and anchor_to must contain the 3-char hash only — remove everything from "│" onward',
     };
   }
 
   return {
     rawAnchor: trimmed,
-    reason: 'Expected a 3-char alphanumeric anchor (e.g. "aB3").',
+    reason: 'Expected a 3-char alphanumeric anchor (e.g. "aB3")',
   };
 }
 
@@ -168,17 +157,12 @@ function fmtMismatchWithServes(
   };
   const notFoundRaw = mismatches.filter((m) => m.kind === "not_found");
   const ambiguousRaw = mismatches.filter((m) => m.kind === "ambiguous");
-  // WHY: a rejection counts and names distinct anchors, never bounds — one single-line edit
-  // submits one anchor as both bounds, so both slots report the same mismatch.
   const notFound = [...new Map(notFoundRaw.map((m) => [m.ref.hash, m])).values()];
   const ambiguous = [...new Map(ambiguousRaw.map((m) => [m.ref.hash, m])).values()];
 
   const refList = notFound.map((m) => `"${m.ref.hash}"`).join(", ");
   if (notFound.length > 0) {
     headlines.push(
-      // B: a well-formed all-digit anchor that does not resolve lands here;
-      // the numeric note steers away from line numbers (T4 deleted the
-      // E_UNKNOWN_ANCHOR declaration — this headline is now the note's only home).
       `${notFound.length} stale anchor${notFound.length > 1 ? "s" : ""}${filePath ? ` in ${filePath}` : ""}: ${refList}. Re-read for fresh anchors.${numericAnchorNote(notFound.map((m) => m.ref.hash))}`,
     );
     for (const m of notFound) {
@@ -261,28 +245,23 @@ export function resEdit(edit: HTEdit, _warnings?: string[]): HEdit {
   const editLines = parseText(edit.replace_with);
   const bounds = [edit.anchor_from, edit.anchor_to].map((ref) => {
     const trimmed = ref.trim();
-    // #108: a pasted block carries no verified coordinate — refuse by SHAPE, naming no
-    // extracted hash. The old first-3-char-alnum-run guess minted a pseudo-anchor whose
-    // "use bare <hash> next time" hint steered the model into an unrelated line.
     if (trimmed.includes("\n")) {
       const lines = trimmed.split("\n").length;
       throw new DomainError("E_MALFORMED_ANCHOR", {
-        // Redacted, upstream shape: never echo the pasted block back into the transcript.
         rawAnchor: `${lines}-line block`,
-        reason: `anchor_from/anchor_to must be a single bare 3-char hash — the anchor read() served beside the one line you mean. You passed a ${lines}-line block; pass that bare hash, or re-read the file.`,
+        reason: `anchor_from/anchor_to must be a single bare 3-char hash — the anchor read() served beside the one line you mean. You passed a ${lines}-line block; pass that bare hash, or re-read the file`,
       });
     }
     const match = trimmed.match(ANCHOR_ROW_RE);
     if (match) {
       let reason: string;
       if (match[1] === "+") {
-        reason = `stripped diff-preview marker from anchor_from/anchor_to — pass the bare anchor.`;
+        reason = `stripped diff-preview marker from anchor_from/anchor_to — pass the bare anchor`;
       } else if (match[1] === "-") {
-        reason = `stripped leading "-" marker from anchor_from/anchor_to — pass the bare anchor.`;
+        reason = `stripped leading "-" marker from anchor_from/anchor_to — pass the bare anchor`;
       } else {
-        reason = `stripped "HASH│" prefix from anchor_from/anchor_to — pass the bare anchor.`;
+        reason = `stripped "HASH│" prefix from anchor_from/anchor_to — pass the bare anchor`;
       }
-      // Channel rule: the model must retry with the bare anchor → MODEL audience via the registry.
       throw new DomainError("E_MALFORMED_ANCHOR", { rawAnchor: trimmed, reason });
     }
     return ref;
@@ -312,21 +291,17 @@ function stripBarePrefixes(edit: HEdit, fileHashes: string[], _warnings: string[
   });
   if (stripped.length === 0) return edit;
   const matchedCount = stripped.filter((s) => s.matched).length;
-  // #63 supersedes #24's 0-matched arm: no stripped prefix is a file anchor, so the
-  // lines are literal content — pass the edit through UNCHANGED (prefixes intact).
-  // Arms with matched >= 1 keep throwing; the call-site echo routing still governs.
-  // FU-5: the applied-bytes warn tiers (served-guard.ts) name this write-through.
   if (matchedCount === 0) return edit;
   const locations = stripped.map((s) => `replace_with line ${s.lineIndex + 1}`).join(", ");
   const evidence = `${matchedCount}/${stripped.length} matched`;
   if (matchedCount === stripped.length) {
     throw new BadAnchorError(
       locations,
-      `stripped "HASH│" prefix from ${locations} (${evidence}) — use bare content without HASH│ next time.`,
+      `stripped "HASH│" prefix from ${locations} (${evidence}) — use bare content without HASH│ next time`,
       { ...edit, content_lines: contentLines },
     );
   }
-  throw new BadAnchorError(locations, `stripped "HASH│" prefix from ${locations} (${evidence}).`, {
+  throw new BadAnchorError(locations, `stripped "HASH│" prefix from ${locations} (${evidence})`, {
     ...edit,
     content_lines: contentLines,
   });
@@ -350,7 +325,7 @@ function stripDiffPrefixes(edit: HEdit, _warnings: string[]): HEdit {
   });
   if (stripped.length === 0) return edit;
   const locations = stripped.map((i) => `replace_with line ${i + 1}`).join(", ");
-  throw new BadAnchorError(locations, `stripped diff-preview marker from ${locations}.`, {
+  throw new BadAnchorError(locations, `stripped diff-preview marker from ${locations}`, {
     ...edit,
     content_lines: contentLines,
   });
@@ -381,14 +356,6 @@ function swapReversedRanges(edit: HEdit, fileHashes: string[], warnings: string[
  * rotates the anchor the current file derives — yet the anchor the model holds still names the same
  * line. The lease remembers the `line_id`, `positionsByIdentity` rebases that id onto the current
  * buffer (canon-keyed pairing), and the canon recorded for that served anchor is the evidence.
- *
- * WHY it cannot widen identity: a byte change that moves the CANON (an interior rewrite, a token
- * merged onto the line) fails the canon comparison and declines, so the stale-anchor refusal and
- * every fail-closed case keep their verdict. An ambiguous serve of the same anchor, a retired lease,
- * a missing lease and an out-of-range rebase all decline the same way.
- *
- * WHY the fallback is `not_found`-only: an AMBIGUOUS anchor found twice in the file is never
- * resolved through a lease — ambiguity stays a refusal.
  */
 function leaseAnchorLineResolver(args: {
   leaseSource: LeaseSpanSource | undefined;
@@ -402,7 +369,6 @@ function leaseAnchorLineResolver(args: {
     let servedIndex = -1;
     for (let i = 0; i < served.length; i++) {
       if (served[i] !== hash) continue;
-      // Served twice: the anchor does not name ONE line, so nothing may be inferred from a lease.
       if (servedIndex >= 0) return undefined;
       servedIndex = i;
     }
@@ -413,8 +379,6 @@ function leaseAnchorLineResolver(args: {
     if (lease === undefined || lease.retiredAt !== null) return undefined;
     const line = leaseSource.rebasedLineOf(lease.lineId);
     if (line === undefined || line < 1 || line > fileLines.length) return undefined;
-    // The canon decides "same line after a reformat": equal canon → the reformat case; different
-    // canon → a different line, and the caller's stale-anchor refusal stands.
     if (canon(fileLines[line - 1]!) !== servedCanon) return undefined;
     return line;
   };
@@ -471,10 +435,6 @@ function valEdit(
     }
     return { resolved: undefined, mismatches };
   }
-  // Reversal always heals upstream in swapReversedRanges (which runs before
-  // valEdit in applyEdit): when both anchors resolve, startLine <= endLine is
-  // guaranteed, so no refusal arm exists here. Anchors carry no order — only
-  // the resolved lines of the anchor_from/anchor_to slot pair matter.
   return {
     resolved: {
       content_lines: edit.content_lines,
@@ -486,8 +446,6 @@ function valEdit(
 
 export type { ServedRow, RangeCause } from "../domain-errors.js";
 
-// F8: narrowed to the codes the reject-and-serve branches actually handle —
-// the class's meaning is type-enforced instead of carried by convention.
 export class AnchorMismatchError extends DomainError<DomainErrorCode> {
   constructor(code: "E_STALE_ANCHOR" | "E_SUSPICIOUS_TEXT", payload: ErrorPayloadMap[typeof code]) {
     super(code, payload);
@@ -695,9 +653,6 @@ export function applyEdit(
     prefixFixed = stripDiffPrefixes(stripBarePrefixes(rangeFixed, fileHashes, warnings), warnings);
   } catch (error) {
     if (!(error instanceof BadAnchorError) || !served) throw error;
-    // Anchor-syntax garbage that is actually served-echo belongs to the
-    // E_SUSPICIOUS_TEXT guard below: re-check the stripped + raw lines at the
-    // resolved start line and throw the echo denial; otherwise E_MALFORMED_ANCHOR stands.
     const stripped = error.stripped;
     const lineByHash = new Map<string, number>();
     for (let i = 0; i < fileHashes.length; i++) lineByHash.set(fileHashes[i]!, i + 1);
@@ -711,9 +666,6 @@ export function applyEdit(
         : undefined);
     if (echo) {
       if (literal) {
-        // Declared literal bytes are the intent: apply the raw edit verbatim
-        // (prefixes intact), not the stripped form. Non-echo garbage still
-        // throws BadAnchorError below via `throw error`.
         prefixFixed = rangeFixed;
         noteLiteralBypass();
       } else {
@@ -730,8 +682,6 @@ export function applyEdit(
     }
   }
 
-  // The lease-backed fallback for a held anchor whose bytes moved but whose canon did not (#138).
-  // Built once per call: it is only consulted for an anchor the file's own hashes do not carry.
   const resolveFromLease = leaseAnchorLineResolver({
     leaseSource,
     served,
@@ -753,8 +703,6 @@ export function applyEdit(
       fileHashes,
       filePath,
     );
-    // WHY: "anchor staleness" now has a producer — this arm IS "the anchor no longer names a current
-    // line"; payload-only (staleAnchorFormat ignores it), so the batch envelope forwards/promotes it.
     throw new AnchorMismatchError("E_STALE_ANCHOR", {
       headline,
       servedRows,
@@ -823,16 +771,6 @@ export function applyEdit(
   assertNotEmpty(content, result);
   const changed = changedRange(content, result);
 
-  // FU-5 (§4.7 conformance, upstream apply.ts:387-427): the 0-matched literal
-  // write-through (#63/ADR-0025) keeps writing, and these tiers name what was
-  // written. Middle tier stays evidence-gated (`if (served)`): with no served
-  // content it reports nothing by construction. Soft-hint tier is shape-only
-  // and runs against an empty served set when served is absent — it fires
-  // regardless of the literal declaration (the declaration covers served rows,
-  // not never-served shapes). Never blocks, never rewrites, keeps no state.
-  // FU-R (upstream apply.ts:399-401): the offending count travels as structured
-  // data (`neverServedCount`); the engine aggregates across batch items and renders
-  // one counted hint per call — this layer never renders the hint string itself.
   let neverServedCount = 0;
   if (served) {
     for (const mismatch of findServedPrefixMismatches(
@@ -882,8 +820,6 @@ export function fmtRegion(hashes: string[], lines: string[]): string {
       `fmtRegion: hashes.length (${hashes.length}) must match lines.length (${lines.length}).`,
     );
   }
-  // One renderer (ADR-0037): the guard above is this entry point's own fail-loud invariant; the
-  // row kernel lives in served-evidence so the read echo and the region render cannot drift.
   return fmtServedRows(
     hashes.map((hash, index) => ({ position: index, hash })),
     lines,
@@ -934,14 +870,6 @@ export function changedRange(
   };
 }
 
-// ---------------------------------------------------------------------------
-// Sealed seam — single public entry for hashline (Candidate 5)
-// HashAssign allocation + hash persistence re-exported here so callers import
-// only from anchor-pipeline. Private modules (hash-assign, hash, hasher,
-// alphabet, pure, parse, apply, resolve, served) are @internal and guarded
-// by biome noRestrictedImports. Deleting this re-export block would scatter
-// the hashline surface again — it concentrates (deep).
-// ---------------------------------------------------------------------------
 export {
   HASH_RE,
   HASH_CLASS,

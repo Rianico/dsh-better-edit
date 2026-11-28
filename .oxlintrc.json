@@ -1,4 +1,8 @@
 {
   "$schema": "./node_modules/oxlint/configuration_schema.json",
-  "rules": {}
+  "jsPlugins": ["./scripts/oxlint-plugin-comment-gate.js"],
+  "rules": {
+    "harness/no-comments": "error"
+  },
+  "ignorePatterns": [".lane/**", "lib/**", "dist/**", "coverage/**", "benchmark/**"]
 }

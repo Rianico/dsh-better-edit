@@ -18,10 +18,6 @@ describe("extra store-lifecycle", () => {
       .mockReturnValue({ storeDir: "workspace", autoGitignore: true, undo_ttl_s: 3600 } as any);
     const lc: any = await import("../../src/store-lifecycle.js");
     lc._resetLifecycleForTests();
-    // Stubs must carry the full shape the janitor actually calls: the undo prune routes
-    // through `store.pruneUndoOlderThan` (T2b), so a stale `undoPruneOlderThan` on the
-    // stmts stub plus a store stub missing it throws a TypeError that onStoreOpen's
-    // warn-catch swallows — the test then passes no matter what.
     const servedPruneArgs: number[] = [];
     const undoPruneArgs: number[] = [];
     let pruneMissingCalls = 0;
@@ -31,7 +27,7 @@ describe("extra store-lifecycle", () => {
     await lc.onStoreOpen(
       storePath,
       {
-        servedPruneOlderThan: (ts: number) => {
+        servedMetaPruneOlderThan: (ts: number) => {
           servedPruneArgs.push(ts);
         },
       },
@@ -48,17 +44,13 @@ describe("extra store-lifecycle", () => {
       } as any,
     );
 
-    // The swallowed-warn path is the failure mode this pins: a stub missing a member the
-    // janitor calls throws a TypeError that onStoreOpen's warn-catch swallows, and the
-    // test would then pass no matter what.
     expect(warn).not.toHaveBeenCalled();
-    // Effects, not a tautology: each janitor step ran exactly once with a numeric cutoff.
     expect(servedPruneArgs).toHaveLength(1);
     expect(Number.isFinite(servedPruneArgs[0])).toBe(true);
     expect(undoPruneArgs).toHaveLength(1);
     expect(Number.isFinite(undoPruneArgs[0])).toBe(true);
     expect(pruneMissingCalls).toBe(1);
-    expect(vacuumCalls).toBe(1); // the store-open boundary runs the retention pass
+    expect(vacuumCalls).toBe(1);
 
     warn.mockRestore();
     spy.mockRestore();
@@ -77,7 +69,6 @@ describe("extra sandbox", () => {
     expect(ctrl.mapError(new Error("x"), undefined)).toBeInstanceOf(Error);
     const denied = new FsError("d", "FS_SANDBOX_DENIED" as any);
     expect(ctrl.mapError(denied, { mode: "a" } as any)).toBeInstanceOf(FsError);
-    // resolvePolicy with no backend and escalation should throw
     await expect(
       ctrl.resolvePolicy(
         "edit",
@@ -130,15 +121,15 @@ describe("extra undo-edit", () => {
     expect(typeof r.persisted).toBe("boolean");
     const loaded = await mod.getUndo(p).catch(() => undefined);
     expect(loaded === undefined || typeof loaded?.content === "string").toBe(true);
-    try {
+    {
       const { DatabaseSync } = await import("node:sqlite");
       const { hashStorePath } = await import("../../src/store-tenancy.js");
       const db = new DatabaseSync(hashStorePath());
-      db.exec(`UPDATE undo SET ending='bad' WHERE path='${p.replace(/'/g, "''")}'`);
+      db.prepare("UPDATE file_undo SET ending = 'bad' WHERE path = ?").run(p);
       db.close();
       const bad = await mod.getUndo(p);
       expect(bad).toBeUndefined();
-    } catch {}
+    }
     await mod.clearUndo(p).catch(() => {});
     await rm(dir, { recursive: true, force: true });
   });

@@ -71,9 +71,6 @@ export function parseSectionFile(content: string): ParsedSection {
     }
     order = Number.parseInt(match[1] as string, 10);
   }
-  // Front-matter body: strip leading blank lines after the closing fence so
-  // `---\n…\n---\n\nbody` and `---\n…\n---\nbody` parse identically (the
-  // materialized preset files carry a blank line after the fence).
   const body = lines.slice(close + 1);
   let bodyStart = 0;
   while (bodyStart < body.length && body[bodyStart]!.trim() === "") bodyStart++;

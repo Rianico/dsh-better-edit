@@ -38,7 +38,6 @@ function makeProdFs() {
       const p = pathOf(t);
       const f = files.get(p);
       if (!f) throw Object.assign(new Error("not found"), { code: "FS_NOT_FOUND" });
-      // dsh-fs-local decodes with TextDecoder utf-8 fatal, ignoreBOM:false -> swallows EF BB BF
       const raw = new TextDecoder("utf-8", { fatal: true }).decode(f.bytes);
       return raw.startsWith("\uFEFF") ? raw.slice(1) : raw;
     }),
@@ -141,7 +140,6 @@ describe("issue #69: ctxFsIO version semantics authorize shadow writes", () => {
     const io: FileIO = ctxFsIO(fake.fs as never, makeCtx());
     const tool = buildStrReplaceEditorTool(io, makeTestSandbox());
     const exec = fakeExec("/abs");
-    // hashline read observation path: same io.readText seam the read tool uses
     await io.readText(p);
     const res = (await tool.execute(
       { command: "str_replace", path: p, old_str: "bravo", new_str: "BRAVO" },
@@ -175,7 +173,6 @@ describe("issue #69: ctxFsIO version semantics authorize shadow writes", () => {
       { command: "str_replace", path: p, old_str: "bravo", new_str: "BRAVO" },
       exec,
     );
-    // Memo/bytes agreement: the state now describes the written bytes at their version.
     expect(getEncodingState(p)?.encoding).toBe("utf8");
     expect(getEncodingState(p)?.version).toBe("v2");
     await expect(
@@ -189,7 +186,6 @@ describe("issue #69: ctxFsIO version semantics authorize shadow writes", () => {
     const bytes = Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from("hello there", "utf16le")]);
     fake.seed(p, bytes);
     const io: FileIO = ctxFsIO(fake.fs as never, makeCtx());
-    // read({ encoding }) records utf16le for the next save verdict.
     await io.readText(p, undefined, "utf16le");
     expect(getEncodingState(p)?.encoding).toBe("utf16le");
 

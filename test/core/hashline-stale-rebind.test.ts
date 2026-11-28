@@ -174,10 +174,8 @@ describe("retired hash anchors", () => {
         .find((line) => line.endsWith("│  show: true,"))!;
       const restoredAnchor = restoredLine.slice(1).split("│")[0]!;
 
-      // The restore revives the pre-edit assignment; it does not mint a fresh anchor.
       expect(restoredAnchor).toBe(originalAnchor);
       expect(await readFile(path, "utf-8")).toBe(initial);
-      // The superseded post-edit handle is the stale one now.
       await expect(
         harness.editTool.execute("stale-after-undo", {
           path: "undo.ts",
@@ -236,7 +234,6 @@ describe("retired hash anchors", () => {
         .slice(1)
         .split("│")[0]!;
 
-      // The restored line carries its pre-edit anchor; the survivor keeps its own (no rebind).
       expect(restoredYAnchor).toBe(yAnchor);
       expect(currentXAnchor).toBe(survivingXAnchor);
     });
@@ -293,7 +290,6 @@ describe("retired hash anchors", () => {
         .slice(1)
         .split("│")[0]!;
 
-      // The restore revives the old assignment even though the store still listed it retired.
       expect(restoredAnchor).toBe(oldAnchor);
       expect(restoredAnchor).not.toBe(currentOnlyAnchor);
       await withWorkspace(cwd, async () => {

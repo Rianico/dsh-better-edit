@@ -45,10 +45,7 @@ describe("undo_last_edit summary counts (#96)", () => {
     await undoAfterEdit(
       "undo_counts_bigdelete.txt",
       TWENTY_LINES,
-      (rows) => [
-        // Delete lines 3..16 (14 lines, beyond the 6-line removal cap) and add one line.
-        [extractHash(rows[2]!), extractHash(rows[15]!), "REPLACED"],
-      ],
+      (rows) => [[extractHash(rows[2]!), extractHash(rows[15]!), "REPLACED"]],
       (text, restored) => {
         expect(restored).toBe(TWENTY_LINES);
         expect(text).toContain(
@@ -71,12 +68,9 @@ describe("undo_last_edit summary counts (#96)", () => {
       },
     );
   });
-  // P3 rider from the T1 review: occurrence counts, not set membership. A set-based count would
-  // collapse a duplicated line and report 0 restored (deletion) or 0 added (duplicate addition).
   it("counts occurrences, not distinct lines, when the edited run has duplicates", async () => {
     const DUPLICATES = "alpha\nbeta\nbeta\ngamma\n";
 
-    // Delete one of the two identical `beta` lines: one occurrence is restored.
     await undoAfterEdit(
       "undo_counts_dupdelete.txt",
       DUPLICATES,
@@ -89,7 +83,6 @@ describe("undo_last_edit summary counts (#96)", () => {
       },
     );
 
-    // Replace `gamma` with a third `beta`: one occurrence is added and one removed.
     await undoAfterEdit(
       "undo_counts_dupadd.txt",
       DUPLICATES,

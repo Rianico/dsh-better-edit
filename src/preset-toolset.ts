@@ -9,12 +9,6 @@
  * every anchor. Every mutating tool is installed only when the preset's layer
  * resolves the matching tool, which keeps `edit` paired with `read` and never
  * shadows a tool the preset did not compose.
- *
- * The probe is an optional-service seam: no `agentPresets` service, no composed
- * preset (preset-free composition), or no scope-read API (`acquireScope` on
- * 0.2.x, `standingKeyFor` on older registries) keeps today's unconditional
- * install, so a host that predates 0.2.1 keeps its pre-gate behavior.
- * @module dsh-better-edit/preset-toolset
  */
 
 import type { Context } from "@deepseek-ai/cordis";
@@ -120,7 +114,7 @@ function warn(host: PresetProbeHost, message: string): void {
   try {
     host.logger?.warn(message);
   } catch {
-    // Diagnostics must never fail an install.
+    // HACK: diagnostics must never fail an install
   }
 }
 
@@ -156,8 +150,6 @@ async function probePreset(
   const presets = host.get("agentPresets") as PresetScopeService | undefined;
   if (!presets || typeof presets.composedPreset !== "function") return undefined;
   const presetId = presets.composedPreset(agentCtx);
-  // Preset-free composition: nothing composed the agent plane, so there is no
-  // preset policy to honour.
   if (typeof presetId !== "string" || presetId.length === 0) return undefined;
   const tools = host.get("tools") as ToolRegistryLike | undefined;
   if (!tools || typeof tools.get !== "function") return undefined;
@@ -166,7 +158,6 @@ async function probePreset(
   try {
     return toolsetFor((name) => tools.get(name, scope.key) !== undefined);
   } finally {
-    // Exactly one release, and only for a lease whose key was usable.
     await scope.release();
   }
 }
@@ -184,8 +175,6 @@ async function readPresetScope(
 ): Promise<PresetScope | undefined> {
   if (typeof presets.acquireScope === "function") {
     const lease = await presets.acquireScope(presetId);
-    // A lease without a key is unusable: fall through (and release nothing,
-    // since no probe ever ran under it).
     if (lease !== undefined && lease.key !== undefined) {
       const key = lease.key;
       return { key, release: () => disposeLease(lease, host) };

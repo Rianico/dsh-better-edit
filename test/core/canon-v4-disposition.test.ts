@@ -112,8 +112,6 @@ describe("canon v4 disposition table — executable record (issues #135, ADR-000
   });
 
   it("carries the edge disposition through the canon, not through the anchor (#138)", () => {
-    // The canon keeps answering "same line after a reformat?"; identity is the RAW line, so every
-    // byte variant rotates the anchor while the edge (`normalize`) rows still fold in the canon.
     const base = lineHashesPure("ab\n");
     for (const cp of ["\u00A0", "\u2003", "\u3000", "\uFEFF"]) {
       const label = `normalize ${cp.codePointAt(0)}`;
@@ -122,7 +120,6 @@ describe("canon v4 disposition table — executable record (issues #135, ADR-000
       expect(lineHashesPure(`a${cp}b\n`)[0], `raw ${cp.codePointAt(0)}`).not.toBe(base[0]);
       for (const probe of [`${cp}ab`, `ab${cp}`]) {
         expect(canon(probe), `${label} edge ${cp.codePointAt(0)}`).toBe(canon("ab"));
-        // Folded canon, different bytes: the anchor still moves (raw-byte identity).
         expect(lineHashesPure(`${probe}\n`)[0], `raw ${cp.codePointAt(0)}`).not.toBe(base[0]);
       }
     }

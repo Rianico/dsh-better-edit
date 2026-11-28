@@ -139,7 +139,7 @@ export class FsSandboxController {
    * the shared `[sandbox: …]` denial marker plus the same-turn escalation
    * hint, keeping the structured code. Any other error passes through.
    */
-  mapError(error: unknown, policy: SandboxExecutionPolicy | undefined): unknown {
+  mapError<T>(error: T, policy: SandboxExecutionPolicy | undefined): T | FsError {
     if (!(error instanceof FsError) || error.code !== "FS_SANDBOX_DENIED") return error;
     const mode = (policy as SandboxExecutionPolicy).mode;
     return new FsError(

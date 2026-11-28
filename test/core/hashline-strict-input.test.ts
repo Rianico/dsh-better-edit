@@ -98,12 +98,6 @@ describe("partial hash prefixes copied into content (issue #24)", () => {
       anchor_to: anchor,
       replace_with: "ZZZ│one\nZZP│two",
     };
-    // #63's contract: no prefix is a file anchor → literal content passes through
-    // UNCHANGED (prefixes intact). Bytes, not message strings, decide.
-    // FU-5: the write-through is no longer SILENT — the never-served shape tier
-    // rides the same result (upstream apply.ts:424-427).
-    // FU-R: at this layer the tier travels as data (neverServedCount); the engine
-    // renders the single per-call hint (upstream apply.ts:399-431).
     const result = applyTool(toolEdit, hashes);
     expect(result.content).toBe("ZZZ│one\nZZP│two\nbeta\ngamma\ndelta");
     expect(result.neverServedCount).toBe(2);
@@ -120,8 +114,6 @@ describe("partial hash prefixes copied into content (issue #24)", () => {
     };
     const result = applyTool(toolEdit, hashes);
     expect(result.content).toBe("ZZZ│one\nreal\nZZP│two\nbeta\ngamma\ndelta");
-    // FU-5: mixed literal content still records the tier — FU-R: exactly the
-    // offending count (2 shapes) as data, no rendered hint at this layer.
     expect(result.neverServedCount).toBe(2);
     expect(result.warnings ?? []).toEqual([]);
   });

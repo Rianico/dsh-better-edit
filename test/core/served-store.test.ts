@@ -23,7 +23,7 @@ import {
   wipeServedState,
   servedPositionsOf,
 } from "../../src/session-view.js";
-import { HASH_STORE_VERSION, SERVED_TTL_MS } from "../../src/constants.js";
+import { SERVED_TTL_MS } from "../../src/constants.js";
 import { initHasher, contentChecksum } from "../../src/hashline/hash-assign.js";
 import { HASH_SPACE, idxToHash, lineHashesPure } from "../../src/hashline/hash-assign.js";
 import { getWritableTempRoot } from "../support/fixtures.js";
@@ -150,7 +150,6 @@ describe("served state — incremental hazard sweep", () => {
         {
           hashes: realHashes,
           canons: Array.from({ length: N }, (_, i) => `line${i}`),
-          // Setup is the whole file (every hash, in order): a full-read serve.
           fullRead: true,
         },
       );
@@ -170,8 +169,6 @@ describe("served state — incremental hazard sweep", () => {
       await recordServed(sessionKey, path, rows, N, {
         hashes: newHashes,
         canons: Array.from({ length: N }, (_, i) => (i < 6 ? `changed${i}` : `line${i}`)),
-        // The cell's subject: the first six lines, a genuine page — the sweep is what may
-        // touch the hazard state here, not the full-read clear.
         fullRead: false,
       });
       const after = store.getRetiredEntries(sessionKey, path);
@@ -187,14 +184,10 @@ describe("served state — incremental hazard sweep", () => {
       const content = Array.from({ length: N }, (_, i) => `line ${i}`).join("\n");
       const hashes = lineHashesPure(content);
       const store = await loadServedStore();
-      // Seed the column the way the sweep writes it — object entries carrying a real
-      // death position — plus the hazard card that entitles a serve re-observing
-      // position 2 to free `AAA` incrementally.
       store.clearRetiredAnchors(sessionKey, path);
       store.upsertRetiredAnchors(sessionKey, path, JSON.stringify([{ hash: "AAA", deathPos: 2 }]));
       store.upsertCards(sessionKey, path, JSON.stringify([2]));
 
-      // The production appending writer (the edit path's retirement).
       await retireAnchors(sessionKey, path, ["BBB"]);
 
       const afterAppend = store.getRetiredEntries(sessionKey, path);
@@ -203,8 +196,6 @@ describe("served state — incremental hazard sweep", () => {
         { hash: "BBB", deathPos: null },
       ]);
 
-      // A genuinely partial serve re-observing position 2: card 2 is already tracked, so
-      // the sweep must free the entry that still knows where it died.
       await recordServed(sessionKey, path, [{ position: 2, hash: hashes[2]! }], N, {
         hashes,
         canons: Array.from({ length: N }, (_, i) => `line${i}`),
@@ -227,7 +218,6 @@ describe("served state — incremental hazard sweep", () => {
         path,
         hashes.map((h, i) => ({ position: i, hash: h })),
         N,
-        // The whole file, so the seeding serve is a full read.
         { hashes, canons: Array.from({ length: N }, (_, i) => `line${i}`), fullRead: true },
       );
       const store = await loadServedStore();
@@ -245,7 +235,6 @@ describe("served state — incremental hazard sweep", () => {
       await recordServed(sessionKey, path, rows, N, {
         hashes: newHashes,
         canons: Array.from({ length: N }, (_, i) => `line${i}`),
-        // Rows 2-3 of ten: the partial branch the cell is named for.
         fullRead: false,
       });
       const afterPartial = store.getRetiredEntries(sessionKey, path);
@@ -259,7 +248,6 @@ describe("served state — incremental hazard sweep", () => {
       await recordServed(sessionKey, path, fullRows, N, {
         hashes: newHashes,
         canons: Array.from({ length: N }, (_, i) => `line${i}`),
-        // "…and clears them on a full serve": the cell's second half is the full read.
         fullRead: true,
       });
       const afterFull = store.getRetiredEntries(sessionKey, path);
@@ -279,7 +267,6 @@ describe("served state — incremental hazard sweep", () => {
         path,
         hashes.map((h, i) => ({ position: i, hash: h })),
         N,
-        // Seeding serve: the whole 1000-line file, so a full read.
         { hashes, canons: Array.from({ length: N }, (_, i) => `line${i}`), fullRead: true },
       );
       const store = await loadServedStore();
@@ -298,7 +285,6 @@ describe("served state — incremental hazard sweep", () => {
       await recordServed(sessionKey, path, rowsFirst, N, {
         hashes,
         canons: Array.from({ length: N }, (_, i) => `line${i}`),
-        // First half of a paged walk: the sweep, not the full-read clear.
         fullRead: false,
       });
       const afterFirst = store.getRetiredEntries(sessionKey, path);
@@ -316,7 +302,6 @@ describe("served state — incremental hazard sweep", () => {
       await recordServed(sessionKey, path, rowsSecond, N, {
         hashes,
         canons: Array.from({ length: N }, (_, i) => `line${i}`),
-        // Second half of the same paged walk.
         fullRead: false,
       });
       const afterSecond = store.getRetiredEntries(sessionKey, path);
@@ -328,7 +313,6 @@ describe("served state — incremental hazard sweep", () => {
       await recordServed(sessionKey, path, fullRows, N, {
         hashes,
         canons: Array.from({ length: N }, (_, i) => `line${i}`),
-        // The walk's terminal full read: this is the serve that clears cards and retired.
         fullRead: true,
       });
       const cardsAfterFull = store.getCards(sessionKey, path);
@@ -347,7 +331,9 @@ describe("served state — retired-anchor writer contract", () => {
   ): { retired: string | null; updated_at: number } {
     const db = new DatabaseSync(sqlitePath(home), { defensive: false } as any);
     const row = db
-      .prepare("SELECT retired, updated_at FROM served WHERE session_id = ? AND path = ?")
+      .prepare(
+        "SELECT retired, updated_at FROM served_session_meta WHERE session_id = ? AND file_path = ?",
+      )
       .get(sessionKey, path) as { retired: string | null; updated_at: number } | undefined;
     db.close();
     if (!row) throw new Error(`no served row for ${sessionKey}:${path}`);
@@ -355,14 +341,6 @@ describe("served state — retired-anchor writer contract", () => {
   }
 
   it("rejects an invalid retired hash before it reads or writes the column", async () => {
-    // WHY the assertion is what it is: ADR-0036 decision 3 says an invalid hash is rejected
-    // "whether or not the hash is new", but the "even when already known" half is
-    // UNCONSTRUCTIBLE as a black-box case here — `isValidRetiredEntry` and
-    // `coerceRetiredEntry` (src/hash-store.ts) both require `HASH_RE`, so the store can never
-    // hold an invalid hash that a caller could then re-present as "known". What the ordering
-    // guarantees observably is exactly what this cell pins: an invalid argument aborts the
-    // call before any read or write, because the validation loop in `addRetiredAnchors`
-    // precedes its `getRetiredEntries` read.
     await withTempHome(async (home) => {
       const sessionKey = "sess-invalid-hash-1";
       const path = "/tmp/invalid-hash-file.txt";
@@ -371,24 +349,14 @@ describe("served state — retired-anchor writer contract", () => {
       store.upsertRetiredAnchors(sessionKey, path, seeded);
       expect(readServedRow(home, sessionKey, path).retired).toBe(seeded);
 
-      // The READ half of the ordering claim, pinned directly: `addRetiredAnchors` validates the
-      // whole batch before its `getRetiredEntries` read, so a rejected batch never reaches the
-      // column. `loadHashStore` is memoized per store path, so this is the very object the call
-      // under test reaches.
       const readSpy = vi.spyOn(store, "getRetiredEntries");
 
-      // A lone invalid hash aborts the call …
       await expect(retireAnchors(sessionKey, path, ["bad-hash!"])).rejects.toThrow(
         /Invalid retired hash/,
       );
-      // … before the column is read at all …
       expect(readSpy).not.toHaveBeenCalled();
-      // … and nothing was written: the column is byte-identical.
       expect(readServedRow(home, sessionKey, path).retired).toBe(seeded);
 
-      // The sharper form: a VALID new hash followed by an invalid one. A writer that appended
-      // as it walked the batch would leave `BBB` behind; the validation loop covers the whole
-      // batch first, so the reject leaves the column byte-identical — no partial append.
       await expect(retireAnchors(sessionKey, path, ["BBB", "bad-hash!"])).rejects.toThrow(
         /Invalid retired hash/,
       );
@@ -397,9 +365,6 @@ describe("served state — retired-anchor writer contract", () => {
       readSpy.mockRestore();
       expect(store.getRetiredEntries(sessionKey, path)).toEqual([{ hash: "AAA", deathPos: 2 }]);
 
-      // … and the seam the two claims above lean on is LIVE: a valid retirement does read the
-      // column. Without this control the `not.toHaveBeenCalled` claims would also pass against a
-      // spy that observes nothing (e.g. a store facade that stopped being the memoized object).
       const liveSpy = vi.spyOn(store, "getRetiredEntries");
       await retireAnchors(sessionKey, path, ["CCC"]);
       expect(liveSpy).toHaveBeenCalled();
@@ -416,18 +381,12 @@ describe("served state — retired-anchor writer contract", () => {
       const seeded = readServedRow(home, sessionKey, path);
       expect(JSON.parse(seeded.retired as string)).toEqual([{ hash: "AAA", deathPos: null }]);
 
-      // Same hash, after the clock has demonstrably moved: idempotent retirement is the
-      // writer's decision not to upsert, so the row's stamp and column must both stay put.
       await new Promise((r) => setTimeout(r, 5));
       await retireAnchors(sessionKey, path, ["AAA"]);
       const afterRepeat = readServedRow(home, sessionKey, path);
       expect(afterRepeat.updated_at).toBe(seeded.updated_at);
       expect(afterRepeat.retired).toBe(seeded.retired);
 
-      // POSITIVE CONTROL — the assertion above can fail. Upserting that very same column
-      // directly, after another few ms, DOES move `updated_at`: the DB clock resolves finer
-      // than the gap this cell measures, so the unchanged stamp is the writer's no-write and
-      // not a clock artefact.
       await new Promise((r) => setTimeout(r, 5));
       store.upsertRetiredAnchors(sessionKey, path, afterRepeat.retired as string);
       const afterControl = readServedRow(home, sessionKey, path);
@@ -445,10 +404,6 @@ describe("served state — merge helper (stale-tail invariant)", () => {
         { position: 1, hash: "def" },
         { position: 2, hash: "ghi" },
       ]);
-      // The file shrank to 1 line; the new serve must not keep the old
-      // tail — a hash held at a position beyond the line count is a
-      // stale claim that later makes boundary anchors look ambiguous
-      // (E_UNSERVED_RANGE, "served at N positions").
       await recordServed("sessionA", "/p.ts", [{ position: 0, hash: "abc" }], 1);
       expect(await loadServed("sessionA", "/p.ts")).toEqual(["abc"]);
       expect((await loadServedStore()).getRetiredAnchors("sessionA", "/p.ts")).toEqual(
@@ -463,7 +418,6 @@ describe("served state — merge helper (stale-tail invariant)", () => {
         { position: 0, hash: "abc" },
         { position: 1, hash: "def" },
       ]);
-      // Post-mutation diff serve: file shrank to 1 line, only "abc" shown.
       await recordServedTruncated("sessionA", "/p.ts", [{ position: 0, hash: "abc" }], 1, 0);
       const served = await loadServed("sessionA", "/p.ts");
       expect(served).toEqual(["abc"]);
@@ -482,8 +436,6 @@ describe("served state — merge helper (stale-tail invariant)", () => {
         { position: 2, hash: "ccc" },
         { position: 3, hash: "ddd" },
       ]);
-      // The edit's first changed line is 1 (0-indexed): the model's
-      // view of everything at/after it no longer holds.
       await recordServedTruncated("sessionA", "/p.ts", [{ position: 2, hash: "xxx" }], 4, 1);
       expect(await loadServed("sessionA", "/p.ts")).toEqual(["aaa", null, "xxx"]);
       expect((await loadServedStore()).getRetiredAnchors("sessionA", "/p.ts")).toEqual(
@@ -506,8 +458,6 @@ describe("served state — merge helper (stale-tail invariant)", () => {
       expect(() => _mergeServedRows([], [{ position: -1, hash: "abc" }])).toThrow(
         /Invalid served position/,
       );
-      // The async seam swallows store failures; an invalid batch must be
-      // a no-op, never a partial write.
       await recordServed("sessionA", "/p.ts", [{ position: 0, hash: "ZZZZ" }]);
       expect(await loadServed("sessionA", "/p.ts")).toEqual([]);
     });
@@ -561,7 +511,6 @@ describe("served state — session isolation", () => {
       await recordServed("sessionA", path, [{ position: 0, hash: "AAA" }], 1, {
         hashes: ["AAA"],
         canons: ["a"],
-        // A one-line file served whole; the cell asserts reservations, not serve shape.
         fullRead: true,
       });
       const store = await loadServedStore();
@@ -569,7 +518,6 @@ describe("served state — session isolation", () => {
       await recordServed("sessionB", path, [{ position: 0, hash: "CCC" }], 1, {
         hashes: ["CCC"],
         canons: ["c"],
-        // Same one-line whole-file serve, second session.
         fullRead: true,
       });
       store.upsertRetiredAnchors("sessionB", path, JSON.stringify([{ hash: "DDD", deathPos: 0 }]));
@@ -605,7 +553,7 @@ describe("served state — session wipe keeps snapshots and undo", () => {
       const store = await loadHashStore();
       await recordServed("sessionA", "/a.ts", [{ position: 0, hash: "abc" }]);
       await recordServed("sessionA", "/b.ts", [{ position: 1, hash: "def" }]);
-      store.upsertSnapshot("/a.ts", contentChecksum("a\n"), 1, ["abc"]);
+      store.upsertSnapshot("/a.ts", contentChecksum("a\n"), 1, ["abc"], "a\n");
       await saveUndo("/u.ts", {
         content: "old",
         bom: "",
@@ -632,11 +580,9 @@ describe("served state — corrupt row handling", () => {
     value: string,
   ): Promise<void> {
     const db = new DatabaseSync(sqlitePath(home), { defensive: false } as any);
-    db.prepare("UPDATE served SET hashes = ? WHERE session_id = ? AND path = ?").run(
-      value,
-      sessionKey,
-      path,
-    );
+    db.prepare(
+      "UPDATE served_session_meta SET hashes = ? WHERE session_id = ? AND file_path = ?",
+    ).run(value, sessionKey, path);
     db.close();
   }
 
@@ -650,7 +596,9 @@ describe("served state — corrupt row handling", () => {
         defensive: false,
       } as any);
       const remaining = check
-        .prepare("SELECT COUNT(*) AS n FROM served WHERE session_id = ? AND path = ?")
+        .prepare(
+          "SELECT COUNT(*) AS n FROM served_session_meta WHERE session_id = ? AND file_path = ?",
+        )
         .get("sessionA", "/p.ts") as { n: number };
       check.close();
       expect(remaining.n).toBe(0);
@@ -667,7 +615,9 @@ describe("served state — corrupt row handling", () => {
         defensive: false,
       } as any);
       const remaining = check
-        .prepare("SELECT COUNT(*) AS n FROM served WHERE session_id = ? AND path = ?")
+        .prepare(
+          "SELECT COUNT(*) AS n FROM served_session_meta WHERE session_id = ? AND file_path = ?",
+        )
         .get("sessionA", "/p.ts") as { n: number };
       check.close();
       expect(remaining.n).toBe(0);
@@ -684,7 +634,9 @@ describe("served state — corrupt row handling", () => {
         defensive: false,
       } as any);
       const remaining = check
-        .prepare("SELECT COUNT(*) AS n FROM served WHERE session_id = ? AND path = ?")
+        .prepare(
+          "SELECT COUNT(*) AS n FROM served_session_meta WHERE session_id = ? AND file_path = ?",
+        )
         .get("sessionA", "/p.ts") as { n: number };
       check.close();
       expect(remaining.n).toBe(0);
@@ -697,7 +649,7 @@ describe("served state — schema versioning", () => {
     await withTempHome(async (home) => {
       const store = await loadHashStore();
       await recordServed("sessionA", "/p.ts", [{ position: 0, hash: "XYZ" }]);
-      store.upsertSnapshot("/p.ts", contentChecksum("x\n"), 1, ["XYZ"]);
+      store.upsertSnapshot("/p.ts", contentChecksum("x\n"), 1, ["XYZ"], "x\n");
       await saveUndo("/u.ts", {
         content: "old",
         bom: "",
@@ -728,15 +680,19 @@ describe("served state — schema versioning", () => {
         | undefined;
       expect(version?.value).toBe("999");
       const servedRow = check
-        .prepare("SELECT hashes FROM served WHERE session_id = ? AND path = ?")
+        .prepare("SELECT hashes FROM served_session_meta WHERE session_id = ? AND file_path = ?")
         .get("sessionA", "/p.ts") as { hashes: string };
       expect(JSON.parse(servedRow.hashes)).toEqual(["XYZ"]);
-      const snapshots = check.prepare("SELECT COUNT(*) AS n FROM snapshots").get() as {
-        n: number;
-      };
-      expect(snapshots.n).toBe(1);
-      const undos = check.prepare("SELECT COUNT(*) AS n FROM undo").get() as { n: number };
-      expect(undos.n).toBe(1);
+      expect(
+        (check.prepare("SELECT COUNT(*) AS n FROM file_snapshots").get() as { n: number }).n,
+      ).toBe(1);
+      expect((check.prepare("SELECT COUNT(*) AS n FROM file_undo").get() as { n: number }).n).toBe(
+        1,
+      );
+      expect((check.prepare("SELECT COUNT(*) AS n FROM snapshots").get() as { n: number }).n).toBe(
+        0,
+      );
+      expect((check.prepare("SELECT COUNT(*) AS n FROM undo").get() as { n: number }).n).toBe(0);
       check.close();
 
       const entries = await readdir(configHome(home));
@@ -768,7 +724,7 @@ describe("served state — schema versioning", () => {
       await writeFile(path, content, "utf-8");
       const initialStore = await loadHashStore();
       await recordServed("sessionA", path, [{ position: 0, hash: "AAA" }]);
-      initialStore.upsertSnapshot(path, contentChecksum(content), 2, ["BBB", "AAA"]);
+      initialStore.upsertSnapshot(path, contentChecksum(content), 2, ["BBB", "AAA"], content);
       await saveUndo(path, {
         content: "old\nnew\n",
         bom: "",
@@ -788,8 +744,6 @@ describe("served state — schema versioning", () => {
       expect(store.getAnchorReservations("sessionA", path).reservedHashes).toEqual(
         new Set(["AAA"]),
       );
-      // The retired-column upgrade is non-destructive (ADR-0017): snapshot and undo
-      // rows survive; only the missing column is backfilled.
       expect((await loadHashStore()).getSnapshot(path, content)).toEqual(["BBB", "AAA"]);
       expect((await loadHashStore()).getUndo(path)).toEqual({
         content: "old\nnew\n",
@@ -797,11 +751,8 @@ describe("served state — schema versioning", () => {
         ending: "\n",
         hashes: ["BBB", "AAA"],
         resultContent: content,
-        // #171: the pair columns are additive and survive the unrelated upgrade backfill; the
-        // save named no effective ending, so the row carries the pre-image's own one.
         effectiveEnding: "\n",
         preImageMixed: 0,
-        // #191: the verdict pair rides the same additive contract — NULL here, never a claim.
         migratedFrom: null,
         migratedFromBOM: null,
       });
@@ -848,8 +799,8 @@ describe("served state — pruneMissing", () => {
       const store = await loadHashStore();
       await recordServed("sessionA", existing, [{ position: 0, hash: "KEP" }]);
       await recordServed("sessionA", "/gone.ts", [{ position: 0, hash: "GON" }]);
-      store.upsertSnapshot(existing, contentChecksum("keep\n"), 1, ["KEP"]);
-      store.upsertSnapshot("/gone.ts", contentChecksum("gone\n"), 1, ["GON"]);
+      store.upsertSnapshot(existing, contentChecksum("keep\n"), 1, ["KEP"], "keep\n");
+      store.upsertSnapshot("/gone.ts", contentChecksum("gone\n"), 1, ["GON"], "gone\n");
       await saveUndo(existing, {
         content: "old",
         bom: "",
@@ -897,10 +848,9 @@ describe("served state — reported drift set", () => {
       const db = new DatabaseSync(sqlitePath(home), {
         defensive: false,
       } as any);
-      db.prepare("UPDATE served SET reported = 'not json' WHERE session_id = ? AND path = ?").run(
-        "sessionA",
-        "/p.ts",
-      );
+      db.prepare(
+        "UPDATE served_session_meta SET reported = 'not json' WHERE session_id = ? AND file_path = ?",
+      ).run("sessionA", "/p.ts");
       db.close();
       expect(await driftReported("sessionA", "/p.ts")).toEqual(new Set());
     });
@@ -950,11 +900,9 @@ describe("served state — TTL sweep", () => {
     updatedAt: number,
   ): Promise<void> {
     const db = new DatabaseSync(sqlitePath(home), { defensive: false } as any);
-    db.prepare("UPDATE served SET updated_at = ? WHERE session_id = ? AND path = ?").run(
-      updatedAt,
-      sessionKey,
-      path,
-    );
+    db.prepare(
+      "UPDATE served_session_meta SET updated_at = ? WHERE session_id = ? AND file_path = ?",
+    ).run(updatedAt, sessionKey, path);
     db.close();
   }
 
@@ -971,7 +919,9 @@ describe("served state — TTL sweep", () => {
         defensive: false,
       } as any);
       const remaining = check
-        .prepare("SELECT COUNT(*) AS n FROM served WHERE session_id = ? AND path = ?")
+        .prepare(
+          "SELECT COUNT(*) AS n FROM served_session_meta WHERE session_id = ? AND file_path = ?",
+        )
         .get("sessionA", "/p.ts") as { n: number };
       check.close();
       expect(remaining.n).toBe(0);

@@ -7,12 +7,6 @@
  * (branching + fallback Map + Top-3), encoding.ts (pure scoring), and
  * file-view/fs-write (stripBOM/detectEnding/encode back). Now one file owns
  * the invariant; deleting it would scatter round-trip fidelity (deep).
- *
- * Interface is the test surface: pure decode is tested without filesystem,
- * IO adapters (fs-bridge) are thin. `store-config.autoGuessEncoding` stays the
- * only config knob — this module reads it but does not own it.
- *
- * @module dsh-better-edit/file-encoding-state
  */
 
 import {
@@ -35,16 +29,6 @@ import type { EncodingMigrationConsent, EncodingMigrationTarget } from "./encodi
  * recorded by the preceding `read({ encoding })` — but only while the memo still
  * matches the on-disk version, and only for encodings the plain read path cannot
  * reproduce.
- *
- * `utf8` / `utf8bom` need no hint: BOM sniff + strict UTF-8 (and the bridge's
- * stripped-BOM restore) already decode them to the text the anchors were served
- * for, so asking for a byte reread would only cost an RPC. Everything else
- * (utf16le, windows-1251, GBK, …) is invisible to the plain path — without the
- * hint the mutation re-read decodes lossily or fails, which is the stale-anchor /
- * unsupported-file symptom this hint removes (issue #112).
- *
- * A drifted memo is dropped first, so a changed file is re-detected instead of
- * having the old encoding laundered onto its new bytes.
  */
 export function encodingHintAtVersion(
   filePath: string,
@@ -55,10 +39,6 @@ export function encodingHintAtVersion(
   if (encoding === undefined || encoding === "utf8" || encoding === "utf8bom") return undefined;
   return encoding;
 }
-
-// ---------------------------------------------------------------------------
-// State — per-file memo identity, session-TTL, version-invalidated
-// ---------------------------------------------------------------------------
 
 export interface FileEncodingState {
   encoding: string;
@@ -119,10 +99,6 @@ export function invalidateIfStale(filePath: string, currentVersion: string | und
   if (memo && memo.version !== currentVersion) encodingMemo.delete(key);
 }
 
-// ---------------------------------------------------------------------------
-// Pure helpers — no IO
-// ---------------------------------------------------------------------------
-
 export function buildTop3Description(candidates: CandidatePreview[]): string {
   const candStr = candidates
     .map((c) => `${c.encoding}("${c.sample.slice(0, 20).replace(/"/g, "'")}")`)
@@ -140,7 +116,6 @@ export function buildTop3ErrorMessage(displayPath: string, candidates: Candidate
 function buildAutoGuessFooterFromCandidates(
   candidates: Array<{ encoding: string; confidence?: number; score?: number; sample?: string }>,
 ): string {
-  // chardet path vs heuristic path share same footer shape, just score vs confidence
   const candsStr = candidates
     .map((c) => {
       const score =
@@ -172,11 +147,6 @@ function isMidConfidenceChardet(
 function isMidConfidenceHeuristic(best: CandidatePreview, second?: CandidatePreview): boolean {
   return second !== undefined && best.score - second.score < 10;
 }
-
-// ---------------------------------------------------------------------------
-// Deterministic admission — BOM → strict UTF-8 → autoGuess gate → Top-3
-// always surfaced. Pure: takes bytes + config, returns decode or throws.
-// ---------------------------------------------------------------------------
 
 export interface DecodeAdmissionConfig {
   autoGuessEncoding: boolean;
@@ -216,13 +186,10 @@ export async function decodeForOpen(
     throw new DomainError("E_BAD_PAYLOAD", { message: `Unknown encoding: ${opts.encodingHint}` });
   }
 
-  // 1) Explicit hint (Reopen with Encoding) — caller already chose, no autoGuess
   if (hint) {
     const bom = detectBom(bytes);
-    // If BOM present, it wins for hasBOM but hint wins for decode (VS Code)
     const off = bom ? bom.bomLen : 0;
     const slice = bom ? bytes.subarray(off) : bytes;
-    // For BOM encodings, decode the full bytes (including BOM) via helper; otherwise hint
     let decoded: string | undefined;
     if (
       bom &&
@@ -233,8 +200,6 @@ export async function decodeForOpen(
         bom.encoding === "utf32be")
     ) {
       // When hint differs from BOM, hint takes precedence for decoding the slice
-      // but we preserve hasBOM from BOM sniff. For utf variants, BOM encoding
-      // already handled; for explicit hint we decode slice with hint.
       decoded = decodeBytes(slice, hint);
       if (decoded === undefined)
         throw new DomainError("E_UNSUPPORTED_FILE", {
@@ -266,7 +231,6 @@ export async function decodeForOpen(
     };
   }
 
-  // 2) BOM sniff — deterministic, before UTF-8
   const bom = detectBom(bytes);
   if (bom) {
     const decoded = decodeBytes(bytes, bom.encoding);
@@ -281,7 +245,6 @@ export async function decodeForOpen(
     }
   }
 
-  // 3) Strict UTF-8 fatal:true — deterministic
   if (isValidUtf8(bytes)) {
     const text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
     return {
@@ -293,9 +256,7 @@ export async function decodeForOpen(
     };
   }
 
-  // 4) AutoGuess gate — probabilistic, last resort
   if (config.autoGuessEncoding) {
-    // Try chardet first (Top-1 with footer for mid-confidence)
     try {
       const chardetCands = await chardetTop3Candidates(bytes, config.supportedEncodings);
       if (chardetCands.length > 0) {
@@ -321,7 +282,7 @@ export async function decodeForOpen(
         }
       }
     } catch {
-      // best-effort
+      // HACK: best-effort probe — a failure falls through to the heuristic
     }
 
     const candidates = top3Candidates(bytes, config.supportedEncodings);
@@ -331,9 +292,6 @@ export async function decodeForOpen(
       const isMid = isMidConfidenceHeuristic(best, second);
       const dec = decodeBytes(bytes, best.encoding);
       if (dec !== undefined) {
-        // Always produce footer for heuristic path (mid check decides but we always have candidates)
-        // Keep existing behavior: always a footer for heuristic, but mid decides inclusion — for now always include
-        // to match prior fs-bridge which always built footerHeu.
         void isMid;
         const footer = buildAutoGuessFooterFromCandidates(candidates);
         return {
@@ -346,11 +304,8 @@ export async function decodeForOpen(
         };
       }
     }
-    // No candidate succeeded — fall through to E_UNSUPPORTED_FILE with Top-3
   }
 
-  // 5) E_UNSUPPORTED_FILE + Top-3 always pushed (even when autoGuess off)
-  // Use chardet Top-3 when available, else heuristic Top-3 — same as fs-bridge fallback
   let candidates: CandidatePreview[] = [];
   try {
     const chardetCands = await chardetTop3Candidates(bytes, config.supportedEncodings);
@@ -374,11 +329,6 @@ export async function decodeForOpen(
   });
 }
 
-// ---------------------------------------------------------------------------
-// Recording helpers — caller supplies the file path + version after decode
-// (identity is `keyOf`'d inside the seam, so one path is one memo entry)
-// ---------------------------------------------------------------------------
-
 export function recordOpenState(
   filePath: string,
   text: string,
@@ -399,10 +349,6 @@ export function recordOpenState(
 export function recordFooter(filePath: string, footer: string | undefined): void {
   if (footer) setAutoGuessFooter(filePath, footer);
 }
-
-// ---------------------------------------------------------------------------
-// Save side — invert state, handle hasBOM + lineEnding, memo update
-// ---------------------------------------------------------------------------
 
 export interface EncodeForSaveOptions {
   encodingHint?: string;
@@ -487,13 +433,6 @@ function utf8TargetState(
  * exists; otherwise defaults are UTF-8 without BOM and LF.
  *
  * ROUND-TRIP VERDICT: the bridge's only write is `writeText(target, content:
- * string, …)`, which every backend encodes as UTF-8. So the save side can
- * restore BOM + line ending for the UTF-8 family, and can write a legacy file
- * only when its UTF-8 byte image is identical (ASCII-only). Anything else
- * throws `E_ENCODING_UNWRITABLE` BEFORE the write unless the caller consented to
- * convert it (#209): the `"utf8"` target writes UTF-8 without BOM and the
- * `"utf8bom"` target writes one leading BOM, and either way the memo records the
- * shape actually written so the next read agrees with the bytes.
  */
 export function prepareForSave(
   content: string,
@@ -508,8 +447,6 @@ export function prepareForSave(
     const norm = normalizeEncoding(opts.encodingHint);
     if (!norm)
       throw new DomainError("E_BAD_PAYLOAD", { message: `Unknown encoding: ${opts.encodingHint}` });
-    // A non-UTF-8 hint names an encoding the UTF-8 text write cannot reproduce
-    // except byte-faithfully; a recorded BOM adds bytes it cannot reproduce at all.
     const hintFaithful =
       (norm === "utf8" || norm === "utf8bom" || isByteFaithfulAsUtf8(content, norm)) &&
       !(existingState?.hasBOM === true && norm !== "utf8bom");
@@ -518,12 +455,8 @@ export function prepareForSave(
     const hasBOM = norm === "utf8bom";
     const lineEnding: LineEnding =
       opts.lineEnding ?? existingState?.lineEnding ?? detectEnding(content);
-    // The bytes must agree with the memo. Without an override the caller's own text is written
-    // verbatim (unchanged behaviour); with one, the text is re-spelled at that ending so the
-    // recorded `lineEnding` describes what was actually written.
     const textToWrite =
       opts.lineEnding !== undefined ? restoreEndings(toLF(content), opts.lineEnding) : content;
-    // Caller writes `textToWrite` as a UTF-8 string; record what the next read detects.
     return {
       textToWrite,
       newState: { encoding: norm, hasBOM, lineEnding, version: undefined },
@@ -531,9 +464,6 @@ export function prepareForSave(
   }
 
   if (!existingState) {
-    // New file, no memo: UTF-8, caller's own line endings. A requested ending still gets applied —
-    // that is the resolved effective EOL the caller computed, and the memo must describe the bytes
-    // it just wrote or the next read would detect a different ending (#169).
     if (opts.lineEnding !== undefined) {
       const textToWrite = restoreEndings(toLF(content), opts.lineEnding);
       const hasBOM = textToWrite.startsWith(UTF8_BOM);
@@ -556,16 +486,8 @@ export function prepareForSave(
 
   if (recorded !== "utf8" && recorded !== "utf8bom") {
     const body = restoreEndings(toLF(content), lineEnding);
-    // A recorded BOM on a non-UTF-8 encoding means bytes the text write cannot
-    // reproduce (e.g. read({ encoding: "windows-1251" }) on a UTF-8-BOM file, or
-    // utf16le's FF FE), so even an ASCII body is not byte-faithful there.
     const faithful = !existingState.hasBOM && isByteFaithfulAsUtf8(body, recorded);
-    // A byte-faithful body is byte-identical under both codecs: it lands unchanged — no BOM, no
-    // verdict, no conversion — whatever the consent says. The consent only decides what to do
-    // with a body this seam CANNOT write faithfully.
     if (faithful) {
-      // The bytes are identical under both codecs, so they land as UTF-8 without BOM; the memo must
-      // describe those bytes — never a stale utf16le/legacy name.
       return {
         textToWrite: body,
         newState: { encoding: "utf8", hasBOM: false, lineEnding, version: undefined },
@@ -574,27 +496,14 @@ export function prepareForSave(
     if (consent === "refuse") {
       throw new DomainError("E_ENCODING_UNWRITABLE", { path: displayPath, encoding: recorded });
     }
-    // #191: the verdict fires ONLY here, on the non-faithful arm: the write abandoned the
-    // recorded codec, so the undo names it.
     const migration: EncodingMigration = { encoding: recorded, hasBOM: existingState.hasBOM };
-    // #209: the migrated bytes take the CHOSEN UTF-8 shape — `utf8bom` adds one leading BOM.
     const newState = utf8TargetState(consent, lineEnding);
-    // WHY (#209): this seam runs TWICE for one write — `persistUndoAndWrite` prepares the text, then
-    // `fs-bridge.writeText` re-prepares it against a memo that still names the legacy codec. A BOM
-    // the first pass added would be added again by the second, so the utf8bom branch strips one
-    // leading BOM before re-adding its own. The "utf8" branch writes the body unchanged; it never
-    // strips content.
     const textToWrite = newState.hasBOM
       ? `${UTF8_BOM}${body.startsWith(UTF8_BOM) ? body.slice(1) : body}`
       : body;
     return { textToWrite, newState, migration };
   }
 
-  // UTF-8 family: restore the recorded BOM + lineEnding via the shared seam so
-  // governed writers (e.g. the str_replace_editor shadow) don't re-implement the
-  // round-trip locally and diverge on future lineEnding evolution.
-  // Only add, never strip: a missing BOM means UTF-8 without BOM. A consent never adds a BOM to a
-  // file that is already UTF-8 — the BOM is preserved, never introduced spontaneously (ADR-0012).
   let textToWrite = restoreEndings(toLF(content), lineEnding);
   if (existingState.hasBOM && !textToWrite.startsWith(UTF8_BOM)) {
     textToWrite = `${UTF8_BOM}${textToWrite}`;

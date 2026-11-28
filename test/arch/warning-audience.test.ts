@@ -16,12 +16,6 @@ import {
  * would resend never acted on it, and the next resend tripped `E_NOOP_LOOP`.
  * Audience names the actor, not the channel: a warning rendered into model
  * content with a model-directed sentence is mislabelled when it says USER.
- *
- * Method: render every warning from a payload fixture and scan the USER-routed
- * output for model-directed vocabulary. The fixture map is keyed by the warning
- * union, so a new warning cannot be added without a sample payload (`tsc`
- * fails). The positive control feeds the predicate the retired text, proving it
- * fires — the guard is not a check that merely restates the registry.
  */
 
 /** Retry directives and rejection predictions addressed to the model. */
@@ -47,8 +41,8 @@ const FIXTURES: WarningFixtures = {
     { ref: "a.txt", anchorFrom: "aB3", anchorTo: "Zz9", batch: false, count: 2 },
   ],
   W_UNSERVED_INTERIOR: [
-    { count: 2, from: 3, to: 4 },
-    { count: 1, from: 7, to: 7 },
+    { unservedLines: [3, 4], replacedLineCount: 6 },
+    { unservedLines: [7], replacedLineCount: 9 },
   ],
   W_ENCODING_MIGRATED: [
     { path: "u16.txt", encoding: "utf16le", hasBOM: true },

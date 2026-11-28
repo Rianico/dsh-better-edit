@@ -132,14 +132,14 @@ describe("undo-store", () => {
       resultContent: "new",
     });
     const db = new DatabaseSync(hashStorePath(), { defensive: false } as any);
-    db.prepare("UPDATE undo SET ending = ? WHERE path = ?").run("bogus", home.testPath);
+    db.prepare("UPDATE file_undo SET ending = ? WHERE path = ?").run("bogus", home.testPath);
     db.close();
     expect(await getUndo(home.testPath)).toBeUndefined();
     const check = new DatabaseSync(hashStorePath(), {
       defensive: false,
     } as any);
     const remaining = check
-      .prepare("SELECT COUNT(*) AS n FROM undo WHERE path = ?")
+      .prepare("SELECT COUNT(*) AS n FROM file_undo WHERE path = ?")
       .get(home.testPath) as { n: number };
     check.close();
     expect(remaining.n).toBe(0);
@@ -163,12 +163,8 @@ describe("undo-store — raw entries", () => {
       ending: "\r\n",
       hashes: ["abc", "def"],
       resultContent: "new",
-      // #171: the store reports both pair columns; a caller that named no effective ending
-      // records the pre-image's own one and never claims a mixture.
       effectiveEnding: "\r\n",
       preImageMixed: 0,
-      // #191: the store reports the verdict pair too; a caller that migrated nothing stores
-      // NULL on both — "not recorded", never a claim.
       migratedFrom: null,
       migratedFromBOM: null,
     });
@@ -224,20 +220,16 @@ describe("undo-store — raw entries", () => {
       resultContent: "new",
     });
     const db = new DatabaseSync(hashStorePath(), { defensive: false } as any);
-    db.prepare("UPDATE undo SET hashes = ? WHERE path = ?").run("{not json", "/a.ts");
+    db.prepare("UPDATE file_undo SET hashes = ? WHERE path = ?").run("{not json", "/a.ts");
     db.close();
     expect(store.getUndo("/a.ts")).toBeUndefined();
     const check = new DatabaseSync(hashStorePath(), {
       defensive: false,
     } as any);
-    const remaining = check
-      .prepare("SELECT COUNT(*) AS n FROM undo WHERE path = ?")
-      .get("/a.ts") as { n: number };
     const v7rows = check
       .prepare("SELECT COUNT(*) AS n FROM file_undo WHERE path = ?")
       .get("/a.ts") as { n: number };
     check.close();
-    expect(remaining.n).toBe(0);
     expect(v7rows.n).toBe(0);
   });
 
@@ -251,20 +243,16 @@ describe("undo-store — raw entries", () => {
       resultContent: "new",
     });
     const db = new DatabaseSync(hashStorePath(), { defensive: false } as any);
-    db.prepare("UPDATE undo SET hashes = ? WHERE path = ?").run('["ZZ", "ZZZZ"]', "/a.ts");
+    db.prepare("UPDATE file_undo SET hashes = ? WHERE path = ?").run('["ZZ", "ZZZZ"]', "/a.ts");
     db.close();
     expect(store.getUndo("/a.ts")).toBeUndefined();
     const check = new DatabaseSync(hashStorePath(), {
       defensive: false,
     } as any);
-    const remaining = check
-      .prepare("SELECT COUNT(*) AS n FROM undo WHERE path = ?")
-      .get("/a.ts") as { n: number };
     const v7rows = check
       .prepare("SELECT COUNT(*) AS n FROM file_undo WHERE path = ?")
       .get("/a.ts") as { n: number };
     check.close();
-    expect(remaining.n).toBe(0);
     expect(v7rows.n).toBe(0);
   });
 });

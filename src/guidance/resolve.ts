@@ -68,7 +68,6 @@ export const GUIDANCE_SECTIONS: readonly GuidanceSection[] = [
   {
     name: "tool:undo_last_edit",
     file: "undo_last_edit.md",
-    // Immediately after the edit slot it annotates; there is no TOOL_UNDO name.
     defaultOrder: 1310,
     renderDefault: () => guidanceText(UNDO_GUIDANCE),
   },
@@ -136,8 +135,6 @@ export async function resolveSection(
     if (content === undefined) continue;
     const parsed = parseSectionFile(content);
     if (parsed.malformed) {
-      // A broken override must never reach the model. Resolve to the
-      // compiled default and report the file + parse reason to the caller.
       return {
         order: defaultOrder,
         text: section.renderDefault(),
@@ -147,23 +144,12 @@ export async function resolveSection(
         },
       };
     }
-    // Blank (no fence, whitespace-only) means "use the default": advance the
-    // fallback chain rather than render an empty section.
     if (isBlankOverride(content)) continue;
     const order = parsed.order ?? defaultOrder;
-    // A valid fence over a whitespace-only body is a deliberate "disable this
-    // section" choice: render an empty string at its order, with no notice.
     if (parsed.text.trim() === "") return { order, text: "" };
-    // Divergence compares the RESOLVED TEXT against the compiled default body,
-    // never the raw file bytes, so an order-only fence around the exact default
-    // body is not divergence.
     if (seedHash(parsed.text) === seedHash(section.renderDefault())) {
       return { order, text: parsed.text };
     }
-    // Trim only trailing newlines before appending the notice; leading and
-    // interior content stay exactly as the user wrote it. The notice literal
-    // lives in `domain-errors.ts` (the vocabulary home) so this module holds no
-    // raw `[W_*]` header.
     return {
       order,
       text: `${parsed.text.replace(/[\r\n]+$/, "")}\n\n${PROMPT_DIVERGED_NOTICE}`,

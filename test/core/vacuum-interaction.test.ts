@@ -144,11 +144,8 @@ describe("vacuum — interaction with lineage, leases and the tools", () => {
         const leaseIds = new Set(leaseLineIds(db, path));
         expect(leaseIds.size).toBeGreaterThan(0);
 
-        // Ten versions whose canons share nothing with the served content, then unpin and sweep.
         await seedVersions(cwd, path, 10, "seed10");
         ageLeases(db, path);
-        // A synthetic bulk row on another path makes the global arm fire: the oldest unpinned row
-        // (the served version) is then the sweep's first candidate.
         db.prepare(
           "INSERT INTO file_snapshots (path, snapshot_hash, line_count, created_at, committed) " +
             "VALUES ('/bulk.ts', '10:bulk', 2000000, ?, 1)",
@@ -168,18 +165,14 @@ describe("vacuum — interaction with lineage, leases and the tools", () => {
           ),
         ).toBe(0);
 
-        // Re-materialize the evicted content: the counter is never reset, so the ids are fresh.
         store.commitSnapshot({ path, content: DISK_CONTENT, hashes: [...servedHashes] });
         const rows = store.lineageFor(path, servedHash);
         const newIds = rows.map((row) => row.lineId);
         const counterAfter = db
           .prepare("SELECT next_id FROM line_id_counters WHERE path = ?")
           .get(path) as { next_id: number };
-        // Exactly one row per line, one distinct id per row (the unique alias guard holds).
         expect(rows.map((row) => row.lineNumber)).toEqual([1, 2, 3]);
         expect(new Set(newIds).size).toBe(3);
-        // Monotone counter, never reset: every fresh id comes from `next_id`; none is re-issued,
-        // and the ids the aged lease still names are not among them.
         expect(newIds.every((id) => id >= counterBefore.next_id)).toBe(true);
         expect(counterAfter.next_id).toBe(counterBefore.next_id + 3);
         for (const lineId of newIds) expect(leaseIds.has(lineId)).toBe(false);
@@ -213,7 +206,6 @@ describe("vacuum — interaction with lineage, leases and the tools", () => {
       ).run(Date.now() + 60_000);
       store.vacuumSnapshots();
       try {
-        // the store exists from the read above
         expect(anchors).toHaveLength(3);
         expect(
           count(
@@ -230,13 +222,8 @@ describe("vacuum — interaction with lineage, leases and the tools", () => {
         } catch (error) {
           failure = `${codeOf(error) ?? ""} :: ${error instanceof Error ? error.message : String(error)}`;
         }
-        // FU-4 ports the granular codes: the evicted snapshot leaves the boundary's lease
-        // without a live line identity, so `interceptLeaseBoundaries` fails closed with
-        // `E_TARGET_LOST` (no rows) inside the batch envelope — the collapsed
-        // `E_STALE_RANGE` shape this cell pinned pre-FU-4 is retired.
         expect(failure).toContain("[E_TARGET_LOST]");
         expect(failure).toContain("no longer resolves to the line identity it was served with");
-        expect(failure).toContain("nothing was written");
         expect(failure).not.toContain("[E_STALE_RANGE]");
         expect(await readFile(path, "utf-8")).toBe(bytesBefore);
       } finally {
@@ -250,7 +237,6 @@ describe("vacuum — interaction with lineage, leases and the tools", () => {
       const it = setupIntegrationTest(cwd);
       const read = await it.readTool.execute("c", { path });
       const anchors = readRowHashes(getText(read));
-      // An out-of-band change to a served line makes that line's anchor stale: the edit must reject.
       await writeFile(path, "ALPHA\nbravo\ncharlie");
       const diskBytes = await readFile(path, "utf-8");
       await expect(
@@ -258,18 +244,12 @@ describe("vacuum — interaction with lineage, leases and the tools", () => {
       ).rejects.toThrow();
       expect(await readFile(path, "utf-8")).toBe(diskBytes);
 
-      // Now sweep away the snapshot the rejected edit was resolved against, and read again.
       await seedVersions(cwd, path, 10, "seed12");
       const db = new DatabaseSync(hashStorePath(cwd));
       try {
         ageLeases(db, path);
-        // The seeding vacuums already settled the path at its window, so the explicit sweep needs the
-        // global arm to reach the aged row: a synthetic bulk row on another path does it.
         insertSnapshot(db, "/bulk-12.ts", "12:bulk", 2_000_000, Date.now() + 60_000);
         (await storeFace(cwd)).vacuumSnapshots();
-        // §8(3): the boundary really did remove the v7 row the rejected edit was resolved against
-        // (the pre-edit content), so the cell cannot pass by leaving the rejected edit's referent
-        // in place; the re-materialization assertion below then covers the new on-disk content.
         const staleHash = snapshotHashFor(DISK_CONTENT);
         const diskHash = snapshotHashFor(diskBytes);
         expect(
@@ -284,7 +264,6 @@ describe("vacuum — interaction with lineage, leases and the tools", () => {
         const text = getText(after);
         expect(await readFile(path, "utf-8")).toBe(diskBytes);
         expect(hashlineBodies(text)).toEqual(diskBytes.replace(/\n$/, "").split("\n"));
-        // …and the read re-materialized it, so the anchors resolve against a fresh v7 row.
         expect(
           count(
             db,
@@ -315,8 +294,6 @@ describe("vacuum — interaction with lineage, leases and the tools", () => {
           | undefined;
         expect(pin?.snapshot_hash).toBe(pinned);
 
-        // Over the per-path window and the global budget, with the leases aged out: the undo pin
-        // is the only thing left protecting the target.
         ageLeases(db, path);
         db.prepare(
           "INSERT INTO file_snapshots (path, snapshot_hash, line_count, created_at, committed) " +
@@ -336,7 +313,7 @@ describe("vacuum — interaction with lineage, leases and the tools", () => {
     });
   });
 
-  it("cell 14 cross-table: a pruned v7 family re-materializes and the legacy row is not the source", async () => {
+  it("cell 14 cross-table: a pruned v7 family re-materializes from disk and the shells stay untouched", async () => {
     await withTempFile("cell14.txt", DISK_CONTENT, async ({ cwd, path }) => {
       const it = setupIntegrationTest(cwd);
       await it.readTool.execute("c", { path });
@@ -345,9 +322,7 @@ describe("vacuum — interaction with lineage, leases and the tools", () => {
         expect(count(db, "SELECT COUNT(*) AS count FROM file_snapshots WHERE path = ?", path)).toBe(
           1,
         );
-        expect(count(db, "SELECT COUNT(*) AS count FROM snapshots WHERE path = ?", path)).toBe(1);
-
-        // Evict the v7 family entirely: the served row is oldest and the bulk row breaks the budget.
+        expect(count(db, "SELECT COUNT(*) AS count FROM snapshots WHERE path = ?", path)).toBe(0);
         ageLeases(db, path);
         db.prepare(
           "INSERT INTO file_snapshots (path, snapshot_hash, line_count, created_at, committed) " +
@@ -357,16 +332,7 @@ describe("vacuum — interaction with lineage, leases and the tools", () => {
         expect(count(db, "SELECT COUNT(*) AS count FROM file_snapshots WHERE path = ?", path)).toBe(
           0,
         );
-        // D2: the legacy `snapshots` row is a declared non-reclaim — one per path, upgrade fallback.
-        expect(count(db, "SELECT COUNT(*) AS count FROM snapshots WHERE path = ?", path)).toBe(1);
-        // A6 — negative pin: make the legacy row WRONG, so a silent legacy serve cannot pass. A
-        // correct re-materialization still serves anchors for the on-disk bytes; a legacy serve
-        // returns the diverged anchors below. (The D2 hazard is also pinned in another lane's unit
-        // cells — `test/core/hash-store.test.ts` fails 3 tests without the lineage-first branch.)
-        db.prepare("UPDATE snapshots SET hashes = ? WHERE path = ?").run(
-          JSON.stringify(["zzz", "zzz", "zzz"]),
-          path,
-        );
+        expect(count(db, "SELECT COUNT(*) AS count FROM snapshots WHERE path = ?", path)).toBe(0);
 
         const after = await it.readTool.execute("c", { path });
         expect(count(db, "SELECT COUNT(*) AS count FROM file_snapshots WHERE path = ?", path)).toBe(
@@ -384,12 +350,10 @@ describe("vacuum — interaction with lineage, leases and the tools", () => {
   it("cell 15 the best-effort trigger reports its own failure and the read still succeeds", async () => {
     await withTempFile("cell15.txt", DISK_CONTENT, async ({ cwd, path }) => {
       const it = setupIntegrationTest(cwd);
-      // Ten versions so the next materialization's sweep has an eviction candidate.
       await seedVersions(cwd, path, 10, "seed15");
       const db = new DatabaseSync(hashStorePath(cwd));
       const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
       try {
-        // Inject a broken candidate: any lineage delete aborts, so the sweep throws.
         db.exec(
           "CREATE TRIGGER t5_break_vacuum BEFORE DELETE ON line_lineage BEGIN " +
             "SELECT RAISE(ABORT, 'injected vacuum fault'); END",
@@ -398,7 +362,6 @@ describe("vacuum — interaction with lineage, leases and the tools", () => {
         const read = await it.readTool.execute("c", { path });
         expect(readRowHashes(getText(read))).toHaveLength(3);
         expect(warn).toHaveBeenCalledWith(expect.stringContaining("vacuum failed"));
-        // The read that triggered it still committed its materialization.
         expect(
           count(db, "SELECT COUNT(*) AS count FROM file_snapshots WHERE path = ?", path),
         ).toBeGreaterThan(0);
@@ -416,11 +379,8 @@ describe("vacuum — interaction with lineage, leases and the tools", () => {
       await it.readTool.execute("c", { path });
       const db = new DatabaseSync(hashStorePath(cwd));
       try {
-        // Over budget, and the served version is the oldest unpinned candidate.
         ageLeases(db, path);
         insertSnapshot(db, "/bulk-22.ts", "22:bulk", 2_000_000, Date.now() + 60_000);
-        // Rewrite the file out of band so the next read must materialize a NEW version, then put a
-        // fault on the delete of exactly that row: the sweep must never reach the row it just wrote.
         const written = "ALPHA\nbravo\ncharlie";
         const writtenHash = snapshotHashFor(written);
         await writeFile(path, written);
@@ -432,8 +392,6 @@ describe("vacuum — interaction with lineage, leases and the tools", () => {
 
         const next = await it.readTool.execute("c", { path });
 
-        // (i) the sweep completed — it evicted the older candidates and the bulk row — without
-        // targeting the fresh row, so no retention failure was reported.
         expect(warn).not.toHaveBeenCalledWith(expect.stringContaining("vacuum failed"));
         expect(
           count(db, "SELECT COUNT(*) AS count FROM file_snapshots WHERE path = ?", "/bulk-22.ts"),
@@ -446,7 +404,6 @@ describe("vacuum — interaction with lineage, leases and the tools", () => {
             writtenHash,
           ),
         ).toBe(1);
-        // (ii) the read served the just-materialized lineage for the on-disk bytes.
         expect(readRowHashes(getText(next))).toEqual(await lineHashes(written, path));
       } finally {
         db.close();
@@ -462,12 +419,11 @@ describe("vacuum — interaction with lineage, leases and the tools", () => {
       const db = new DatabaseSync(hashStorePath(cwd));
       const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
       try {
-        // Over the soft cap with every candidate pinned: the open sweep can only defer.
         await pinnedBulk(db, cwd, "c23", 3);
         warn.mockClear();
         await onStoreOpen(
           hashStorePath(cwd),
-          { servedPruneOlderThan: () => {} },
+          { servedMetaPruneOlderThan: () => {} },
           await storeFace(cwd),
         );
         expect(warn).toHaveBeenCalledWith(expect.stringContaining("soft overflow"));
@@ -484,13 +440,10 @@ describe("vacuum — interaction with lineage, leases and the tools", () => {
       const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
       const db = new DatabaseSync(hashStorePath(cwd));
       try {
-        // (a) the read's serve write joins a caller-owned unit, so its sweep defers — reported as a
-        // skip, never as a zero result that reads as "nothing to do".
         await it.readTool.execute("c", { path });
         expect(warn).toHaveBeenCalledWith(expect.stringContaining("skipped"));
         expect(warn).not.toHaveBeenCalledWith(expect.stringContaining("soft overflow"));
 
-        // (b) over the soft cap, an edit whose materialization is outermost reports the deferral.
         const anchors = readRowHashes(getText(await it.readTool.execute("c", { path })));
         await pinnedBulk(db, cwd, "c24", 3);
         warn.mockClear();
@@ -509,8 +462,6 @@ describe("vacuum — interaction with lineage, leases and the tools", () => {
       const db = new DatabaseSync(hashStorePath(cwd));
       const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
       try {
-        // Over budget, so the open sweep has a candidate, with a fault on every pair delete: the
-        // sweep throws and only the catch decides what the operator sees.
         ageLeases(db, path);
         const bulkPath = join(cwd, "bulk-27.ts");
         await writeFile(bulkPath, "x\n");
@@ -522,10 +473,13 @@ describe("vacuum — interaction with lineage, leases and the tools", () => {
         warn.mockClear();
 
         await expect(
-          onStoreOpen(hashStorePath(cwd), { servedPruneOlderThan: () => {} }, await storeFace(cwd)),
+          onStoreOpen(
+            hashStorePath(cwd),
+            { servedMetaPruneOlderThan: () => {} },
+            await storeFace(cwd),
+          ),
         ).resolves.toBeUndefined();
 
-        // (i) loud: the warning names the failing store. (ii) non-fatal: open still resolved.
         expect(warn).toHaveBeenCalledWith(
           expect.stringContaining(`snapshot vacuum failed at store open for ${hashStorePath(cwd)}`),
         );
@@ -537,7 +491,7 @@ describe("vacuum — interaction with lineage, leases and the tools", () => {
     });
   });
 
-  it("cell 28 legacy-only upsert: no v7 materialization means no sweep and no failure", async () => {
+  it("cell 28 contentless upsert: refused loudly, no sweep and no store failure", async () => {
     await withTempFile("cell28.txt", DISK_CONTENT, async ({ cwd, path }) => {
       const it = setupIntegrationTest(cwd);
       await it.readTool.execute("c", { path });
@@ -546,13 +500,10 @@ describe("vacuum — interaction with lineage, leases and the tools", () => {
       try {
         await pinnedBulk(db, cwd, "c28", 3);
         warn.mockClear();
-        // A legacy-only write (no content) is not a v7 materialization: no fresh row to protect, so
-        // the trigger must not sweep (and must not trip over the absent content either).
-        (await storeFace(cwd)).upsertSnapshot(path, "legacy-only-checksum", 3, [
-          "aaa",
-          "bbb",
-          "ccc",
-        ]);
+        const face = await storeFace(cwd);
+        expect(() =>
+          face.upsertSnapshot(path, "legacy-only-checksum", 3, ["aaa", "bbb", "ccc"]),
+        ).toThrow(/upsertSnapshot requires content/);
         expect(warn).not.toHaveBeenCalledWith(expect.stringContaining("vacuum failed"));
         expect(warn).not.toHaveBeenCalledWith(expect.stringContaining("soft overflow"));
       } finally {

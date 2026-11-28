@@ -17,10 +17,6 @@ import type { EditMode } from "./edit-mode.js";
 import { isRec, normalizeFilePath, rejectUnknownFields } from "./utils.js";
 import { DomainError } from "./domain-errors.js";
 
-// ---- request shapes --------------------------------------------------------
-
-// Declared in the edit-mode leaf; re-exported here so the contract's consumers are
-// unchanged (ADR-0037 — the write pipeline imports the leaf, never this module).
 export type { EditMode };
 
 export type EditItem = {
@@ -51,7 +47,6 @@ export type EditRequest = {
   allow_encoding_migration?: EncodingMigrationConsent;
 };
 
-// legacy single-edit shape retained for mutation.ts internal API (renamed with the payload)
 export interface EditParams {
   file: string;
   anchor_from: string;
@@ -76,8 +71,6 @@ export interface ReadParams {
 export interface UndoParams {
   path: string;
 }
-
-// ---- normalized marker -----------------------------------------------------
 
 export const normalizedEdit = Symbol("normalizedEdit");
 
@@ -154,8 +147,6 @@ export function editRequestFrom(input: unknown): NormalizedEditRequest | undefin
     dry_run?: unknown;
     allow_encoding_migration?: unknown;
   };
-  // file preferred; legacy path/file_path fold (sanitized). #117: a null or
-  // absent file is an admission error — the anchor-inference seam is retired.
   let effectiveFile: unknown;
   if (file !== undefined) effectiveFile = file;
   else if (path !== undefined) effectiveFile = path;
@@ -181,8 +172,6 @@ export function editRequestFrom(input: unknown): NormalizedEditRequest | undefin
     if (typeof dry_run !== "boolean") return undefined;
     effectiveDryRun = dry_run;
   }
-  // Omission is the only spelling of "the config decides": a present value — `null` included —
-  // must be a consent, so anything else fails the fold (refused by name in assertEditRequest).
   let effectiveConsent: EncodingMigrationConsent | undefined;
   if (allow_encoding_migration !== undefined) {
     if (!isEncodingMigrationConsent(allow_encoding_migration)) return undefined;
@@ -193,7 +182,6 @@ export function editRequestFrom(input: unknown): NormalizedEditRequest | undefin
     edits: items,
     mode: effectiveMode,
     dry_run: effectiveDryRun,
-    // Absent stays absent: the config ladder must not see a materialized "refuse" here.
     ...(effectiveConsent === undefined ? {} : { allow_encoding_migration: effectiveConsent }),
   };
 }
@@ -243,24 +231,13 @@ export function sanitizePath(value: unknown): string | null {
   return cleaned.length > 0 ? cleaned : null;
 }
 
-export const EDIT_PAYLOAD_HINT =
-  "Edit must be called with exactly one payload. Use the canonical payload " +
-  '{"file": file, "edits": [{ "anchor_from": anchor_from, "anchor_to": anchor_to, "replace_with": replace_with }, ...], "mode"?: "general" | "literal", "dry_run"?: boolean, "allow_encoding_migration"?: "refuse" | "utf8" | "utf8bom"}: ' +
-  '"file" is the text file to edit (a non-empty string, never a directory); each item names ' +
-  "two inclusive bare-3-char anchors and the full replacement " +
-  '(an empty string deletes the range); optional "mode" is "general" (default, reproduced served rows are refused) or "literal" (declared literal content); optional "dry_run" is boolean (omitted or null means false — a live edit); optional "allow_encoding_migration" consents to converting this file to UTF-8 on this write — "refuse" (never convert), "utf8" (no BOM) or "utf8bom" (with BOM) — and omitted means the config decides. ' +
-  "Legacy tuple items and legacy key spellings still fold; do not mix old and new key spellings.";
-
-function describeReceived(input: unknown): string {
-  if (input === undefined) return "Received no arguments.";
-  if (input === null) return "Received null.";
-  if (typeof input === "string") return `Received a bare string (${JSON.stringify(input)}).`;
-  const json = JSON.stringify(input);
-  const preview = typeof json === "string" && json.length > 160 ? `${json.slice(0, 160)}…` : json;
-  return `Received: ${preview}`;
-}
-
-// ---- filed sets (declared once) ---------------------------------------------
+/**
+ * The one shape line an admission refusal appends (spec #214): the root keys the payload
+ * contract accepts, then the item shape. Deliberately NOT the old canonical-payload paragraph
+ * and NOT the submitted input — the model already knows what it sent.
+ */
+const EDIT_PAYLOAD_SHAPE =
+  "Edit payload: { file, edits: [{ anchor_from, anchor_to, replace_with }], mode?, dry_run?, allow_encoding_migration? }";
 
 const EDIT_KS = new Set([
   "file",
@@ -275,20 +252,16 @@ const READ_KS = new Set(["path", "offset", "limit", "encoding", "windows"]);
 const ITEM_KS = new Set(["anchor_from", "anchor_to", "replace_with"]);
 const LEGACY_ITEM_KS = new Set(["remove_from", "remove_to", "replacement_text"]);
 
-// ---- normalization -----------------------------------------------------------
-
 /**
  * Normalize `file_path` → `path` alias on the request record and tuple edits → objects.
  * Returns the input unchanged when not a record; otherwise returns a shallow copy with
  * the alias applied so callers never mutate the original `args` object.
  */
-export function normalizeRequest(input: unknown): unknown {
+export function normalizeRequest<T>(input: T): Record<string, unknown> | T {
   if (!isRec(input)) return input;
   const record: Record<string, unknown> = { ...input };
   normalizeFilePath(record);
-  // also normalize file_path inside edits if they were objects (legacy) — not needed for tuple but harmless
   if (Array.isArray(record.edits)) {
-    // keep tuple as-is; editRequestFrom will handle
   }
   const valid = editRequestFrom(record);
   if (!valid) return record;
@@ -297,12 +270,10 @@ export function normalizeRequest(input: unknown): unknown {
     edits: valid.edits,
     mode: valid.mode,
     dry_run: valid.dry_run,
-    // Carried only when the caller named it: a materialized "refuse" would outrank the config.
     ...(valid.allow_encoding_migration === undefined
       ? {}
       : { allow_encoding_migration: valid.allow_encoding_migration }),
   };
-  // preserve non-standard fields like sandbox_permissions/justification for later reject check? but we strip to valid fields and re-add them?
   for (const k of ["sandbox_permissions", "justification"]) {
     if (k in record) (normalized as Record<string, unknown>)[k] = record[k];
   }
@@ -316,8 +287,6 @@ export const normReq = normalizeRequest;
 export function prepareEditArguments(args: unknown): Record<string, unknown> {
   const valid = editRequestFrom(args as unknown);
   if (valid) {
-    // F10.1: preserve mode like normalizeRequest — the two normalizers agree.
-    // prepareEditArguments returns schema-ready folded objects (named triple).
     return {
       file: valid.file,
       edits: valid.edits,
@@ -329,11 +298,9 @@ export function prepareEditArguments(args: unknown): Record<string, unknown> {
     };
   }
   throw new DomainError("E_BAD_PAYLOAD", {
-    message: `${EDIT_PAYLOAD_HINT} ${describeReceived(args)}`,
+    message: `Edit arguments are malformed. ${EDIT_PAYLOAD_SHAPE}`,
   });
 }
-
-// ---- assertions ---------------------------------------------------------------
 
 /** The spellings a caller may name the target with, in payload precedence order. */
 const FILE_SPELLINGS = ["file", "path", "file_path"] as const;
@@ -364,7 +331,7 @@ function namesNoFile(request: Record<string, unknown>): boolean {
     if (!(key in request)) continue;
     const value = request[key];
     if (typeof value === "string") {
-      if (sanitizePath(value) !== null) return false; // a usable name wins
+      if (sanitizePath(value) !== null) return false;
       seesUnnamed = true;
       continue;
     }
@@ -372,10 +339,8 @@ function namesNoFile(request: Record<string, unknown>): boolean {
       seesUnnamed = true;
       continue;
     }
-    return false; // present but wrongly typed: malformed payload
+    return false;
   }
-  // No spelling at all is still unnamed when the record carries an edit payload;
-  // a record naming nothing and carrying nothing keeps the generic hint.
   return seesUnnamed || Array.isArray(request.edits);
 }
 
@@ -396,14 +361,10 @@ function hasUnusableDryRun(request: Record<string, unknown>): boolean {
 function hasUnusableEncodingConsent(request: Record<string, unknown>): boolean {
   if (!("allow_encoding_migration" in request)) return false;
   const value = request.allow_encoding_migration;
-  // `undefined` is the only absent spelling: `null` is a value outside the enum, refused by name.
   return value !== undefined && !isEncodingMigrationConsent(value);
 }
 
 export function assertEditRequest(request: unknown): asserts request is NormalizedEditRequest {
-  // #117: the specific refusal must be reachable before the marker guard — a raw
-  // record whose file is null/absent/empty never normalizes, so the generic hint
-  // would otherwise be the only message the caller sees.
   if (isRec(request) && namesNoFile(request)) {
     throw new DomainError("E_BAD_PAYLOAD", { message: FILE_REQUIRED_MESSAGE });
   }
@@ -416,9 +377,7 @@ export function assertEditRequest(request: unknown): asserts request is Normaliz
   }
   if (!isNormalizedEdit(request)) {
     throw new DomainError("E_BAD_PAYLOAD", {
-      message:
-        'Edit request must be exactly { file, edits: [{ anchor_from, anchor_to, replace_with }, ...], mode?: "general" | "literal", dry_run?: boolean, allow_encoding_migration?: "refuse" | "utf8" | "utf8bom" }. ' +
-        EDIT_PAYLOAD_HINT,
+      message: `Edit request is malformed. ${EDIT_PAYLOAD_SHAPE}`,
     });
   }
   rejectUnknownFields(request as Record<string, unknown>, EDIT_KS, "Edit request");
@@ -428,8 +387,6 @@ export function assertEditRequest(request: unknown): asserts request is Normaliz
       message: FILE_REQUIRED_MESSAGE,
     });
   }
-  // Defence in depth: the pre-marker predicate reads the RAW record, so the marker-carrying
-  // record is re-checked here (a forced value never folds, but a hand-built marker can).
   if (
     req.allow_encoding_migration !== undefined &&
     !isEncodingMigrationConsent(req.allow_encoding_migration)
@@ -489,8 +446,6 @@ export function assertUndoRequest(request: unknown): asserts request is UndoPara
     });
   }
 }
-
-// ---- shared JSON Schema literals (co-located with field sets) ---------------
 
 export const replaceWithSchema = {
   type: "string",

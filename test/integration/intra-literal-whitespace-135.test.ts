@@ -9,15 +9,6 @@
  *    `"a b"` -> `"ab"` — changes the canon and the edit must reject with the on-disk bytes intact;
  *  - a pure re-indent (edge run) or an appended trailing run folds to the same canon and the edit
  *    still applies — the formatter tolerance the seam keeps.
- *
- * The v2 canon (ADR-0002) stripped every ASCII whitespace run anywhere in the line, which folded
- * `"a b"` into `"ab"`: a stale anchor then paired with the other writer's bytes and overwrote
- * them. Case (d) pins the deliberate narrowing on a parenthesis-spacing rewrite, which v2 also
- * folded away.
- *
- * The tool surfaces the rejection inside the batch envelope: the outer code is `E_BATCH_ABORT` and
- * the inner cause this repo emits for a canon mismatch is `[E_STALE_ANCHOR]` (the lease retired, so
- * the anchor no longer pairs) — both pinned below.
  */
 import { describe, expect, it } from "vitest";
 import { readFile, writeFile } from "node:fs/promises";
@@ -74,7 +65,6 @@ describe("issue #135 — intra-literal whitespace is significant (canon v4)", ()
       const harness = setupIntegrationTest(cwd);
       const anchor = anchorFor(await servedRows(harness, "t.ts"), TARGET_LINE);
 
-      // External writer removes the space inside the literal: "a b" -> "ab".
       const external = 'class A {\n\tString s = "ab";\n}\n';
       await writeFile(path, external, "utf-8");
 
@@ -82,7 +72,7 @@ describe("issue #135 — intra-literal whitespace is significant (canon v4)", ()
       const onDisk = await readFile(path, "utf-8");
 
       expect(error, "the intra-literal rewrite must reject, not overwrite").toBeDefined();
-      expect(code).toBe("E_BATCH_ABORT");
+      expect(code).toBe("E_STALE_ANCHOR");
       expect(message).toContain("[E_STALE_ANCHOR]");
       expect(onDisk).toBe(external);
     });
@@ -93,7 +83,6 @@ describe("issue #135 — intra-literal whitespace is significant (canon v4)", ()
       const harness = setupIntegrationTest(cwd);
       const anchor = anchorFor(await servedRows(harness, "t.ts"), TARGET_LINE);
 
-      // External formatter moves only the leading run: tab -> four spaces.
       await writeFile(path, 'class A {\n    String s = "a b";\n}\n', "utf-8");
 
       const { error, code } = await editOne(harness, anchor, '\tString s = "a c";');
@@ -107,7 +96,6 @@ describe("issue #135 — intra-literal whitespace is significant (canon v4)", ()
       const harness = setupIntegrationTest(cwd);
       const anchor = anchorFor(await servedRows(harness, "t.ts"), TARGET_LINE);
 
-      // External writer pads the line's trailing run only.
       await writeFile(path, 'class A {\n\tString s = "a b";   \n}\n', "utf-8");
 
       const { error, code } = await editOne(harness, anchor, '\tString s = "a c";');
@@ -124,13 +112,12 @@ describe("issue #135 — intra-literal whitespace is significant (canon v4)", ()
       const harness = setupIntegrationTest(cwd);
       const anchor = anchorFor(await servedRows(harness, "t.ts"), "foo( a, b );");
 
-      // v2 folded both spellings to `foo(a,b);` and let the stale anchor win; v4 does not.
       const external = "foo(a,b);\n";
       await writeFile(path, external, "utf-8");
 
       const { error, code, message } = await editOne(harness, anchor, "foo(c, d);");
       expect(error, "the interior rewrite must reject").toBeDefined();
-      expect(code).toBe("E_BATCH_ABORT");
+      expect(code).toBe("E_STALE_ANCHOR");
       expect(message).toContain("[E_STALE_ANCHOR]");
       expect(await readFile(path, "utf-8")).toBe(external);
     });

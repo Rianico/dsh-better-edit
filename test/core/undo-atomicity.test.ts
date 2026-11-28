@@ -49,9 +49,6 @@ interface UndoProbe {
 
 async function probe(cwd: string, harness: Harness): Promise<UndoProbe> {
   const abs = await harness.io.resolve("t.txt", cwd, new AbortController().signal);
-  // Narrowed to the internal view: the cross-pair cell must stub `commitSnapshot`, a
-  // LineageStore seam member the public `HashStore` view deliberately hides (the same
-  // narrowing test/core/serve-leases.test.ts uses for the served/lease seam).
   const store = (await loadHashStore(cwd)) as InternalHashStore;
   const entry = store.getUndo(abs);
   if (entry === undefined) throw new Error("expected an undo pair after one edit");
@@ -125,13 +122,10 @@ describe("undo atomicity — the snapshot adopt and the undo-pair clear", () => 
       const fault = await undoFaulting(harness);
       adopt.mockRestore();
 
-      // The file write is outside the unit and stands.
       expect(await readFile(path, "utf-8")).toBe("a\nb\nc\n");
 
-      // Both-or-neither: the adopt faulted, so the pair must NOT have been cleared.
       expect(pairState(p)).toEqual({ pairCleared: false, adoptLanded: false });
 
-      // No silent swallow: the fault is reported, and never as a successful undo.
       expect(codeOf(fault)).toBe("E_UNDO_NOT_RECORDED");
       expect(String(fault)).not.toContain("Undone last edit");
     });
@@ -151,7 +145,6 @@ describe("undo atomicity — the snapshot adopt and the undo-pair clear", () => 
 
       expect(await readFile(path, "utf-8")).toBe("a\nb\nc\n");
 
-      // The adopt ran first; only a shared unit can roll it back with the failed clear.
       expect(pairState(p)).toEqual({ pairCleared: false, adoptLanded: false });
       expect(codeOf(fault)).toBe("E_UNDO_NOT_RECORDED");
     });
@@ -169,8 +162,6 @@ describe("undo atomicity — the snapshot adopt and the undo-pair clear", () => 
       await undoFaulting(harness);
       adopt.mockRestore();
 
-      // Recoverable: the pair is retained, the file is reverted, so the next undo sees a
-      // file that no longer matches the recorded post-edit content and clears the pair.
       expect(p.store.getUndo(p.abs)).toBeDefined();
       const second = await harness.undoTool.execute("undo_last_edit", { path: "t.txt" });
       expect(getText(second)).toContain("E_UNDO_STALE");
@@ -190,15 +181,12 @@ describe("undo atomicity — the snapshot adopt and the undo-pair clear", () => 
       const fault = await undoFaulting(harness);
       write.mockRestore();
 
-      // `retireAnchors` runs before the write, so the anchors are retired and the file is
-      // unchanged; the store pair is untouched because it runs after the write.
       expect(await readFile(path, "utf-8")).toBe("a\nB\nc\n");
       const store = await loadHashStore(cwd);
       const abs = await harness.io.resolve("t.txt", cwd, new AbortController().signal);
       expect(store.getUndo(abs)).toBeDefined();
       expect(fault).toBeDefined();
 
-      // Terminating recovery: a read re-serves the unchanged file, and its fresh anchors edit.
       const served = await harness.readTool.execute("read", { path: "t.txt" });
       const row = getText(served)
         .split("\n")
@@ -217,10 +205,6 @@ describe("undo atomicity — the snapshot adopt and the undo-pair clear", () => 
       expect(await readFile(path, "utf-8")).toBe("a\nB\nc\n");
       const p = await probe(cwd, harness);
 
-      // Hold BOTH writes of the pair down: the adopt (`upsertSnapshot`) and the serve-path
-      // re-materialization (`commitSnapshot` — the LineageStore seam member `grantServeLeases`
-      // calls from `recordServedTruncated`). A one-shot adopt spy alone let the serve path
-      // rebuild the v7 side, which is why the r1 counterexample could not show the damage.
       const adopt = vi.spyOn(p.store, "upsertSnapshot").mockImplementation(() => {
         throw new Error("injected: pair-adopt fault");
       });
@@ -238,7 +222,6 @@ describe("undo atomicity — the snapshot adopt and the undo-pair clear", () => 
       const advertised = returned === undefined ? [] : restoredAnchorsFromToolOutput(returned);
       const servedAnchors = p.store.getAnchorReservations(harness.sessionKey, p.abs).reservedHashes;
 
-      // Every probe is measured here, never inferred from the claim under test.
       const endState = {
         toolClaimedSuccess: returned !== undefined && returned.includes("Undone last edit"),
         faultCode: codeOf(fault),
@@ -285,9 +268,6 @@ describe("undo atomicity — the snapshot adopt and the undo-pair clear", () => 
       expect(await readFile(path, "utf-8")).toBe("a\nB\nc\n");
       const p = await probe(cwd, harness);
 
-      // ONLY the post-unit serve write faults (`upsertServed` alone): the pair unit
-      // (`upsertSnapshot` + `deleteUndoPair`) still commits, so the undo itself succeeds
-      // and only the advertised anchors are missing.
       const serve = vi.spyOn(p.store, "upsertServed").mockImplementation(() => {
         throw new Error("injected: post-unit serve fault");
       });
@@ -300,17 +280,13 @@ describe("undo atomicity — the snapshot adopt and the undo-pair clear", () => 
       }
       serve.mockRestore();
       const text = returned ?? "";
-      // The anchors the output shows for the restored rows — the ones the claim authorises.
       const shownAnchors = restoredAnchorsFromToolOutput(text);
       const servedAnchors = p.store.getAnchorReservations(harness.sessionKey, p.abs).reservedHashes;
       const fileAfter = await readFile(path, "utf-8");
-      // Measured BEFORE the follow-up attempts: the recovery edit legitimately opens a new pair.
       const pairCommitted = p.store.getUndo(p.abs) === undefined;
-      // The follow-up the claim would have authorised, using an anchor it showed.
       const followUpEdit =
         shownAnchors[0] === undefined ? "n/a" : await editOutcome(harness, shownAnchors[0]);
 
-      // The named recovery terminates: a re-read re-serves the reverted file and its anchors edit.
       const reread = await harness.readTool.execute("read", { path: "t.txt" });
       const row = getText(reread)
         .split("\n")
@@ -324,7 +300,6 @@ describe("undo atomicity — the snapshot adopt and the undo-pair clear", () => 
         threw: fault !== undefined,
         reportsRevert: text.includes("Undone last edit on t.txt."),
         fileReverted: fileAfter === "a\nb\nc\n",
-        // The serve fault is a PARTIAL failure: it must not roll the committed pair back.
         pairCommitted,
         promisesAnchors: text.includes(
           "carry the restored file\u2019s original anchors for follow-up edits",
@@ -351,7 +326,6 @@ describe("undo atomicity — the snapshot adopt and the undo-pair clear", () => 
       const harness = setupIntegrationTest(cwd);
       await applyOneEdit(harness);
 
-      // No fault: the serve lands, so the claim stands and must be exactly what it always was.
       const text = getText(await harness.undoTool.execute("undo_last_edit", { path: "t.txt" }));
       const lines = text.split("\n");
 

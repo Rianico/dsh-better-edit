@@ -43,8 +43,6 @@ afterEach(() => {
 
 describe("str_replace_editor — encoding auto-guess on view", () => {
   it("decodes a GBK file through autoGuess", async () => {
-    // Longer body: short GBK byte runs are valid Big5 too (detection-error
-    // territory) — a paragraph lets the guesser settle on gbk.
     const body =
       "你好世界，这是一个用于编码检测的长段落。\n第二行内容也是中文。\n第三行继续添加更多中文字符以提高置信度。";
     await withTempBytes("gbk.txt", iconv.encode(body, "gbk"), async ({ cwd, path }) => {
@@ -54,7 +52,6 @@ describe("str_replace_editor — encoding auto-guess on view", () => {
       const params = { command: "view", path };
       const res = (await tool.execute(params, execFor(cwd, params))) as unknown as ViewResult;
       expect(res.text).toContain("你好世界");
-      // Decisive guess → no footer; mid-confidence guess → Auto-guessed footer (readAndServe parity).
       expect(res.warning === undefined || (res.warning ?? "").includes("Auto-guessed")).toBe(true);
     });
   });
@@ -66,7 +63,6 @@ describe("str_replace_editor — encoding auto-guess on view", () => {
       const tool = buildStrReplaceEditorTool(localIO(), makeTestSandbox());
       const params = { command: "view", path };
       const res = (await tool.execute(params, execFor(cwd, params))) as unknown as ViewResult;
-      // Short GBK runs are valid Big5 too — the guesser stays uncertain and must say so.
       expect(res.warning ?? "").toContain("Auto-guessed");
       const blocks = (
         tool as unknown as { output: { render(a: unknown, v: unknown): Array<{ text: string }> } }
@@ -86,7 +82,6 @@ describe("str_replace_editor — write gates", () => {
       await expect(tool.execute(params, execFor(cwd, params))).rejects.toThrow(
         /E_BLIND_REPLACE.*has not been viewed/,
       );
-      // The gate fires before any write: reject ⇒ byte-identical file.
       expect(await readFile(path, "utf-8")).toBe("alpha\nbeta\n");
     });
   });
@@ -98,7 +93,6 @@ describe("str_replace_editor — write gates", () => {
       await expect(tool.execute(params, execFor(cwd, params))).rejects.toThrow(
         /E_BLIND_REPLACE.*has not been viewed/,
       );
-      // Same no-write guarantee as the blind str_replace cell above.
       expect(await readFile(path, "utf-8")).toBe("a\nb\n");
     });
   });
@@ -117,7 +111,6 @@ describe("str_replace_editor — write gates", () => {
         text: string;
       };
       expect(res.text).toMatch(/Replaced 1 occurrence/);
-      // The BOM is encoding scaffolding, not content: the rewrite must round-trip it.
       const raw = await readFile(path);
       expect([raw[0], raw[1], raw[2]]).toEqual([0xef, 0xbb, 0xbf]);
       expect(raw.toString("utf-8")).toContain("there");

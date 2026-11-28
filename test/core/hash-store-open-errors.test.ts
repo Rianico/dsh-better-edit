@@ -50,8 +50,6 @@ vi.mock("node:sqlite", () => ({
             if (!state.persistentBusy) state.busyOnce = null;
             throw err;
           }
-          // node:sqlite run() always returns this shape; the lineage path reads
-          // lastInsertRowid, so the mock must not return undefined.
           return { changes: 1, lastInsertRowid: 1 };
         },
       };
@@ -73,8 +71,6 @@ vi.mock("fs/promises", async (importOriginal) => {
 let tmpHome: string;
 
 beforeAll(async () => {
-  // `.tmp/` is gitignored and nothing else guarantees it exists in a clean tree; the async
-  // `fs/promises` module is mocked in this file (no-op `mkdir`), so create the root synchronously.
   mkdirSync(join(process.cwd(), ".tmp"), { recursive: true });
   tmpHome = await mkdtemp(join(process.cwd(), ".tmp", "hash-store-open-errors-"));
   vi.stubEnv("HOME", tmpHome);
@@ -136,7 +132,7 @@ describe("hash store open error handling", () => {
     const store = await loadHashStore();
     state.busyOnce = busyError("database is locked");
     expect(() => {
-      store.upsertSnapshot("/p.ts", "checksum", 1, ["AAA"]);
+      store.upsertSnapshot("/p.ts", "checksum", 1, ["AAA"], "a\n");
     }).not.toThrow();
     expect(state.runCalls).toBeGreaterThan(1);
   });
@@ -149,7 +145,7 @@ describe("hash store open error handling", () => {
     state.persistentBusy = true;
     const callsBefore = state.runCalls;
     expect(() => {
-      store.upsertSnapshot("/p.ts", "checksum", 1, ["AAA"]);
+      store.upsertSnapshot("/p.ts", "checksum", 1, ["AAA"], "a\n");
     }).toThrow(/locked/);
     expect(state.runCalls - callsBefore).toBe(4);
   });
@@ -160,8 +156,6 @@ describe("hash store open error handling", () => {
     const internal = (await loadHashStore()) as unknown as {
       commitSnapshot(input: { path: string; content: string; hashes: string[] }): void;
     };
-    // First .run inside commitSnapshot is the counter upsert; without the per-statement
-    // withBusyRetry the busy error would abort the whole unit instead of retrying.
     state.busyOnce = busyError("database is locked");
     expect(() => {
       internal.commitSnapshot({ path: "/lin.ts", content: "a\n", hashes: ["AAA"] });
@@ -177,8 +171,6 @@ describe("hash store open error handling", () => {
       supportedVersion: 6,
     });
     expect(isCorruptionError(refusal)).toBe(false);
-    // The guard is message-independent: even a DomainError whose rendered text
-    // matches the corruption regex must never route to quarantine.
     const lookalike = new DomainError("E_UNKNOWN", {
       errorName: "Error",
       message: "database disk image is malformed",

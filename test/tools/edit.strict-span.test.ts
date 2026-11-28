@@ -1,13 +1,3 @@
-/**
- * #144 T4 — tool-level acceptance for strict span mode.
- *
- * Invariant: strict mode refuses a span edit whose replaced interior was never served, and it
- * refuses BEFORE any write (bytes unchanged, no undo row); hint mode applies the same edit and
- * discloses the replaced unserved interior through the `[MODEL] [W_UNSERVED_INTERIOR]` warning.
- * A fully served span, or a fully served span that only shifted position under an exterior
- * insert, applies under strict; a served interior whose identity drifted rejects `E_STALE_RANGE`;
- * one refused item aborts the whole batch atomically.
- */
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import { readFile, writeFile } from "node:fs/promises";
 
@@ -26,7 +16,7 @@ afterEach(() => {
 });
 
 const SPAN_ENV = "DSH_BETTER_EDIT_SPAN_MODE";
-const BLANK = `-${" ".repeat(ANCHOR_LEN)}${HASH_SEP}`; // empty gutter of a removed unserved row
+const BLANK = `-${" ".repeat(ANCHOR_LEN)}${HASH_SEP}`;
 
 async function withSpanMode<T>(mode: "hint" | "strict", run: () => Promise<T>): Promise<T> {
   const previous = process.env[SPAN_ENV];
@@ -103,7 +93,6 @@ describe("strict span mode — tool acceptance (#144 T4)", () => {
       );
       const text = getText(out);
 
-      // The removed unserved row keeps an empty gutter; a served row would print its anchor.
       expect(text).toContain(`${BLANK}hidden`);
       expect(text).not.toMatch(/^-[A-Za-z0-9]{3}│hidden$/m);
       expect(text).toContain("[MODEL] [W_UNSERVED_INTERIOR]");
@@ -115,7 +104,6 @@ describe("strict span mode — tool acceptance (#144 T4)", () => {
     const TWELVE = Array.from({ length: 12 }, (_, i) => `row ${i + 1}`).join("\n") + "\n";
     await withTempFile("span.txt", TWELVE, async ({ cwd, path }) => {
       const harness = setupIntegrationTest(cwd);
-      // Serve boundaries plus the middle run: old lines 3 and 10 stay unserved.
       const anchors = await readWindows(harness, "span.txt", [
         { offset: 1, limit: 2 },
         { offset: 4, limit: 6 },
@@ -129,7 +117,10 @@ describe("strict span mode — tool acceptance (#144 T4)", () => {
         }),
       );
 
-      expect(getText(out)).toContain("Span replaced 2 unserved interior line(s) (lines 3-10).");
+      expect(getText(out)).toContain(
+        "Span replaced 12 file lines, 2 of which were never served; the edit applied.\n" +
+          "Unserved file lines: 3, 10",
+      );
       expect(await readFile(path, "utf-8")).toBe("replacement\n");
     });
   });
@@ -148,12 +139,11 @@ describe("strict span mode — tool acceptance (#144 T4)", () => {
         ),
       );
 
-      expect(error.code).toBe("E_BATCH_ABORT");
+      expect(error.code).toBe("E_UNSERVED_RANGE");
       expect(error.message).toContain("[E_UNSERVED_RANGE]");
       expect(error.message).toContain("Strict span mode refused the edit to hole.txt:");
       expect(error.message).toContain("1 of the 3 file lines it replaces was never served.");
       expect(error.message).toContain("Unserved file line: 2");
-      // The strict refusal is rowless, so it must not pretend to echo a current range.
       expect(error.message).not.toContain("Current range");
       expect(await readFile(path, "utf-8")).toBe(before);
       expect(await getUndo(canonicalSync(path))).toBeUndefined();
@@ -163,7 +153,6 @@ describe("strict span mode — tool acceptance (#144 T4)", () => {
   it("a hole-filled span passes strict mode once line 2 is read", async () => {
     await withTempFile("hole.txt", HOLE, async ({ cwd, path }) => {
       const harness = setupIntegrationTest(cwd);
-      // The literal retry path: boundaries first, then the hole, then the same span.
       const holes = await readWindows(harness, "hole.txt", holeWindows());
       const filled = await readWindows(harness, "hole.txt", [{ offset: 2, limit: 1 }]);
       const anchors = new Map([...holes, ...filled]);
@@ -184,8 +173,6 @@ describe("strict span mode — tool acceptance (#144 T4)", () => {
       const harness = setupIntegrationTest(cwd);
       const anchors = await readWindows(harness, "shift.txt", [{ offset: 5, limit: 3 }]);
 
-      // A plain new-content insert above the span: the lease identity rebases it, so the
-      // served anchors still name the same lines and no re-read is owed.
       await writeFile(path, `inserted\n${TEN}`, "utf-8");
 
       await withSpanMode("strict", () =>
@@ -245,7 +232,6 @@ describe("strict span mode — tool acceptance (#144 T4)", () => {
 
       expect(error.code).toBe("E_BATCH_ABORT");
       expect(error.message).toContain("[E_UNSERVED_RANGE]");
-      // Item 1 alone would have written, so the unchanged bytes prove the batch is all-or-nothing.
       expect(await readFile(path, "utf-8")).toBe(before);
       expect(await getUndo(canonicalSync(path))).toBeUndefined();
     });

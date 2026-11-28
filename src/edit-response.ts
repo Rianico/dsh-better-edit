@@ -189,8 +189,6 @@ export function buildBatchResult(sections: BatchSection[], dryRun = false): TRes
   const addedLines = sections.reduce((n, s) => n + s.totalAddedLines, 0);
   const removedLines = sections.reduce((n, s) => n + s.totalRemovedLines, 0);
   const allNoop = appliedTotal === 0;
-  // WHY (#144 T3): one diff per applied section, computed once — it feeds the rendered rows, the
-  // WHY: served mirror and the applied-tier disclosure, so the three can never disagree.
   const diffBySection = new Map<BatchSection, ReturnType<typeof genDiff>>();
   const disclosureBySection = new Map<BatchSection, string>();
   for (const s of appliedFiles) {
@@ -209,28 +207,22 @@ export function buildBatchResult(sections: BatchSection[], dryRun = false): TRes
       disclosureBySection.set(
         s,
         formatWarning("W_UNSERVED_INTERIOR", {
-          count: unserved.length,
-          from: unserved[0]!,
-          to: unserved[unserved.length - 1]!,
+          unservedLines: unserved,
+          replacedLineCount: diffResult.removedLineCount,
         }),
       );
     }
   }
-  // WHY (#144 T3): a fold keeps section order; one disclosure per committed file, never per row.
   const warnings = sections.flatMap((s) => {
     const disclosure = disclosureBySection.get(s);
     return [...(s.warnings ?? []), ...(disclosure === undefined ? [] : [disclosure])];
   });
-  // An empty section is "that file reported no drift", so it must not contribute a blank paragraph
-  // to the join; an all-clean batch therefore has no notice at all to publish.
   const notices = sections
     .map((s) => s.driftNotice)
     .filter((d): d is string => d !== undefined && d.length > 0);
   const driftNotice = notices.length > 0 ? notices.join("\n\n") : undefined;
 
   if (allNoop) {
-    // WHY (#145 T3): metrics keep the live vocabulary ("applied"/"noop") because it names the
-    // outcome the bytes WOULD have; only the header and `details.dryRun` mark that nothing was written.
     const text = dryRun
       ? `[DRY RUN] No changes would be made. All ${totalEdits} edit(s) in the batch would produce identical content.\nClassification: noop${warnBlock(warnings)}`
       : `No changes made. All ${totalEdits} edit(s) in the batch produced identical content.\nClassification: noop${warnBlock(warnings)}`;
@@ -246,8 +238,6 @@ export function buildBatchResult(sections: BatchSection[], dryRun = false): TRes
           warningsCount: warnings.length,
         }),
         ...(warnings.length > 0 ? { warnings } : {}),
-        // WHY (#145 T3): a preview served no row, so it says so with the same empty arrays an applied
-        // preview publishes; an absent field would read as "not projected", not as "served nothing".
         ...(dryRun ? { dryRun: true, servedRows: [], servedByPath: [] } : {}),
         ...(driftNotice === undefined ? {} : { driftNotice }),
       },
@@ -263,8 +253,6 @@ export function buildBatchResult(sections: BatchSection[], dryRun = false): TRes
     for (let i = 0; i < s.resultHashes.length; i++) {
       denseRows.push({ position: i, hash: s.resultHashes[i]! });
     }
-    // WHY (#145): a dry run commits nothing, so every anchor in its diff would name bytes that never
-    // landed. Publishing none keeps a lease from being minted from the hypothetical result.
     if (!dryRun && denseRows.length > 0) {
       servedByPath.push({ path: s.path, servedRows: denseRows });
     }
@@ -275,12 +263,9 @@ export function buildBatchResult(sections: BatchSection[], dryRun = false): TRes
   const lineSummary = countsChanged
     ? ` Added ${addedLines} line(s), removed ${removedLines} line(s).`
     : "";
-  // WHY (#145 T3): the dry clause is hypothetical — a preview added and removed nothing.
   const dryLineSummary = countsChanged
     ? ` Would add ${addedLines} line(s), remove ${removedLines} line(s).`
     : "";
-  // WHY (#145 T3): metrics keep the live vocabulary ("applied"/"noop") because it names the outcome
-  // the bytes WOULD have; only the `[DRY RUN]` header and `details.dryRun` mark that nothing was written.
   const summary = dryRun
     ? `[DRY RUN] Validated ${appliedFiles.length} file(s) — ${appliedTotal} of ${totalEdits} edit(s) would be applied${noopTotal > 0 ? ` (${noopTotal} noop)` : ""}.${dryLineSummary}`
     : `Successfully edited ${appliedFiles.length} file(s) — ${appliedTotal} of ${totalEdits} edit(s) applied${noopTotal > 0 ? ` (${noopTotal} noop)` : ""}.${lineSummary}`;

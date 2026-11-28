@@ -12,6 +12,7 @@ import { initHasher } from "../../src/hashline/hash-assign.js";
 import {
   extractHash,
   getText,
+  makeTag,
   setupIntegrationTest,
   useTestHome,
   withTempFile,
@@ -115,7 +116,6 @@ describe("fmtReadPreview — windows", () => {
     expect(result.text).toContain("=== Lines 1-15 of 20 ===");
     expect(rowsOf(result.text)).toEqual(TWENTY_LINES.slice(0, 15));
     expect(result.served.map((row) => row.position)).toEqual([...Array(15).keys()]);
-    // WHY: one run means one record per line, so the row the model sees and the row served agree.
     expect(anchorsByLine(result.text).get("line 5")).toBe(result.served[4]!.hash);
   });
 
@@ -131,7 +131,6 @@ describe("fmtReadPreview — windows", () => {
       undefined,
       home.testPath,
     );
-    // WHY: the union is the answer, not whichever window came first.
     expect(result.text.match(/^=== Lines /gm)).toHaveLength(1);
     expect(result.text).toContain("=== Lines 1-10 of 20 ===");
     expect(rowsOf(result.text)).toEqual(TWENTY_LINES.slice(0, 10));
@@ -163,7 +162,6 @@ describe("fmtReadPreview — windows", () => {
     expect(result.text).toContain("=== Lines 1-200 of 200 ===");
     expect(rowsOf(result.text)).toHaveLength(200);
     expect(result.served).toHaveLength(200);
-    // WHY: duplicated bytes are never rendered, so they never debit the shared budget.
     expect(result.truncation).toBeUndefined();
   });
 
@@ -180,7 +178,6 @@ describe("fmtReadPreview — windows", () => {
       home.testPath,
     );
     expect(result.text).toContain("=== Lines 1-10 of 20 ===");
-    // WHY: a merged run stays contiguous, so the builders' `startLine - 1 + index` still holds.
     expect(rowsOf(result.text)).toEqual(TWENTY_LINES.slice(0, 10));
     expect(result.served.map((row) => row.position)).toEqual([...Array(10).keys()]);
   });
@@ -197,7 +194,6 @@ describe("fmtReadPreview — windows", () => {
       undefined,
       home.testPath,
     );
-    // WHY: no gap exists between 1-2 and 3-4, so two headers would be pure noise.
     expect(result.text.match(/^=== Lines /gm)).toHaveLength(1);
     expect(result.text).toContain("=== Lines 1-6 of 20 ===");
     expect(rowsOf(result.text)).toEqual(TWENTY_LINES.slice(0, 6));
@@ -235,7 +231,6 @@ describe("fmtReadPreview — windows", () => {
       undefined,
       home.testPath,
     );
-    // WHY: the order is part of the request, so sections follow it — `served` does not.
     expect(reversed.text.match(/^=== Lines /gm)).toHaveLength(2);
     expect(reversed.text.indexOf("=== Lines 10-20 of 20 ===")).toBeLessThan(
       reversed.text.indexOf("=== Lines 1-3 of 20 ==="),
@@ -271,7 +266,6 @@ describe("fmtReadPreview — windows", () => {
     );
     expect(result.text).toContain("=== Lines 11-12 of 12 ===");
     expect(result.served.map((row) => row.position)).toEqual([10, 11]);
-    // WHY: a window that fit the shared budget is not a truncated result, so no metadata is owed.
     expect(result.truncation).toBeUndefined();
   });
 
@@ -288,7 +282,6 @@ describe("fmtReadPreview — windows", () => {
       home.testPath,
     );
     expect(result.text).toContain("Offset 99 is beyond end of file (12 lines total)");
-    // WHY: a window past EOF has no line range to name, so its section carries the message alone.
     expect(result.text).not.toContain("=== Lines 99");
     expect(result.served.map((row) => row.position)).toEqual([0]);
   });
@@ -306,14 +299,11 @@ describe("fmtReadPreview — windows", () => {
       undefined,
       home.testPath,
     );
-    // WHY: a past-EOF window contributes no interval, so it is not a barrier between the runs
-    // WHY: around it — 1-2 and 3-4 stay one coalesced run even with the message in between.
     expect(result.text.match(/^=== Lines /gm)).toHaveLength(1);
     const header = "=== Lines 1-6 of 20 ===";
     const message = "Offset 99 is beyond end of file (20 lines total)";
     expect(result.text).toContain(header);
     expect(result.text).toContain(message);
-    // The message keeps its own caller slot (order 1), after the merged run (order 0).
     expect(result.text.indexOf(header)).toBeLessThan(result.text.indexOf("│line 6"));
     expect(result.text.indexOf("│line 6")).toBeLessThan(result.text.indexOf(message));
     expect(result.text).not.toContain("=== Lines 99");
@@ -337,9 +327,7 @@ describe("fmtReadPreview — windows", () => {
     );
     expect(result.text).toContain("[Read budget exhausted; this section is not shown.");
     expect(result.served.map((row) => row.position)).toEqual([0, 1, 2]);
-    // WHY: the budget really did cut a requested window away, so the tool owes truncated: true.
     expect(result.truncation?.truncated).toBe(true);
-    // WHY: windows are discrete slices, so no root offset can paginate the request as one stream.
     expect(result.nextOffset).toBeUndefined();
   });
 
@@ -353,9 +341,7 @@ describe("fmtReadPreview — windows", () => {
       2,
     );
     expect(result.truncation?.truncated).toBe(true);
-    // The window keeps its own continuation cue...
     expect(result.text).toContain("to continue");
-    // ...but the request is not one stream, so no scalar offset is offered for it.
     expect(result.nextOffset).toBeUndefined();
   });
 
@@ -376,11 +362,9 @@ describe("fmtReadPreview — windows", () => {
     );
     expect(windowed.text).toContain("exceeds the 200B limit");
     expect(windowed.text).toContain("│short two");
-    // WHY: the window named lines 1-2; "use offset=3 to continue" would offer a page it never asked for.
     expect(windowed.text).not.toContain("to continue");
     expect(windowed.nextOffset).toBeUndefined();
 
-    // The same range read alone IS a page, so the hint is still owed there.
     const single = await fmtReadPreview(
       content,
       { offset: 1, limit: 2 },
@@ -434,7 +418,6 @@ describe("read tool — windows", () => {
         ],
       });
       const byLine = anchorsByLine(getText(readResult));
-      // Both anchors come from different windows: the leases granted by one read must cover them.
       const edited = await editTool.execute("e1", {
         path: "windows.ts",
         anchor_from: byLine.get("line 1")!,
@@ -457,8 +440,6 @@ describe("read tool — windows", () => {
         path: "reread.ts",
         windows: [{ offset: 1, limit: 3 }],
       });
-      // WHY: re-reading is how anchors refresh, so a read tool must never withhold served rows
-      // WHY: because an earlier call already served the same range.
       expect(rowsOf(getText(first))).toEqual(["line 1", "line 2", "line 3"]);
       expect(rowsOf(getText(second))).toEqual(["line 1", "line 2", "line 3"]);
       const byLine = anchorsByLine(getText(second));
@@ -468,7 +449,6 @@ describe("read tool — windows", () => {
         anchor_to: byLine.get("line 2")!,
         replace_with: "X",
       });
-      // The second call's anchors resolve, so it really did re-serve (and re-lease) its rows.
       expect(getText(edited)).toContain("Successfully edited");
     });
   });
@@ -485,7 +465,6 @@ describe("read tool — windows", () => {
       });
       expect(getText(readResult)).toContain("=== Lines 1-4 of 12 ===");
       const byLine = anchorsByLine(getText(readResult));
-      // Lines 2-3 appear in both windows; their anchors must resolve against the lease granted once.
       const edited = await editTool.execute("e1", {
         path: "overlap.ts",
         anchor_from: byLine.get("line 2")!,
@@ -504,7 +483,6 @@ describe("read tool — windows", () => {
 
       await markDriftReported(sessionKey, path, ["abc"]);
       await readAndServe(localIO(), "empty-windows.ts", cwd, { sessionKey, windows: [] });
-      // An empty array falls back to a full read, so it owes the full-read contract: drift cleared.
       expect(await driftReported(sessionKey, path)).toEqual(new Set());
 
       await markDriftReported(sessionKey, path, ["abc"]);
@@ -515,7 +493,6 @@ describe("read tool — windows", () => {
       });
       expect(await driftReported(sessionKey, path)).toEqual(new Set(["abc"]));
 
-      // A non-empty multi-window read serves sparse rows — also not a full read.
       await markDriftReported(sessionKey, path, ["abc"]);
       const sparse = await readAndServe(localIO(), "empty-windows.ts", cwd, {
         sessionKey,
@@ -527,9 +504,6 @@ describe("read tool — windows", () => {
       expect(sparse.served.map((row) => row.position)).toEqual([0, 1, 10, 11]);
       expect(await driftReported(sessionKey, path)).toEqual(new Set(["abc"]));
 
-      // The drift clear is only ONE of the effects a full read owns. `windows: []` falls back to
-      // the plain full-read contract, so the retired anchors, the hazard cards and the served
-      // canon array go with it — the whole contract, from the same rule.
       const store = await internalStore();
       await seedFullReadOwned(sessionKey, path);
       await readAndServe(localIO(), "empty-windows.ts", cwd, { sessionKey, windows: [] });
@@ -537,15 +511,11 @@ describe("read tool — windows", () => {
       expect([...store.getCards(sessionKey, path)]).toEqual([]);
       expect(store.getServedCanons(sessionKey, path)).toHaveLength(12);
 
-      // A non-empty `windows` request that happens to cover the whole file is still a window, not
-      // "the" whole-file read: it must not clear the hazard state or overwrite the canon array
-      // just because the rows it served turned out dense.
       await seedFullReadOwned(sessionKey, path);
       const whole = await readAndServe(localIO(), "empty-windows.ts", cwd, {
         sessionKey,
         windows: [{ offset: 1, limit: 12 }],
       });
-      // The premise: this request really did serve every line of the file.
       expect(whole.served.map((row) => row.position)).toEqual([
         0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11,
       ]);
@@ -558,19 +528,13 @@ describe("read tool — windows", () => {
   it("the preview echoes the windows rule: windows: [] through the read tool is a full read, drift clear included", async () => {
     await withTempFile("echo-windows.ts", TWELVE, async ({ cwd, path }) => {
       const { readTool } = setupIntegrationTest(cwd);
-      // The fixture's exec session (`makeExec` pins the session id).
       const sessionKey = "test-session";
-      // The tool's store resolves against its workspace context; enter the same one so the
-      // marks observed here are the marks the tool's full read clears.
       await withWorkspace(cwd, async () => {
         await markDriftReported(sessionKey, path, ["abc"]);
         const result = await readTool.execute("r1", { path: "echo-windows.ts", windows: [] });
-        // Preview echo: `[]` maps to no-windows exactly like the serve-side rule — the plain
-        // full-read rendering, no window headers.
         const text = getText(result);
         expect(text).not.toContain("=== Lines");
         expect(rowsOf(text)).toEqual(TWELVE.trimEnd().split("\n"));
-        // The full-read contract read-and-serve's isFullRead owes the same rule: drift cleared.
         expect(await driftReported(sessionKey, path)).toEqual(new Set());
       });
     });
@@ -591,9 +555,65 @@ describe("read tool — windows", () => {
       parameters: { properties: Record<string, { description?: string }> };
     };
     const windows = tool.parameters.properties.windows;
-    // WHY the cap text: the DSL has no maxItems, so normWindows enforces the bound and only the
-    // description can keep it discoverable to the model (see the FU-6 note in src/tool-read.ts).
     expect(windows, "the read schema advertises windows").toBeDefined();
     expect(windows?.description).toContain(`${MAX_READ_WINDOWS} line windows`);
+  });
+});
+
+describe("read tool — multi-window budget vs intrinsic line cap", () => {
+  const BIG = "x".repeat(160_000);
+  const MID = "y".repeat(100_000);
+  const CONTENT = [BIG, "skip", MID].join("\n") + "\n";
+
+  it("omits the over-budget window, refuses its unserved anchor, then edits after a standalone read", async () => {
+    await withTempFile("two-cap.txt", CONTENT, async ({ cwd, path }) => {
+      const { readTool, editTool } = setupIntegrationTest(cwd);
+      const windowed = getText(
+        await readTool.execute("r1", {
+          path: "two-cap.txt",
+          windows: [
+            { offset: 1, limit: 1 },
+            { offset: 3, limit: 1 },
+          ],
+        }),
+      );
+      expect(windowed).toContain(
+        "[Section does not fit in the remaining 43.7KB read budget; not shown. Re-read it on its own.]",
+      );
+      expect(windowed).not.toContain("cannot show");
+      expect(windowed).not.toContain(MID);
+
+      const omitted = (await makeTag(CONTENT, 3, path)).hash;
+      let rejected: Error | undefined;
+      try {
+        await editTool.execute("e1", {
+          path: "two-cap.txt",
+          anchor_from: omitted,
+          anchor_to: omitted,
+          replace_with: "replaced",
+        });
+      } catch (error) {
+        rejected = error as Error;
+      }
+      expect(rejected?.message).toContain("[E_UNKNOWN_ANCHOR]");
+      expect(await readFile(path, "utf-8")).toBe(CONTENT);
+
+      const alone = getText(
+        await readTool.execute("r2", { path: "two-cap.txt", offset: 3, limit: 1 }),
+      );
+      expect(alone).toContain(MID);
+      const row = alone.split("\n").find((line) => /^[A-Za-z0-9]{3}│/.test(line));
+      expect(row).toBeDefined();
+      const anchor = extractHash(row!);
+
+      const edited = await editTool.execute("e3", {
+        path: "two-cap.txt",
+        anchor_from: anchor,
+        anchor_to: anchor,
+        replace_with: "replaced",
+      });
+      expect(getText(edited)).toContain("Successfully edited");
+      expect(await readFile(path, "utf-8")).toBe([BIG, "skip", "replaced"].join("\n") + "\n");
+    });
   });
 });

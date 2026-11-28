@@ -69,7 +69,6 @@ describe("edit dry_run — zero persistence", () => {
       const harness = setupIntegrationTest(cwd);
       const served = await servedRows(harness, "t.txt");
       const absolutePath = await harness.io.resolve("t.txt", cwd, undefined);
-      // The hash store is per-workspace, so every direct probe runs inside the workspace context.
       const mirror = () =>
         withWorkspace(cwd, async () =>
           JSON.stringify(await loadServed(harness.sessionKey, absolutePath)),
@@ -150,8 +149,6 @@ describe("edit dry_run — zero persistence", () => {
     const original = "a\nb\nc\n";
     const result = "a\nB\nc\n";
     const served = lineHashesPure(original);
-    // The tool seam answers with text only (like `edit.unserved-warning.test.ts`), so the response
-    // details are projected through the same builder the tool calls.
     const section: BatchSection = {
       path: "t.txt",
       originalNormalized: original,
@@ -180,8 +177,6 @@ describe("edit dry_run — zero persistence", () => {
     expect(live.details.servedByPath!.length).toBeGreaterThan(0);
     expect("dryRun" in live.details, "a live edit publishes no dryRun marker").toBe(false);
 
-    // An all-noop batch answers with its own text (never a diff), so the header and the empty serve
-    // arrays are the only signals a reader gets that the batch was a preview.
     const noopSection: BatchSection = {
       ...section,
       result: original,
@@ -247,8 +242,6 @@ describe("edit dry_run — zero persistence", () => {
       const harness = setupIntegrationTest(cwd);
       const served = await servedRows(harness, "t.txt");
       const absolutePath = await harness.io.resolve("t.txt", cwd, undefined);
-      // Two items take the batch projection, whose `details` never reach the tool's text answer, so
-      // the store is read directly: both its own view and the session-view projection must hold.
       const storeServed = () =>
         withWorkspace(cwd, async () => {
           const store = (await loadHashStore()) as InternalHashStore;
@@ -310,8 +303,6 @@ describe("edit dry_run — the drift scan", () => {
         withWorkspace(cwd, async () => [
           ...(await driftReported(harness.sessionKey, absolutePath)),
         ]);
-      // A line outside the edited range changed on disk after the read: the classic drift episode.
-      // The edit itself still resolves, because the anchor it names still points at its own line.
       await writeFile(path, "a\nb\nCH\n", "utf-8");
       const before = { served: await mirror(), reported: await reported() };
 
@@ -343,21 +334,13 @@ describe("edit dry_run — the drift scan", () => {
 });
 
 describe("edit dry_run — fail-closed parity with the live path", () => {
-  /** `served` is the JSON served mirror after the run: a refusal records real rows in both modes. */
   type Outcome = { message: string; bytes: string; served: string; probe: string | null };
   type BuildArgs = { cwd: string; path: string; harness: Harness };
 
-  /**
-   * Run one scenario twice with identical setup, `dry_run: true` then `false`. Two separate temp
-   * directories keep the fixtures the same, so a difference can only come from the dry-run wiring.
-   * The answer is the full refusal text with the temp cwd redacted: the two runs never share a path,
-   * and the inner code (`E_STALE_ANCHOR`, `E_UNKNOWN_ANCHOR`, `ENOENT`) is what must match.
-   */
   async function parityRun(input: {
     name: string;
     content: string;
     build: (args: BuildArgs) => Promise<Record<string, unknown>>;
-    /** A path the scenario must not create, read after each run. */
     probe?: string;
   }): Promise<{ dry: Outcome; live: Outcome }> {
     const run = async (dryRun: boolean): Promise<Outcome> => {
@@ -384,7 +367,6 @@ describe("edit dry_run — fail-closed parity with the live path", () => {
             input.probe === undefined
               ? null
               : await readFile(join(cwd, input.probe), "utf-8").catch(() => null),
-          // The store is per-workspace, so the mirror probe runs inside the workspace context.
           served: await withWorkspace(cwd, async () =>
             JSON.stringify(await loadServed(harness.sessionKey, absolutePath)),
           ),
@@ -423,7 +405,6 @@ describe("edit dry_run — fail-closed parity with the live path", () => {
       content: "left\nmiddle\nright\n",
       build: async ({ harness, path }) => {
         const served = await servedRows(harness, "t.txt");
-        // Step 3 of the #142 repro: the interior row goes stale on disk, so the span rejects.
         await writeFile(path, "left\nexternal\nright\n", "utf-8");
         return {
           file: "t.txt",
@@ -438,7 +419,6 @@ describe("edit dry_run — fail-closed parity with the live path", () => {
     expect(dry.message, "a refusal must never carry a partial diff").not.toContain("```diff");
     expect(dry.bytes).toBe("left\nexternal\nright\n");
     expect(live.bytes).toBe("left\nexternal\nright\n");
-    // ADR-0043: the echoed rows describe the current file, so both modes record them as served.
     expect(dry.served, "the dry refusal records the same real rows as the live one").toBe(
       live.served,
     );
@@ -539,7 +519,6 @@ describe("edit dry_run — noop loop", () => {
         edits: [{ anchor_from: served[1]!.hash, anchor_to: served[1]!.hash, replace_with: "bbb" }],
       };
 
-      // Two LIVE submissions put the tally at 2 — the [W_NOOP] tier, one short of the guard.
       const first = await tool.execute("e1", { ...noop, dry_run: false });
       expect(getText(first), "the first live noop only counts").not.toContain("[W_NOOP]");
       const second = await tool.execute("e2", { ...noop, dry_run: false });
@@ -552,8 +531,6 @@ describe("edit dry_run — noop loop", () => {
       expect(dryText, "a dry-run noop never emits the loop warning").not.toContain("[W_NOOP]");
       expect(await readFile(path, "utf-8")).toBe(content);
 
-      // A mixed preview reaches the applied branch, where the live path clears the tally: the dry run
-      // must skip that clear too, or the loop this payload earned would silently forget it.
       const mixed = await tool.execute("e3b", {
         file: "t.txt",
         dry_run: true,
@@ -568,9 +545,6 @@ describe("edit dry_run — noop loop", () => {
       );
       expect(await readFile(path, "utf-8"), "the mixed preview writes nothing").toBe(content);
 
-      // The tally still stands at 2, so the third LIVE submission is the one the guard refuses: a dry
-      // call that cleared it would let this through, and one that advanced it would have refused the
-      // preview above.
       await expect(
         tool.execute("e4", { ...noop, dry_run: false }),
         "the live tally survives the preview",
@@ -600,7 +574,6 @@ describe("edit dry_run — engine and renderer seams", () => {
       const io = localIO();
       const sandbox = makeTestSandbox();
 
-      // The engine resolves the per-workspace store, so the caller supplies the workspace a tool sets.
       const preview = await withWorkspace(cwd, () =>
         execute({
           io,

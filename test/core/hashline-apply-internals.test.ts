@@ -61,7 +61,7 @@ describe("checkBoundaryDup (via applyEdit) — no auto-fix (removed)", () => {
   it("does not auto-fix when replacement does not duplicate adjacent lines", async () => {
     const content = "a\nb\nc\nd";
     const hashes = await lineHashes(content, home.testPath);
-    const result = applyEdit(
+    const _result = applyEdit(
       content,
       resEdit({ anchor_from: hashes[1]!, anchor_to: hashes[2]!, replace_with: "X\nY" }),
     );
@@ -70,7 +70,7 @@ describe("checkBoundaryDup (via applyEdit) — no auto-fix (removed)", () => {
   it("does not auto-fix when replacement edge is empty string", async () => {
     const content = "a\nb\nc\nd";
     const hashes = await lineHashes(content, home.testPath);
-    const result = applyEdit(
+    const _result = applyEdit(
       content,
       resEdit({ anchor_from: hashes[1]!, anchor_to: hashes[2]!, replace_with: "" }),
     );
@@ -279,7 +279,6 @@ describe("boundary-dup no autocorrection (removed)", () => {
         replace_with: "class A {\n  x = 1;\n\n  constructor() {}\n}",
       }),
     );
-    // With no dedup, replacement duplicates the following line, so not noop
     expect(result.content).toBe(
       "class A {\n  x = 1;\n\n  constructor() {}\n}\n  constructor() {}\n}\n",
     );

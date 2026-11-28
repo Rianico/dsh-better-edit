@@ -9,14 +9,6 @@
  *
  * Subject choice: `undo-encoding.test.ts` owns the REVERT clause ("Restored as UTF-8; …");
  * this file owns the EDIT notice ("Migrated … to UTF-8. …"). One subject per file.
- *
- * Landed-only pinning: the dry-run and all-noop cases pin the positive half (a notice rides
- * only a landed write) on result text; the refusal and batch-abort arms pin it by the absence
- * of an undo row, because a thrown `DomainError` message can never carry an applied-tier warning
- * and asserting its absence there would prove nothing.
- *
- * "Batch" below means N edit calls (one file per call since ADR-0007 retired cross-file
- * `batch_edit`); the multi-`edits` single call is case 7's abort arm.
  */
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -196,8 +188,6 @@ describe("non-migrating writes stay silent", () => {
       const { editText } = await readAndEdit(cwd, "ascii.txt", "alpha", "ALPHA", {
         encoding: "windows-1251",
       });
-      // The faithful body lands byte-identical UTF-8 bytes with no verdict at any step:
-      // the only delta from `before` is the edited line, with no BOM and no transcoding.
       expect(editText).not.toContain(NOTICE_MARK);
       expect((await readFile(path)).equals(Buffer.from("ALPHA\nbeta\n", "utf-8"))).toBe(true);
       expect(before.equals(Buffer.from("alpha\nbeta\n", "utf-8"))).toBe(true);
@@ -228,9 +218,6 @@ describe("calls that write nothing announce nothing", () => {
         await expect(attempt).rejects.toMatchObject({ code: "E_ENCODING_UNWRITABLE" });
         const error = await attempt.catch((e: unknown) => e);
         expect((error as Error).message).toContain("[E_ENCODING_UNWRITABLE]");
-        // A refusal throws its DomainError before any applied-tier warning exists, so the
-        // landed-only half is pinned by the absence of an undo row instead of a vacuous
-        // absence on the thrown message (which can never carry an applied-tier warning).
         expect(getText(await harness.undoTool.execute("u1", { path: "u16-refuse.txt" }))).toContain(
           "No undo history",
         );
@@ -261,8 +248,6 @@ describe("calls that write nothing announce nothing", () => {
           ],
         });
         await expect(attempt).rejects.toMatchObject({ code: "E_BATCH_ABORT" });
-        // Same landed-only pin as above: the abort throws before any warning exists, so the
-        // refusal created no undo row.
         expect(getText(await harness.undoTool.execute("u1", { path: "u16-batch.txt" }))).toContain(
           "No undo history",
         );
@@ -308,7 +293,6 @@ describe("calls that write nothing announce nothing", () => {
       const first = await readAndEdit(cwd, "u16-noop.txt", "вторая", "другая");
       expect(countOf(first.editText, NOTICE_MARK)).toBe(1);
 
-      // The file is UTF-8 now; rewriting the same content writes nothing new to announce.
       const second = await readAndEdit(cwd, "u16-noop.txt", "другая", "другая");
       expect(second.editText).not.toContain(NOTICE_MARK);
     });

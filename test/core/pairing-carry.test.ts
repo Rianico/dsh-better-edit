@@ -2,8 +2,6 @@ import { beforeAll, describe, expect, it } from "vitest";
 import { pairLineage, pairSnapshots, type LineageLine } from "../../src/snapshot-store/pairing.js";
 import { canonDigest, initHasher, rawDigest } from "../../src/hashline/hash-assign.js";
 
-// #199: this spec is pure, so its first digest runs before the async xxhash-wasm init would
-// otherwise settle on a cold runner. Await the seam explicitly, as every hashing spec does.
 beforeAll(async () => {
   await initHasher();
 });
@@ -65,7 +63,6 @@ describe("pairLineage — homogeneous-run ordinal carry", () => {
     const prev = lineage(["head", "  }", "    }", "tail"]);
     const curr = lineage(["head", "    }", "tail"]);
 
-    // The canon folds the edge run, so only the raw digest separates the two spellings.
     expect(canonDigest("  }")).toBe(canonDigest("    }"));
     expect(sortedPairs(pairLineage(prev, curr))).toEqual([
       [1, 1],
@@ -102,8 +99,6 @@ describe("pairLineage — homogeneous-run ordinal carry", () => {
   it("keeps the pairing monotonic after the carry", () => {
     const pairing = pairLineage(lineage(["H", "x", "x", "x", "T"]), lineage(["H", "x", "T"]));
 
-    // Monotonicity is a property of the pair set, not of Map insertion order: the carry appends
-    // its gap pairs after the engine's, so only the prev-sorted view is ascending in curr.
     const ordered = [...pairing.entries()].sort((a, b) => a[0] - b[0]);
     let lastCurr = 0;
     for (const [prevLine, currLine] of ordered) {

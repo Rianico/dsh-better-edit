@@ -58,10 +58,6 @@ function formatRemovedLines(
   const unservedRemovedLines: number[] = [];
   let cursor = oldLineNum;
   const emit = (line: string): void => {
-    // WHY (#144 T3): a `null` slot proves the session never read this old line, so the row shows
-    // WHY: the empty gutter instead of an anchor the model must not treat as served. An
-    // WHY: `undefined` slot is a truncated mirror (the lease outlives it), not evidence of a miss,
-    // WHY: so that row keeps its anchor.
     const unserved = served?.[cursor - 1] === null;
     if (unserved) unservedRemovedLines.push(cursor);
     const hash = unserved ? undefined : oldContentHashes?.[cursor - 1];
@@ -74,8 +70,6 @@ function formatRemovedLines(
   }
   const omitted = displayLines.length - DIFF_REMOVED_EDGE * 2;
   for (const line of displayLines.slice(0, DIFF_REMOVED_EDGE)) emit(line);
-  // WHY (#144 T3): hidden rows never render, so their unserved lines ride on the marker — a fold
-  // WHY: must not be the one place a replaced interior nobody read goes undisclosed.
   let hiddenUnserved = 0;
   for (let line = cursor; line < cursor + omitted; line++) {
     if (served?.[line - 1] === null) {
@@ -83,9 +77,6 @@ function formatRemovedLines(
       unservedRemovedLines.push(line);
     }
   }
-  // WHY: ADR-0024/D3 — the model sees the deletion's head, tail, and exact size; the hidden rows
-  // WHY: still advance the cursor so every later row keeps its exact old line number and hash.
-  // WHY: #169 — the marker's count is the exact deleted span and uses the unified `lines deleted` diction.
   const unservedSuffix = hiddenUnserved > 0 ? ` (${hiddenUnserved} unserved)` : "";
   rows.push(` - ... [${omitted} lines deleted]${unservedSuffix} ...`);
   cursor += omitted;
@@ -264,15 +255,6 @@ function diffParts(
  * - collapse invariant: a middle gap smaller than 2×context renders whole (#166/#172);
  *   at context 0 every non-empty middle gap collapses to a single counted untouched
  *   marker (#170); bare ` ...` appears only at leading/trailing edges; added spans are never collapsed.
- * - servedRows mirror exactly the rendered context/addition rows (position + hash). A `dryRun`
- *   records none and blanks its added gutters, because a run that commits nothing serves nothing;
- *   its context rows keep their real anchors, which the session already holds.
- * - unservedRemovedLines names, ascending and in ORIGINAL coordinates, every removed row whose
- *   pre-batch `served` slot was `null` — the session never read that line, so the row renders the
- *   empty gutter instead of an anchor. A `null` fold-hidden line counts toward the marker's
- *   ` (N unserved)` suffix and the returned list alike, so the count is independent of the cap.
- *   An `undefined` slot is a truncated mirror (the lease outlives it) and keeps its anchor; with
- *   no `served` mirror at all the projection is unchanged and the list is empty.
  */
 export function genDiff(
   oldContent: string,
@@ -287,6 +269,8 @@ export function genDiff(
   firstChangedLine: number | undefined;
   servedRows: ServedRow[];
   unservedRemovedLines: number[];
+  /** Every removed OLD line in the whole diff, whatever the fold cap and the mirror say. */
+  removedLineCount: number;
 } {
   const effectiveNewHashes = newContentHashes ?? lineHashesPure(newContent);
 
@@ -294,6 +278,7 @@ export function genDiff(
   const output: string[] = [];
   const servedRows: ServedRow[] = [];
   const unservedRemovedLines: number[] = [];
+  let removedLineCount = 0;
   let newLineNum = 1;
   let oldLineNum = 1;
   let lastWasChange = false;
@@ -309,8 +294,6 @@ export function genDiff(
       if (firstChangedLine === undefined) firstChangedLine = newLineNum;
       if (part.added) {
         for (let k = 0; k < displayLines.length; k++) {
-          // WHY (#145): a dry run's added row has no identity the session could honour, so it
-          // prints the empty gutter and records no served row.
           const hash = dryRun ? undefined : effectiveNewHashes[newLineNum - 1];
           output.push(fmtDiffLine("+", displayLines[k]!, hash));
           if (hash !== undefined) {
@@ -323,6 +306,7 @@ export function genDiff(
         for (const row of removed.rows) output.push(row);
         unservedRemovedLines.push(...removed.unservedRemovedLines);
         oldLineNum = removed.nextOldLineNum;
+        removedLineCount += displayLines.length;
       }
       lastWasChange = true;
       continue;
@@ -338,14 +322,10 @@ export function genDiff(
         skipStart = Math.max(0, displayLines.length - contextLines);
         linesToShow = displayLines.slice(skipStart);
       } else if (nextPartIsChange && displayLines.length > contextLines * 2) {
-        // WHY: #170 — slice(-0) returns the whole array, so at context 0 the tail is taken
-        // WHY: explicitly; the gap then renders marker-only with the count covering the full span.
         const tail = contextLines === 0 ? [] : displayLines.slice(-contextLines);
         linesToShow = [...displayLines.slice(0, contextLines), UNTOUCHED_MARKER, ...tail];
         skipMiddle = displayLines.length - contextLines * 2;
       } else if (!nextPartIsChange && linesToShow.length > contextLines) {
-        // WHY: #166 — only trailing gaps may be sliced away silently; a middle gap renders whole
-        // WHY: below 2×context, otherwise hidden rows would desync the anchors that follow it.
         linesToShow = linesToShow.slice(0, contextLines);
       }
 
@@ -356,8 +336,6 @@ export function genDiff(
       }
       for (const line of linesToShow) {
         if (isUntouchedMarker(line)) {
-          // WHY: #169 — a hidden middle span is a counted `lines untouched` marker; both cursors
-          // WHY: advance past the exact hidden count, so anchors after it stay aligned.
           output.push(` ... [${skipMiddle} lines untouched] ...`);
           newLineNum += skipMiddle;
           oldLineNum += skipMiddle;
@@ -365,8 +343,6 @@ export function genDiff(
         }
         const hash = effectiveNewHashes[newLineNum - 1];
         output.push(fmtDiffLine(" ", line, hash));
-        // A dry run serves nothing, so it publishes no row — the printed anchor above still
-        // describes the unchanged line the session already holds.
         if (hash !== undefined && !dryRun) {
           servedRows.push({ position: newLineNum - 1, hash });
         }
@@ -380,5 +356,11 @@ export function genDiff(
     lastWasChange = false;
   }
 
-  return { diff: output.join("\n"), firstChangedLine, servedRows, unservedRemovedLines };
+  return {
+    diff: output.join("\n"),
+    firstChangedLine,
+    servedRows,
+    unservedRemovedLines,
+    removedLineCount,
+  };
 }

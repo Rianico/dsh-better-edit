@@ -6,7 +6,6 @@ import { tmpdir } from "node:os";
 describe("coverage-agent-e misc", () => {
   it("sandbox policy branches", async () => {
     const { FsSandboxController } = await import("../../src/sandbox.js");
-    // confined without policy should throw
     expect(
       () =>
         new FsSandboxController({
@@ -14,13 +13,11 @@ describe("coverage-agent-e misc", () => {
           get: () => undefined,
         } as any),
     ).toThrow();
-    // unconfined should not throw
     const c1 = new FsSandboxController({
       fs: { sandboxMode: undefined } as any,
       get: () => undefined,
     } as any);
     expect(c1).toBeDefined();
-    // with policy
     const c2 = new FsSandboxController({
       fs: { sandboxMode: "readOnly" } as any,
       get: (k: string) => (k === "sandboxPolicy" ? { allowExec: true, root: "/tmp" } : undefined),
@@ -51,7 +48,6 @@ describe("coverage-agent-e misc", () => {
     try {
       const p = join(dir, "a.txt");
       await writeFile(p, "orig", "utf-8");
-      // save with different endings
       for (const ending of ["\n", "\r\n"] as const) {
         const e = {
           content: "old",
@@ -63,7 +59,6 @@ describe("coverage-agent-e misc", () => {
         const r = await mod.saveUndo(p, e);
         expect(typeof r.persisted).toBe("boolean");
       }
-      // getUndo for missing
       expect(await mod.getUndo(join(dir, "missing.txt"))).toBeUndefined();
       await mod.clearUndo(p);
       expect(await mod.getUndo(p)).toBeUndefined();
@@ -78,7 +73,6 @@ describe("coverage-agent-e misc", () => {
     expect(mod.formatSize(1023)).toBe("1023B");
     expect(mod.formatSize(1024)).toContain("KB");
     expect(mod.formatSize(5 * 1024 * 1024)).toContain("MB");
-    // truncateHead
     const long = "line\n".repeat(2000);
     const r = mod.truncateHead(long, 100);
     expect(r).toBeDefined();

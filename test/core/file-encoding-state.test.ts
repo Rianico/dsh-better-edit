@@ -5,7 +5,6 @@ import {
   recordOpenState,
   getEncodingState,
   clearEncodingState,
-  getAutoGuessFooter,
   clearAutoGuessFooter,
   buildTop3ErrorMessage,
 } from "../../src/file-encoding-state.js";
@@ -71,7 +70,6 @@ describe("file-encoding-state — deterministic admission (pure, no filesystem)"
     const res = await decodeForOpen(gbkBytes, cfgOn);
     expect(res.text).not.toContain("\uFFFD");
     expect(["gbk", "big5", "iso-8859-1", "windows-1251", "shift_jis"]).toContain(res.encoding);
-    // footer is present for heuristic path (always)
     expect(res.footer).toMatch(/Auto-guessed/);
     expect(res.candidates.length).toBeGreaterThan(0);
   });
@@ -116,8 +114,6 @@ describe("file-encoding-state — deterministic admission (pure, no filesystem)"
   });
 
   it("E_UNSUPPORTED_FILE when hint bytes cannot be decoded", async () => {
-    // empty hint with bytes that are not decodeable as requested? iconv-lite decodes most, so use utf8 hint on gbk bytes that are valid utf8? Instead test via direct hint failure: use bytes that are not valid for that encoding? For now check that hint path throws on bad bytes when we force undefined decode
-    // We simulate by passing empty bytes with hint — should still decode (empty is valid)
     const empty = new Uint8Array([]);
     const res = await decodeForOpen(empty, cfgOff, { encodingHint: "gbk" });
     expect(res.text).toBe("");

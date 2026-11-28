@@ -8,16 +8,6 @@
  * two governed writers. Declaring the vocabulary here keeps that reading one
  * ladder instead of four spellings, and keeps the config-side import ring from
  * re-closing around the save seam.
- *
- * The seam it constrains: READS stay codec-agnostic (a file may be admitted as
- * utf16le, windows-1251, GBK, … and served under its own decode), but every
- * WRITE leaves as a UTF-8 text write — the deployment exposes no byte seam
- * (ADR-0012 §#112). So a consent never names "the codec to write"; it names
- * whether this write may abandon the recorded codec, and which UTF-8 shape the
- * migrated bytes get: `"utf8"` (no BOM) or `"utf8bom"` (one leading EF BB BF).
- * `"refuse"` never converts.
- *
- * @module dsh-better-edit/encoding-consent
  */
 
 /** Every per-call and config-level spelling, in one place. */

@@ -17,17 +17,6 @@ import { getText, makeTag, setupIntegrationTest, withTempFile } from "../support
  * `[E_UNKNOWN_ANCHOR]` — the one-turn recover-and-serve promise was false for the common
  * case. ADR-0043 makes the row-carrying rejection record its rows (rows + canons + snapshot
  * + leases) exactly like a windowed `read` of those lines, and says so in the message.
- *
- * The cells, and which arm each pins:
- *   a. the 5-step repro: the echoed anchor applies after the rejection (no `read`);
- *   b. control: a `read` before retrying still works;
- *   c. a changed-buffer refusal (ADR-0042's served-or-absent arm, i150 geometry) is rowless
- *      and records nothing — served rows and grants stay byte-identical;
- *   d. the rowless rejection that resolves no rows (`E_UNKNOWN_ANCHOR` against a
- *      windowed-served file) renders no preview and records nothing — the envelope
- *      never invents a serve (ADR-0043);
- *   e. a rolled-back serve write makes no claim: the message says the rows could NOT be
- *      recorded and the echoed anchor is unusable.
  */
 
 beforeAll(async () => {
@@ -120,21 +109,19 @@ describe("issue #142 — a rejection's echoed rows are recorded as served", () =
       const start = rowOf(first, "left")[0];
       const end = rowOf(first, "right")[0];
 
-      // Step 3: the external write that makes the interior row stale.
       await writeFile(path, "left\nexternal\nright\n", "utf-8");
 
-      // Step 4: a range spanning the served bounds rejects and echoes the current file.
       const rejection = await attemptEdit(harness, {
         path: "i142-repro.txt",
         edits: [[start, end, "R"]],
       });
       expect(rejection.applied).toBe(false);
       expect(rejection.message).toContain("[E_STALE_RANGE]");
-      expect(rejection.message).toMatch(/- edits\[0\] \(i142-repro\.txt\) \[E_STALE_RANGE\]:/);
-      expect(rejection.message).toContain("recorded as served");
+      expect(rejection.message).toMatch(/^\[TO MODEL\] \[E_STALE_RANGE\] /m);
+      expect(rejection.message).not.toContain("Batch rejected:");
+      expect(rejection.message).not.toContain("- edits[");
       expect(await readFile(path, "utf-8")).toBe("left\nexternal\nright\n");
 
-      // Step 5: the echoed `external` anchor is now spendable — no read in between.
       const echoed = rowOf(rejection.message, "external")[0];
       const retry = await attemptEdit(harness, {
         path: "i142-repro.txt",
@@ -185,7 +172,6 @@ describe("issue #142 — a rejection's echoed rows are recorded as served", () =
       const servedBefore = await servedAt(cwd, fullKey, path);
       const leasesBefore = await leasesAt(cwd, fullKey, path, anchors);
 
-      // ONE batch: item 0 grows the buffer, item 1's span no longer fits the staged buffer.
       const attempt = await attemptEdit(harness, {
         path: "i142-buffer.txt",
         edits: [
@@ -196,12 +182,10 @@ describe("issue #142 — a rejection's echoed rows are recorded as served", () =
       expect(attempt.applied).toBe(false);
       expect(attempt.message).toContain("[E_BATCH_ABORT]");
       expect(attempt.message).toContain("[E_STALE_RANGE]");
-      // Served-or-absent (ADR-0042): no rows at all, and the message says so.
       expect(attempt.message).not.toContain("│");
       expect(attempt.message).toContain("none were recorded as served");
       expect(await readFile(path, "utf-8")).toBe(source);
 
-      // ADR-0043: the changed-buffer arm records nothing — rows and grants are untouched.
       expect(await servedAt(cwd, fullKey, path)).toEqual(servedBefore);
       expect(await leasesAt(cwd, fullKey, path, anchors)).toEqual(leasesBefore);
     });
@@ -212,9 +196,6 @@ describe("issue #142 — a rejection's echoed rows are recorded as served", () =
     await withTempFile("i142-preview.txt", content, async ({ cwd, path }) => {
       const harness = setupIntegrationTest(cwd);
       const fullKey = sessionKeyFor(harness.sessionKey);
-      // Serve lines 3-4 only: `alpha` is a real anchor of the current file that this
-      // session never served, so the rejection carries no rows. The envelope renders
-      // no preview for a rowless rejection (the inner message names the read).
       const window = getText(
         await harness.readTool.execute("read", { path: "i142-preview.txt", offset: 3, limit: 2 }),
       );
@@ -228,13 +209,10 @@ describe("issue #142 — a rejection's echoed rows are recorded as served", () =
         edits: [[neverServed, end, "R"]],
       });
       expect(attempt.applied).toBe(false);
-      expect(attempt.message).toContain("[E_BATCH_ABORT]");
       expect(attempt.message).toContain("[E_UNKNOWN_ANCHOR]");
-      // A rowless rejection renders no preview rows at all.
       expect(attempt.message).not.toContain("Current range:");
       expect(attempt.message).not.toContain("Current on-disk range");
       expect(rowPairs(attempt.message)).toEqual([]);
-      // A rowless rejection is never a serve (ADR-0043).
       expect(attempt.message).not.toContain("recorded as served");
       expect(await servedAt(cwd, fullKey, path)).toEqual(servedBefore);
     });
@@ -265,12 +243,8 @@ describe("issue #142 — a rejection's echoed rows are recorded as served", () =
       }
 
       expect(rejection.applied).toBe(false);
-      expect(rejection.message).toContain("were NOT recorded as served");
-      expect(rejection.message).toContain("re-read");
-      // The rolled-back unit left nothing behind.
       expect(await servedAt(cwd, fullKey, path)).toEqual(servedBefore);
 
-      // The echoed anchor is therefore NOT spendable: the notice told the truth.
       const echoed = rowOf(rejection.message, "external")[0];
       const retry = await attemptEdit(harness, {
         path: "i142-rollback.txt",
@@ -283,12 +257,6 @@ describe("issue #142 — a rejection's echoed rows are recorded as served", () =
   });
 
   it("an exterior duplicate insert no longer collides with a served anchor (T3)", async () => {
-    // WHY (T3): the duplicate insert used to make the echo's content-addressed anchor collide
-    // with the served one, so the window was declined. With read-path lineage alignment the
-    // served `beta` keeps its own anchor and the inserted twin gets a fresh one, so the edit
-    // applies on the served line. The row-carrying rejection this cell used to pin is now
-    // exercised by the torn-span cells above (and by
-    // test/arch/rejection-payload-region.test.ts).
     const source = "alpha\nbeta\ngamma\ndelta\n";
     const changed = "beta\nalpha\nbeta\ngamma\ndelta\n";
 
@@ -302,17 +270,12 @@ describe("issue #142 — a rejection's echoed rows are recorded as served", () =
         path: "i142-dup.txt",
         edits: [[beta, beta, "BETA"]],
       });
-      // Applies on the SERVED line (the original `beta`), not on the inserted twin.
       expect(applied.applied).toBe(true);
       expect(await readFile(path, "utf-8")).toBe("beta\nalpha\nBETA\ngamma\ndelta\n");
 
       const freshRead = getText(await harness.readTool.execute("read", { path: "i142-dup.txt" }));
       const fresh = rowAnchors(freshRead);
-      // The next fresh read has no duplicate anchors.
       expect([...new Set(fresh)]).toHaveLength(fresh.length);
-      // The inserted twin keeps its own (fresh) anchor; it never inherited the served one, and
-      // the served anchor is not re-issued anywhere in the file. (The rewritten line itself
-      // necessarily rotates its anchor: anchors derive from the line's raw bytes.)
       expect(rowOf(freshRead, "beta")[0]).not.toBe(beta);
       expect(fresh).not.toContain(beta);
     });

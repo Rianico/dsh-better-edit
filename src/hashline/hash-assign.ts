@@ -7,18 +7,11 @@
  * Previously split across alphabet.ts (ALPH), hasher.ts (xxh32), pure.ts
  * (lineHashesPure/mapStableHashes), hash.ts (lineHashes persistence).
  * Now one file owns the triad — ALPH/xxh32/hashAt are private to this seam.
- *
- * Callers use this seam's public surface: lineHashesPure, mapStableHashes,
- * lineHashes, canon, HASH_SEP, etc. Deleting this module would scatter the
- * allocation invariant across 4 files — it concentrates.
- *
- * @module dsh-better-edit/hashline/hash-assign
  */
 import xxhash from "xxhash-wasm";
 import { splitLines } from "../utils.js";
 import { DomainError } from "../domain-errors.js";
 
-// --- hasher (private to this seam) ---
 export type Hasher = {
   h32(input: string, seed?: number): number;
   h64ToString(input: string, seed?: bigint): string;
@@ -33,7 +26,6 @@ export function getH(): Hasher {
 const hasherP: Promise<Hasher> = xxhash()
   .then((h) => {
     // SAFETY: `xxhash()` resolves the package's own hasher object, whose declaration types the
-    // wider lazy-loaded API surface; the assertion narrows it to the two methods `getH()` exposes.
     hasher = h as unknown as Hasher;
     return hasher;
   })
@@ -51,7 +43,6 @@ export function contentChecksum(content: string): string {
   return getH().h64ToString(content);
 }
 
-// --- alphabet (private to this seam) ---
 export const HASH_LEN = 3;
 export const ALPH = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
 const ALPH_SAFE = ALPH.replace(/-/g, "\\-");
@@ -59,23 +50,16 @@ export const ALPH_RE = new RegExp(`^[${ALPH_SAFE}]+$`);
 export const HASH_CLASS = `[${ALPH_SAFE}]{${HASH_LEN}}`;
 export const HASH_RE = new RegExp(`^${HASH_CLASS}$`);
 
-// --- pure (allocation invariant) ---
 export const ANCHOR_LEN = HASH_LEN;
 export const HASH_SEP = "│";
 export const HASH_SPACE = ALPH.length ** HASH_LEN;
-// MAX_HASH_LINES is the anchor-space size (62³), not a line-count limit.
-// File line-count limits use maxLines (e.g. 200k) and report E_LARGE_FILE;
-// anchor-space exhaustion reports E_LARGE_FILE with limitKind "hash-space" — see nextZeroBit.
 export const MAX_HASH_LINES = HASH_SPACE;
 export const HASH_PROBE_STRIDE = ALPH.length ** 2 + ALPH.length + 1;
 
 export class AnchorSpaceExhaustedError extends DomainError<"E_LARGE_FILE"> {
   readonly retiredCount: number;
   readonly servedCount: number;
-  // F10.3: reserved count removed — the registry payload carries the limit,
-  // not the probe state.
   constructor(retiredCount: number, servedCount: number) {
-    // Channel rule: hard capacity refusal the model must route around → MODEL via the registry.
     super("E_LARGE_FILE", { limitKind: "hash-space", limit: HASH_SPACE });
     this.name = "AnchorSpaceExhaustedError";
     this.retiredCount = retiredCount;
@@ -93,11 +77,6 @@ export class AnchorSpaceExhaustedError extends DomainError<"E_LARGE_FILE"> {
  * copy (or an inline variant) of the test; a rewording of the allocator's probe message in one copy
  * would silently change a decision at the others, and the failure mode is a raw `Error` reaching
  * the model instead of the typed refusal.
- *
- * Members: the typed `AnchorSpaceExhaustedError` (already translated), the allocator wording
- * `nextZeroBit` raises when the probe wraps the whole space ("probing failed over"), and that
- * same refusal's formatted headline ("Cannot allocate a unique hash anchor", which survives a
- * re-wrap that costs the error its class).
  */
 export function isAnchorSpaceExhaustion(e: unknown): boolean {
   if (e instanceof AnchorSpaceExhaustedError) return true;
@@ -118,16 +97,6 @@ export function isAnchorSpaceExhaustion(e: unknown): boolean {
  * anchor space: exhaustion and the line cap are the same diagnosis (a file too long to hash),
  * but promotion cannot out-grow the line cap, because the retry re-reads the same oversized file
  * and throws the identical error — with this `(session, path)`'s retired anchors now cleared, so
- * the failed read has also degraded its own stale-anchor checks. "Can promotion help?" is
- * therefore the strict subset: the probe wrapping the whole space.
- *
- * The line cap is a capacity refusal, never an identity one, and its wording is not the hash-space
- * one: `eLargeFileMsg` formats with `limitKind: "lines"` ("<path> has N lines, exceeding the
- * N-line limit"), so `isAnchorSpaceExhaustion` already declines it; "Cannot allocate a unique hash
- * anchor" is `AnchorSpaceExhaustedError`'s own headline, reachable as message-only text on a
- * re-wrap. Declining both keeps promotion off every refusal a retry cannot out-grow, and leaves
- * the line cap free to be re-formatted through the hash-space wording without promotion silently
- * becoming a hazard-clear.
  */
 export function isPromotableAnchorSpaceExhaustion(e: unknown): boolean {
   if (e instanceof AnchorSpaceExhaustedError) return true;
@@ -164,8 +133,6 @@ export const HL_BARE_PREFIX_RE = new RegExp(`^\\s*(${HASH_CLASS})│`);
  * recorded, pairing breaks and the edit rejects fail-closed.
  * Prior versions: v2 stripped every ASCII whitespace run anywhere in the line (docs/adr/0002), which
  * folded `"a b"` into `"ab"` and let a stale anchor overwrite the other writer's bytes.
- * Snapshot keys carry both axes (`${CANON_VERSION}:${ANCHOR_GENERATION}:${checksum}`), so pre-v4 rows
- * are inert cache misses rebuilt on the next read — no migration needed.
  */
 export const CANON_VERSION = 4;
 
@@ -180,11 +147,6 @@ export const CANON_VERSION = 4;
  * (1) the content seeding (`xxh32(line)` -> base index); (2) the width and space
  * (`HASH_LEN`, `ALPH`, `HASH_SPACE`); (3) the probe stride (`HASH_PROBE_STRIDE`). Bump it whenever any
  * of those change.
- *
- * WHY a second axis beside CANON_VERSION: cache keys carry both
- * (`${CANON_VERSION}:${ANCHOR_GENERATION}:${checksum}`), so a canon-only change misses the cache
- * without invalidating anchor-bearing state, while a generation change invalidates that state — the
- * `hash-store` open-time sweep and the undo gate both read this same prefix.
  */
 export const ANCHOR_GENERATION = 2;
 
@@ -268,7 +230,6 @@ function assignHash(used: Uint32Array, baseIdx: number, hint: { value: number })
 export function lineHashesPure(
   content: string,
   reservedHashes: ReadonlySet<string> = new Set(),
-  // optional counts for richer error — when caller knows retired vs served split
   retiredCount?: number,
   servedCount?: number,
 ): string[] {
@@ -279,15 +240,11 @@ export function lineHashesPure(
   const hint = { value: 0 };
   try {
     for (let i = 0; i < lines.length; i++) {
-      // WHY raw: identity is the line's own bytes (#138 / ADR-0013). The canon folds the edge
-      // whitespace class, so a canon-seeded base cannot tell two canon-equal lines apart and falls
-      // back to its positional probe — the sibling-dependent spelling #138 closes.
       const baseIdx = (xxh32(lines[i]!) >>> 14) % HASH_SPACE;
       const h = assignHash(used, baseIdx, hint);
       hashes[i] = h;
     }
   } catch (e: unknown) {
-    // Rethrow identity: an already-typed exhaustion keeps its counts untouched.
     if (e instanceof AnchorSpaceExhaustedError) throw e;
     if (isAnchorSpaceExhaustion(e)) {
       const rc = retiredCount ?? reservedHashes.size;
@@ -333,7 +290,6 @@ export function lineHashesAligned(
       hashes[i] = assignHash(used, baseIdx, hint);
     }
   } catch (e: unknown) {
-    // Rethrow identity: an already-typed exhaustion keeps its counts untouched.
     if (e instanceof AnchorSpaceExhaustedError) throw e;
     if (isAnchorSpaceExhaustion(e)) {
       const rc = reservedCount ?? blocked.size;
@@ -443,16 +399,11 @@ export function mapStableHashes(
   try {
     for (let i = 0; i < newLines.length; i++) {
       if (newHashes[i]) continue;
-      // WHY raw (deliberate divergence from upstream's pairing): the SURVIVOR index above stays
-      // canon-keyed so formatter tolerance is unchanged — a re-indented untouched line still inherits
-      // its anchor — while a FRESH allocation keys on the raw line, so the anchor a written line gets
-      // is the one its own bytes derive (#138).
       const baseIdx = (xxh32(newLines[i]!) >>> 14) % HASH_SPACE;
       const h = assignHash(used, baseIdx, hint);
       newHashes[i] = h;
     }
   } catch (e: unknown) {
-    // Rethrow identity: an already-typed exhaustion keeps its counts untouched.
     if (e instanceof AnchorSpaceExhaustedError) throw e;
     if (isAnchorSpaceExhaustion(e)) {
       const rc = retiredCount ?? reservedHashes.size;
@@ -468,5 +419,3 @@ function markHashUsed(used: Uint32Array, hash: string): void {
   const idx = hashToIndex(hash);
   if (idx >= 0) setBit(used, idx);
 }
-
-// --- persistence wrapper (from hash.ts) ---

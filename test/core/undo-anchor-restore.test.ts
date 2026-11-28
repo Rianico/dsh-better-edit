@@ -100,12 +100,10 @@ describe("undo restores the pre-edit anchors", () => {
         .map((row) => ANCHOR_ROW.exec(row))
         .find((match) => match?.[2] === "bbb");
 
-      // The revert diff names the pre-edit anchor, not a freshly minted one.
       expect(restoredRow?.[1]).toBe(bbbAnchor);
       expect(undoneText).toContain("original anchors");
       expect(await readFile(path, "utf8")).toBe(original);
 
-      // A re-read serves the same anchor for the restored line.
       const reread = await harness.readTool.execute("read", { path: "undo-repro.txt" });
       expect(servedAnchor(getText(reread), "bbb")).toBe(bbbAnchor);
     });
@@ -161,15 +159,12 @@ describe("undo restores the pre-edit anchors", () => {
 
       await withWorkspace(cwd, async () => {
         const store = await internalStore();
-        // Restored anchors are live again: un-retired in the blocked set and leased.
         const retired = store.getRetiredAnchors(harness.sessionKey, abs);
         expect(retired.has(betaAnchor)).toBe(false);
         expect(retired.has(alphaAnchor)).toBe(false);
         expect(store.leaseFor(harness.sessionKey, abs, betaAnchor)?.retiredAt).toBeNull();
-        // The added line does not come back, so its anchor stays retired.
         expect(retired.has(extraAnchor)).toBe(true);
         expect(store.leaseFor(harness.sessionKey, abs, extraAnchor)?.retiredAt).not.toBeNull();
-        // The restored assignment is persisted for the restored content.
         expect(store.getSnapshot(abs, original)).toEqual([alphaAnchor, betaAnchor]);
       });
     });
@@ -201,7 +196,6 @@ describe("undo restores the pre-edit anchors", () => {
       if (restoredAnchor === undefined) throw new Error("undo diff row carried no anchor");
       expect(restoredAnchor).toBe(bbbAnchor);
 
-      // The superseded post-edit assignment stays dead.
       await expect(
         harness.editTool.execute("stale", {
           path: "undo-chain.txt",
@@ -211,7 +205,6 @@ describe("undo restores the pre-edit anchors", () => {
         }),
       ).rejects.toThrow(/E_STALE_ANCHOR/);
 
-      // The restored anchor from the undo diff chains a new edit with no re-read.
       await harness.editTool.execute("chained", {
         path: "undo-chain.txt",
         anchor_from: restoredAnchor,

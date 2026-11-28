@@ -4,12 +4,10 @@
  * Falsifier: the end-to-end disclosure. Two window reads leave holes in the served mirror
  * (lines 3-4 of six were never shown), and a later edit replaces the whole span. The diff must
  * blank those removed rows' gutters — their anchors were never served — and the response must
- * carry exactly one `[MODEL] [W_UNSERVED_INTERIOR]` line naming the interior lines. A fully
- * served replacement is silent; strict mode refuses the same span before any diff; a noop
- * branch has no applied section, so it can carry no disclosure.
- *
- * The tool seam returns text only, so the `details` cells project the same section shape through
- * `buildBatchResult` directly (the public function the tool calls).
+ * carry exactly one `[MODEL] [W_UNSERVED_INTERIOR]` naming the replaced file-line count, the
+ * unserved count, and the compressed absolute file lines (#223). A fully served replacement is
+ * silent; strict mode refuses the same span before any diff; a noop branch has no applied section,
+ * so it can carry no disclosure.
  */
 import { beforeAll, describe, expect, it } from "vitest";
 
@@ -24,8 +22,10 @@ beforeAll(async () => {
 });
 
 const SIX = "a\nb\nc\nd\ne\nf\n";
+const EIGHT = "a\nb\nc\nd\ne\nf\ng\nh\ni\n";
 const DISCLOSURE =
-  "[MODEL] [W_UNSERVED_INTERIOR] Span replaced 2 unserved interior line(s) (lines 3-4). " +
+  "[MODEL] [W_UNSERVED_INTERIOR] Span replaced 6 file lines, 2 of which were never served; " +
+  "the edit applied.\nUnserved file lines: 3-4\n" +
   "Edits should only modify lines previously read and served (enforced under strict mode); " +
   "verify this uninspected replacement was intended.";
 /** A removed row with no anchor: the gutter the diff must render for an unread old line. */
@@ -54,6 +54,29 @@ async function serveHoleyWindows(harness: Harness): Promise<Map<string, string>>
     }),
   );
   return new Map([...parseRows(head), ...parseRows(tail)]);
+}
+
+/** Serve lines 1-2, 5 and 9, so old lines 3-4 and 6-8 stay holes in the served mirror. */
+async function serveGapWindows(harness: Harness): Promise<Map<string, string>> {
+  const head = getText(
+    await harness.readTool.execute("read", {
+      path: "t.txt",
+      windows: [{ offset: 1, limit: 2 }],
+    }),
+  );
+  const middle = getText(
+    await harness.readTool.execute("read", {
+      path: "t.txt",
+      windows: [{ offset: 5, limit: 1 }],
+    }),
+  );
+  const tail = getText(
+    await harness.readTool.execute("read", {
+      path: "t.txt",
+      windows: [{ offset: 9, limit: 1 }],
+    }),
+  );
+  return new Map([...parseRows(head), ...parseRows(middle), ...parseRows(tail)]);
 }
 
 /** A section mirroring the whole-span replacement, with an explicit served mirror. */
@@ -94,7 +117,6 @@ describe("edit unserved-interior disclosure (#144 T3)", () => {
       expect(removed.find((line) => line.endsWith(`${HASH_SEP}c`))).toBe(`${BLANK}c`);
       expect(removed.find((line) => line.endsWith(`${HASH_SEP}d`))).toBe(`${BLANK}d`);
 
-      // details live behind the tool seam, so the same section shape is projected directly.
       const hashes = lineHashesPure(SIX);
       const built = buildBatchResult([
         spanSection("X\n", [hashes[0]!, hashes[1]!, null, null, hashes[4]!, hashes[5]!]),
@@ -102,6 +124,60 @@ describe("edit unserved-interior disclosure (#144 T3)", () => {
       expect(built.details.warnings).toEqual([DISCLOSURE]);
       expect(built.details.metrics!.warnings).toBe(built.details.warnings!.length);
       expect(built.details.metrics!.warnings).toBeGreaterThanOrEqual(1);
+    });
+  });
+
+  it("names a single unserved interior line as one line, never a collapsed range", async () => {
+    await withTempFile("t.txt", "a\nb\nc\nd\n", async ({ cwd }) => {
+      const harness = setupIntegrationTest(cwd);
+      const head = getText(
+        await harness.readTool.execute("read", {
+          path: "t.txt",
+          windows: [{ offset: 1, limit: 1 }],
+        }),
+      );
+      const tail = getText(
+        await harness.readTool.execute("read", {
+          path: "t.txt",
+          windows: [{ offset: 3, limit: 2 }],
+        }),
+      );
+      const anchors = new Map([...parseRows(head), ...parseRows(tail)]);
+
+      const out = await harness.editTool.execute("edit", {
+        path: "t.txt",
+        edits: [[anchors.get("a")!, anchors.get("c")!, "X"]],
+      });
+      const text = getText(out);
+
+      expect(text).toContain(
+        "[MODEL] [W_UNSERVED_INTERIOR] Span replaced 3 file lines, 1 of which was never served; " +
+          "the edit applied.\nUnserved file line: 2\n" +
+          "Edits should only modify lines previously read and served (enforced under strict mode); " +
+          "verify this uninspected replacement was intended.",
+      );
+      expect(text).not.toContain("Unserved file line: 2-2");
+    });
+  });
+
+  it("lists non-contiguous unserved runs instead of a min..max envelope", async () => {
+    await withTempFile("t.txt", EIGHT, async ({ cwd }) => {
+      const harness = setupIntegrationTest(cwd);
+      const anchors = await serveGapWindows(harness);
+
+      const out = await harness.editTool.execute("edit", {
+        path: "t.txt",
+        edits: [[anchors.get("b")!, anchors.get("i")!, "X"]],
+      });
+      const text = getText(out);
+
+      expect(text).toContain(
+        "[MODEL] [W_UNSERVED_INTERIOR] Span replaced 8 file lines, 5 of which were never served; " +
+          "the edit applied.\nUnserved file lines: 3-4, 6-8\n" +
+          "Edits should only modify lines previously read and served (enforced under strict mode); " +
+          "verify this uninspected replacement was intended.",
+      );
+      expect((text.match(/W_UNSERVED_INTERIOR/g) ?? []).length).toBe(1);
     });
   });
 
@@ -135,9 +211,7 @@ describe("edit unserved-interior disclosure (#144 T3)", () => {
           path: "t.txt",
           edits: [[anchors.get("a")!, anchors.get("f")!, "X"]],
         });
-        // The edit tool always routes through the batch envelope, so the span refusal arrives as
-        // the first item's inner diagnostic (#144 T2 producer).
-        await expect(attempt).rejects.toMatchObject({ code: "E_BATCH_ABORT" });
+        await expect(attempt).rejects.toMatchObject({ code: "E_UNSERVED_RANGE" });
         const error = await attempt.catch((e: unknown) => e);
         expect((error as Error).message).toContain("[E_UNSERVED_RANGE]");
         expect((error as Error).message).toContain("never served");

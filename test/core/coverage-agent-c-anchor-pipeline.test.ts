@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 import { parseHashRef, resEdit, applyEdit, parseText } from "../../src/hashline/anchor-pipeline.js";
 import {
   verifyServedRange,
@@ -6,7 +6,7 @@ import {
   fmtServedRows,
 } from "../../src/hashline/served-evidence.js";
 import { lineHashesPure } from "../../src/hashline/hash-assign.js";
-import { initHasher } from "../../src/hashline/hash-assign.js";
+import "../../src/hashline/hash-assign.js";
 
 describe("coverage: anchor-pipeline parseHashRef / diagRef branches", () => {
   it("rejects empty and numeric anchors", () => {
@@ -20,9 +20,6 @@ describe("coverage: anchor-pipeline parseHashRef / diagRef branches", () => {
   });
   it("rejects multiline block with pipes", () => {
     const block = "abc│line one\ndef│line two";
-    // #108: the pipe+newline branch that minted "wUp"/"AU6" is gone. A block that still
-    // carries │ lands on the pre-existing single-line "remove everything from │" shape rule
-    // (it names no coordinate); a pipe-free block reaches the generic tail.
     let message = "";
     try {
       parseHashRef(block);
@@ -36,10 +33,8 @@ describe("coverage: anchor-pipeline parseHashRef / diagRef branches", () => {
     expect(() => parseHashRef("x\ny")).toThrow(/Expected a 3-char/);
   });
   it("parses valid 3-char alphanumeric", () => {
-    // generate a valid hash via hasher
     const hashes = lineHashesPure("a\nb\nc");
     expect(parseHashRef(hashes[0]!).hash).toBe(hashes[0]!);
-    // also simple
     expect(parseHashRef("aB3").hash).toBe("aB3");
   });
 });
@@ -76,7 +71,6 @@ describe("coverage: anchor-pipeline resEdit warnings", () => {
     const block = "abc│first\nother line\ndef│second";
     const edit: any = { anchor_from: block, anchor_to: "def", replace_with: "new" };
     expect(() => resEdit(edit, warnings)).toThrow(/\[E_MALFORMED_ANCHOR\]/);
-    // #108: the refusal names NO coordinate — shape rule plus the pasted block's line count.
     let message = "";
     try {
       resEdit(edit, warnings);
@@ -90,7 +84,6 @@ describe("coverage: anchor-pipeline resEdit warnings", () => {
     expect(message).not.toMatch(/"[A-Za-z0-9]{3}"/);
   });
   it("rejects missing fields", () => {
-    // anchor_from must be string
     expect(() =>
       resEdit({ anchor_from: 123 as any, anchor_to: "abc", replace_with: "x" } as any),
     ).toThrow();
@@ -136,7 +129,6 @@ describe("coverage: anchor-pipeline applyEdit", () => {
   it("swaps reversed anchors", () => {
     const content = "a\nb\nc\nd";
     const hashes = lineHashesPure(content);
-    // reversed: anchor_from is line 3, anchor_to is line 1
     const edit: any = {
       hash_bounds: [{ hash: hashes[2]! }, { hash: hashes[0]! }],
       content_lines: ["X"],
@@ -149,14 +141,12 @@ describe("coverage: anchor-pipeline applyEdit", () => {
   it("keeps boundary dups (no auto-fix) trailing/leading", () => {
     const content = "a\nb\nc\nd\ne";
     const hashes = lineHashesPure(content);
-    // edit replacing lines 2-3 (b,c) but include trailing dup d which equals file line after range — now kept
     const edit: any = {
       hash_bounds: [{ hash: hashes[1]! }, { hash: hashes[2]! }],
       content_lines: ["B", "C", "d"],
     };
     const result = applyEdit(content, edit, undefined, hashes);
     expect(result.content).toBe("a\nB\nC\nd\nd\ne");
-    // also test leading dup
     const edit2: any = {
       hash_bounds: [{ hash: hashes[1]! }, { hash: hashes[2]! }],
       content_lines: ["a", "B", "C"],
@@ -175,7 +165,6 @@ describe("coverage: anchor-pipeline applyEdit", () => {
   it("throws on ambiguous anchors", () => {
     const content = "a\nb\nc";
     const hashes = lineHashesPure(content);
-    // forge hashes with duplicate
     const dupHashes = [...hashes];
     dupHashes[2] = hashes[0]!;
     const edit: any = {
@@ -189,7 +178,6 @@ describe("coverage: anchor-pipeline applyEdit", () => {
     const content = "a\nb\nc";
     const hashes = lineHashesPure(content);
     const served = [...hashes];
-    // make replacement start with served hash + │
     const edit: any = {
       hash_bounds: [{ hash: hashes[0]! }, { hash: hashes[0]! }],
       content_lines: [`${hashes[0]!}│a`, "new"],
@@ -277,14 +265,12 @@ describe("coverage: anchor-pipeline verifyServedRange / buildRangeEcho", () => {
       }
     })();
     expect(caught?.code).toBe("E_UNKNOWN_ANCHOR");
-    // Grounding void: neither bound was ever served, so the refusal carries no rows.
     expect(caught?.servedRows ?? []).toEqual([]);
   });
 
   it("verifyServedRange throws E_UNSERVED_RANGE when served null in range", () => {
     const content = "a\nb\nc";
     const hashes = lineHashesPure(content);
-    // served has one null inside verified span
     const served: (string | null)[] = [hashes[0]!, null, hashes[2]!];
     expect(() =>
       verifyServedRange({
@@ -319,7 +305,6 @@ describe("coverage: anchor-pipeline verifyServedRange / buildRangeEcho", () => {
   it("verifyServedRange detects E_STALE_RANGE when hashes differ", () => {
     const content = "a\nb\nc";
     const hashes = lineHashesPure(content);
-    // modify hashes to simulate stale
     const staleHashes = [...hashes];
     staleHashes[0] = "zzz";
     const served: (string | null)[] = [hashes[0]!, hashes[1]!, hashes[2]!];

@@ -55,9 +55,6 @@ describe("FsSandboxController", () => {
     expect(fields.sandbox_permissions.enum).toEqual([...sandbox.escalationModes]);
 
     const resolved = await sandbox.resolvePolicy("edit", {}, exec);
-    // The SESSION is passed to the policy resolver — that is what stamps the
-    // session workspace root onto the write, keeping workspace-write edits
-    // inside the session cwd from being denied.
     expect(policy.resolve).toHaveBeenCalledWith({
       session: exec.agent!.session,
     });

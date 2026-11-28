@@ -11,7 +11,6 @@ describe("coverage-sandbox-tool", () => {
         return undefined;
       },
     } as any);
-    // Try to get policy via internal method if exists
     if (ctrl.getPolicy) {
       const policy = await ctrl.getPolicy(
         { sandbox_permissions: "readOnly", justification: "test" },
@@ -37,7 +36,6 @@ describe("coverage-sandbox-tool", () => {
       },
     } as any);
     const tool: any = buildEditTool(localIO(), sandbox);
-    // Try with sandbox_permissions
     try {
       const res = await tool.execute("edit", {
         path: "a.txt",

@@ -132,13 +132,10 @@ async function withTempBytes(
     clearEncodingState();
     _resetConfigCache();
     delete process.env.DSH_BETTER_EDIT_NORMALIZE_TO_UTF8;
-    // Windows refuses to unlink an open `hash-store.sqlite` (EBUSY), so the store
-    // must close before the directory goes away (upstream 9937e18).
     shutdownHashStore();
     try {
       await rm(cwd, { recursive: true, force: true });
     } finally {
-      // Unconditional: a failed rm must not leak the mutated HOME/DSH_HOME.
       restoreHome();
     }
   }
@@ -169,8 +166,6 @@ describe("prepareForSave — round-trip verdict", () => {
   });
 
   it("refuses a recorded BOM when the recorded encoding is not UTF-8", () => {
-    // A legacy BOM (`utf16le` FF FE, or read({encoding}) on a UTF-8-BOM file) is a
-    // byte image a UTF-8 string write cannot reproduce — even for empty content.
     expect(() =>
       prepareForSave(
         "",
@@ -207,7 +202,6 @@ describe("prepareForSave — round-trip verdict", () => {
       {},
     );
     expect(prep.textToWrite).toBe("plain ascii\n");
-    // The written bytes are UTF-8, so the memo must describe UTF-8 afterwards.
     expect(prep.newState?.encoding).toBe("utf8");
     expect(prep.newState?.hasBOM).toBe(false);
   });
@@ -274,7 +268,6 @@ describe("edit — recorded encoding round-trip", () => {
 
       const written = await readFile(path, "utf-8");
       expect(written).toBe("изменённая строка\nвторая строка\n");
-      // BOM dropped by the migration, and the memo describes the bytes just written.
       expect((await memoFor(path))?.encoding).toBe("utf8");
       expect((await memoFor(path))?.hasBOM).toBe(false);
 
@@ -439,7 +432,6 @@ describe("undo_last_edit — staleness read consumes the recorded encoding", () 
       await harness.readTool.execute("r1", { path: "undo-cp.txt", encoding: "windows-1251" });
       const before = await readFile(path);
       await withWorkspace(cwd, async () => {
-        // The undo store keys by the canonical path the tools resolve to.
         const canonical = await resolveTarget(path);
         const hashes = await lineHashes(CP1251_TEXT, canonical);
         await saveUndo(canonical, {
@@ -451,9 +443,6 @@ describe("undo_last_edit — staleness read consumes the recorded encoding", () 
         });
       });
 
-      // The staleness read must decode with the recorded windows-1251 hint: the bytes are
-      // unchanged since the undo record, so E_UNDO_STALE would be a false "modified". The
-      // revert itself cannot be written back through the text seam, so it refuses instead.
       await expect(harness.undoTool.execute("u1", { path: "undo-cp.txt" })).rejects.toThrow(
         /\[E_ENCODING_UNWRITABLE\][\s\S]*allow_encoding_migration/,
       );
@@ -477,7 +466,6 @@ describe("transaction — the round-trip verdict precedes every write", () => {
           return io.writeText(...args);
         },
       };
-      // Read the UTF-16LE file so the memo records its encoding for the transaction.
       await io.readText(bPath);
       expect((await memoFor(bPath))?.encoding).toBe("utf16le");
 
@@ -519,7 +507,6 @@ describe("transaction — the round-trip verdict precedes every write", () => {
         ).rejects.toThrow(/E_ENCODING_UNWRITABLE[\s\S]*allow_encoding_migration/);
       });
 
-      // File A would have been written first; the refusal for B must land before it.
       expect(writes).toBe(0);
       expect(await readFile(aPath, "utf-8")).toBe("alpha\n");
       await withWorkspace(cwd, async () => {
@@ -542,15 +529,11 @@ describe("fixture teardown — Windows-safe ordering", () => {
     teardown.shutdownCallsAtRm = -1;
     try {
       await expect(
-        withTempBytes("teardown.txt", Buffer.from("a\n", "utf-8"), async () => {
-          // No-op body: the pin is about teardown ordering only.
-        }),
+        withTempBytes("teardown.txt", Buffer.from("a\n", "utf-8"), async () => {}),
       ).rejects.toBe(failure);
 
-      // Ordering, not luck: the store closed exactly once before rm was attempted.
       expect(teardown.shutdownCallsAtRm).toBe(1);
       expect(teardown.rmTarget).toMatch(/enc-roundtrip-/);
-      // A failed rm must not leak the mutated home into later tests.
       expect(process.env.HOME).toBe(previous.HOME);
       expect(process.env.DSH_HOME).toBe(previous.DSH_HOME);
       expect(process.env.USERPROFILE).toBe(previous.USERPROFILE);
